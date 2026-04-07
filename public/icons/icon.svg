@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background circle: warm orange gradient -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fb923c"/>
+      <stop offset="100%" stop-color="#ea580c"/>
+    </linearGradient>
+    <linearGradient id="flame" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#fff7ed"/>
+    </linearGradient>
+  </defs>
+  <!-- Circle background -->
+  <circle cx="256" cy="256" r="256" fill="url(#bg)"/>
+  <!-- Stylized flame / irori (hearth) symbol -->
+  <g transform="translate(256, 270)">
+    <!-- Outer flame -->
+    <path d="M0,-120 C40,-80 70,-30 70,20 C70,60 40,100 0,100 C-40,100 -70,60 -70,20 C-70,-30 -40,-80 0,-120Z" fill="url(#flame)" opacity="0.9"/>
+    <!-- Inner flame -->
+    <path d="M0,-60 C20,-35 35,-10 35,15 C35,40 20,55 0,55 C-20,55 -35,40 -35,15 C-35,-10 -20,-35 0,-60Z" fill="#fff7ed" opacity="0.8"/>
+  </g>
+  <!-- "う" character -->
+  <text x="256" y="380" text-anchor="middle" font-family="'Hiragino Sans','Noto Sans JP',sans-serif" font-size="72" font-weight="700" fill="white" opacity="0.95">う</text>
+</svg>
