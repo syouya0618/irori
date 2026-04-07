@@ -13,14 +13,16 @@ export async function createHousehold(name: string) {
     return { error: "認証されていません。ログインしてください。" }
   }
 
-  // Create household
-  const { data: household, error: householdError } = await supabase
-    .from("households")
-    .insert({ name })
-    .select("id")
-    .single()
+  // UUID をサーバー側で生成し、INSERT 後の SELECT を回避
+  // （INSERT は RLS 許可だが、SELECT は household_id 一致が必要で、
+  //  この時点では profile.household_id が NULL のため SELECT が失敗する）
+  const householdId = crypto.randomUUID()
 
-  if (householdError || !household) {
+  const { error: householdError } = await supabase
+    .from("households")
+    .insert({ id: householdId, name })
+
+  if (householdError) {
     return { error: "世帯の作成に失敗しました。もう一度お試しください。" }
   }
 
@@ -28,7 +30,7 @@ export async function createHousehold(name: string) {
   const { error: profileError } = await supabase
     .from("profiles")
     .update({
-      household_id: household.id,
+      household_id: householdId,
       role: "owner" as const,
     })
     .eq("id", user.id)
