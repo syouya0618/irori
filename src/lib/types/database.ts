@@ -347,6 +347,21 @@ export interface Database {
         Args: Record<string, never>
         Returns: string
       }
+      get_invitation_by_token: {
+        Args: { invite_token: string }
+        Returns: {
+          id: string
+          household_id: string
+          household_name: string
+          role: HouseholdRole
+          status: InviteStatus
+          expires_at: string
+        }[]
+      }
+      accept_invitation: {
+        Args: { invitation_uuid: string }
+        Returns: void
+      }
     }
     Enums: {
       meal_type: MealType
