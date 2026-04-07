@@ -253,8 +253,8 @@ ALTER TABLE purchase_history ENABLE ROW LEVEL SECURITY;
 -- ヘルパー関数: 現在のユーザーの household_id を取得
 CREATE OR REPLACE FUNCTION get_my_household_id()
 RETURNS UUID AS $$
-  SELECT household_id FROM profiles WHERE id = auth.uid();
-$$ LANGUAGE sql SECURITY DEFINER STABLE;
+  SELECT household_id FROM public.profiles WHERE id = auth.uid();
+$$ LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public;
 
 -- --- households ---
 CREATE POLICY "households_select" ON households
@@ -402,17 +402,20 @@ CREATE TRIGGER trg_stock_items_updated_at
 -- 7. Auth Hook: 新規ユーザー作成時にprofileを自動生成
 -- ============================================================
 
+-- IMPORTANT: SET search_path = public は必須。
+-- GoTrue は supabase_auth_admin ロール（search_path=auth）でトリガーを発火するため、
+-- 明示しないと profiles を auth.profiles として探し 500 エラーになる。
 CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO profiles (id, display_name)
+  INSERT INTO public.profiles (id, display_name)
   VALUES (
     NEW.id,
     COALESCE(NEW.raw_user_meta_data->>'display_name', '')
   );
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
