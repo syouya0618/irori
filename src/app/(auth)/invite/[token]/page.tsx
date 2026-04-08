@@ -82,7 +82,6 @@ export default async function InvitePage({
           invitationId={invitation.id}
           householdName={invitation.household_name}
           role={invitation.role}
-          userId={user.id}
         />
       </div>
     </div>

@@ -1,5 +1,7 @@
 "use server"
 
+import { redirect } from "next/navigation"
+import { revalidatePath } from "next/cache"
 import { createClient } from "@/lib/supabase/server"
 
 export async function acceptInvitation(invitationId: string) {
@@ -20,7 +22,6 @@ export async function acceptInvitation(invitationId: string) {
   })
 
   if (error) {
-    // DB関数からのエラーメッセージをユーザー向けに変換
     const message = error.message
     if (message.includes("already belongs")) {
       return { error: "すでに世帯に参加しています。" }
@@ -37,5 +38,6 @@ export async function acceptInvitation(invitationId: string) {
     return { error: "世帯への参加に失敗しました。もう一度お試しください。" }
   }
 
-  return { error: null }
+  revalidatePath("/meals")
+  redirect("/meals")
 }

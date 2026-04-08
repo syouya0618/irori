@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -9,8 +8,7 @@ import { toast } from "sonner"
 import { Loader2, Home } from "lucide-react"
 import { createHousehold } from "./actions"
 
-export function SetupForm({ userId }: { userId: string }) {
-  const router = useRouter()
+export function SetupForm() {
   const [name, setName] = useState("")
   const [isLoading, setIsLoading] = useState(false)
 
@@ -25,15 +23,14 @@ export function SetupForm({ userId }: { userId: string }) {
 
     setIsLoading(true)
 
+    // 成功時: server action 内で redirect() が throw され、ここには戻らない
+    // 失敗時: { error: string } が返る
     const result = await createHousehold(trimmedName)
 
     if (result?.error) {
       toast.error(result.error)
       setIsLoading(false)
-      return
     }
-
-    router.push("/meals")
   }
 
   return (

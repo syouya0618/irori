@@ -1,5 +1,7 @@
 "use server"
 
+import { redirect } from "next/navigation"
+import { revalidatePath } from "next/cache"
 import { createClient } from "@/lib/supabase/server"
 
 export async function createHousehold(name: string) {
@@ -13,9 +15,6 @@ export async function createHousehold(name: string) {
     return { error: "認証されていません。ログインしてください。" }
   }
 
-  // UUID をサーバー側で生成し、INSERT 後の SELECT を回避
-  // （INSERT は RLS 許可だが、SELECT は household_id 一致が必要で、
-  //  この時点では profile.household_id が NULL のため SELECT が失敗する）
   const householdId = crypto.randomUUID()
 
   const { error: householdError } = await supabase
@@ -26,7 +25,8 @@ export async function createHousehold(name: string) {
     return { error: "世帯の作成に失敗しました。もう一度お試しください。" }
   }
 
-  // Update profile with household_id and role
+  // .select("id").single() で更新が実際に1行影響したことを検証。
+  // 0行影響（プロフィール未存在等）の場合 PGRST116 エラーで検知する。
   const { error: profileError } = await supabase
     .from("profiles")
     .update({
@@ -34,10 +34,13 @@ export async function createHousehold(name: string) {
       role: "owner" as const,
     })
     .eq("id", user.id)
+    .select("id")
+    .single()
 
   if (profileError) {
     return { error: "プロフィールの更新に失敗しました。もう一度お試しください。" }
   }
 
-  return { error: null }
+  revalidatePath("/meals")
+  redirect("/meals")
 }

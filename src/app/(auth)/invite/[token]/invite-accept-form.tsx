@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { toast } from "sonner"
 import { Loader2, Users } from "lucide-react"
@@ -12,7 +11,6 @@ interface InviteAcceptFormProps {
   invitationId: string
   householdName: string
   role: HouseholdRole
-  userId: string
 }
 
 const roleLabels: Record<HouseholdRole, string> = {
@@ -25,24 +23,20 @@ export function InviteAcceptForm({
   invitationId,
   householdName,
   role,
-  userId,
 }: InviteAcceptFormProps) {
-  const router = useRouter()
   const [isLoading, setIsLoading] = useState(false)
 
   async function handleAccept() {
     setIsLoading(true)
 
+    // 成功時: server action 内で redirect() が throw され、ここには戻らない
+    // 失敗時: { error: string } が返る
     const result = await acceptInvitation(invitationId)
 
     if (result?.error) {
       toast.error(result.error)
       setIsLoading(false)
-      return
     }
-
-    toast.success("世帯に参加しました")
-    router.push("/meals")
   }
 
   return (
