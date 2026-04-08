@@ -52,6 +52,25 @@ export async function generateInvite() {
   return { success: true, url: inviteUrl }
 }
 
+export async function approveUser(targetUserId: string) {
+  const result = await getAuthContext()
+  if (result.error !== null) return { error: result.error }
+  const { supabase } = result.context
+
+  const { error } = await supabase.rpc("approve_user", {
+    target_user_id: targetUserId,
+  })
+
+  if (error) {
+    if (error.message.includes("Only owners")) {
+      return { error: "承認権限がありません" }
+    }
+    return { error: "承認に失敗しました" }
+  }
+
+  return { success: true }
+}
+
 export async function signOut() {
   const supabase = await createClient()
   await supabase.auth.signOut()

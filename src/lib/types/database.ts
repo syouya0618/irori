@@ -61,6 +61,7 @@ export interface Database {
           display_name: string
           avatar_url: string | null
           role: HouseholdRole
+          is_approved: boolean
           created_at: string
           updated_at: string
         }
@@ -70,6 +71,7 @@ export interface Database {
           display_name?: string
           avatar_url?: string | null
           role?: HouseholdRole
+          is_approved?: boolean
           created_at?: string
           updated_at?: string
         }
@@ -79,6 +81,7 @@ export interface Database {
           display_name?: string
           avatar_url?: string | null
           role?: HouseholdRole
+          is_approved?: boolean
           updated_at?: string
         }
         Relationships: []
@@ -360,6 +363,19 @@ export interface Database {
       }
       accept_invitation: {
         Args: { invitation_uuid: string }
+        Returns: void
+      }
+      get_pending_approvals: {
+        Args: Record<string, never>
+        Returns: {
+          id: string
+          display_name: string
+          email: string
+          created_at: string
+        }[]
+      }
+      approve_user: {
+        Args: { target_user_id: string }
         Returns: void
       }
     }

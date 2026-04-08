@@ -19,6 +19,13 @@ export default async function SettingsPage() {
     .eq("id", profile!.household_id!)
     .single()
 
+  // ownerのみ: 承認待ちユーザー取得
+  let pendingUsers: { id: string; display_name: string; email: string; created_at: string }[] = []
+  if (profile!.role === "owner") {
+    const { data } = await supabase.rpc("get_pending_approvals")
+    pendingUsers = data ?? []
+  }
+
   return (
     <SettingsContent
       profile={{
@@ -33,6 +40,7 @@ export default async function SettingsPage() {
           : null
       }
       email={user!.email ?? ""}
+      pendingUsers={pendingUsers}
     />
   )
 }
