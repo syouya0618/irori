@@ -11,20 +11,21 @@
  * - [RECURRING] 日付パースのUTC問題
  */
 
-const JST_LOCALE = "en-CA"
-const JST_TZ = "Asia/Tokyo"
+// Intl.DateTimeFormat インスタンスはモジュールスコープで1回だけ生成する。
+// new ごとのコンストラクタコスト（ICU ロード含む）を避けるため。
+const JST_FORMATTER = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Tokyo",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+})
 
 /**
  * 現在のJST日付を "YYYY-MM-DD" 形式で返す。
  * サーバー(UTC)でもクライアント(JST)でも同じ値を返す。
  */
 export function todayJstString(now: Date = new Date()): string {
-  return new Intl.DateTimeFormat(JST_LOCALE, {
-    timeZone: JST_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now)
+  return JST_FORMATTER.format(now)
 }
 
 /**

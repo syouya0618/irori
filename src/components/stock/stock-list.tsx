@@ -30,7 +30,6 @@ import { daysFromTodayJst } from "@/lib/utils/date-jst"
 import type { ItemCategory } from "@/lib/types/database"
 import type { RecipeSuggestion } from "@/lib/domain"
 
-// ─── カテゴリーアイコンマッピング ────────────────────────
 const categoryIcons: Record<ItemCategory, React.ComponentType<{ size?: number; className?: string }>> = {
   vegetable: Carrot,
   fruit: Apple,
@@ -72,7 +71,6 @@ export function StockList({
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editingItem, setEditingItem] = useState<StockItemData | null>(null)
 
-  // ─── Supabase Realtime ─────────────────────────────────
   useEffect(() => {
     const supabase = createClient()
 
@@ -111,12 +109,10 @@ export function StockList({
     }
   }, [householdId])
 
-  // ─── 楽観削除ハンドラ ──────────────────────────────────
   const handleOptimisticDelete = useCallback((id: string) => {
     setItems((prev) => prev.filter((item) => item.id !== id))
   }, [])
 
-  // ─── 編集ハンドラ ──────────────────────────────────────
   const handleEdit = useCallback((item: StockItemData) => {
     setEditingItem(item)
     setSheetOpen(true)
@@ -127,7 +123,6 @@ export function StockList({
     setSheetOpen(true)
   }
 
-  // ─── カテゴリーグループ化 ──────────────────────────────
   const grouped = useMemo(() => {
     const groups = new Map<ItemCategory, StockItemData[]>()
     for (const item of items) {

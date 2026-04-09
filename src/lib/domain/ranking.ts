@@ -1,9 +1,5 @@
 import { matchStockToTemplate } from "./matching"
-import {
-  calculateExpiryBonus,
-  calculateReactionScore,
-  daysUntilExpiry,
-} from "./scoring"
+import { calculateReactionScore, daysUntilExpiry } from "./scoring"
 import {
   DEFAULT_SCORING_CONFIG,
   type RecipeSuggestion,
@@ -15,9 +11,7 @@ import {
 /**
  * テンプレートリストと在庫リストを受け取り、スコア降順で上位N件を返す。
  * Domain層の唯一の公開エントリポイント。
- *
  * マッチ率が0のテンプレートは結果から除外する。
- * テンプレート数やカスタム設定は config で上書き可能。
  */
 export function rankSuggestions(
   templates: TemplateInput[],
@@ -36,38 +30,33 @@ export function rankSuggestions(
       mergedConfig.minMatchLength,
     )
 
-    // マッチ率0のテンプレートは除外
     if (matchResult.matchRate === 0) continue
 
-    const expiryBonus = calculateExpiryBonus(
-      matchResult.matched,
-      mergedConfig,
-      today,
+    // daysUntilExpiry を1回だけ計算し、matchedIngredients と expiryBonus の両方で共有する。
+    let expiringCount = 0
+    const matchedIngredients = matchResult.matched.map(
+      ({ ingredient, stockItem }) => {
+        const days = daysUntilExpiry(stockItem.expires_at, today)
+        const isExpiring =
+          days !== null && days <= mergedConfig.expiryBonusThresholdDays
+        if (isExpiring) expiringCount++
+        return { name: ingredient.name, isExpiring }
+      },
+    )
+
+    const expiryBonus = Math.min(
+      expiringCount * mergedConfig.expiryBonusPerItem,
+      mergedConfig.expiryBonusMax,
     )
     const reactionScore = calculateReactionScore(
       template.reactionHistory,
       mergedConfig,
     )
 
-    const score = matchResult.matchRate + expiryBonus + reactionScore
-
-    // マッチ食材と isExpiring を1ループで構築
-    // （hasExpiringStock も matchedIngredients から導出して冗長計算を避ける）
-    const matchedIngredients = matchResult.matched.map(
-      ({ ingredient, stockItem }) => {
-        const days = daysUntilExpiry(stockItem.expires_at, today)
-        return {
-          name: ingredient.name,
-          isExpiring:
-            days !== null && days <= mergedConfig.expiryBonusThresholdDays,
-        }
-      },
-    )
-
     results.push({
       templateId: template.id,
       title: template.title,
-      score,
+      score: matchResult.matchRate + expiryBonus + reactionScore,
       scoreBreakdown: {
         matchRate: matchResult.matchRate,
         expiryBonus,
@@ -75,11 +64,10 @@ export function rankSuggestions(
       },
       matchedIngredients,
       missingIngredients: matchResult.missing,
-      hasExpiringStock: matchedIngredients.some((m) => m.isExpiring),
+      hasExpiringStock: expiringCount > 0,
     })
   }
 
-  // スコア降順でソート、上位N件を返す
   return results
     .sort((a, b) => b.score - a.score)
     .slice(0, mergedConfig.topN)

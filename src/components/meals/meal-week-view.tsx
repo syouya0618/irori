@@ -17,11 +17,9 @@ import type {
   ItemCategory,
 } from "@/lib/types/database"
 
-// ── Helpers ──
-
 const DAY_NAMES = ["月", "火", "水", "木", "金", "土", "日"]
 
-// Week view only shows breakfast/lunch/dinner (not snack)
+// 週ビューは snack を除く3食のみ表示する
 const WEEK_VIEW_MEAL_TYPES: MealType[] = ["breakfast", "lunch", "dinner"]
 
 function formatDayHeader(d: Date): string {
@@ -50,8 +48,6 @@ function isToday(d: Date): boolean {
     d.getDate() === today.getDate()
   )
 }
-
-// ── Types ──
 
 interface MealWithDetails {
   id: string
@@ -107,7 +103,6 @@ export function MealWeekView({
     }>
   } | null>(null)
 
-  // URL params から template ID を読み取り、自動でシートを開く
   const templateIdFromUrl = searchParams.get("template")
   const hasProcessedUrlTemplate = useRef(false)
 
@@ -143,16 +138,14 @@ export function MealWeekView({
     }
   }, [templateIdFromUrl, router])
 
-  // Ref to avoid re-subscribing on every week change
+  // Realtime subscription が weekStart 変更のたびに再購読しないよう ref で保持する。
   const weekStartRef = useRef(weekStart)
   useEffect(() => { weekStartRef.current = weekStart }, [weekStart])
 
-  // Computed week days
   const weekDays = useMemo(() => {
     return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
   }, [weekStart])
 
-  // Meals indexed by date+mealType
   const mealMap = useMemo(() => {
     const map = new Map<string, MealWithDetails>()
     for (const meal of meals) {
@@ -161,13 +154,10 @@ export function MealWeekView({
     return map
   }, [meals])
 
-  // Check if current week is this week
   const isCurrentWeek = useMemo(() => {
     const currentMonday = getMonday(new Date())
     return formatDateKey(weekStart) === formatDateKey(currentMonday)
   }, [weekStart])
-
-  // ── Fetch meals for the current week ──
 
   const fetchMeals = useCallback(
     async (start: Date) => {
@@ -198,8 +188,6 @@ export function MealWeekView({
     [householdId]
   )
 
-  // ── Week navigation ──
-
   function goToPreviousWeek() {
     const newStart = addDays(weekStart, -7)
     setWeekStart(newStart)
@@ -217,8 +205,6 @@ export function MealWeekView({
     setWeekStart(monday)
     fetchMeals(monday)
   }
-
-  // ── Realtime subscription ──
 
   useEffect(() => {
     const supabase = createClient()
@@ -244,8 +230,6 @@ export function MealWeekView({
     }
   }, [householdId, fetchMeals])
 
-  // ── Sheet handlers ──
-
   function openNewMeal(date: string, mealType: MealType) {
     setEditingMeal(null)
     setSelectedDate(date)
@@ -267,8 +251,6 @@ export function MealWeekView({
       setPrefilledFromTemplate(null)
     }
   }
-
-  // ── Build form data ──
 
   const formInitialData = editingMeal
     ? {
@@ -294,7 +276,6 @@ export function MealWeekView({
         }
       : undefined
 
-  // ── Check if all days are empty (empty state) ──
   const hasAnyMeals = meals.length > 0
 
   return (

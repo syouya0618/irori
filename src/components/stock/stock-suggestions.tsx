@@ -2,13 +2,19 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
-import { ChevronDown, ChevronRight, Lightbulb, Loader2 } from "lucide-react"
+import {
+  ChevronDown,
+  ChevronRight,
+  Lightbulb,
+  Loader2,
+  Sparkles,
+} from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { getRecipeSuggestions } from "@/app/(main)/stock/actions"
 import type { StockItemData } from "./stock-item"
 import type { RecipeSuggestion } from "@/lib/domain"
-import { SuggestionCard, SuggestionSectionIcon } from "./suggestion-card"
+import { SuggestionCard } from "./suggestion-card"
 
 interface StockSuggestionsProps {
   /** 初期提案データ（SSRで取得） */
@@ -90,7 +96,7 @@ export function StockSuggestions({
         ) : (
           <ChevronRight size={16} className="text-muted-foreground" />
         )}
-        <SuggestionSectionIcon />
+        <Sparkles size={16} className="text-primary" />
         <span className="text-sm font-semibold">おすすめ献立</span>
         {suggestions.length > 0 && (
           <span className="text-xs text-muted-foreground">

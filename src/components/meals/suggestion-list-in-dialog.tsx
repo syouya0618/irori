@@ -128,8 +128,13 @@ export function SuggestionListInDialog({
               <div className="flex flex-wrap gap-1">
                 {suggestion.matchedIngredients.map((ing) => (
                   <span
-                    key={ing.name}
-                    className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700"
+                    key={`match-${ing.name}`}
+                    className={cn(
+                      "rounded-full px-2 py-0.5 text-xs",
+                      ing.isExpiring
+                        ? "bg-red-50 text-red-700"
+                        : "bg-emerald-50 text-emerald-700",
+                    )}
                   >
                     {ing.name}
                   </span>

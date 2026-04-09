@@ -97,7 +97,7 @@ export function StockFormSheet({
         ? await updateStockItem(editingItem.id, formData)
         : await addStockItem(formData)
 
-      if (result.error) {
+      if ("error" in result) {
         toast.error(result.error)
       } else {
         toast.success(isEditing ? "在庫を更新しました" : "在庫を追加しました")

@@ -12,17 +12,38 @@ import {
   type TemplateInput,
 } from "@/lib/domain"
 
-// ─── 在庫追加 ────────────────────────────────────────────
-export async function addStockItem(formData: FormData) {
+type ParsedStockFields = {
+  name: string
+  category: ItemCategory
+  quantity: number
+  unit: string | null
+  expires_at: string | null
+}
+
+function parseStockFormData(
+  formData: FormData,
+): ParsedStockFields | { error: string } {
   const name = formData.get("name")
   if (typeof name !== "string" || name.trim().length === 0) {
     return { error: "アイテム名を入力してください" }
   }
 
-  const category = (formData.get("category") as ItemCategory) || "other_food"
-  const quantity = Number(formData.get("quantity")) || 1
-  const unit = (formData.get("unit") as string) || null
-  const expiresAt = (formData.get("expires_at") as string) || null
+  const unit = formData.get("unit")
+  const expiresAt = formData.get("expires_at")
+
+  return {
+    name: name.trim(),
+    category: (formData.get("category") as ItemCategory) || "other_food",
+    quantity: Number(formData.get("quantity")) || 1,
+    unit: typeof unit === "string" && unit.length > 0 ? unit : null,
+    expires_at:
+      typeof expiresAt === "string" && expiresAt.length > 0 ? expiresAt : null,
+  }
+}
+
+export async function addStockItem(formData: FormData) {
+  const parsed = parseStockFormData(formData)
+  if ("error" in parsed) return parsed
 
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error }
@@ -30,11 +51,7 @@ export async function addStockItem(formData: FormData) {
 
   const { error } = await supabase.from("stock_items").insert({
     household_id: householdId,
-    name: name.trim(),
-    category,
-    quantity,
-    unit: unit || null,
-    expires_at: expiresAt || null,
+    ...parsed,
     created_by: userId,
   })
 
@@ -46,17 +63,9 @@ export async function addStockItem(formData: FormData) {
   return { success: true }
 }
 
-// ─── 在庫更新 ────────────────────────────────────────────
 export async function updateStockItem(itemId: string, formData: FormData) {
-  const name = formData.get("name")
-  if (typeof name !== "string" || name.trim().length === 0) {
-    return { error: "アイテム名を入力してください" }
-  }
-
-  const category = (formData.get("category") as ItemCategory) || "other_food"
-  const quantity = Number(formData.get("quantity")) || 1
-  const unit = (formData.get("unit") as string) || null
-  const expiresAt = (formData.get("expires_at") as string) || null
+  const parsed = parseStockFormData(formData)
+  if ("error" in parsed) return parsed
 
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error }
@@ -64,13 +73,7 @@ export async function updateStockItem(itemId: string, formData: FormData) {
 
   const { error } = await supabase
     .from("stock_items")
-    .update({
-      name: name.trim(),
-      category,
-      quantity,
-      unit: unit || null,
-      expires_at: expiresAt || null,
-    })
+    .update(parsed)
     .eq("id", itemId)
     .eq("household_id", householdId)
 
@@ -82,7 +85,6 @@ export async function updateStockItem(itemId: string, formData: FormData) {
   return { success: true }
 }
 
-// ─── 在庫削除 ────────────────────────────────────────────
 export async function deleteStockItem(itemId: string) {
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error }
@@ -102,7 +104,6 @@ export async function deleteStockItem(itemId: string) {
   return { success: true }
 }
 
-// ─── 購入履歴からサジェスト ──────────────────────────────
 export async function getStockSuggestions(query: string) {
   if (!query || query.trim().length === 0) {
     return { suggestions: [] }
@@ -124,7 +125,6 @@ export async function getStockSuggestions(query: string) {
     return { suggestions: [] }
   }
 
-  // 名前でユニーク化
   const seen = new Set<string>()
   const unique = (data ?? []).filter((item) => {
     const key = item.item_name.toLowerCase()
@@ -141,13 +141,11 @@ export async function getStockSuggestions(query: string) {
   }
 }
 
-// ─── 在庫不足を買い物リストに追加 ────────────────────────
 export async function addToShoppingList(itemId: string) {
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error }
   const { supabase, userId, householdId } = result.context
 
-  // 在庫アイテムを取得
   const { data: stockItem, error: fetchError } = await supabase
     .from("stock_items")
     .select("name, category")
@@ -159,7 +157,6 @@ export async function addToShoppingList(itemId: string) {
     return { error: "在庫アイテムが見つかりません" }
   }
 
-  // 既に買い物リストにあるか確認
   const { data: existing } = await supabase
     .from("shopping_items")
     .select("id")
@@ -171,7 +168,6 @@ export async function addToShoppingList(itemId: string) {
     return { error: "既に買い物リストにあります" }
   }
 
-  // sort_order の最大値を取得
   const { data: maxOrder } = await supabase
     .from("shopping_items")
     .select("sort_order")
@@ -202,10 +198,8 @@ export async function addToShoppingList(itemId: string) {
   return { success: true }
 }
 
-// ─── レシピ提案 ──────────────────────────────────────────
 /**
  * 在庫食材をもとにレシピ（献立テンプレート）を提案する。
- * ドメイン層の rankSuggestions を呼び出し、マッチスコア順に返す。
  * 読み取り専用のため revalidatePath は呼ばない。
  */
 export async function getRecipeSuggestions(): Promise<{
@@ -218,8 +212,7 @@ export async function getRecipeSuggestions(): Promise<{
   }
   const { supabase, householdId } = result.context
 
-  // 在庫・テンプレート・過去リアクションを並列取得
-  // 在庫は getCachedStockItems 経由で取得し、page.tsx 等と同一リクエスト内の
+  // 在庫は getCachedStockItems 経由で取得し、page.tsx との同一リクエスト内の
   // 重複フェッチを排除する。
   const [stockResult, templateResult, reactionResult] = await Promise.all([
     getCachedStockItems(householdId),
@@ -227,7 +220,6 @@ export async function getRecipeSuggestions(): Promise<{
       .from("meal_templates")
       .select("id, title, ingredients")
       .eq("household_id", householdId),
-    // meals.template_id ごとの過去リアクションを取得（2段階クエリ）
     supabase
       .from("meals")
       .select("template_id, meal_reactions ( reaction )")
@@ -246,7 +238,6 @@ export async function getRecipeSuggestions(): Promise<{
     expires_at: s.expires_at,
   }))
 
-  // template_id ごとにリアクションを集計
   // Database 型の Relationships が空のため as unknown as で型を宣言
   const reactionRows = (reactionResult.data ?? []) as unknown as Array<{
     template_id: string | null

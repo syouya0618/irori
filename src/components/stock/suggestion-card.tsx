@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { Sparkles, Plus } from "lucide-react"
+import { Plus } from "lucide-react"
 import type { RecipeSuggestion } from "@/lib/domain"
 
 /**
@@ -98,9 +98,4 @@ export function SuggestionCard({
       </Button>
     </div>
   )
-}
-
-/** 提案セクションのヘッダーアイコン（他コンポーネントから再利用可能） */
-export function SuggestionSectionIcon() {
-  return <Sparkles size={16} className="text-primary" />
 }

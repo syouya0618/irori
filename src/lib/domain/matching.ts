@@ -1,4 +1,7 @@
-import { ingredientsMatch } from "./normalize"
+import {
+  normalizeIngredientName,
+  normalizedIngredientsMatch,
+} from "./normalize"
 import type {
   StockItemInput,
   TemplateIngredient,
@@ -36,19 +39,30 @@ export function matchStockToTemplate(
     return { matched: [], missing: [], matchRate: 0 }
   }
 
+  // 在庫名を先に正規化しておき、内部ループで重複正規化を避ける。
+  const normalizedStock = stockItems.map((item) => ({
+    item,
+    normalized: normalizeIngredientName(item.name),
+  }))
+
   const matched: MatchResult["matched"] = []
   const missing: TemplateIngredient[] = []
   const usedStockIds = new Set<string>()
 
   for (const ingredient of template.ingredients) {
-    const stockItem = stockItems.find(
-      (s) =>
-        !usedStockIds.has(s.id) &&
-        ingredientsMatch(s.name, ingredient.name, minMatchLength),
+    const normalizedIngredient = normalizeIngredientName(ingredient.name)
+    const found = normalizedStock.find(
+      ({ item, normalized }) =>
+        !usedStockIds.has(item.id) &&
+        normalizedIngredientsMatch(
+          normalized,
+          normalizedIngredient,
+          minMatchLength,
+        ),
     )
-    if (stockItem) {
-      usedStockIds.add(stockItem.id)
-      matched.push({ ingredient, stockItem })
+    if (found) {
+      usedStockIds.add(found.item.id)
+      matched.push({ ingredient, stockItem: found.item })
     } else {
       missing.push(ingredient)
     }
