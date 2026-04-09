@@ -1,15 +1,21 @@
 "use client"
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { ChevronLeft, ChevronRight } from "lucide-react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { MealCard, EmptyMealSlot } from "@/components/meals/meal-card"
-import type { MealCardData } from "@/components/meals/meal-card"
 import { MealFormSheet } from "@/components/meals/meal-form-sheet"
 import { createClient } from "@/lib/supabase/client"
+import { loadTemplate } from "@/app/(main)/meals/actions"
 import { getMonday, addDays, formatDateKey } from "@/lib/utils/date"
 import { MEAL_TYPE_SHORT_LABELS } from "@/lib/utils/meal-types"
-import type { MealType, MealReaction } from "@/lib/types/database"
+import type {
+  MealType,
+  MealReaction,
+  ItemCategory,
+} from "@/lib/types/database"
 
 // ── Helpers ──
 
@@ -78,6 +84,9 @@ export function MealWeekView({
   userId,
   initialWeekStart,
 }: MealWeekViewProps) {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+
   const [weekStart, setWeekStart] = useState<Date>(
     () => new Date(initialWeekStart + "T00:00:00")
   )
@@ -89,6 +98,50 @@ export function MealWeekView({
   const [editingMeal, setEditingMeal] = useState<MealWithDetails | null>(null)
   const [selectedDate, setSelectedDate] = useState("")
   const [selectedMealType, setSelectedMealType] = useState<MealType>("dinner")
+  const [prefilledFromTemplate, setPrefilledFromTemplate] = useState<{
+    title: string
+    ingredients: Array<{
+      name: string
+      quantity: string
+      category: ItemCategory
+    }>
+  } | null>(null)
+
+  // URL params から template ID を読み取り、自動でシートを開く
+  const templateIdFromUrl = searchParams.get("template")
+  const hasProcessedUrlTemplate = useRef(false)
+
+  useEffect(() => {
+    if (!templateIdFromUrl || hasProcessedUrlTemplate.current) return
+    hasProcessedUrlTemplate.current = true
+
+    let cancelled = false
+    loadTemplate(templateIdFromUrl).then((result) => {
+      if (cancelled) return
+
+      if (result.error) {
+        toast.error(result.error)
+      } else if (result.data) {
+        const today = formatDateKey(new Date())
+        setPrefilledFromTemplate(result.data)
+        setEditingMeal(null)
+        setSelectedDate(today)
+        setSelectedMealType("dinner")
+        setSheetOpen(true)
+      } else {
+        // data も error もない想定外ケース
+        toast.error("テンプレートが見つかりません")
+      }
+
+      // 成功・失敗に関わらず URL params は一度だけクリアする
+      // （リロード時に再処理されないように）
+      router.replace("/meals")
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [templateIdFromUrl, router])
 
   // Ref to avoid re-subscribing on every week change
   const weekStartRef = useRef(weekStart)
@@ -211,6 +264,7 @@ export function MealWeekView({
     setSheetOpen(open)
     if (!open) {
       setEditingMeal(null)
+      setPrefilledFromTemplate(null)
     }
   }
 
@@ -226,10 +280,19 @@ export function MealWeekView({
         ingredients: editingMeal.meal_ingredients.map((ing) => ({
           name: ing.name,
           quantity: ing.quantity ?? "",
-          category: ing.category as import("@/lib/types/database").ItemCategory,
+          category: ing.category as ItemCategory,
         })),
       }
-    : undefined
+    : prefilledFromTemplate
+      ? {
+          // id なし = 新規作成扱い
+          title: prefilledFromTemplate.title,
+          mealType: selectedMealType,
+          date: selectedDate,
+          isEatingOut: false,
+          ingredients: prefilledFromTemplate.ingredients,
+        }
+      : undefined
 
   // ── Check if all days are empty (empty state) ──
   const hasAnyMeals = meals.length > 0

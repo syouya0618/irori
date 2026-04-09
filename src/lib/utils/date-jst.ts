@@ -1,0 +1,67 @@
+/**
+ * JST（Asia/Tokyo）に基づく日付ユーティリティ。
+ *
+ * JavaScript の new Date("YYYY-MM-DD") はUTCで解釈されるため、
+ * Vercel (UTC) とクライアント (JST) で結果が食い違う。
+ * このモジュールは文字列レベルで日付を扱い、
+ * タイムゾーン非依存で日数差を計算する。
+ *
+ * 関連する学習記録:
+ * - [HIGH] Date.getDate()/getMonth()のタイムゾーン依存
+ * - [RECURRING] 日付パースのUTC問題
+ */
+
+const JST_LOCALE = "en-CA"
+const JST_TZ = "Asia/Tokyo"
+
+/**
+ * 現在のJST日付を "YYYY-MM-DD" 形式で返す。
+ * サーバー(UTC)でもクライアント(JST)でも同じ値を返す。
+ */
+export function todayJstString(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat(JST_LOCALE, {
+    timeZone: JST_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now)
+}
+
+/**
+ * "YYYY-MM-DD" 形式の文字列を数値分解する。タイムゾーンに依存しない。
+ */
+function parseYmd(ymd: string): { y: number; m: number; d: number } | null {
+  const pattern = /^(\d{4})-(\d{2})-(\d{2})$/
+  const match = pattern.test(ymd) ? ymd.split("-").map(Number) : null
+  if (!match || match.length !== 3) return null
+  return { y: match[0], m: match[1], d: match[2] }
+}
+
+/**
+ * 2つの YYYY-MM-DD 文字列の日数差を返す（to - from）。
+ * タイムゾーンに一切依存しない。
+ *
+ * @returns 日数差（正なら to が未来、負なら過去）。パース失敗時は null。
+ */
+export function daysBetweenYmd(fromYmd: string, toYmd: string): number | null {
+  const from = parseYmd(fromYmd)
+  const to = parseYmd(toYmd)
+  if (!from || !to) return null
+
+  // Date.UTC はタイムゾーン非依存の Unix ms を返す
+  const fromMs = Date.UTC(from.y, from.m - 1, from.d)
+  const toMs = Date.UTC(to.y, to.m - 1, to.d)
+
+  return Math.round((toMs - fromMs) / (1000 * 60 * 60 * 24))
+}
+
+/**
+ * 指定された YYYY-MM-DD 文字列が今日 (JST) から何日後かを返す。
+ * 期限切れは負の値、当日は 0、未来は正の値。
+ */
+export function daysFromTodayJst(
+  targetYmd: string,
+  now: Date = new Date(),
+): number | null {
+  return daysBetweenYmd(todayJstString(now), targetYmd)
+}
