@@ -35,7 +35,7 @@ export default async function SetupPage() {
           </p>
         </div>
 
-        <SetupForm userId={user.id} />
+        <SetupForm />
       </div>
     </div>
   )

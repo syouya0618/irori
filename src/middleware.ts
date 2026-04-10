@@ -32,23 +32,45 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl
 
-  // 認証不要ルート
   const isPublicRoute =
     pathname === "/login" || pathname.startsWith("/auth/callback")
   const isInviteRoute = pathname.startsWith("/invite/")
+  const isPendingRoute = pathname === "/pending-approval"
 
-  // 未認証 → /login
-  if (!user && !isPublicRoute && !isInviteRoute) {
-    const url = request.nextUrl.clone()
-    url.pathname = "/login"
-    return NextResponse.redirect(url)
+  // ── 未認証 ──
+  if (!user) {
+    // public / invite 以外 → /login
+    if (!isPublicRoute && !isInviteRoute) {
+      const url = request.nextUrl.clone()
+      url.pathname = "/login"
+      return NextResponse.redirect(url)
+    }
+    return supabaseResponse
   }
 
-  // 認証済み → /login, /auth/callback にアクセスしたら /meals へ
-  if (user && isPublicRoute) {
-    const url = request.nextUrl.clone()
-    url.pathname = "/meals"
-    return NextResponse.redirect(url)
+  // ── 認証済み: 承認チェック ──
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_approved")
+    .eq("id", user.id)
+    .single()
+
+  const isApproved = profile?.is_approved ?? false
+
+  if (!isApproved) {
+    // 未承認: invite / pending-approval 以外 → /pending-approval
+    if (!isPendingRoute && !isInviteRoute) {
+      const url = request.nextUrl.clone()
+      url.pathname = "/pending-approval"
+      return NextResponse.redirect(url)
+    }
+  } else {
+    // 承認済み: public / pending-approval → /meals
+    if (isPublicRoute || isPendingRoute) {
+      const url = request.nextUrl.clone()
+      url.pathname = "/meals"
+      return NextResponse.redirect(url)
+    }
   }
 
   return supabaseResponse
