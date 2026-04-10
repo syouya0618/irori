@@ -2,12 +2,13 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { UtensilsCrossed, ShoppingCart, Settings } from "lucide-react"
+import { UtensilsCrossed, ShoppingCart, Package, Settings } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const tabs = [
   { href: "/meals", label: "献立", icon: UtensilsCrossed },
   { href: "/shopping", label: "買い物", icon: ShoppingCart },
+  { href: "/stock", label: "在庫", icon: Package },
   { href: "/settings", label: "設定", icon: Settings },
 ] as const
 
