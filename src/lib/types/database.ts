@@ -32,6 +32,9 @@ export type ItemCategory =
   | "other_daily"
 export type HouseholdRole = "owner" | "member" | "viewer"
 export type InviteStatus = "pending" | "accepted" | "expired"
+export type BabyLogType = "feeding" | "diaper" | "sleep"
+export type FeedingType = "breast_left" | "breast_right" | "bottle" | "solid"
+export type DiaperType = "pee" | "poop" | "both"
 
 export interface Database {
   public: {
@@ -343,6 +346,44 @@ export interface Database {
         }
         Relationships: []
       }
+      baby_logs: {
+        Row: {
+          id: string
+          household_id: string
+          log_type: BabyLogType
+          logged_at: string
+          logged_by: string
+          feeding_type: FeedingType | null
+          amount_ml: number | null
+          diaper_type: DiaperType | null
+          ended_at: string | null
+          memo: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          household_id: string
+          log_type: BabyLogType
+          logged_at?: string
+          logged_by: string
+          feeding_type?: FeedingType | null
+          amount_ml?: number | null
+          diaper_type?: DiaperType | null
+          ended_at?: string | null
+          memo?: string | null
+        }
+        Update: {
+          log_type?: BabyLogType
+          logged_at?: string
+          feeding_type?: FeedingType | null
+          amount_ml?: number | null
+          diaper_type?: DiaperType | null
+          ended_at?: string | null
+          memo?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: Record<string, never>
     Functions: {
@@ -386,6 +427,9 @@ export interface Database {
       item_category: ItemCategory
       household_role: HouseholdRole
       invite_status: InviteStatus
+      baby_log_type: BabyLogType
+      feeding_type: FeedingType
+      diaper_type: DiaperType
     }
   }
 }

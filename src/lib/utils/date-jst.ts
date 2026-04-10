@@ -66,3 +66,34 @@ export function daysFromTodayJst(
 ): number | null {
   return daysBetweenYmd(todayJstString(now), targetYmd)
 }
+
+/**
+ * YYYY-MM-DD 文字列を指定日数シフトする。タイムゾーン非依存。
+ */
+export function shiftYmd(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split("-").map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d + days))
+  return dt.toISOString().slice(0, 10)
+}
+
+// JST 時刻フォーマッター（モジュールスコープで1回だけ生成）
+const JST_TIME_FORMATTER = new Intl.DateTimeFormat("ja-JP", {
+  timeZone: "Asia/Tokyo",
+  hour: "2-digit",
+  minute: "2-digit",
+})
+
+/**
+ * ISO 8601 文字列から JST の "HH:MM" を返す。
+ */
+export function formatTimeJst(iso: string): string {
+  return JST_TIME_FORMATTER.format(new Date(iso))
+}
+
+/**
+ * ISO 8601 タイムスタンプから JST の "YYYY-MM-DD" 日付文字列を返す。
+ * Realtime イベントの日付フィルタリング等に使用。
+ */
+export function toJstDateString(iso: string): string {
+  return JST_FORMATTER.format(new Date(iso))
+}
