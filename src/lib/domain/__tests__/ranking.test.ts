@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest"
 import { rankSuggestions } from "../ranking"
 import { mkStock, mkTemplate } from "./helpers"
 
-const TODAY = new Date("2026-04-09T00:00:00")
+const TODAY = new Date("2026-04-09T00:00:00Z")
 
 describe("rankSuggestions", () => {
   it("マッチ率0のテンプレートは結果に含まれない", () => {

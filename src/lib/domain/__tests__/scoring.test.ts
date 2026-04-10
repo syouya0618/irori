@@ -7,7 +7,7 @@ import {
 import { DEFAULT_SCORING_CONFIG } from "../types"
 import { mkStock, mkMatched } from "./helpers"
 
-const TODAY = new Date("2026-04-09T00:00:00")
+const TODAY = new Date("2026-04-09T00:00:00Z")
 
 describe("daysUntilExpiry", () => {
   it("期限切れは負の値", () => {
