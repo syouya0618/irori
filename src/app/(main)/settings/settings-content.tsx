@@ -18,6 +18,9 @@ import {
   Moon,
   Monitor,
   Package,
+  Baby,
+  FileDown,
+  Download,
 } from "lucide-react"
 import {
   Card,
@@ -34,6 +37,7 @@ import {
   updateProfile,
   updateDefaultPage,
   updateAutoStockCategories,
+  updateBabyProfile,
   generateInvite,
   approveUser,
   signOut,
@@ -72,6 +76,10 @@ interface SettingsContentProps {
   email: string
   pendingUsers: PendingUser[]
   autoStockCategories: string[]
+  babyProfile: {
+    name: string | null
+    birthDate: string | null
+  }
 }
 
 const roleLabels: Record<HouseholdRole, string> = {
@@ -86,6 +94,7 @@ export function SettingsContent({
   email,
   pendingUsers,
   autoStockCategories,
+  babyProfile,
 }: SettingsContentProps) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -232,6 +241,12 @@ export function SettingsContent({
 
       {/* 在庫自動追加 */}
       <AutoStockCategoriesCard initialCategories={autoStockCategories} />
+
+      {/* 赤ちゃん情報 */}
+      <BabyProfileCard initialProfile={babyProfile} />
+
+      {/* 記録エクスポート */}
+      <ExportCard />
 
       {/* テーマ */}
       <ThemeCard />
@@ -491,6 +506,146 @@ function AutoStockCategoriesCard({
             </button>
           ))}
         </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function BabyProfileCard({
+  initialProfile,
+}: {
+  initialProfile: { name: string | null; birthDate: string | null }
+}) {
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+
+  const handleSave = (formData: FormData) => {
+    startTransition(async () => {
+      const result = await updateBabyProfile(formData)
+      if (result.error) {
+        toast.error(result.error)
+      } else {
+        toast.success("赤ちゃん情報を更新しました")
+        router.refresh()
+      }
+    })
+  }
+
+  return (
+    <Card className="glass">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Baby size={18} />
+          赤ちゃん情報
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form action={handleSave} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="baby_name">名前</Label>
+            <Input
+              id="baby_name"
+              name="baby_name"
+              defaultValue={initialProfile.name ?? ""}
+              placeholder="赤ちゃんの名前"
+              className="h-10"
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="baby_birth_date">生年月日</Label>
+            <Input
+              id="baby_birth_date"
+              name="baby_birth_date"
+              type="date"
+              defaultValue={initialProfile.birthDate ?? ""}
+              className="h-10"
+            />
+          </div>
+          <Button
+            type="submit"
+            size="lg"
+            disabled={isPending}
+            className="cursor-pointer self-end"
+          >
+            {isPending ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : null}
+            保存
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  )
+}
+
+const PERIOD_OPTIONS = [
+  { value: "1week", label: "1週間" },
+  { value: "1month", label: "1ヶ月" },
+  { value: "3months", label: "3ヶ月" },
+] as const
+
+function ExportCard() {
+  const [period, setPeriod] = useState("1week")
+  const [isDownloading, setIsDownloading] = useState(false)
+
+  const handleDownload = async () => {
+    setIsDownloading(true)
+    try {
+      const res = await fetch(`/api/baby-report?period=${period}`)
+      if (!res.ok) throw new Error()
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `baby-log.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      toast.error("ダウンロードに失敗しました")
+    } finally {
+      setIsDownloading(false)
+    }
+  }
+
+  return (
+    <Card className="glass">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <FileDown size={18} />
+          記録エクスポート
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <p className="text-xs text-muted-foreground">
+          小児科受診用のPDFレポートを生成します。
+        </p>
+        <div className="flex gap-1 rounded-xl bg-muted/50 p-1">
+          {PERIOD_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setPeriod(opt.value)}
+              className={segmentCn(period === opt.value)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="lg"
+          onClick={handleDownload}
+          disabled={isDownloading}
+          className="cursor-pointer"
+        >
+          {isDownloading ? (
+            <Loader2 size={16} className="animate-spin" />
+          ) : (
+            <Download size={16} />
+          )}
+          PDFをダウンロード
+        </Button>
       </CardContent>
     </Card>
   )
