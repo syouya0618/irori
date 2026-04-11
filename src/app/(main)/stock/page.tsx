@@ -1,5 +1,8 @@
 import { StockList } from "@/components/stock/stock-list"
-import { getRecipeSuggestions } from "@/app/(main)/stock/actions"
+import {
+  getRecipeSuggestions,
+  getConsumptionRates,
+} from "@/app/(main)/stock/actions"
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { getCachedStockItems } from "@/lib/supabase/cached-queries"
 
@@ -8,19 +11,17 @@ export default async function StockPage() {
   if (result.error !== null) return null
   const { householdId } = result.context
 
-  // getCachedStockItems と getRecipeSuggestions の両方が内部で
-  // getCachedStockItems を呼ぶが、React.cache() により同一リクエスト内では
-  // 実際の Supabase クエリは1回のみ発行される。
-  // getAuthContext も cache() 済みのため auth/profiles クエリも1回のみ。
-  const [itemsResult, suggestionsResult] = await Promise.all([
+  const [itemsResult, suggestionsResult, ratesResult] = await Promise.all([
     getCachedStockItems(householdId),
     getRecipeSuggestions(),
+    getConsumptionRates(),
   ])
 
   return (
     <StockList
       initialItems={itemsResult.data ?? []}
       initialSuggestions={suggestionsResult.data}
+      consumptionRates={ratesResult.rates}
       householdId={householdId}
     />
   )

@@ -8,6 +8,7 @@ import { getCategoryLabel, getCategoryColor } from "@/lib/utils/categories"
 import { daysFromTodayJst } from "@/lib/utils/date-jst"
 import { Button } from "@/components/ui/button"
 import { deleteStockItem, addToShoppingList } from "@/app/(main)/stock/actions"
+import { estimateRemainingDays } from "@/lib/domain/consumption-rate"
 import type { ItemCategory } from "@/lib/types/database"
 
 export interface StockItemData {
@@ -24,6 +25,7 @@ export interface StockItemData {
 
 interface StockItemProps {
   item: StockItemData
+  dailyRate?: number | null
   onEdit: (item: StockItemData) => void
   onOptimisticDelete: (id: string) => void
 }
@@ -61,8 +63,34 @@ function getExpiryStatus(expiresAt: string | null): {
   return { label: monthDayLabel, className: "text-muted-foreground" }
 }
 
+function getRemainingDaysStatus(
+  quantity: number,
+  dailyRate: number | null | undefined,
+): { label: string; className: string } | null {
+  const remaining = estimateRemainingDays(quantity, dailyRate ?? null)
+  if (remaining === null) return null
+
+  if (remaining <= 3) {
+    return {
+      label: `あと${remaining}日分`,
+      className: "bg-red-100 text-red-700",
+    }
+  }
+  if (remaining <= 7) {
+    return {
+      label: `あと${remaining}日分`,
+      className: "bg-amber-100 text-amber-700",
+    }
+  }
+  return {
+    label: `あと${remaining}日分`,
+    className: "bg-blue-50 text-blue-700",
+  }
+}
+
 export function StockItem({
   item,
+  dailyRate,
   onEdit,
   onOptimisticDelete,
 }: StockItemProps) {
@@ -77,6 +105,7 @@ export function StockItem({
   }, [])
 
   const expiryStatus = getExpiryStatus(item.expires_at)
+  const remainingStatus = getRemainingDaysStatus(item.quantity, dailyRate)
 
   const handleDelete = () => {
     if (!confirmDelete) {
@@ -143,6 +172,18 @@ export function StockItem({
             )}
           >
             {expiryStatus.label}
+          </span>
+        )}
+
+        {/* 残日数バッジ（消費ペースベース） */}
+        {remainingStatus && (
+          <span
+            className={cn(
+              "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium",
+              remainingStatus.className
+            )}
+          >
+            {remainingStatus.label}
           </span>
         )}
       </button>

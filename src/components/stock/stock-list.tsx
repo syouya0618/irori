@@ -20,8 +20,10 @@ import {
   Package,
   AlertTriangle,
 } from "lucide-react"
+import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
+import { checkAndAutoAddLowStock } from "@/app/(main)/stock/actions"
 import { StockItem, type StockItemData } from "./stock-item"
 import { StockFormSheet } from "./stock-form-sheet"
 import { StockSuggestions } from "./stock-suggestions"
@@ -51,6 +53,7 @@ const categoryIcons: Record<ItemCategory, React.ComponentType<{ size?: number; c
 interface StockListProps {
   initialItems: StockItemData[]
   initialSuggestions: RecipeSuggestion[]
+  consumptionRates: Record<string, number | null>
   householdId: string
 }
 
@@ -65,6 +68,7 @@ function countExpiringItems(items: StockItemData[]): number {
 export function StockList({
   initialItems,
   initialSuggestions,
+  consumptionRates,
   householdId,
 }: StockListProps) {
   const [items, setItems] = useState<StockItemData[]>(initialItems)
@@ -108,6 +112,25 @@ export function StockList({
       supabase.removeChannel(channel)
     }
   }, [householdId])
+
+  // 在庫低下チェック（30分間隔で自動実行）
+  useEffect(() => {
+    const key = "stock_low_checked_at"
+    const THIRTY_MIN = 30 * 60 * 1000
+    const last = sessionStorage.getItem(key)
+
+    if (last && Date.now() - Number(last) < THIRTY_MIN) return
+
+    checkAndAutoAddLowStock().then((result) => {
+      sessionStorage.setItem(key, String(Date.now()))
+      if (result.addedItems.length > 0) {
+        toast.success(
+          `在庫が少ない${result.addedItems.length}件を買い物リストに追加しました`,
+          { description: result.addedItems.join("、") },
+        )
+      }
+    })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOptimisticDelete = useCallback((id: string) => {
     setItems((prev) => prev.filter((item) => item.id !== id))
@@ -219,6 +242,7 @@ export function StockList({
                     <StockItem
                       key={item.id}
                       item={item}
+                      dailyRate={consumptionRates[item.category] ?? null}
                       onEdit={handleEdit}
                       onOptimisticDelete={handleOptimisticDelete}
                     />

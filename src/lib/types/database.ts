@@ -49,16 +49,19 @@ export interface Database {
         Row: {
           id: string
           name: string
+          auto_stock_categories: Json
           created_at: string
         }
         Insert: {
           id?: string
           name?: string
+          auto_stock_categories?: Json
           created_at?: string
         }
         Update: {
           id?: string
           name?: string
+          auto_stock_categories?: Json
           created_at?: string
         }
         Relationships: []

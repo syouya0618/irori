@@ -14,3 +14,11 @@ export {
   type TemplateInput,
   type TemplateIngredient,
 } from "./types"
+export {
+  calculateDailyRate,
+  calculateMilkDailyMl,
+  estimateRemainingDays,
+  DEFAULT_RATE_CONFIG,
+  type ConsumptionLogInput,
+  type ConsumptionRateConfig,
+} from "./consumption-rate"

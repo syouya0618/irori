@@ -72,6 +72,11 @@ export async function approveUser(targetUserId: string) {
 }
 
 import { VALID_PAGES, type ValidPage } from "@/lib/constants/pages"
+import type { ItemCategory } from "@/lib/types/database"
+
+const VALID_STOCK_CATEGORIES: ItemCategory[] = [
+  "baby", "cleaning", "hygiene", "other_daily",
+]
 
 export async function updateDefaultPage(page: string) {
   if (!VALID_PAGES.includes(page as ValidPage)) {
@@ -86,6 +91,29 @@ export async function updateDefaultPage(page: string) {
     .from("profiles")
     .update({ default_page: page })
     .eq("id", userId)
+
+  if (error) {
+    return { error: "設定の更新に失敗しました" }
+  }
+
+  return { success: true }
+}
+
+export async function updateAutoStockCategories(categories: ItemCategory[]) {
+  // バリデーション: 全てが有効なカテゴリであること
+  const valid = categories.every((c) => VALID_STOCK_CATEGORIES.includes(c))
+  if (!valid) {
+    return { error: "無効なカテゴリが含まれています" }
+  }
+
+  const result = await getAuthContext()
+  if (result.error !== null) return { error: result.error }
+  const { supabase, householdId } = result.context
+
+  const { error } = await supabase
+    .from("households")
+    .update({ auto_stock_categories: JSON.stringify(categories) })
+    .eq("id", householdId)
 
   if (error) {
     return { error: "設定の更新に失敗しました" }
