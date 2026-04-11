@@ -188,25 +188,24 @@ async function autoAddToStock(
     return false
   }
 
-  // 同名の在庫アイテムがあるか確認（ilike で DB 側フィルタ）
+  // 同名の在庫アイテムがあるか確認（完全一致で検索）
   const { data: matchedItems } = await supabase
     .from("stock_items")
     .select("id, name, quantity")
     .eq("household_id", householdId)
-    .ilike("name", itemName.trim())
+    .eq("name", itemName.trim())
     .limit(1)
 
   const existing = matchedItems?.[0] ?? null
 
   if (existing) {
-    // 既存アイテムの数量を+1
-    await supabase
+    const { error: updateError } = await supabase
       .from("stock_items")
       .update({ quantity: existing.quantity + 1 })
       .eq("id", existing.id)
+    if (updateError) return false
   } else {
-    // 新規在庫アイテムとして追加
-    await supabase.from("stock_items").insert({
+    const { error: insertError } = await supabase.from("stock_items").insert({
       household_id: householdId,
       name: itemName.trim(),
       category: itemCategory,
@@ -214,6 +213,7 @@ async function autoAddToStock(
       unit: "個",
       created_by: userId,
     })
+    if (insertError) return false
   }
 
   return true

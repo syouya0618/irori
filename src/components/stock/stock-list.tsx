@@ -122,6 +122,7 @@ export function StockList({
     if (last && Date.now() - Number(last) < THIRTY_MIN) return
 
     checkAndAutoAddLowStock().then((result) => {
+      if (result.error) return
       sessionStorage.setItem(key, String(Date.now()))
       if (result.addedItems.length > 0) {
         toast.success(

@@ -357,7 +357,15 @@ export async function checkAndAutoAddLowStock(): Promise<{
         .eq("is_checked", false),
     ])
 
-  if (!householdResult.data) return { error: null, addedItems: [] }
+  if (
+    householdResult.error ||
+    logsResult.error ||
+    stockResult.error ||
+    shoppingResult.error ||
+    !householdResult.data
+  ) {
+    return { error: null, addedItems: [] }
+  }
 
   const autoCategories = householdResult.data.auto_stock_categories as string[]
   if (!Array.isArray(autoCategories) || autoCategories.length === 0) {

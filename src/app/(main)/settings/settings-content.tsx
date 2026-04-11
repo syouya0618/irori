@@ -471,6 +471,7 @@ function AutoStockCategoriesCard({
       <CardContent className="flex flex-col gap-3">
         <p className="text-xs text-muted-foreground">
           買い物リストでチェックした時に、以下のカテゴリは在庫に自動追加されます。
+          残日数の自動計算は育児ログ連動のベビー用品のみ対応しています。
         </p>
         <div className="grid grid-cols-2 gap-2">
           {AUTO_STOCK_OPTIONS.map((opt) => (
