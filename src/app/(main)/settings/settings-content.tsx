@@ -455,7 +455,7 @@ function AutoStockCategoriesCard({
       )
       if (result.error) {
         toast.error(result.error)
-        setSelected(selected)
+        setSelected(new Set(initialCategories))
       }
     })
   }

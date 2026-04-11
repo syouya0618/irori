@@ -1,4 +1,4 @@
-import { todayJstString, toJstDateString } from "@/lib/utils/date-jst"
+import { todayJstString, toJstDateString, shiftYmd } from "@/lib/utils/date-jst"
 import type { BabyLogType } from "@/lib/types/database"
 
 /** 消耗品レート算出の入力となるログの最小型 */
@@ -28,10 +28,7 @@ function filterLogsInWindow(
   config: ConsumptionRateConfig,
 ): ConsumptionLogInput[] {
   const todayStr = todayJstString(today)
-  // windowDays日前の日付文字列を生成
-  const [y, m, d] = todayStr.split("-").map(Number)
-  const cutoffDate = new Date(Date.UTC(y, m - 1, d - config.windowDays))
-  const cutoffStr = cutoffDate.toISOString().slice(0, 10)
+  const cutoffStr = shiftYmd(todayStr, -config.windowDays)
 
   return logs.filter((log) => {
     if (log.log_type !== logType) return false

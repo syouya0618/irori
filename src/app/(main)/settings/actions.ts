@@ -112,7 +112,7 @@ export async function updateAutoStockCategories(categories: ItemCategory[]) {
 
   const { error } = await supabase
     .from("households")
-    .update({ auto_stock_categories: JSON.stringify(categories) })
+    .update({ auto_stock_categories: categories })
     .eq("id", householdId)
 
   if (error) {

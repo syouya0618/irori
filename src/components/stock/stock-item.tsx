@@ -70,22 +70,10 @@ function getRemainingDaysStatus(
   const remaining = estimateRemainingDays(quantity, dailyRate ?? null)
   if (remaining === null) return null
 
-  if (remaining <= 3) {
-    return {
-      label: `あと${remaining}日分`,
-      className: "bg-red-100 text-red-700",
-    }
-  }
-  if (remaining <= 7) {
-    return {
-      label: `あと${remaining}日分`,
-      className: "bg-amber-100 text-amber-700",
-    }
-  }
-  return {
-    label: `あと${remaining}日分`,
-    className: "bg-blue-50 text-blue-700",
-  }
+  const label = `あと${remaining}日分`
+  if (remaining <= 3) return { label, className: "bg-red-100 text-red-700" }
+  if (remaining <= 7) return { label, className: "bg-amber-100 text-amber-700" }
+  return { label, className: "bg-blue-50 text-blue-700" }
 }
 
 export function StockItem({

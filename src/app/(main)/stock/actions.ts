@@ -7,6 +7,7 @@ import type { ItemCategory, MealReaction } from "@/lib/types/database"
 import {
   rankSuggestions,
   calculateDailyRate,
+  estimateRemainingDays,
   type RecipeSuggestion,
   type StockItemInput,
   type TemplateIngredient,
@@ -326,34 +327,50 @@ export async function checkAndAutoAddLowStock(): Promise<{
   }
   const { supabase, userId, householdId } = result.context
 
-  // 世帯の自動追加対象カテゴリを取得
-  const { data: household } = await supabase
-    .from("households")
-    .select("auto_stock_categories")
-    .eq("id", householdId)
-    .single()
+  const now = new Date()
+  const today = todayJstString(now)
+  const weekAgo = shiftYmd(today, -7)
 
-  if (!household) return { error: null, addedItems: [] }
+  // 独立クエリを並列実行（authコンテキストを共有して重複排除）
+  const [householdResult, logsResult, stockResult, shoppingResult] =
+    await Promise.all([
+      supabase
+        .from("households")
+        .select("auto_stock_categories")
+        .eq("id", householdId)
+        .single(),
+      supabase
+        .from("baby_logs")
+        .select("log_type, logged_at, amount_ml")
+        .eq("household_id", householdId)
+        .in("log_type", ["diaper", "feeding"])
+        .gte("logged_at", `${weekAgo}T00:00:00`)
+        .limit(500),
+      supabase
+        .from("stock_items")
+        .select("id, name, category, quantity")
+        .eq("household_id", householdId),
+      supabase
+        .from("shopping_items")
+        .select("name")
+        .eq("household_id", householdId)
+        .eq("is_checked", false),
+    ])
 
-  const autoCategories = household.auto_stock_categories as string[]
+  if (!householdResult.data) return { error: null, addedItems: [] }
+
+  const autoCategories = householdResult.data.auto_stock_categories as string[]
   if (!Array.isArray(autoCategories) || autoCategories.length === 0) {
     return { error: null, addedItems: [] }
   }
 
-  // 消費レートを取得
-  const ratesResult = await getConsumptionRates()
-  if (ratesResult.error) return { error: null, addedItems: [] }
-
-  // 在庫アイテムを取得
-  const stockResult = await getCachedStockItems(householdId)
-  if (stockResult.error) return { error: null, addedItems: [] }
-
-  const { estimateRemainingDays } = await import("@/lib/domain/consumption-rate")
+  const diaperRate = calculateDailyRate(logsResult.data ?? [], "diaper", now)
+  const rates: Record<string, number | null> = { baby: diaperRate }
 
   // 残日数≤3のアイテムを抽出
   const lowStockItems = (stockResult.data ?? []).filter((item) => {
     if (!autoCategories.includes(item.category)) return false
-    const rate = ratesResult.rates[item.category]
+    const rate = rates[item.category]
     if (rate == null) return false
     const remaining = estimateRemainingDays(item.quantity, rate)
     return remaining !== null && remaining <= 3
@@ -361,15 +378,8 @@ export async function checkAndAutoAddLowStock(): Promise<{
 
   if (lowStockItems.length === 0) return { error: null, addedItems: [] }
 
-  // 既存の買い物リスト（未チェック）を取得して重複チェック
-  const { data: existingItems } = await supabase
-    .from("shopping_items")
-    .select("name")
-    .eq("household_id", householdId)
-    .eq("is_checked", false)
-
   const existingNames = new Set(
-    (existingItems ?? []).map((i) => i.name.toLowerCase()),
+    (shoppingResult.data ?? []).map((i) => i.name.toLowerCase()),
   )
 
   const toAdd = lowStockItems.filter(
@@ -389,7 +399,6 @@ export async function checkAndAutoAddLowStock(): Promise<{
 
   let nextOrder = (maxOrder?.sort_order ?? 0) + 1
 
-  // 一括INSERT
   const insertRows = toAdd.map((item) => ({
     household_id: householdId,
     name: item.name,

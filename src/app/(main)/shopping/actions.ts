@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache"
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { getCurrentWeekRange } from "@/lib/utils/date"
 import type { AuthContext } from "@/lib/supabase/auth-context"
-import { normalizeIngredientName } from "@/lib/domain/normalize"
 import type { ItemCategory, StoreType } from "@/lib/types/database"
 
 // ─── Helper: 今週の献立から新しい食材を取得 ──────────────────
@@ -189,16 +188,15 @@ async function autoAddToStock(
     return false
   }
 
-  // 同名の在庫アイテムがあるか確認（正規化名で検索）
-  const normalizedName = normalizeIngredientName(itemName)
-  const { data: existingItems } = await supabase
+  // 同名の在庫アイテムがあるか確認（ilike で DB 側フィルタ）
+  const { data: matchedItems } = await supabase
     .from("stock_items")
     .select("id, name, quantity")
     .eq("household_id", householdId)
+    .ilike("name", itemName.trim())
+    .limit(1)
 
-  const existing = existingItems?.find(
-    (item) => normalizeIngredientName(item.name) === normalizedName,
-  )
+  const existing = matchedItems?.[0] ?? null
 
   if (existing) {
     // 既存アイテムの数量を+1
