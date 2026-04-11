@@ -9,7 +9,7 @@ export default async function SettingsPage() {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("id, display_name, avatar_url, household_id, role")
+    .select("id, display_name, avatar_url, household_id, role, default_page")
     .eq("id", user!.id)
     .single()
 
@@ -33,6 +33,7 @@ export default async function SettingsPage() {
         displayName: profile!.display_name,
         avatarUrl: profile!.avatar_url,
         role: profile!.role,
+        defaultPage: profile!.default_page ?? "meals",
       }}
       household={
         household

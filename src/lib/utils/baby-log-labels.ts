@@ -4,6 +4,9 @@ const logTypeLabels: Record<BabyLogType, string> = {
   feeding: "授乳",
   diaper: "おむつ",
   sleep: "睡眠",
+  temperature: "体温",
+  growth: "成長記録",
+  memo: "メモ",
 }
 
 const feedingTypeLabels: Record<FeedingType, string> = {

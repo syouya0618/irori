@@ -65,10 +65,10 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(url)
     }
   } else {
-    // 承認済み: public / pending-approval → /meals
+    // 承認済み: public / pending-approval → / (default_page 解決は page.tsx に委譲)
     if (isPublicRoute || isPendingRoute) {
       const url = request.nextUrl.clone()
-      url.pathname = "/meals"
+      url.pathname = "/"
       return NextResponse.redirect(url)
     }
   }

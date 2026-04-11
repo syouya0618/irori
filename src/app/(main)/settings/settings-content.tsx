@@ -13,6 +13,10 @@ import {
   Loader2,
   ShieldCheck,
   UserPlus,
+  LayoutDashboard,
+  Sun,
+  Moon,
+  Monitor,
 } from "lucide-react"
 import {
   Card,
@@ -24,7 +28,15 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
-import { updateProfile, generateInvite, approveUser, signOut } from "./actions"
+import {
+  updateProfile,
+  updateDefaultPage,
+  generateInvite,
+  approveUser,
+  signOut,
+} from "./actions"
+import { useTheme } from "@/lib/hooks/use-theme"
+import { segmentCn } from "@/lib/utils/segment-cn"
 import type { HouseholdRole } from "@/lib/types/database"
 
 interface PendingUser {
@@ -34,12 +46,20 @@ interface PendingUser {
   created_at: string
 }
 
+const PAGE_OPTIONS = [
+  { value: "meals", label: "献立" },
+  { value: "shopping", label: "買い物" },
+  { value: "stock", label: "在庫" },
+  { value: "baby", label: "育児" },
+] as const
+
 interface SettingsContentProps {
   profile: {
     id: string
     displayName: string
     avatarUrl: string | null
     role: HouseholdRole
+    defaultPage: string
   }
   household: {
     id: string
@@ -201,6 +221,12 @@ export function SettingsContent({
         </CardContent>
       </Card>
 
+      {/* デフォルトページ */}
+      <DefaultPageCard defaultPage={profile.defaultPage} />
+
+      {/* テーマ */}
+      <ThemeCard />
+
       {/* 招待 */}
       <Card className="glass">
         <CardHeader>
@@ -307,6 +333,84 @@ export function SettingsContent({
         ログアウト
       </Button>
     </div>
+  )
+}
+
+const THEME_OPTIONS = [
+  { value: "light" as const, label: "ライト", icon: Sun },
+  { value: "dark" as const, label: "ダーク", icon: Moon },
+  { value: "system" as const, label: "システム", icon: Monitor },
+]
+
+function ThemeCard() {
+  const { theme, setTheme } = useTheme()
+
+  return (
+    <Card className="glass">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Sun size={18} />
+          テーマ
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex gap-1 rounded-xl bg-muted/50 p-1">
+          {THEME_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setTheme(opt.value)}
+              className={segmentCn(theme === opt.value)}
+            >
+              <opt.icon size={14} className="mr-1 inline-block" />
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function DefaultPageCard({ defaultPage }: { defaultPage: string }) {
+  const [selected, setSelected] = useState(defaultPage)
+  const [isPending, startTransition] = useTransition()
+
+  function handleSelect(page: string) {
+    setSelected(page)
+    startTransition(async () => {
+      const result = await updateDefaultPage(page)
+      if (result.error) {
+        toast.error(result.error)
+        setSelected(defaultPage)
+      }
+    })
+  }
+
+  return (
+    <Card className="glass">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <LayoutDashboard size={18} />
+          起動時のページ
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex gap-1 rounded-xl bg-muted/50 p-1">
+          {PAGE_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => handleSelect(opt.value)}
+              disabled={isPending}
+              className={segmentCn(selected === opt.value)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 

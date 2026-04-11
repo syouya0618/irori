@@ -32,7 +32,13 @@ export type ItemCategory =
   | "other_daily"
 export type HouseholdRole = "owner" | "member" | "viewer"
 export type InviteStatus = "pending" | "accepted" | "expired"
-export type BabyLogType = "feeding" | "diaper" | "sleep"
+export type BabyLogType =
+  | "feeding"
+  | "diaper"
+  | "sleep"
+  | "temperature"
+  | "growth"
+  | "memo"
 export type FeedingType = "breast_left" | "breast_right" | "bottle" | "solid"
 export type DiaperType = "pee" | "poop" | "both"
 
@@ -65,6 +71,7 @@ export interface Database {
           avatar_url: string | null
           role: HouseholdRole
           is_approved: boolean
+          default_page: string
           created_at: string
           updated_at: string
         }
@@ -75,6 +82,7 @@ export interface Database {
           avatar_url?: string | null
           role?: HouseholdRole
           is_approved?: boolean
+          default_page?: string
           created_at?: string
           updated_at?: string
         }
@@ -85,6 +93,7 @@ export interface Database {
           avatar_url?: string | null
           role?: HouseholdRole
           is_approved?: boolean
+          default_page?: string
           updated_at?: string
         }
         Relationships: []
@@ -357,6 +366,10 @@ export interface Database {
           amount_ml: number | null
           diaper_type: DiaperType | null
           ended_at: string | null
+          temperature: number | null
+          weight_g: number | null
+          height_cm: number | null
+          duration_min: number | null
           memo: string | null
           created_at: string
           updated_at: string
@@ -371,6 +384,10 @@ export interface Database {
           amount_ml?: number | null
           diaper_type?: DiaperType | null
           ended_at?: string | null
+          temperature?: number | null
+          weight_g?: number | null
+          height_cm?: number | null
+          duration_min?: number | null
           memo?: string | null
         }
         Update: {
@@ -380,6 +397,10 @@ export interface Database {
           amount_ml?: number | null
           diaper_type?: DiaperType | null
           ended_at?: string | null
+          temperature?: number | null
+          weight_g?: number | null
+          height_cm?: number | null
+          duration_min?: number | null
           memo?: string | null
         }
         Relationships: []

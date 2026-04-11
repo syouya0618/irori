@@ -15,7 +15,7 @@ export async function GET(request: Request) {
       if (returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//")) {
         return NextResponse.redirect(`${origin}${returnTo}`)
       }
-      return NextResponse.redirect(`${origin}/meals`)
+      return NextResponse.redirect(`${origin}/`)
     }
   }
 

@@ -9,6 +9,10 @@ export interface BabyLogData {
   amount_ml: number | null
   diaper_type: DiaperType | null
   ended_at: string | null
+  temperature: number | null
+  weight_g: number | null
+  height_cm: number | null
+  duration_min: number | null
   memo: string | null
   created_at: string
 }

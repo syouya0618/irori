@@ -71,6 +71,29 @@ export async function approveUser(targetUserId: string) {
   return { success: true }
 }
 
+import { VALID_PAGES, type ValidPage } from "@/lib/constants/pages"
+
+export async function updateDefaultPage(page: string) {
+  if (!VALID_PAGES.includes(page as ValidPage)) {
+    return { error: "無効なページ指定です" }
+  }
+
+  const result = await getAuthContext()
+  if (result.error !== null) return { error: result.error }
+  const { supabase, userId } = result.context
+
+  const { error } = await supabase
+    .from("profiles")
+    .update({ default_page: page })
+    .eq("id", userId)
+
+  if (error) {
+    return { error: "設定の更新に失敗しました" }
+  }
+
+  return { success: true }
+}
+
 export async function signOut() {
   const supabase = await createClient()
   await supabase.auth.signOut()
