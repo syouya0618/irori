@@ -6,11 +6,14 @@ import { getCachedStockItems } from "@/lib/supabase/cached-queries"
 import type { ItemCategory, MealReaction } from "@/lib/types/database"
 import {
   rankSuggestions,
+  calculateDailyRate,
+  estimateRemainingDays,
   type RecipeSuggestion,
   type StockItemInput,
   type TemplateIngredient,
   type TemplateInput,
 } from "@/lib/domain"
+import { todayJstString, shiftYmd } from "@/lib/utils/date-jst"
 
 type ParsedStockFields = {
   name: string
@@ -268,4 +271,159 @@ export async function getRecipeSuggestions(): Promise<{
   const suggestions = rankSuggestions(templates, stockItems)
 
   return { error: null, data: suggestions }
+}
+
+/**
+ * 育児ログから消耗品の日次消費レートを算出する。
+ * 現在はおむつ（"baby"カテゴリ）のみ対応。
+ */
+export async function getConsumptionRates(): Promise<{
+  error: string | null
+  rates: Record<string, number | null>
+}> {
+  const result = await getAuthContext()
+  if (result.error !== null) {
+    return { error: result.error, rates: {} }
+  }
+  const { supabase, householdId } = result.context
+
+  const now = new Date()
+  const today = todayJstString(now)
+  const weekAgo = shiftYmd(today, -7)
+
+  const { data: logs, error } = await supabase
+    .from("baby_logs")
+    .select("log_type, logged_at, amount_ml")
+    .eq("household_id", householdId)
+    .in("log_type", ["diaper", "feeding"])
+    .gte("logged_at", `${weekAgo}T00:00:00`)
+    .order("logged_at", { ascending: false })
+
+  if (error) {
+    return { error: "消費レートの取得に失敗しました", rates: {} }
+  }
+
+  const diaperRate = calculateDailyRate(logs ?? [], "diaper", now)
+
+  return {
+    error: null,
+    rates: {
+      baby: diaperRate,
+    },
+  }
+}
+
+/**
+ * 在庫が少ないアイテムを買い物リストに自動追加する。
+ * 残日数が3日以下のアイテムを対象とし、既に買い物リストにあるものは除外する。
+ */
+export async function checkAndAutoAddLowStock(): Promise<{
+  error: string | null
+  addedItems: string[]
+}> {
+  const result = await getAuthContext()
+  if (result.error !== null) {
+    return { error: result.error, addedItems: [] }
+  }
+  const { supabase, userId, householdId } = result.context
+
+  const now = new Date()
+  const today = todayJstString(now)
+  const weekAgo = shiftYmd(today, -7)
+
+  // 独立クエリを並列実行（authコンテキストを共有して重複排除）
+  const [householdResult, logsResult, stockResult, shoppingResult] =
+    await Promise.all([
+      supabase
+        .from("households")
+        .select("auto_stock_categories")
+        .eq("id", householdId)
+        .single(),
+      supabase
+        .from("baby_logs")
+        .select("log_type, logged_at, amount_ml")
+        .eq("household_id", householdId)
+        .in("log_type", ["diaper", "feeding"])
+        .gte("logged_at", `${weekAgo}T00:00:00`)
+        .limit(500),
+      supabase
+        .from("stock_items")
+        .select("id, name, category, quantity")
+        .eq("household_id", householdId),
+      supabase
+        .from("shopping_items")
+        .select("name")
+        .eq("household_id", householdId)
+        .eq("is_checked", false),
+    ])
+
+  if (
+    householdResult.error ||
+    logsResult.error ||
+    stockResult.error ||
+    shoppingResult.error ||
+    !householdResult.data
+  ) {
+    return { error: null, addedItems: [] }
+  }
+
+  const autoCategories = householdResult.data.auto_stock_categories as string[]
+  if (!Array.isArray(autoCategories) || autoCategories.length === 0) {
+    return { error: null, addedItems: [] }
+  }
+
+  const diaperRate = calculateDailyRate(logsResult.data ?? [], "diaper", now)
+  const rates: Record<string, number | null> = { baby: diaperRate }
+
+  // 残日数≤3のアイテムを抽出
+  const lowStockItems = (stockResult.data ?? []).filter((item) => {
+    if (!autoCategories.includes(item.category)) return false
+    const rate = rates[item.category]
+    if (rate == null) return false
+    const remaining = estimateRemainingDays(item.quantity, rate)
+    return remaining !== null && remaining <= 3
+  })
+
+  if (lowStockItems.length === 0) return { error: null, addedItems: [] }
+
+  const existingNames = new Set(
+    (shoppingResult.data ?? []).map((i) => i.name.toLowerCase()),
+  )
+
+  const toAdd = lowStockItems.filter(
+    (item) => !existingNames.has(item.name.toLowerCase()),
+  )
+
+  if (toAdd.length === 0) return { error: null, addedItems: [] }
+
+  // sort_order の最大値を取得
+  const { data: maxOrder } = await supabase
+    .from("shopping_items")
+    .select("sort_order")
+    .eq("household_id", householdId)
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .single()
+
+  let nextOrder = (maxOrder?.sort_order ?? 0) + 1
+
+  const insertRows = toAdd.map((item) => ({
+    household_id: householdId,
+    name: item.name,
+    category: item.category as ItemCategory,
+    store_type: "drugstore" as const,
+    created_by: userId,
+    sort_order: nextOrder++,
+  }))
+
+  const { error: insertError } = await supabase
+    .from("shopping_items")
+    .insert(insertRows)
+
+  if (insertError) {
+    return { error: "買い物リストへの追加に失敗しました", addedItems: [] }
+  }
+
+  revalidatePath("/shopping")
+  return { error: null, addedItems: toAdd.map((i) => i.name) }
 }

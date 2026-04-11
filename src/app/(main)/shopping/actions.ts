@@ -122,8 +122,8 @@ export async function toggleItem(itemId: string, isChecked: boolean) {
   if (result.error !== null) return { error: result.error }
   const { supabase, userId, householdId } = result.context
 
-  // 世帯に属するアイテムか確認してから更新
-  const { error } = await supabase
+  // 世帯に属するアイテムか確認してから更新（名前とカテゴリも取得）
+  const { data: updatedItem, error } = await supabase
     .from("shopping_items")
     .update({
       is_checked: isChecked,
@@ -132,13 +132,91 @@ export async function toggleItem(itemId: string, isChecked: boolean) {
     })
     .eq("id", itemId)
     .eq("household_id", householdId)
+    .select("name, category")
+    .single()
 
   if (error) {
     return { error: "更新に失敗しました" }
   }
 
+  // 在庫自動追加: チェックON時のみ
+  let autoStocked = false
+  let autoStockedName: string | null = null
+
+  if (isChecked && updatedItem) {
+    try {
+      const stocked = await autoAddToStock(
+        supabase,
+        householdId,
+        userId,
+        updatedItem.name,
+        updatedItem.category as ItemCategory,
+      )
+      if (stocked) {
+        autoStocked = true
+        autoStockedName = updatedItem.name
+      }
+    } catch {
+      // auto-stockの失敗はチェック操作自体には影響させない
+    }
+  }
+
   revalidatePath("/shopping")
-  return { success: true }
+  if (autoStocked) revalidatePath("/stock")
+  return { success: true, autoStocked, autoStockedName }
+}
+
+// ─── Helper: 在庫自動追加 ─────────────────────────────────
+async function autoAddToStock(
+  supabase: AuthContext["supabase"],
+  householdId: string,
+  userId: string,
+  itemName: string,
+  itemCategory: ItemCategory,
+): Promise<boolean> {
+  // 世帯の自動追加対象カテゴリを取得
+  const { data: household } = await supabase
+    .from("households")
+    .select("auto_stock_categories")
+    .eq("id", householdId)
+    .single()
+
+  if (!household) return false
+
+  const categories = household.auto_stock_categories as string[]
+  if (!Array.isArray(categories) || !categories.includes(itemCategory)) {
+    return false
+  }
+
+  // 同名の在庫アイテムがあるか確認（完全一致で検索）
+  const { data: matchedItems } = await supabase
+    .from("stock_items")
+    .select("id, name, quantity")
+    .eq("household_id", householdId)
+    .eq("name", itemName.trim())
+    .limit(1)
+
+  const existing = matchedItems?.[0] ?? null
+
+  if (existing) {
+    const { error: updateError } = await supabase
+      .from("stock_items")
+      .update({ quantity: existing.quantity + 1 })
+      .eq("id", existing.id)
+    if (updateError) return false
+  } else {
+    const { error: insertError } = await supabase.from("stock_items").insert({
+      household_id: householdId,
+      name: itemName.trim(),
+      category: itemCategory,
+      quantity: 1,
+      unit: "個",
+      created_by: userId,
+    })
+    if (insertError) return false
+  }
+
+  return true
 }
 
 // ─── アイテム削除 ────────────────────────────────────────

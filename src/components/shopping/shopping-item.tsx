@@ -56,6 +56,10 @@ export function ShoppingItem({
         // ロールバック
         onOptimisticToggle(item.id, !newChecked)
         toast.error(result.error)
+        return
+      }
+      if (result.autoStocked && result.autoStockedName) {
+        toast.success(`${result.autoStockedName}を在庫に追加しました`)
       }
     })
   }
