@@ -122,6 +122,41 @@ export async function updateAutoStockCategories(categories: ItemCategory[]) {
   return { success: true }
 }
 
+export async function updateBabyProfile(formData: FormData) {
+  const babyName = formData.get("baby_name")
+  const babyBirthDate = formData.get("baby_birth_date")
+
+  if (typeof babyName !== "string") {
+    return { error: "名前を入力してください" }
+  }
+
+  let birthDateValue: string | null = null
+  if (typeof babyBirthDate === "string" && babyBirthDate.trim() !== "") {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(babyBirthDate)) {
+      return { error: "生年月日の形式が不正です" }
+    }
+    birthDateValue = babyBirthDate
+  }
+
+  const result = await getAuthContext()
+  if (result.error !== null) return { error: result.error }
+  const { supabase, householdId } = result.context
+
+  const { error } = await supabase
+    .from("households")
+    .update({
+      baby_name: babyName.trim() || null,
+      baby_birth_date: birthDateValue,
+    })
+    .eq("id", householdId)
+
+  if (error) {
+    return { error: "赤ちゃん情報の更新に失敗しました" }
+  }
+
+  return { success: true }
+}
+
 export async function signOut() {
   const supabase = await createClient()
   await supabase.auth.signOut()

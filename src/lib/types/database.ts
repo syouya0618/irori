@@ -50,18 +50,24 @@ export interface Database {
           id: string
           name: string
           auto_stock_categories: Json
+          baby_name: string | null
+          baby_birth_date: string | null
           created_at: string
         }
         Insert: {
           id?: string
           name?: string
           auto_stock_categories?: Json
+          baby_name?: string | null
+          baby_birth_date?: string | null
           created_at?: string
         }
         Update: {
           id?: string
           name?: string
           auto_stock_categories?: Json
+          baby_name?: string | null
+          baby_birth_date?: string | null
           created_at?: string
         }
         Relationships: []

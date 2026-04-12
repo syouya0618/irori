@@ -15,7 +15,7 @@ export default async function SettingsPage() {
 
   const { data: household } = await supabase
     .from("households")
-    .select("id, name, auto_stock_categories")
+    .select("id, name, auto_stock_categories, baby_name, baby_birth_date")
     .eq("id", profile!.household_id!)
     .single()
 
@@ -43,6 +43,10 @@ export default async function SettingsPage() {
       autoStockCategories={
         (household?.auto_stock_categories as string[] | null) ?? ["baby", "cleaning", "hygiene"]
       }
+      babyProfile={{
+        name: household?.baby_name ?? null,
+        birthDate: household?.baby_birth_date ?? null,
+      }}
       email={user!.email ?? ""}
       pendingUsers={pendingUsers}
     />
