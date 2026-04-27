@@ -36,3 +36,9 @@ export {
   type TemperatureRecord,
   type GrowthRecord,
 } from "./baby-log-aggregation"
+export {
+  buildBabyWeeklySummary,
+  totalBabyWeeklySummary,
+  type BabyWeeklySummaryLogInput,
+  type BabyWeeklySummaryDay,
+} from "./baby-weekly-summary"
