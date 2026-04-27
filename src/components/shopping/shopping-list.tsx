@@ -23,7 +23,6 @@ import {
   Package,
 } from "lucide-react"
 import { toast } from "sonner"
-import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"

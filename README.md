@@ -1,36 +1,75 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# うちのログ
 
-## Getting Started
+夫婦の献立・買い物・在庫・育児ログをひとつにまとめる家庭運営PWA。
 
-First, run the development server:
+## 現在地
+
+2026-04-27時点では、`main` は Phase 3.3 小児科用PDFエクスポートまで取り込み済み。作業ブランチ `codex/continue-work` では Phase 3.4 の育児ログ週間サマリーを実装中。
+
+主な実装済み機能:
+
+- 認証: Supabase magic link、callback、未認証リダイレクト、承認待ち画面
+- 世帯管理: 世帯作成、招待リンク、招待受け入れ、ownerによる承認
+- 献立: 週間表示、CRUD、食材、リアクション、テンプレート、外食記録、写真アップロード
+- 買い物: 手動追加、献立から生成、カテゴリ/店舗別表示、購入チェック、Realtime、一括クリア
+- 在庫: CRUD、期限アラート、購入履歴サジェスト、在庫から買い物追加、レシピ候補、Realtime
+- 育児ログ: 授乳、おむつ、睡眠、体温、成長記録、メモ、授乳タイマー、覚醒時間、Realtime
+- 設定: デフォルトページ、テーマ、在庫自動追加カテゴリ、赤ちゃん情報、PDFエクスポート
+
+未実装の大きな塊:
+
+- 買い物リストのオフライン対応
+- Google Placesによる外食先検索
+- PWA Push通知
+- 成長曲線グラフ
+- 予防接種、検診、アレルギー管理
+- 家事分担レポート
+
+## 技術スタック
+
+- Next.js 16.2.2 App Router
+- React 19.2
+- TypeScript
+- Tailwind CSS v4.2
+- shadcn/ui + Liquid Glass design system
+- Supabase Auth / Database / Storage / Realtime
+- Vitest
+- pdfmake
+
+## 開発
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+開発サーバ:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```text
+http://localhost:3000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+検証:
 
-## Learn More
+```bash
+pnpm test:run
+pnpm lint
+pnpm exec tsc --noEmit
+pnpm build
+```
 
-To learn more about Next.js, take a look at the following resources:
+## 重要な注意
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- Next.js 16では `middleware.ts` ではなく `proxy.ts` を使う。
+- Next.js 16.2.2のTurbopack buildは現環境でcompile待ちになるため、`pnpm build` は `next build --webpack` 固定。
+- Server Actionsは各route配下の `actions.ts` に置く。
+- Supabase RLSは `FOR ALL` ではなく SELECT/INSERT/UPDATE/DELETE を分離する。
+- `new Date("YYYY-MM-DD")` はUTC解釈の罠があるため、JST日付処理は `src/lib/utils/date-jst.ts` を使う。
+- pdfmakeの `setFonts()` はモジュールスコープで1回だけ行う。
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 関連ドキュメント
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- [要件定義](./requirements.md)
+- [開発計画](./development-plan.md)
+- [デザインシステム](./docs/DESIGN_SYSTEM.md)
+- [Phase 3設計](./docs/plans/2026-04-10-phase3-design.md)

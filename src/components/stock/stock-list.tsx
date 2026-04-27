@@ -131,7 +131,7 @@ export function StockList({
         )
       }
     })
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleOptimisticDelete = useCallback((id: string) => {
     setItems((prev) => prev.filter((item) => item.id !== id))

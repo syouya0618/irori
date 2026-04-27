@@ -20,7 +20,7 @@ export async function createClient() {
             )
           } catch {
             // Server Component からの呼び出し時は無視。
-            // middleware がセッションをリフレッシュするので問題ない。
+            // proxy がセッションをリフレッシュするので問題ない。
           }
         },
       },
