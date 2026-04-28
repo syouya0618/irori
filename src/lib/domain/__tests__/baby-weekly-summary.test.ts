@@ -77,6 +77,71 @@ describe("buildBabyWeeklySummary", () => {
     })
   })
 
+  it("完全に範囲外の睡眠を除外する", () => {
+    const result = buildBabyWeeklySummary(
+      [
+        log(
+          "sleep",
+          "2026-04-03T22:00:00+09:00",
+          "2026-04-04T06:00:00+09:00",
+        ),
+        log(
+          "sleep",
+          "2026-04-12T00:00:00+09:00",
+          "2026-04-12T02:00:00+09:00",
+        ),
+      ],
+      "2026-04-11",
+    )
+
+    expect(totalBabyWeeklySummary(result)).toEqual({
+      feedingCount: 0,
+      diaperCount: 0,
+      sleepMinutes: 0,
+    })
+  })
+
+  it("終了時刻が開始時刻以前の睡眠を除外する", () => {
+    const result = buildBabyWeeklySummary(
+      [
+        log(
+          "sleep",
+          "2026-04-10T10:00:00+09:00",
+          "2026-04-10T09:59:00+09:00",
+        ),
+      ],
+      "2026-04-11",
+    )
+
+    expect(totalBabyWeeklySummary(result)).toEqual({
+      feedingCount: 0,
+      diaperCount: 0,
+      sleepMinutes: 0,
+    })
+  })
+
+  it("週間日数が0以下なら空配列を返す", () => {
+    expect(buildBabyWeeklySummary([], "2026-04-11", 0)).toEqual([])
+    expect(buildBabyWeeklySummary([], "2026-04-11", -1)).toEqual([])
+  })
+
+  it("週間サマリー対象外のログ種別を無視する", () => {
+    const result = buildBabyWeeklySummary(
+      [
+        log("temperature", "2026-04-10T08:00:00+09:00"),
+        log("growth", "2026-04-10T09:00:00+09:00"),
+        log("memo", "2026-04-10T10:00:00+09:00"),
+      ],
+      "2026-04-11",
+    )
+
+    expect(totalBabyWeeklySummary(result)).toEqual({
+      feedingCount: 0,
+      diaperCount: 0,
+      sleepMinutes: 0,
+    })
+  })
+
   it("日跨ぎ睡眠をJSTの日別に分割する", () => {
     const result = buildBabyWeeklySummary(
       [
