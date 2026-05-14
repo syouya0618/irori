@@ -15,8 +15,11 @@ export default async function BabyPage() {
   const weeklyStart = `${weeklyStartJst}T00:00:00+09:00`
 
   // 今日のログ + 最新の完了済み睡眠 + 週間サマリー用ログを並列取得
-  const [{ data: logs }, { data: lastSleepData }, { data: weeklyLogs }] =
-    await Promise.all([
+  const [
+    { data: logs },
+    { data: lastSleepData, error: lastSleepError },
+    { data: weeklyLogs },
+  ] = await Promise.all([
       supabase
         .from("baby_logs")
         .select(
@@ -47,6 +50,16 @@ export default async function BabyPage() {
         )
         .order("logged_at", { ascending: false }),
     ])
+
+  if (lastSleepError) {
+    console.error("[baby] last sleep lookup failed", {
+      message: lastSleepError.message,
+      code: lastSleepError.code,
+      details: lastSleepError.details,
+      hint: lastSleepError.hint,
+      householdId,
+    })
+  }
 
   return (
     <BabyDashboard

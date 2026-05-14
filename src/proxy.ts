@@ -5,8 +5,8 @@ export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
 
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "",
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ?? "",
     {
       cookies: {
         getAll() {
@@ -49,11 +49,24 @@ export async function proxy(request: NextRequest) {
   }
 
   // ── 認証済み: 承認チェック ──
-  const { data: profile } = await supabase
+  // Supabase error は plain object（class Error 非継承）。{ data } のみで destructure すると
+  // silent fail で /pending-approval ループに陥るため、error を構造化ログ出力する。
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("is_approved")
     .eq("id", user.id)
     .single()
+
+  if (profileError) {
+    console.error("[proxy] profile lookup failed", {
+      message: profileError.message,
+      code: profileError.code,
+      details: profileError.details,
+      hint: profileError.hint,
+      userId: user.id,
+      pathname,
+    })
+  }
 
   const isApproved = profile?.is_approved ?? false
 
