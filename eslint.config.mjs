@@ -13,6 +13,22 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
+  {
+    rules: {
+      // process.env への非null断言 (!) を禁止。Vercel 環境変数のペースト時に
+      // 末尾改行が混入すると auth が無音 fail するため、`?.trim() ?? ""` を強制する。
+      // (learnings.md L71 / L204)
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            'TSNonNullExpression > MemberExpression[object.object.name="process"][object.property.name="env"]',
+          message:
+            'process.env への非null断言 (!) は禁止。末尾改行混入を防ぐため `?.trim() ?? ""` を使うこと。',
+        },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;
