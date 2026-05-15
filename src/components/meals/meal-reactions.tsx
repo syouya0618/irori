@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useOptimistic, useTransition } from "react"
+import { useOptimistic, useTransition } from "react"
 import { cn } from "@/lib/utils"
 import { upsertReaction } from "@/app/(main)/meals/actions"
 import { toast } from "sonner"

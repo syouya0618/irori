@@ -8,7 +8,7 @@ import {
   calculateAge,
   type AggregationLogInput,
 } from "../baby-log-aggregation"
-import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
+import type { BabyLogType } from "@/lib/types/database"
 
 // 基準日: 2026-04-11 JST 12:00 (UTC 03:00)
 const BASE = new Date("2026-04-11T03:00:00Z")
