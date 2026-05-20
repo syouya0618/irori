@@ -22,11 +22,21 @@ export function useUser() {
 
   const fetchProfile = useCallback(
     async (userId: string) => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("profiles")
         .select("id, display_name, household_id, role, avatar_url")
         .eq("id", userId)
         .single()
+
+      if (error) {
+        console.error("[use-user] profile fetch failed", {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+          userId,
+        })
+      }
 
       setProfile(data as Profile | null)
     },

@@ -13,11 +13,21 @@ export default async function SetupPage() {
   }
 
   // Check if user already has a household
-  const { data: profile } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("household_id")
     .eq("id", user.id)
     .single()
+
+  if (profileError) {
+    console.error("[setup] profile lookup failed", {
+      message: profileError.message,
+      code: profileError.code,
+      details: profileError.details,
+      hint: profileError.hint,
+      userId: user.id,
+    })
+  }
 
   if (profile?.household_id) {
     redirect("/meals")
