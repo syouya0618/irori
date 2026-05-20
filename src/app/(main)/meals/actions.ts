@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache"
 import { getAuthContext } from "@/lib/supabase/auth-context"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 import type { MealType, MealReaction, ItemCategory } from "@/lib/types/database"
 
 interface MealIngredientInput {
@@ -74,11 +75,17 @@ export async function updateMeal(input: UpdateMealInput) {
   const { supabase, householdId } = result.context
 
   // Verify ownership
-  const { data: existingMeal } = await supabase
+  const { data: existingMeal, error: existingMealError } = await supabase
     .from("meals")
     .select("household_id")
     .eq("id", input.id)
     .single()
+
+  if (existingMealError) {
+    logSupabaseError("meals", "meal ownership check failed", existingMealError, {
+      mealId: input.id,
+    })
+  }
 
   if (!existingMeal || existingMeal.household_id !== householdId) {
     return { error: "この献立を編集する権限がありません。" }
@@ -131,11 +138,17 @@ export async function deleteMeal(mealId: string) {
   const { supabase, householdId } = result.context
 
   // Verify ownership
-  const { data: existingMeal } = await supabase
+  const { data: existingMeal, error: existingMealError } = await supabase
     .from("meals")
     .select("household_id")
     .eq("id", mealId)
     .single()
+
+  if (existingMealError) {
+    logSupabaseError("meals", "meal ownership check failed", existingMealError, {
+      mealId,
+    })
+  }
 
   if (!existingMeal || existingMeal.household_id !== householdId) {
     return { error: "この献立を削除する権限がありません。" }
@@ -161,23 +174,34 @@ export async function upsertReaction(mealId: string, reaction: MealReaction) {
   const { supabase, userId, householdId } = result.context
 
   // Verify meal belongs to the household
-  const { data: meal } = await supabase
+  const { data: meal, error: mealError } = await supabase
     .from("meals")
     .select("household_id")
     .eq("id", mealId)
     .single()
 
+  if (mealError) {
+    logSupabaseError("meals", "meal lookup failed", mealError, { mealId })
+  }
+
   if (!meal || meal.household_id !== householdId) {
     return { error: "この献立にリアクションする権限がありません。" }
   }
 
-  // Check existing reaction
-  const { data: existing } = await supabase
+  // Check existing reaction (未リアクションは正常系ゆえ maybeSingle)
+  const { data: existing, error: existingError } = await supabase
     .from("meal_reactions")
     .select("id, reaction")
     .eq("meal_id", mealId)
     .eq("user_id", userId)
-    .single()
+    .maybeSingle()
+
+  if (existingError) {
+    logSupabaseError("meals", "reaction lookup failed", existingError, {
+      mealId,
+      userId,
+    })
+  }
 
   if (existing) {
     if (existing.reaction === reaction) {
@@ -227,11 +251,15 @@ export async function saveAsTemplate(mealId: string) {
   const { supabase, userId, householdId } = result.context
 
   // Get meal with ingredients
-  const { data: meal } = await supabase
+  const { data: meal, error: mealError } = await supabase
     .from("meals")
     .select("title, household_id")
     .eq("id", mealId)
     .single()
+
+  if (mealError) {
+    logSupabaseError("meals", "meal lookup failed", mealError, { mealId })
+  }
 
   if (!meal || meal.household_id !== householdId) {
     return { error: "この献立をテンプレートとして保存する権限がありません。" }
@@ -272,11 +300,17 @@ export async function loadTemplate(templateId: string) {
   if (result.error !== null) return { error: result.error, data: null }
   const { supabase, householdId } = result.context
 
-  const { data: template } = await supabase
+  const { data: template, error: templateError } = await supabase
     .from("meal_templates")
     .select("title, ingredients, household_id")
     .eq("id", templateId)
     .single()
+
+  if (templateError) {
+    logSupabaseError("meals", "template lookup failed", templateError, {
+      templateId,
+    })
+  }
 
   if (!template || template.household_id !== householdId) {
     return { error: "テンプレートが見つかりません。", data: null }
@@ -296,11 +330,17 @@ export async function deleteTemplate(templateId: string) {
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
 
-  const { data: template } = await supabase
+  const { data: template, error: templateError } = await supabase
     .from("meal_templates")
     .select("household_id")
     .eq("id", templateId)
     .single()
+
+  if (templateError) {
+    logSupabaseError("meals", "template ownership check failed", templateError, {
+      templateId,
+    })
+  }
 
   if (!template || template.household_id !== householdId) {
     return { error: "このテンプレートを削除する権限がありません。" }

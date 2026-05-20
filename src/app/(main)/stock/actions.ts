@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache"
 import { getAuthContext } from "@/lib/supabase/auth-context"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 import { getCachedStockItems } from "@/lib/supabase/cached-queries"
 import type { ItemCategory, MealReaction } from "@/lib/types/database"
 import {
@@ -171,13 +172,20 @@ export async function addToShoppingList(itemId: string) {
     return { error: "既に買い物リストにあります" }
   }
 
-  const { data: maxOrder } = await supabase
+  // 空リスト (0 行) は正常系ゆえ maybeSingle
+  const { data: maxOrder, error: maxOrderError } = await supabase
     .from("shopping_items")
     .select("sort_order")
     .eq("household_id", householdId)
     .order("sort_order", { ascending: false })
     .limit(1)
-    .single()
+    .maybeSingle()
+
+  if (maxOrderError) {
+    logSupabaseError("stock", "sort_order lookup failed", maxOrderError, {
+      householdId,
+    })
+  }
 
   const sortOrder = (maxOrder?.sort_order ?? 0) + 1
 
@@ -396,14 +404,20 @@ export async function checkAndAutoAddLowStock(): Promise<{
 
   if (toAdd.length === 0) return { error: null, addedItems: [] }
 
-  // sort_order の最大値を取得
-  const { data: maxOrder } = await supabase
+  // sort_order の最大値を取得 (空リストは正常系ゆえ maybeSingle)
+  const { data: maxOrder, error: maxOrderError } = await supabase
     .from("shopping_items")
     .select("sort_order")
     .eq("household_id", householdId)
     .order("sort_order", { ascending: false })
     .limit(1)
-    .single()
+    .maybeSingle()
+
+  if (maxOrderError) {
+    logSupabaseError("stock", "sort_order lookup failed", maxOrderError, {
+      householdId,
+    })
+  }
 
   let nextOrder = (maxOrder?.sort_order ?? 0) + 1
 
