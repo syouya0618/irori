@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 import type { User } from "@supabase/supabase-js"
 import type { HouseholdRole } from "@/lib/types/database"
 
@@ -29,11 +30,7 @@ export function useUser() {
         .single()
 
       if (error) {
-        console.error("[use-user] profile fetch failed", {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint,
+        logSupabaseError("use-user", "profile fetch failed", error, {
           userId,
         })
       }

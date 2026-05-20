@@ -1,5 +1,6 @@
 import { cache } from "react"
 import { createClient } from "@/lib/supabase/server"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 
 export type AuthContext = {
   supabase: Awaited<ReturnType<typeof createClient>>
@@ -25,11 +26,7 @@ export const getAuthContext = cache(
       .single()
 
     if (profileError) {
-      console.error("[auth-context] profile lookup failed", {
-        message: profileError.message,
-        code: profileError.code,
-        details: profileError.details,
-        hint: profileError.hint,
+      logSupabaseError("auth-context", "profile lookup failed", profileError, {
         userId: user.id,
       })
     }

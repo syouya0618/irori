@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 import { VALID_PAGES, type ValidPage } from "@/lib/constants/pages"
 
 export default async function Home() {
@@ -17,11 +18,7 @@ export default async function Home() {
     .single()
 
   if (profileError) {
-    console.error("[home] profile lookup failed", {
-      message: profileError.message,
-      code: profileError.code,
-      details: profileError.details,
-      hint: profileError.hint,
+    logSupabaseError("home", "profile lookup failed", profileError, {
       userId: user.id,
     })
   }

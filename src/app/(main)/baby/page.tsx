@@ -1,4 +1,5 @@
 import { getAuthContext } from "@/lib/supabase/auth-context"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 import { BabyDashboard } from "@/components/baby/baby-dashboard"
 import { todayJstString, shiftYmd } from "@/lib/utils/date-jst"
 
@@ -52,11 +53,7 @@ export default async function BabyPage() {
     ])
 
   if (lastSleepError) {
-    console.error("[baby] last sleep lookup failed", {
-      message: lastSleepError.message,
-      code: lastSleepError.code,
-      details: lastSleepError.details,
-      hint: lastSleepError.hint,
+    logSupabaseError("baby", "last sleep lookup failed", lastSleepError, {
       householdId,
     })
   }

@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr"
 import { NextResponse, type NextRequest } from "next/server"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -58,11 +59,7 @@ export async function proxy(request: NextRequest) {
     .single()
 
   if (profileError) {
-    console.error("[proxy] profile lookup failed", {
-      message: profileError.message,
-      code: profileError.code,
-      details: profileError.details,
-      hint: profileError.hint,
+    logSupabaseError("proxy", "profile lookup failed", profileError, {
       userId: user.id,
       pathname,
     })
