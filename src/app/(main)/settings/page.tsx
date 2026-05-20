@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 import { SettingsContent } from "./settings-content"
 
 export default async function SettingsPage() {
@@ -7,17 +8,29 @@ export default async function SettingsPage() {
   // No auth/redirect checks needed - layout handles them
   const { data: { user } } = await supabase.auth.getUser()
 
-  const { data: profile } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("id, display_name, avatar_url, household_id, role, default_page")
     .eq("id", user!.id)
     .single()
 
-  const { data: household } = await supabase
+  if (profileError) {
+    logSupabaseError("settings", "profile lookup failed", profileError, {
+      userId: user!.id,
+    })
+  }
+
+  const { data: household, error: householdError } = await supabase
     .from("households")
     .select("id, name, auto_stock_categories, baby_name, baby_birth_date")
     .eq("id", profile!.household_id!)
     .single()
+
+  if (householdError) {
+    logSupabaseError("settings", "household lookup failed", householdError, {
+      householdId: profile!.household_id,
+    })
+  }
 
   // ownerのみ: 承認待ちユーザー取得
   let pendingUsers: { id: string; display_name: string; email: string; created_at: string }[] = []

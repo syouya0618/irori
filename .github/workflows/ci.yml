@@ -39,5 +39,5 @@ jobs:
         run: pnpm build
 
       - name: Detect Supabase silent fail (.single()/.maybeSingle() without error)
-        # report-only。strict 化は issue #20 PR-C 完了後に切り替える。
-        run: ./scripts/check-supabase-error-destructure.py
+        # strict: issue #20 PR-C で全違反を解消済み。新規 silent fail は CI で fail させる。
+        run: ./scripts/check-supabase-error-destructure.py --strict

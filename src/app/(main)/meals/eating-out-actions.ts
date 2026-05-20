@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache"
 import { getAuthContext } from "@/lib/supabase/auth-context"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 
 /**
  * Supabase Storage に 'eating-out-photos' バケットが必要です。
@@ -36,11 +37,17 @@ export async function saveEatingOutLog(input: SaveEatingOutLogInput) {
   const { supabase, householdId } = result.context
 
   // 対象の meal が自分の世帯に属するか確認
-  const { data: meal } = await supabase
+  const { data: meal, error: mealError } = await supabase
     .from("meals")
     .select("household_id")
     .eq("id", input.mealId)
     .single()
+
+  if (mealError) {
+    logSupabaseError("eating-out", "meal ownership check failed", mealError, {
+      mealId: input.mealId,
+    })
+  }
 
   if (!meal || meal.household_id !== householdId) {
     return { error: "この献立の外食記録を編集する権限がありません。" }
@@ -108,11 +115,18 @@ export async function getEatingOutLog(mealId: string) {
   if (result.error !== null) return { error: result.error, data: null }
   const { supabase } = result.context
 
-  const { data } = await supabase
+  // 外食ログ未記録は正常系ゆえ maybeSingle
+  const { data, error: logError } = await supabase
     .from("eating_out_logs")
     .select("id, restaurant_name, memo, rating, photo_url")
     .eq("meal_id", mealId)
-    .single()
+    .maybeSingle()
+
+  if (logError) {
+    logSupabaseError("eating-out", "eating out log lookup failed", logError, {
+      mealId,
+    })
+  }
 
   return { error: null, data }
 }

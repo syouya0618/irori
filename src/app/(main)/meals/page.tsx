@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 import { MealWeekView } from "@/components/meals/meal-week-view"
 import { getMonday, addDays, formatDateKey } from "@/lib/utils/date"
 
@@ -8,11 +9,17 @@ export default async function MealsPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
 
-  const { data: profile } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("household_id")
     .eq("id", user.id)
     .single()
+
+  if (profileError) {
+    logSupabaseError("meals", "profile lookup failed", profileError, {
+      userId: user.id,
+    })
+  }
 
   if (!profile?.household_id) return null
 

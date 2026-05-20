@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache"
 import { getAuthContext } from "@/lib/supabase/auth-context"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 import { getCurrentWeekRange } from "@/lib/utils/date"
 import type { AuthContext } from "@/lib/supabase/auth-context"
 import type { ItemCategory, StoreType } from "@/lib/types/database"
@@ -70,13 +71,19 @@ async function getNextSortOrder(
   supabase: AuthContext["supabase"],
   householdId: string
 ): Promise<number> {
-  const { data } = await supabase
+  // 空リスト (0 行) は正常系ゆえ maybeSingle
+  const { data, error } = await supabase
     .from("shopping_items")
     .select("sort_order")
     .eq("household_id", householdId)
     .order("sort_order", { ascending: false })
     .limit(1)
-    .single()
+    .maybeSingle()
+  if (error) {
+    logSupabaseError("shopping", "sort_order lookup failed", error, {
+      householdId,
+    })
+  }
   return (data?.sort_order ?? 0) + 1
 }
 
@@ -175,11 +182,17 @@ async function autoAddToStock(
   itemCategory: ItemCategory,
 ): Promise<boolean> {
   // 世帯の自動追加対象カテゴリを取得
-  const { data: household } = await supabase
+  const { data: household, error: householdError } = await supabase
     .from("households")
     .select("auto_stock_categories")
     .eq("id", householdId)
     .single()
+
+  if (householdError) {
+    logSupabaseError("shopping", "household lookup failed", householdError, {
+      householdId,
+    })
+  }
 
   if (!household) return false
 
@@ -274,7 +287,10 @@ export async function clearChecked() {
 
   if (historyError) {
     // 履歴の記録に失敗しても削除は続行
-    console.error("購入履歴の記録に失敗:", historyError)
+    logSupabaseError("shopping", "購入履歴の記録に失敗", historyError, {
+      householdId,
+      itemCount: historyItems.length,
+    })
   }
 
   // チェック済みアイテムを削除
