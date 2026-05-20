@@ -32,10 +32,34 @@ export default async function InvitePage({
   }
 
   // profile と invitation を並列取得
-  const [{ data: profile }, { data: invitations }] = await Promise.all([
+  const [
+    { data: profile, error: profileError },
+    { data: invitations, error: invitationsError },
+  ] = await Promise.all([
     supabase.from("profiles").select("household_id").eq("id", user.id).single(),
     supabase.rpc("get_invitation_by_token", { invite_token: token }),
   ])
+
+  if (profileError) {
+    console.error("[invite] profile lookup failed", {
+      message: profileError.message,
+      code: profileError.code,
+      details: profileError.details,
+      hint: profileError.hint,
+      userId: user.id,
+    })
+  }
+
+  // token は secret なので構造化ログには含めない (userId のみ)。
+  if (invitationsError) {
+    console.error("[invite] invitation lookup failed", {
+      message: invitationsError.message,
+      code: invitationsError.code,
+      details: invitationsError.details,
+      hint: invitationsError.hint,
+      userId: user.id,
+    })
+  }
 
   if (profile?.household_id) {
     return (

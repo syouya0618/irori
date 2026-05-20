@@ -18,11 +18,21 @@ export default async function MainLayout({
   }
 
   // 世帯が未設定なら /setup へ
-  const { data: profile } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("household_id")
     .eq("id", user.id)
     .single()
+
+  if (profileError) {
+    console.error("[main-layout] profile lookup failed", {
+      message: profileError.message,
+      code: profileError.code,
+      details: profileError.details,
+      hint: profileError.hint,
+      userId: user.id,
+    })
+  }
 
   if (!profile?.household_id) {
     redirect("/setup")
