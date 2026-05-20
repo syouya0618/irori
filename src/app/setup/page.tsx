@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 import { SetupForm } from "./setup-form"
 
 export default async function SetupPage() {
@@ -20,11 +21,7 @@ export default async function SetupPage() {
     .single()
 
   if (profileError) {
-    console.error("[setup] profile lookup failed", {
-      message: profileError.message,
-      code: profileError.code,
-      details: profileError.details,
-      hint: profileError.hint,
+    logSupabaseError("setup", "profile lookup failed", profileError, {
       userId: user.id,
     })
   }

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 import { InviteAcceptForm } from "./invite-accept-form"
 
 function InviteError({ title, description }: { title: string; description: string }) {
@@ -41,22 +42,14 @@ export default async function InvitePage({
   ])
 
   if (profileError) {
-    console.error("[invite] profile lookup failed", {
-      message: profileError.message,
-      code: profileError.code,
-      details: profileError.details,
-      hint: profileError.hint,
+    logSupabaseError("invite", "profile lookup failed", profileError, {
       userId: user.id,
     })
   }
 
   // token は secret なので構造化ログには含めない (userId のみ)。
   if (invitationsError) {
-    console.error("[invite] invitation lookup failed", {
-      message: invitationsError.message,
-      code: invitationsError.code,
-      details: invitationsError.details,
-      hint: invitationsError.hint,
+    logSupabaseError("invite", "invitation lookup failed", invitationsError, {
       userId: user.id,
     })
   }

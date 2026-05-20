@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 import { BottomNav } from "@/components/common/bottom-nav"
 
 export default async function MainLayout({
@@ -25,11 +26,7 @@ export default async function MainLayout({
     .single()
 
   if (profileError) {
-    console.error("[main-layout] profile lookup failed", {
-      message: profileError.message,
-      code: profileError.code,
-      details: profileError.details,
-      hint: profileError.hint,
+    logSupabaseError("main-layout", "profile lookup failed", profileError, {
       userId: user.id,
     })
   }
