@@ -11,13 +11,18 @@ Usage:
   scripts/check-supabase-error-destructure.py            # report-only, exit 0
   scripts/check-supabase-error-destructure.py --strict   # exit 1 on violations
 
-Verify axes (learnings.md L243, 2026-05-16):
-  1. True positive:   `const { data } = await ...single()`           → reported
-  2. False positive:  `const { data, error } = await ...single()`    → NOT reported
-  3. Edge case:       multi-line `const {\n  data,\n  error,\n} = ...` → NOT reported
-  4. Known limitation: Promise.all で複数 .single() が並ぶケースは行ベース近似のため
-     false positive が出うる。report-only で運用し、移行完了後に対象を絞ってから
-     --strict に切り替える前提。
+Verify axes:
+  1. True positive:   `const { data } = await ...single()`            → reported
+  2. False positive:  `const { data, error } = await ...single()`     → NOT reported
+  3. Multi-line edge case: `const {\n  data,\n  error,\n} = ...`      → NOT reported
+  4. Promise.all per-element:
+       `const [{ data: a, error: aE }, { data: b }] = Promise.all([..single(), ..single()])`
+       のように一部要素のみ error 欠落の場合、当該要素に対応する `.single()` 行のみ
+       violation として検出 (LHS 全体に error トークンが在っても false negative を
+       作らない)。
+  5. Fat-arrow guard: `=>` の `=` を assignment と誤検出しない。
+  6. Robustness: 非 UTF-8 / 読み取り不可ファイルは warning を stderr に出して skip し、
+     script 全体をクラッシュさせない (report-only 前提を壊さない)。
 """
 from __future__ import annotations
 
@@ -29,60 +34,159 @@ ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 SINGLE_RE = re.compile(r"\.(maybeSingle|single)\(\)")
 DESTRUCTURE_START_RE = re.compile(r"(?:const|let|var)\s+[\[{]")
+ARRAY_DESTRUCT_RE = re.compile(r"(?:const|let|var)\s*\[")
 ERROR_TOKEN_RE = re.compile(r"\berror\b")
 DATA_TOKEN_RE = re.compile(r"\bdata\b")
+PROMISE_ALL_RE = re.compile(r"Promise\.all\s*\(\s*\[")
 SCAN_LIMIT = 30
+
+
+def _parse_array_lhs_elements(lhs: str) -> list[str] | None:
+    """`const [{ data: a, error: aE }, { data: b }]` LHS を要素文字列リストに分割する。"""
+    m = ARRAY_DESTRUCT_RE.search(lhs)
+    if not m:
+        return None
+    start = m.end()  # position immediately after `[`
+    elements: list[str] = []
+    depth = 0
+    cur = start
+    i = start
+    while i < len(lhs):
+        c = lhs[i]
+        if c in "[{(":
+            depth += 1
+        elif c in "]})":
+            if c == "]" and depth == 0:
+                elements.append(lhs[cur:i])
+                return elements
+            depth -= 1
+        elif c == "," and depth == 0:
+            elements.append(lhs[cur:i])
+            cur = i + 1
+        i += 1
+    return None  # 構文崩壊などで `]` に達せず終了
+
+
+def _find_position_in_promise_all(
+    rhs_text: str, single_offset_in_rhs: int
+) -> int | None:
+    """
+    Promise.all([...]) 内で、当該 .single() の rhs_text 内 offset が
+    何番目の要素 (0-indexed) に属するか返す。
+    `Promise.all` が見つからない、または対応する `[` の外に offset があれば None。
+    """
+    pa_match = PROMISE_ALL_RE.search(rhs_text)
+    if not pa_match:
+        return None
+    pa_open = pa_match.end()  # `[` の直後
+    if single_offset_in_rhs < pa_open:
+        return None
+    depth = 0
+    position = 0
+    for i in range(pa_open, single_offset_in_rhs):
+        c = rhs_text[i]
+        if c in "[{(":
+            depth += 1
+        elif c in "]})":
+            if depth == 0:
+                # `Promise.all([` の対応 `]` を抜けて先にある (= 別の式)
+                return None
+            depth -= 1
+        elif c == "," and depth == 0:
+            position += 1
+    return position
 
 
 def check_file(path: Path) -> list[tuple[int, str]]:
     """Return list of (line_number_1based, line_content) violations."""
-    lines = path.read_text().splitlines()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        # script 全体クラッシュ防止: 1 ファイル読み取り失敗は stderr に出して skip。
+        print(
+            f"warning: skipped {path} ({type(e).__name__}: {e})", file=sys.stderr
+        )
+        return []
+    lines = text.splitlines()
     violations: list[tuple[int, str]] = []
 
     for idx, line in enumerate(lines):
-        if not SINGLE_RE.search(line):
+        single_match = SINGLE_RE.search(line)
+        if not single_match:
             continue
 
-        # Walk upward to find the nearest destructure declaration line.
+        # 上方向に最も近い destructure 宣言行を探す。
+        # `range(idx, idx - SCAN_LIMIT - 1, -1)` で idx - SCAN_LIMIT 行も含めて走査する
+        # (`max(-1, ...)` は idx < SCAN_LIMIT のとき index 0 まで届くようにするため)。
         block_start = -1
-        for j in range(idx, max(-1, idx - SCAN_LIMIT), -1):
+        floor = max(-1, idx - SCAN_LIMIT - 1)
+        for j in range(idx, floor, -1):
             if DESTRUCTURE_START_RE.search(lines[j]):
                 block_start = j
                 break
         if block_start < 0:
             continue
 
-        # The destructure ends at the line containing `=` after block_start.
+        # 代入の `=` を見つける。`==`/`!=`/`<=`/`>=`/`=>` は skip。
         eq_line = -1
+        eq_pos = -1
         for j in range(block_start, min(len(lines), idx + 1)):
             stripped = lines[j]
-            # Skip lines with `==` or `!=` only (no assignment).
-            eq_idx = stripped.find("=")
-            while eq_idx >= 0:
-                nxt = stripped[eq_idx + 1 : eq_idx + 2]
-                prv = stripped[eq_idx - 1 : eq_idx] if eq_idx > 0 else ""
-                if nxt != "=" and prv not in {"=", "!", "<", ">"}:
+            cur = stripped.find("=")
+            while cur >= 0:
+                nxt = stripped[cur + 1 : cur + 2]
+                prv = stripped[cur - 1 : cur] if cur > 0 else ""
+                if nxt not in {"=", ">"} and prv not in {"=", "!", "<", ">"}:
                     eq_line = j
+                    eq_pos = cur
                     break
-                eq_idx = stripped.find("=", eq_idx + 1)
+                cur = stripped.find("=", cur + 1)
             if eq_line >= 0:
                 break
         if eq_line < 0:
             continue
 
-        # Inspect text from block_start through the `=` on eq_line (LHS only).
+        # LHS テキスト (宣言開始から `=` の直前まで)。
         if eq_line == block_start:
-            eq_pos = lines[eq_line].find("=")
-            snippet = lines[eq_line][:eq_pos]
+            lhs = lines[eq_line][:eq_pos]
         else:
-            snippet = "\n".join(lines[block_start:eq_line])
-            eq_pos = lines[eq_line].find("=")
-            snippet += "\n" + lines[eq_line][:eq_pos]
+            lhs = (
+                "\n".join(lines[block_start:eq_line])
+                + "\n"
+                + lines[eq_line][:eq_pos]
+            )
 
-        if not DATA_TOKEN_RE.search(snippet):
-            # Not a Supabase result destructure (likely await without LHS data binding).
+        if not DATA_TOKEN_RE.search(lhs):
+            # `data` を bind しない destructure (Supabase 結果ではない可能性が高い)。
             continue
-        if ERROR_TOKEN_RE.search(snippet):
+
+        # `error` を検査する範囲を決める:
+        #   - default: LHS 全体
+        #   - Promise.all + array destructure: 当該 .single() の Promise.all 内 position に
+        #     対応する LHS array element だけ (per-element 検査で false negative を防ぐ)
+        check_target = lhs
+        if ARRAY_DESTRUCT_RE.search(lhs):
+            rhs_parts = [lines[eq_line][eq_pos + 1 :]]
+            for j in range(eq_line + 1, idx + 1):
+                rhs_parts.append(lines[j])
+            rhs_text = "\n".join(rhs_parts)
+
+            # rhs_text 内での .single() の offset を計算する。
+            line_offsets: dict[int, int] = {eq_line: 0}
+            offset = len(rhs_parts[0])
+            for j in range(eq_line + 1, idx + 1):
+                offset += 1  # `\n`
+                line_offsets[j] = offset
+                offset += len(lines[j])
+            single_offset = line_offsets[idx] + single_match.start()
+
+            position = _find_position_in_promise_all(rhs_text, single_offset)
+            if position is not None:
+                elements = _parse_array_lhs_elements(lhs)
+                if elements is not None and 0 <= position < len(elements):
+                    check_target = elements[position]
+
+        if ERROR_TOKEN_RE.search(check_target):
             continue
 
         violations.append((idx + 1, line.strip()))
