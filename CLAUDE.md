@@ -48,3 +48,30 @@ src/
 - Server Actions in co-located `actions.ts` files
 - All Supabase RLS: separate SELECT/UPDATE/DELETE policies (never FOR ALL)
 - Feature branches only (never commit to main directly)
+
+## irori 完了前チェックリスト（グローバルチェックリストに追加）
+
+9. Supabase 操作に `createServerClient` / service role を適切に使用しているか
+10. `new Date('YYYY-MM-DD')` を使っていないか（UTC 罠）
+11. `useEffect` 内の fetch に `AbortController` があるか
+12. `resetForm()` で全 `useState`（saving/loading 含む）をリセットしているか
+
+## 既知の罠（Gotchas）
+
+### irori 固有
+
+- **レシピマッチングで同一在庫アイテムの重複使用を防ぐ**: `usedStockIds: Set<string>` で追跡し、マッチング時に除外
+- **pdfmake v0.3.7: `setFonts()` はモジュールスコープで1回のみ**: リクエストごとに呼ぶと並行リクエストで競合リスク
+- **SECURITY DEFINER 関数には `SET search_path = public` 必須**: `auth.users` トリガーから呼ばれると `search_path=auth` で狂う
+- **`ALTER TYPE ADD VALUE` と CHECK 制約は別マイグレーションに分離**: 同一トランザクション内で新 ENUM 値を CHECK 制約で参照すると `unsafe use of new value` エラー
+- **`cookies()` + `NextResponse.redirect()` で Cookie 未伝播**: `createServerClient` でレスポンスに直接書き込む
+
+### Next.js / Supabase 共通
+
+- **`"use server"` ファイルからの非関数 export でビルド破壊**: 定数・型は共有モジュールに配置
+- **React 19 `<form action={fn}>` は auto-reset**: `onReset={(e) => e.preventDefault()}` で無効化
+- **`overflow-hidden` は `position: sticky` を破壊**: `overflow-clip` を使用
+- **`.update()` は 0 行更新でも `error: null`**: `.select("id").single()` で行数検証
+- **Server Action 副次 DB 操作のエラー握り潰し禁止**: 各クエリの `.error` を個別検証
+- **react-hook-form `watch()` + React Compiler 非互換**: `useWatch()` or `getValues()` に移行
+- **`router.back()` は履歴なしで無動作**: 明示的な遷移先を指定
