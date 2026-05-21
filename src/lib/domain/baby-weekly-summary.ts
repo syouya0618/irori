@@ -14,6 +14,23 @@ export interface BabyWeeklySummaryDay {
   sleepMinutes: number
 }
 
+/**
+ * 週間サマリーの棒グラフ y 軸スケールの最低基準値（baseline）。
+ *
+ * 疎データ（例: 6日ゼロ・1日だけ授乳1回）でローカル最大値正規化すると
+ * 「1回」が画面いっぱいに伸び誤認を招くため、最低スケールを設ける。
+ * データがこの値を上回ればグラフは伸びる（BarChart 側で
+ * `Math.max(maxValue ?? 0, ...data values, 1)` を計算）。
+ *
+ * これらは Issue #15 由来の暫定デフォルト値であり、実運用後に
+ * ユーザーのフィードバックを踏まえて再調整する想定。
+ */
+export const WEEKLY_CHART_BASELINE = {
+  feedingCount: 8, // 授乳: 一日の目安上限（回）
+  diaperCount: 10, // おむつ: 一日の目安上限（回）
+  sleepMinutes: 840, // 睡眠: 14時間 = 840分
+} as const
+
 function createEmptyDay(date: string): BabyWeeklySummaryDay {
   return {
     date,

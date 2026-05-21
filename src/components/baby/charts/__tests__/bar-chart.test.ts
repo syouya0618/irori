@@ -24,6 +24,55 @@ describe("BarChart", () => {
     expect(html).not.toContain("NaN")
   })
 
+  it("maxValue baseline で疎データの棒が満杯にならない", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BarChart, {
+        ariaLabel: "直近7日の授乳回数",
+        data: [{ label: "4/16", value: 1 }],
+        maxValue: 8,
+        barColorClassName: "text-amber-500",
+        valueFormatter: (value) => `${value}回`,
+      }),
+    )
+
+    // safeMax=8, normalized=1/8, height=max(4, 0.125*64)=8, y=12+64-8=68
+    expect(html).toContain('width="280" height="8"')
+    expect(html).toContain('y="68"')
+    // 満杯（height=64 / y=12）になっていないこと
+    expect(html).not.toContain('height="64"')
+  })
+
+  it("maxValue 未指定だと疎データの棒は満杯まで伸びる", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BarChart, {
+        ariaLabel: "直近7日の授乳回数",
+        data: [{ label: "4/16", value: 1 }],
+        barColorClassName: "text-amber-500",
+        valueFormatter: (value) => `${value}回`,
+      }),
+    )
+
+    // safeMax=1, normalized=1, height=max(4, 1*64)=64, y=12+64-64=12
+    expect(html).toContain('width="280" height="64"')
+    expect(html).toContain('y="12"')
+  })
+
+  it("データが maxValue を上回ればグラフは伸びる", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BarChart, {
+        ariaLabel: "直近7日の授乳回数",
+        data: [{ label: "4/16", value: 16 }],
+        maxValue: 8,
+        barColorClassName: "text-amber-500",
+        valueFormatter: (value) => `${value}回`,
+      }),
+    )
+
+    // safeMax=max(8,16,1)=16, normalized=1, height=64, y=12
+    expect(html).toContain('width="280" height="64"')
+    expect(html).toContain('y="12"')
+  })
+
   it("空データでも壊れた数値を出さない", () => {
     const html = renderToStaticMarkup(
       React.createElement(BarChart, {

@@ -2,6 +2,7 @@ import { Droplets, Milk, Moon } from "lucide-react"
 import { BarChart } from "@/components/baby/charts/bar-chart"
 import { formatElapsedMinutes } from "@/lib/utils/baby-log-labels"
 import {
+  WEEKLY_CHART_BASELINE,
   totalBabyWeeklySummary,
   type BabyWeeklySummaryDay,
 } from "@/lib/domain/baby-weekly-summary"
@@ -101,6 +102,7 @@ export function BabyWeeklySummary({ days }: BabyWeeklySummaryProps) {
             <BarChart
               ariaLabel="直近7日の授乳回数"
               data={feedingData}
+              maxValue={WEEKLY_CHART_BASELINE.feedingCount}
               barColorClassName="text-amber-500 dark:text-amber-300"
               valueFormatter={countLabel}
             />
@@ -116,6 +118,7 @@ export function BabyWeeklySummary({ days }: BabyWeeklySummaryProps) {
             <BarChart
               ariaLabel="直近7日の睡眠時間"
               data={sleepData}
+              maxValue={WEEKLY_CHART_BASELINE.sleepMinutes}
               barColorClassName="text-violet-500 dark:text-violet-300"
               valueFormatter={formatElapsedMinutes}
             />
@@ -131,6 +134,7 @@ export function BabyWeeklySummary({ days }: BabyWeeklySummaryProps) {
             <BarChart
               ariaLabel="直近7日のおむつ交換回数"
               data={diaperData}
+              maxValue={WEEKLY_CHART_BASELINE.diaperCount}
               barColorClassName="text-sky-500 dark:text-sky-300"
               valueFormatter={countLabel}
             />
