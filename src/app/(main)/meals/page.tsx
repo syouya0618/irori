@@ -28,7 +28,7 @@ export default async function MealsPage() {
   const startStr = formatDateKey(monday)
   const endStr = formatDateKey(sunday)
 
-  const { data: meals } = await supabase
+  const { data: meals, error: mealsError } = await supabase
     .from("meals")
     .select(
       `
@@ -41,6 +41,13 @@ export default async function MealsPage() {
     .gte("date", startStr)
     .lte("date", endStr)
     .order("date")
+
+  if (mealsError) {
+    logSupabaseError("meals", "meals lookup failed", mealsError, {
+      userId: user.id,
+      householdId: profile.household_id,
+    })
+  }
 
   return (
     <MealWeekView
