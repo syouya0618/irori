@@ -161,12 +161,18 @@ export async function addToShoppingList(itemId: string) {
     return { error: "在庫アイテムが見つかりません" }
   }
 
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from("shopping_items")
     .select("id")
     .eq("household_id", householdId)
     .ilike("name", stockItem.name)
     .limit(1)
+
+  if (existingError) {
+    logSupabaseError("stock", "shopping item duplicate check failed", existingError, {
+      householdId,
+    })
+  }
 
   if (existing && existing.length > 0) {
     return { error: "既に買い物リストにあります" }

@@ -47,10 +47,16 @@ async function getNewIngredientsForWeek(
   }
 
   // 既存の買い物リストに同名のアイテムがないかチェック
-  const { data: existingItems } = await supabase
+  const { data: existingItems, error: existingItemsError } = await supabase
     .from("shopping_items")
     .select("name")
     .eq("household_id", householdId)
+
+  if (existingItemsError) {
+    logSupabaseError("shopping", "existing items lookup failed", existingItemsError, {
+      householdId,
+    })
+  }
 
   const existingNames = new Set(
     (existingItems ?? []).map((i) => i.name.toLowerCase())
@@ -202,12 +208,18 @@ async function autoAddToStock(
   }
 
   // 同名の在庫アイテムがあるか確認（完全一致で検索）
-  const { data: matchedItems } = await supabase
+  const { data: matchedItems, error: matchedItemsError } = await supabase
     .from("stock_items")
     .select("id, name, quantity")
     .eq("household_id", householdId)
     .eq("name", itemName.trim())
     .limit(1)
+
+  if (matchedItemsError) {
+    logSupabaseError("shopping", "stock item match lookup failed", matchedItemsError, {
+      householdId,
+    })
+  }
 
   const existing = matchedItems?.[0] ?? null
 

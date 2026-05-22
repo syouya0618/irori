@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { MealCard, EmptyMealSlot } from "@/components/meals/meal-card"
 import { MealFormSheet } from "@/components/meals/meal-form-sheet"
 import { createClient } from "@/lib/supabase/client"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 import { loadTemplate } from "@/app/(main)/meals/actions"
 import { getMonday, addDays, formatDateKey } from "@/lib/utils/date"
 import { MEAL_TYPE_SHORT_LABELS } from "@/lib/utils/meal-types"
@@ -166,7 +167,7 @@ export function MealWeekView({
       const startStr = formatDateKey(start)
       const endStr = formatDateKey(addDays(start, 6))
 
-      const { data } = await supabase
+      const { data, error: mealsError } = await supabase
         .from("meals")
         .select(
           `
@@ -179,6 +180,12 @@ export function MealWeekView({
         .gte("date", startStr)
         .lte("date", endStr)
         .order("date")
+
+      if (mealsError) {
+        logSupabaseError("meal-week-view", "meals lookup failed", mealsError, {
+          householdId,
+        })
+      }
 
       if (data) {
         setMeals(data as unknown as MealWithDetails[])

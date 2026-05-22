@@ -38,6 +38,7 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Detect Supabase silent fail (.single()/.maybeSingle() without error)
-        # strict: issue #20 PR-C で全違反を解消済み。新規 silent fail は CI で fail させる。
+      - name: Detect Supabase silent fail (.single()/.maybeSingle()/multi-row without error)
+        # strict: issue #20/#14 で全違反を解消済み。新規 silent fail は CI で fail させる。
+        # issue #14 推奨3: multi-row クエリ (.select()/.rpc() で error 欠落) も検出する。
         run: ./scripts/check-supabase-error-destructure.py --strict
