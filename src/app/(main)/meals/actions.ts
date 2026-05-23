@@ -265,10 +265,16 @@ export async function saveAsTemplate(mealId: string) {
     return { error: "この献立をテンプレートとして保存する権限がありません。" }
   }
 
-  const { data: ingredients } = await supabase
+  const { data: ingredients, error: ingredientsError } = await supabase
     .from("meal_ingredients")
     .select("name, quantity, category")
     .eq("meal_id", mealId)
+
+  if (ingredientsError) {
+    logSupabaseError("meals", "meal ingredients lookup failed", ingredientsError, {
+      mealId,
+    })
+  }
 
   const { data: template, error } = await supabase
     .from("meal_templates")
@@ -370,11 +376,17 @@ export async function getTemplates() {
   if (result.error !== null) return { error: result.error, data: [] }
   const { supabase, householdId } = result.context
 
-  const { data: templates } = await supabase
+  const { data: templates, error: templatesError } = await supabase
     .from("meal_templates")
     .select("id, title, ingredients, created_at")
     .eq("household_id", householdId)
     .order("created_at", { ascending: false })
+
+  if (templatesError) {
+    logSupabaseError("meals", "templates lookup failed", templatesError, {
+      householdId,
+    })
+  }
 
   return { error: null, data: templates || [] }
 }
