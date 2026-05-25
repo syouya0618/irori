@@ -52,8 +52,8 @@ export default async function MealsPage() {
   return (
     <MealWeekView
       initialMeals={(meals as unknown as Parameters<typeof MealWeekView>[0]["initialMeals"]) ?? []}
-      householdId={profile!.household_id!}
-      userId={user!.id}
+      householdId={profile.household_id}
+      userId={user.id}
       initialWeekStart={startStr}
     />
   )
