@@ -2,7 +2,7 @@
 
 ## Tech Stack
 
-- **Framework**: Next.js 16.2.2 (App Router)
+- **Framework**: Next.js 16.2.6 (App Router)
 - **React**: 19.2
 - **Tailwind CSS**: v4.2
 - **UI**: shadcn/ui + Liquid Glass design system

@@ -27,7 +27,7 @@
 
 ## 技術スタック
 
-- Next.js 16.2.2 App Router
+- Next.js 16.2.6 App Router
 - React 19.2
 - TypeScript
 - Tailwind CSS v4.2
