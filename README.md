@@ -27,7 +27,7 @@
 
 ## 技術スタック
 
-- Next.js 16.2.2 App Router
+- Next.js 16.2.6 App Router
 - React 19.2
 - TypeScript
 - Tailwind CSS v4.2
@@ -61,7 +61,7 @@ pnpm build
 ## 重要な注意
 
 - Next.js 16では `middleware.ts` ではなく `proxy.ts` を使う。
-- Next.js 16.2.2のTurbopack buildは現環境でcompile待ちになるため、`pnpm build` は `next build --webpack` 固定。
+- `pnpm build` は Next.js 16.2.6 で Turbopack build retest 済み（Issue #17）。16.2.2 で発生した compile 待ちが解消されたため `--webpack` 固定を解除した。
 - Server Actionsは各route配下の `actions.ts` に置く。
 - Supabase RLSは `FOR ALL` ではなく SELECT/INSERT/UPDATE/DELETE を分離する。
 - `new Date("YYYY-MM-DD")` はUTC解釈の罠があるため、JST日付処理は `src/lib/utils/date-jst.ts` を使う。
