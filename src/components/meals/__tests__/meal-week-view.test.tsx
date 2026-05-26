@@ -27,6 +27,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest"
 import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react"
 import { act } from "react"
 
+import type { MealReaction } from "@/lib/types/database"
+
 // ---------------------------------------------------------------------------
 // 型: テストで扱う MealWithDetails の row shape は meal-week-view.tsx の
 //     SELECT 結果に合わせる
@@ -39,7 +41,7 @@ type MealRow = {
   title: string
   is_eating_out: boolean
   template_id: string | null
-  meal_reactions: { user_id: string; reaction: string }[]
+  meal_reactions: { user_id: string; reaction: MealReaction }[]
   meal_ingredients: { name: string; quantity: string | null; category: string }[]
 }
 
@@ -57,7 +59,9 @@ type RealtimePayload = {
 // Mock state (vi.hoisted で factory と test body で共有)
 // ---------------------------------------------------------------------------
 
-type ViFn = ReturnType<typeof import("vitest").vi.fn>
+// vi.fn() のデフォルト generic は callable な型を返さないため、明示的に
+// (...args) => unknown シグネチャを指定して invoke 可能にする
+type ViFn = ReturnType<typeof import("vitest").vi.fn<(...args: unknown[]) => unknown>>
 
 const mockState = vi.hoisted(() => ({
   listeners: [] as Array<(payload: unknown) => void>,
@@ -139,19 +143,15 @@ vi.mock("../meal-form-sheet", () => ({
   MealFormSheet: () => null,
 }))
 
-// meals/actions: MealReactions が upsertReaction を呼ぶ + URL template 経路で
-// loadTemplate が呼ばれうるので、モジュール単位で stub 化する
+// meals/actions: URL template 経路 (useEffect → loadTemplate) のみ stub。
+// MealFormSheet は () => null で隔離済みなので createMeal/updateMeal/deleteMeal/
+// upsertReaction 等は本テストの render tree から呼ばれない。
+// 将来別 action が呼ばれるようになれば test が "is not a function" で即落ちて
+// 明示的な追加判断を促す失敗モードを保持する（defensive failure mode）。
 vi.mock("@/app/(main)/meals/actions", async () => {
   const { vi: viMod } = await import("vitest")
   return {
-    createMeal: viMod.fn().mockResolvedValue({ error: null }),
-    updateMeal: viMod.fn().mockResolvedValue({ error: null }),
-    deleteMeal: viMod.fn().mockResolvedValue({ error: null }),
-    upsertReaction: viMod.fn().mockResolvedValue({ error: null }),
-    saveAsTemplate: viMod.fn().mockResolvedValue({ error: null }),
     loadTemplate: viMod.fn().mockResolvedValue({ data: null, error: null }),
-    deleteTemplate: viMod.fn().mockResolvedValue({ error: null }),
-    getTemplates: viMod.fn().mockResolvedValue({ data: [] }),
   }
 })
 
@@ -403,6 +403,9 @@ describe("MealWeekView / Realtime → refetch 反映", () => {
   it("unmount で supabase.removeChannel が呼ばれる", () => {
     const { unmount } = render(<MealWeekView {...defaultProps()} />)
 
+    // mount 時に Realtime channel 名が "meals-${householdId}" 形式で
+    // 確実に houshold スコープで購読されることを pin する
+    expect(mockState.channelNameMock).toHaveBeenCalledWith("meals-h1")
     expect(mockState.removeChannelMock).not.toHaveBeenCalled()
 
     unmount()
