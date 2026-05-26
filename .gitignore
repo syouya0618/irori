@@ -51,3 +51,6 @@ __pycache__/
 
 # codex
 .codex-pet-runs/
+
+# git worktrees (並列開発用、リポジトリには含めない)
+.worktrees/
