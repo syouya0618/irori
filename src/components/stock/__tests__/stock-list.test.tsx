@@ -28,55 +28,40 @@ import { describe, it, expect, beforeEach, vi } from "vitest"
 import { render, screen, cleanup, waitFor } from "@testing-library/react"
 import { act } from "react"
 import type { StockItemData } from "../stock-item"
+import type {
+  RealtimePayload,
+  ViFn,
+} from "@/test-utils/supabase-realtime-mock"
+import {
+  emitPayload,
+  makePayloadFor,
+  resetInlineReducerMockState,
+} from "@/test-utils/supabase-realtime-mock"
 
 // ---------------------------------------------------------------------------
 // Mock state (vi.hoisted で factory と test body で共有)
+//
+// 共通の Realtime mock フィールドに加え、stock 固有の
+// `checkAndAutoAddLowStockMock` を superset として持つ
+// （Realtime 共通 helper は知らない追加フィールド）。
 // ---------------------------------------------------------------------------
-
-type RealtimePayload = {
-  eventType: "INSERT" | "UPDATE" | "DELETE"
-  schema: string
-  table: string
-  commit_timestamp: string
-  errors: string[]
-  new: StockItemData | Record<string, never>
-  old: { id: string } | Record<string, never>
-}
 
 const mockState = vi.hoisted(() => ({
   listeners: [] as Array<(payload: unknown) => void>,
-  removeChannelMock: undefined as unknown as ReturnType<typeof import("vitest").vi.fn>,
-  fromMock: undefined as unknown as ReturnType<typeof import("vitest").vi.fn>,
-  checkAndAutoAddLowStockMock: undefined as unknown as ReturnType<typeof import("vitest").vi.fn>,
+  removeChannelMock: undefined as unknown as ViFn,
+  fromMock: undefined as unknown as ViFn,
+  checkAndAutoAddLowStockMock: undefined as unknown as ViFn,
 }))
 
 vi.mock("@/lib/supabase/client", async () => {
   const { vi: viMod } = await import("vitest")
-  mockState.removeChannelMock = viMod.fn().mockResolvedValue("ok")
-  mockState.fromMock = viMod.fn().mockImplementation(() => {
-    throw new Error(
+  const { buildInlineReducerSupabaseMock } = await import(
+    "@/test-utils/supabase-realtime-mock"
+  )
+  return buildInlineReducerSupabaseMock(viMod, mockState, {
+    throwMessage:
       "supabase.from() should not be called in StockList Realtime callback tests",
-    )
   })
-  return {
-    createClient: () => {
-      const channel: {
-        on: (event: string, filter: unknown, cb: (p: unknown) => void) => typeof channel
-        subscribe: () => typeof channel
-      } = {
-        on: (_event, _filter, cb) => {
-          mockState.listeners.push(cb)
-          return channel
-        },
-        subscribe: () => channel,
-      }
-      return {
-        channel: () => channel,
-        removeChannel: mockState.removeChannelMock,
-        from: mockState.fromMock,
-      }
-    },
-  }
 })
 
 // 子コンポーネントは server action / useRouter を呼ぶため無効化
@@ -133,36 +118,7 @@ function makeItem(
   }
 }
 
-function makePayload(
-  eventType: "INSERT" | "UPDATE",
-  item: StockItemData,
-): RealtimePayload
-function makePayload(eventType: "DELETE", itemId: string): RealtimePayload
-function makePayload(
-  eventType: "INSERT" | "UPDATE" | "DELETE",
-  itemOrId: StockItemData | string,
-): RealtimePayload {
-  const base = {
-    schema: "public",
-    table: "stock_items",
-    commit_timestamp: "2026-04-16T03:30:00Z",
-    errors: [],
-  }
-  if (eventType === "DELETE") {
-    return {
-      ...base,
-      eventType,
-      new: {},
-      old: { id: itemOrId as string },
-    }
-  }
-  return {
-    ...base,
-    eventType,
-    new: itemOrId as StockItemData,
-    old: {},
-  }
-}
+const makePayload = makePayloadFor<StockItemData>("stock_items")
 
 function defaultProps(
   overrides: Partial<Parameters<typeof StockList>[0]> = {},
@@ -176,23 +132,22 @@ function defaultProps(
   }
 }
 
-function emit(payload: RealtimePayload) {
-  for (const cb of mockState.listeners) cb(payload)
-}
+const emit = (payload: RealtimePayload<StockItemData>) =>
+  emitPayload(mockState, payload)
 
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
-  // cleanup() で前テストの unmount を発火させ removeChannel カウントが
-  // テスト境界を跨がぬよう、その後で mock state をリセットする
+  // cleanup() → resetInlineReducerMockState() の順序が load-bearing:
+  // cleanup() で前テストの unmount が走り removeChannel カウントが +1 されるので、
+  // その後で reset() (内部で mockClear) を呼ぶことでカウントを境界跨ぎさせない。
   cleanup()
   // checkAndAutoAddLowStock の 30 分 throttle 状態をテスト間で絶縁
   sessionStorage.clear()
-  mockState.listeners.length = 0
-  mockState.removeChannelMock.mockClear()
-  mockState.fromMock.mockClear()
+  resetInlineReducerMockState(mockState)
+  // stock 固有の mock は helper では掃かれないので個別に clear
   mockState.checkAndAutoAddLowStockMock.mockClear()
 })
 
