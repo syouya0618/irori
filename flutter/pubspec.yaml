@@ -1,0 +1,53 @@
+name: irori
+description: A family productivity app for baby logs, meals, shopping, and stock. (Flutter migration of the Next.js original)
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.12.0
+  flutter: ^3.44.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  intl: ^0.19.0
+
+  # Supabase: Auth / DB / Realtime / Storage
+  supabase_flutter: ^2.5.0
+
+  # State 管理 / Routing
+  flutter_riverpod: ^2.5.0
+  go_router: ^14.2.0
+
+  # PDF (baby-report はクライアントサイド生成 — Section 4 / 7.2.3 参照)
+  pdf: ^3.10.0
+  printing: ^5.13.0
+
+  # Charts (baby 7 日サマリー Bar Chart, trend Line Chart)
+  fl_chart: ^0.68.0
+
+  # Models (freezed immutable + JSON 自動復元)
+  freezed_annotation: ^2.4.0
+  json_annotation: ^4.9.0
+
+  # Icons (既存 Lucide React の移植)
+  lucide_icons_flutter: ^3.0.0
+
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  build_runner: ^2.4.0
+  freezed: ^2.5.0
+  json_serializable: ^6.8.0
+  custom_lint: ^0.6.0
+  riverpod_lint: ^2.3.0
+
+flutter:
+  uses-material-design: true
+  # 既存 Liquid Glass design system のフォントは Noto Sans JP を想定。
+  # Phase 1 着手時に fonts assets を追加する (PDF 用 Noto Sans JP 埋め込みと共通化)。
