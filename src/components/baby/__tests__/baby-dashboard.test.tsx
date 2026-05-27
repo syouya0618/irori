@@ -32,55 +32,36 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vites
 import { render, screen, cleanup } from "@testing-library/react"
 import { act } from "react"
 import type { BabyLogData } from "@/lib/types/baby"
+import type {
+  RealtimePayload,
+  ViFn,
+} from "@/test-utils/supabase-realtime-mock"
+import {
+  emitPayload,
+  makePayloadFor,
+  resetInlineReducerMockState,
+} from "@/test-utils/supabase-realtime-mock"
 
 // ---------------------------------------------------------------------------
 // Mock state (vi.hoisted で factory と test body で共有)
 // ---------------------------------------------------------------------------
 
-type RealtimePayload = {
-  eventType: "INSERT" | "UPDATE" | "DELETE"
-  schema: string
-  table: string
-  commit_timestamp: string
-  errors: string[]
-  new: BabyLogData | Record<string, never>
-  old: { id: string } | Record<string, never>
-}
-
 const mockState = vi.hoisted(() => ({
   listeners: [] as Array<(payload: unknown) => void>,
-  removeChannelMock: undefined as unknown as ReturnType<typeof import("vitest").vi.fn>,
-  fromMock: undefined as unknown as ReturnType<typeof import("vitest").vi.fn>,
+  removeChannelMock: undefined as unknown as ViFn,
+  fromMock: undefined as unknown as ViFn,
 }))
 
 vi.mock("@/lib/supabase/client", async () => {
   const { vi: viMod } = await import("vitest")
-  mockState.removeChannelMock = viMod.fn().mockResolvedValue("ok")
-  mockState.fromMock = viMod.fn().mockImplementation(() => {
-    throw new Error(
+  const { buildInlineReducerSupabaseMock } = await import(
+    "@/test-utils/supabase-realtime-mock"
+  )
+  return buildInlineReducerSupabaseMock(viMod, mockState, {
+    throwMessage:
       "supabase.from() should not be called in BabyDashboard tests " +
-        "(selectedDate must not change to trigger the date-change useEffect)",
-    )
+      "(selectedDate must not change to trigger the date-change useEffect)",
   })
-  return {
-    createClient: () => {
-      const channel: {
-        on: (event: string, filter: unknown, cb: (p: unknown) => void) => typeof channel
-        subscribe: () => typeof channel
-      } = {
-        on: (_event, _filter, cb) => {
-          mockState.listeners.push(cb)
-          return channel
-        },
-        subscribe: () => channel,
-      }
-      return {
-        channel: () => channel,
-        removeChannel: mockState.removeChannelMock,
-        from: mockState.fromMock,
-      }
-    },
-  }
 })
 
 // ---------------------------------------------------------------------------
@@ -119,36 +100,7 @@ function makeLog(
   return { ...baseLog, ...overrides }
 }
 
-function makePayload(
-  eventType: "INSERT" | "UPDATE",
-  log: BabyLogData,
-): RealtimePayload
-function makePayload(eventType: "DELETE", logId: string): RealtimePayload
-function makePayload(
-  eventType: "INSERT" | "UPDATE" | "DELETE",
-  logOrId: BabyLogData | string,
-): RealtimePayload {
-  const base = {
-    schema: "public",
-    table: "baby_logs",
-    commit_timestamp: "2026-04-16T03:30:00Z",
-    errors: [],
-  }
-  if (eventType === "DELETE") {
-    return {
-      ...base,
-      eventType,
-      new: {},
-      old: { id: logOrId as string },
-    }
-  }
-  return {
-    ...base,
-    eventType,
-    new: logOrId as BabyLogData,
-    old: {},
-  }
-}
+const makePayload = makePayloadFor<BabyLogData>("baby_logs")
 
 function defaultProps(
   overrides: Partial<Parameters<typeof BabyDashboard>[0]> = {},
@@ -164,9 +116,8 @@ function defaultProps(
   }
 }
 
-function emit(payload: RealtimePayload) {
-  for (const cb of mockState.listeners) cb(payload)
-}
+const emit = (payload: RealtimePayload<BabyLogData>) =>
+  emitPayload(mockState, payload)
 
 /**
  * 指定 ariaLabel の BarChart の SVG <title> テキスト一覧を返す。
@@ -195,14 +146,13 @@ afterAll(() => {
 })
 
 beforeEach(() => {
-  // cleanup() で前テストの DOM/effect を片付け → removeChannel の呼び出しが
-  // 1 increment 増える可能性があるので、その後に mock state をリセットする。
+  // cleanup() → resetInlineReducerMockState() の順序が load-bearing:
+  // cleanup() で前テストの unmount が走り removeChannel カウントが +1 されるので、
+  // その後で reset() (内部で mockClear) を呼ぶことでカウントを境界跨ぎさせない。
   cleanup()
   // case 10 (真夜中跨ぎ) が時刻を進めるため、毎テスト先頭で FIXED_NOW に戻す。
   vi.setSystemTime(FIXED_NOW)
-  mockState.listeners.length = 0
-  mockState.removeChannelMock.mockClear()
-  mockState.fromMock.mockClear()
+  resetInlineReducerMockState(mockState)
 })
 
 // ---------------------------------------------------------------------------

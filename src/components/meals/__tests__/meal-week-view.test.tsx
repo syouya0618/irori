@@ -28,6 +28,16 @@ import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/re
 import { act } from "react"
 
 import type { MealReaction } from "@/lib/types/database"
+import type {
+  RealtimePayload,
+  ViFn,
+} from "@/test-utils/supabase-realtime-mock"
+import {
+  emitPayload,
+  makePayloadFor,
+  resetRefetchMockState,
+  setRefetchData,
+} from "@/test-utils/supabase-realtime-mock"
 
 // ---------------------------------------------------------------------------
 // 型: テストで扱う MealWithDetails の row shape は meal-week-view.tsx の
@@ -45,23 +55,11 @@ type MealRow = {
   meal_ingredients: { name: string; quantity: string | null; category: string }[]
 }
 
-type RealtimePayload = {
-  eventType: "INSERT" | "UPDATE" | "DELETE"
-  schema: string
-  table: string
-  commit_timestamp: string
-  errors: string[]
-  new: MealRow | Record<string, never>
-  old: { id: string } | Record<string, never>
-}
-
 // ---------------------------------------------------------------------------
 // Mock state (vi.hoisted で factory と test body で共有)
+// refetch style: chain mock を test body から個別 assertion する前提のため、
+// 各 mock を mockState 経由で公開する
 // ---------------------------------------------------------------------------
-
-// vi.fn() のデフォルト generic は callable な型を返さないため、明示的に
-// (...args) => unknown シグネチャを指定して invoke 可能にする
-type ViFn = ReturnType<typeof import("vitest").vi.fn<(...args: unknown[]) => unknown>>
 
 const mockState = vi.hoisted(() => ({
   listeners: [] as Array<(payload: unknown) => void>,
@@ -73,51 +71,16 @@ const mockState = vi.hoisted(() => ({
   gteMock: undefined as unknown as ViFn,
   lteMock: undefined as unknown as ViFn,
   orderMock: undefined as unknown as ViFn,
-  // 次に fetchMeals が呼ばれた時に返す data。テスト側で setMockMeals() で更新する。
-  currentMeals: [] as Array<Record<string, unknown>>,
+  /** 次回 fetchMeals が走った時に .order() が resolve する data。setRefetchData() で更新 */
+  currentResolveData: [] as MealRow[],
 }))
 
 vi.mock("@/lib/supabase/client", async () => {
   const { vi: viMod } = await import("vitest")
-  mockState.removeChannelMock = viMod.fn().mockResolvedValue("ok")
-  mockState.channelNameMock = viMod.fn()
-
-  // chainable query builder:
-  // .from("meals").select(...).eq("household_id", ...).gte("date", start).lte("date", end).order("date")
-  // 最後の .order() が thenable (Promise) として { data, error } を resolve する。
-  mockState.orderMock = viMod
-    .fn()
-    .mockImplementation(() =>
-      Promise.resolve({ data: mockState.currentMeals, error: null }),
-    )
-  mockState.lteMock = viMod.fn(() => ({ order: mockState.orderMock }))
-  mockState.gteMock = viMod.fn(() => ({ lte: mockState.lteMock }))
-  mockState.eqMock = viMod.fn(() => ({ gte: mockState.gteMock }))
-  mockState.selectMock = viMod.fn(() => ({ eq: mockState.eqMock }))
-  mockState.fromMock = viMod.fn(() => ({ select: mockState.selectMock }))
-
-  return {
-    createClient: () => {
-      const channel: {
-        on: (event: string, filter: unknown, cb: (p: unknown) => void) => typeof channel
-        subscribe: () => typeof channel
-      } = {
-        on: (_event, _filter, cb) => {
-          mockState.listeners.push(cb)
-          return channel
-        },
-        subscribe: () => channel,
-      }
-      return {
-        channel: (name: string) => {
-          mockState.channelNameMock(name)
-          return channel
-        },
-        removeChannel: mockState.removeChannelMock,
-        from: mockState.fromMock,
-      }
-    },
-  }
+  const { buildRefetchSupabaseMock } = await import(
+    "@/test-utils/supabase-realtime-mock"
+  )
+  return buildRefetchSupabaseMock<MealRow>(viMod, mockState)
 })
 
 // next/navigation: useSearchParams は空、useRouter は no-op
@@ -181,36 +144,7 @@ function makeMeal(
   }
 }
 
-function makePayload(
-  eventType: "INSERT" | "UPDATE",
-  meal: MealRow,
-): RealtimePayload
-function makePayload(eventType: "DELETE", mealId: string): RealtimePayload
-function makePayload(
-  eventType: "INSERT" | "UPDATE" | "DELETE",
-  mealOrId: MealRow | string,
-): RealtimePayload {
-  const base = {
-    schema: "public",
-    table: "meals",
-    commit_timestamp: "2026-04-13T03:30:00Z",
-    errors: [],
-  }
-  if (eventType === "DELETE") {
-    return {
-      ...base,
-      eventType,
-      new: {},
-      old: { id: mealOrId as string },
-    }
-  }
-  return {
-    ...base,
-    eventType,
-    new: mealOrId as MealRow,
-    old: {},
-  }
-}
+const makePayload = makePayloadFor<MealRow>("meals")
 
 function defaultProps(
   overrides: Partial<Parameters<typeof MealWeekView>[0]> = {},
@@ -224,36 +158,25 @@ function defaultProps(
   }
 }
 
-function emit(payload: RealtimePayload) {
-  for (const cb of mockState.listeners) cb(payload)
-}
+const emit = (payload: RealtimePayload<MealRow>) =>
+  emitPayload(mockState, payload)
 
 /**
  * 次に fetchMeals が呼ばれた時に SELECT 結果として返すデータをセットする。
  * Realtime emit より前に呼ぶ契約。
  */
-function setMockMeals(rows: MealRow[]) {
-  mockState.currentMeals = rows as unknown as Array<Record<string, unknown>>
-}
+const setMockMeals = (rows: MealRow[]) => setRefetchData(mockState, rows)
 
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
-  // cleanup() で前テストの unmount を発火させ removeChannel カウントが
-  // テスト境界を跨がぬよう、その後で mock state をリセットする
+  // cleanup() → resetRefetchMockState() の順序が load-bearing:
+  // cleanup() で前テストの unmount が走り removeChannel カウントが +1 されるので、
+  // その後で reset() (内部で mockClear) を呼ぶことでカウントを境界跨ぎさせない。
   cleanup()
-  mockState.listeners.length = 0
-  mockState.currentMeals = []
-  mockState.removeChannelMock.mockClear()
-  mockState.channelNameMock.mockClear()
-  mockState.fromMock.mockClear()
-  mockState.selectMock.mockClear()
-  mockState.eqMock.mockClear()
-  mockState.gteMock.mockClear()
-  mockState.lteMock.mockClear()
-  mockState.orderMock.mockClear()
+  resetRefetchMockState(mockState)
 })
 
 // ---------------------------------------------------------------------------

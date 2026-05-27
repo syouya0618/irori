@@ -24,54 +24,35 @@ import { describe, it, expect, beforeEach, vi } from "vitest"
 import { render, screen, cleanup } from "@testing-library/react"
 import { act } from "react"
 import type { ShoppingItemData } from "../shopping-item"
+import type {
+  RealtimePayload,
+  ViFn,
+} from "@/test-utils/supabase-realtime-mock"
+import {
+  emitPayload,
+  makePayloadFor,
+  resetInlineReducerMockState,
+} from "@/test-utils/supabase-realtime-mock"
 
 // ---------------------------------------------------------------------------
 // Mock state (vi.hoisted で factory と test body で共有)
 // ---------------------------------------------------------------------------
 
-type RealtimePayload = {
-  eventType: "INSERT" | "UPDATE" | "DELETE"
-  schema: string
-  table: string
-  commit_timestamp: string
-  errors: string[]
-  new: ShoppingItemData | Record<string, never>
-  old: { id: string } | Record<string, never>
-}
-
 const mockState = vi.hoisted(() => ({
   listeners: [] as Array<(payload: unknown) => void>,
-  removeChannelMock: undefined as unknown as ReturnType<typeof import("vitest").vi.fn>,
-  fromMock: undefined as unknown as ReturnType<typeof import("vitest").vi.fn>,
+  removeChannelMock: undefined as unknown as ViFn,
+  fromMock: undefined as unknown as ViFn,
 }))
 
 vi.mock("@/lib/supabase/client", async () => {
   const { vi: viMod } = await import("vitest")
-  mockState.removeChannelMock = viMod.fn().mockResolvedValue("ok")
-  mockState.fromMock = viMod.fn().mockImplementation(() => {
-    throw new Error(
+  const { buildInlineReducerSupabaseMock } = await import(
+    "@/test-utils/supabase-realtime-mock"
+  )
+  return buildInlineReducerSupabaseMock(viMod, mockState, {
+    throwMessage:
       "supabase.from() should not be called in ShoppingList Realtime callback tests",
-    )
   })
-  return {
-    createClient: () => {
-      const channel: {
-        on: (event: string, filter: unknown, cb: (p: unknown) => void) => typeof channel
-        subscribe: () => typeof channel
-      } = {
-        on: (_event, _filter, cb) => {
-          mockState.listeners.push(cb)
-          return channel
-        },
-        subscribe: () => channel,
-      }
-      return {
-        channel: () => channel,
-        removeChannel: mockState.removeChannelMock,
-        from: mockState.fromMock,
-      }
-    },
-  }
 })
 
 // 子フォームは server action を呼ぶので無効化
@@ -116,36 +97,7 @@ function makeItem(
   }
 }
 
-function makePayload(
-  eventType: "INSERT" | "UPDATE",
-  item: ShoppingItemData,
-): RealtimePayload
-function makePayload(eventType: "DELETE", itemId: string): RealtimePayload
-function makePayload(
-  eventType: "INSERT" | "UPDATE" | "DELETE",
-  itemOrId: ShoppingItemData | string,
-): RealtimePayload {
-  const base = {
-    schema: "public",
-    table: "shopping_items",
-    commit_timestamp: "2026-04-16T03:30:00Z",
-    errors: [],
-  }
-  if (eventType === "DELETE") {
-    return {
-      ...base,
-      eventType,
-      new: {},
-      old: { id: itemOrId as string },
-    }
-  }
-  return {
-    ...base,
-    eventType,
-    new: itemOrId as ShoppingItemData,
-    old: {},
-  }
-}
+const makePayload = makePayloadFor<ShoppingItemData>("shopping_items")
 
 function defaultProps(
   overrides: Partial<Parameters<typeof ShoppingList>[0]> = {},
@@ -158,21 +110,19 @@ function defaultProps(
   }
 }
 
-function emit(payload: RealtimePayload) {
-  for (const cb of mockState.listeners) cb(payload)
-}
+const emit = (payload: RealtimePayload<ShoppingItemData>) =>
+  emitPayload(mockState, payload)
 
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
-  // cleanup() で前テストの unmount を発火させ removeChannel カウントが
-  // テスト境界を跨がぬよう、その後で mock state をリセットする
+  // cleanup() → resetInlineReducerMockState() の順序が load-bearing:
+  // cleanup() で前テストの unmount が走り removeChannel カウントが +1 されるので、
+  // その後で reset() (内部で mockClear) を呼ぶことでカウントを境界跨ぎさせない。
   cleanup()
-  mockState.listeners.length = 0
-  mockState.removeChannelMock.mockClear()
-  mockState.fromMock.mockClear()
+  resetInlineReducerMockState(mockState)
 })
 
 // ---------------------------------------------------------------------------
