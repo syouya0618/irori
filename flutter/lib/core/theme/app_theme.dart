@@ -11,15 +11,16 @@ import 'colors.dart';
 /// dark mode は Phase 4 cutover 後の改善 task として保留 (Section 7.5.2)。
 final ThemeData iroriTheme = ThemeData(
   useMaterial3: true,
-  colorScheme: ColorScheme.fromSeed(
-    seedColor: IroriColors.primary,
-    brightness: Brightness.light,
-  ).copyWith(
-    primary: IroriColors.primary,
-    surface: IroriColors.surface,
-    onSurface: IroriColors.textPrimary,
-    error: IroriColors.error,
-  ),
+  colorScheme:
+      ColorScheme.fromSeed(
+        seedColor: IroriColors.primary,
+        brightness: Brightness.light,
+      ).copyWith(
+        primary: IroriColors.primary,
+        surface: IroriColors.surface,
+        onSurface: IroriColors.textPrimary,
+        error: IroriColors.error,
+      ),
   scaffoldBackgroundColor: const Color(0xFFFFF7ED), // orange-50 (warm 背景)
   textTheme: const TextTheme(
     displayLarge: TextStyle(

@@ -38,10 +38,10 @@ class WelcomePage extends StatelessWidget {
                       children: [
                         Text(
                           'irori',
-                          style:
-                              Theme.of(context).textTheme.displayLarge?.copyWith(
-                                    color: IroriColors.primary,
-                                  ),
+                          style: Theme.of(context).textTheme.displayLarge
+                              ?.copyWith(
+                                color: IroriColors.primary,
+                              ),
                         ),
                         const SizedBox(height: 12),
                         Text(
