@@ -12,40 +12,42 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
-  intl: ^0.19.0
+  intl: ^0.20.2
 
   # Supabase: Auth / DB / Realtime / Storage
-  supabase_flutter: ^2.5.0
+  supabase_flutter: ^2.12.4
 
   # State 管理 / Routing
-  flutter_riverpod: ^2.5.0
-  go_router: ^14.2.0
+  # riverpod 3.x は API 変更あり (StreamNotifier → AsyncNotifier 推奨等)
+  # 設計書 Section 4 のサンプルは Phase 1 着手時に 3.x API で再執筆する。
+  flutter_riverpod: ^3.3.1
+  go_router: ^17.2.3
 
   # PDF (baby-report はクライアントサイド生成 — Section 4 / 7.2.3 参照)
-  pdf: ^3.10.0
-  printing: ^5.13.0
+  pdf: ^3.12.0
+  printing: ^5.14.3
 
   # Charts (baby 7 日サマリー Bar Chart, trend Line Chart)
-  fl_chart: ^0.68.0
+  fl_chart: ^1.2.0
 
-  # Models (freezed immutable + JSON 自動復元)
-  freezed_annotation: ^2.4.0
-  json_annotation: ^4.9.0
+  # Models (freezed 3.x + JSON 自動復元)
+  freezed_annotation: ^3.1.0
+  json_annotation: ^4.12.0
 
   # Icons (既存 Lucide React の移植)
-  lucide_icons_flutter: ^3.0.0
+  lucide_icons_flutter: ^3.1.14
 
-  cupertino_icons: ^1.0.6
+  cupertino_icons: ^1.0.9
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^4.0.0
-  build_runner: ^2.4.0
-  freezed: ^2.5.0
-  json_serializable: ^6.8.0
-  custom_lint: ^0.6.0
-  riverpod_lint: ^2.3.0
+  flutter_lints: ^6.0.0
+  build_runner: ^2.15.0
+  freezed: ^3.2.5
+  json_serializable: ^6.14.0
+  custom_lint: ^0.8.1
+  riverpod_lint: ^3.1.3
 
 flutter:
   uses-material-design: true

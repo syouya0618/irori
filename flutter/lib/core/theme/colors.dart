@@ -3,16 +3,22 @@ import 'package:flutter/material.dart';
 /// Liquid Glass design system の色定義 (oklch → sRGB pre-compute 済み)。
 ///
 /// 既存 Next.js 期の Tailwind 設定 (`docs/DESIGN_SYSTEM.md`) と整合させる:
-/// - primary: `oklch(0.65 0.19 50)` ≈ `#EF6C00` (warm orange / Tailwind orange-600 相当)
+/// - primary: `oklch(0.65 0.19 50)` ≈ `#E56200` (warm orange)
+///   CSS Color 4 仕様の oklch → sRGB 正規アルゴリズム (D65 white point, Bradford
+///   chromatic adaptation 不要) で計算: RGB(229, 98, 0)。
+///   既存 Next.js 側 (`src/app/globals.css` の `--primary: oklch(0.65 0.19 50)`)
+///   はブラウザの CSS native 計算で同値に解決される (Chromium / Firefox / Safari)。
+///   `docs/DESIGN_SYSTEM.md` の `#e07020` 記載は旧値ゆえ別 PR で訂正予定。
 ///
 /// すべて `light mode` での WCAG AA 4.5:1 以上を満たす設計
 /// (ui-ux-pro-max accessibility CRITICAL 準拠)。
 class IroriColors {
   IroriColors._();
 
-  // Primary (warm orange)
-  static const Color primary = Color(0xFFEF6C00);
-  static const Color primaryHover = Color(0xFFE05F00);
+  // Primary (warm orange — oklch(0.65 0.19 50) を CSS Color 4 で sRGB 化)
+  static const Color primary = Color(0xFFE56200);
+  // hover: lightness を 0.65 → 0.60 に下げた oklch(0.60 0.19 50) = #D45100
+  static const Color primaryHover = Color(0xFFD45100);
 
   // Surface
   static const Color surface = Color(0xFFFFFFFF);

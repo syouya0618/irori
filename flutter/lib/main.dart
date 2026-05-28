@@ -13,6 +13,10 @@ import 'core/theme/app_theme.dart';
 ///
 /// Phase 0 では env が未設定でも GlassCard の Hello World が描画される設計
 /// (Supabase.initialize は env がある時のみ実行)。
+///
+/// FIXME(phase-1): 本 skip ロジックは Phase 0 限定。auth 機能を加える Phase 1 で、
+/// production build (`kReleaseMode == true`) で env が空なら StateError を throw する
+/// ガードに置換すること。さもないと Vercel env 設定忘れが silent fail で auth 全壊。
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 

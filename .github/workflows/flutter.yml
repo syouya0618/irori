@@ -1,0 +1,53 @@
+name: Flutter CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'flutter/**'
+      - '.github/workflows/flutter.yml'
+  pull_request:
+    paths:
+      - 'flutter/**'
+      - '.github/workflows/flutter.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.0'
+          channel: 'stable'
+          cache: true
+
+      - name: Show versions
+        run: |
+          flutter --version
+          dart --version
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Verify formatting
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Static analysis
+        run: flutter analyze --fatal-infos
+
+      - name: Run tests
+        run: flutter test --reporter=expanded
+
+      - name: Build web (CanvasKit default, no env defines)
+        # SUPABASE_URL / ANON_KEY は CI では注入せず、main.dart の skip ロジックで
+        # Hello World のみ build 可能であることを検証する。
+        # Flutter 3.29 で `--web-renderer` フラグ削除済み (release notes 3.29.0)。
+        # 現在は --wasm で skwasm/canvaskit 切替、未指定なら canvaskit ベースの build。
+        run: flutter build web --release

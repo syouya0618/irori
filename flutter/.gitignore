@@ -37,9 +37,6 @@ app.*.symbols
 # Obfuscation related
 app.*.map.json
 
-# Build artifacts (Web は build/web/)
-/build/
-
 # Local environment
 .env
 .env.local

@@ -31,7 +31,7 @@ asdf local flutter 3.44.0
 claude mcp add --transport stdio dart -- dart mcp-server
 ```
 
-これで Claude が widget tree introspection / `pub_dev_search` / `pubspec.yaml` 管理 / **Agentic Hot Reload** (Flutter 3.44+) を利用可能になる。
+これで Claude が widget tree introspection / `pub_dev_search` / `pubspec.yaml` 管理 / テスト実行 / hot reload 連携を利用可能になる (要件: Dart SDK 3.9+)。
 
 ### 3. flutter project の初期化
 
@@ -64,7 +64,7 @@ fvm flutter test
 fvm flutter run -d chrome   # ローカル browser で Hello World 確認
 ```
 
-### 5. Production build (CanvasKit がデフォルト)
+### 5. Production build
 
 ```bash
 fvm flutter build web --release
@@ -72,7 +72,7 @@ fvm flutter build web --release
 
 出力先: `build/web/`
 
-Flutter 3.44 では CanvasKit が default renderer であり、`--web-renderer canvaskit` フラグは廃止済み (`flutter build web` で自動選択)。WebAssembly + skwasm に切り替えるなら `--wasm` を付けるが、本プロジェクトでは Phase 4 後に再評価する。
+`--web-renderer` フラグは [Flutter 3.29.0 release notes](https://docs.flutter.dev/release/release-notes/release-notes-3.29.0) で削除済み (*"[tool] Removes deprecated --web-renderer parameter"*)。現在の Flutter は `--wasm` 未指定なら canvaskit ベースで build される (Liquid Glass `BackdropFilter` のフル対応に必要)。WebAssembly + skwasm に切り替えるなら `--wasm` を付けるが、本プロジェクトでは Phase 4 後に再評価する。
 
 ### 6. Vercel deployment (新規 project)
 
@@ -80,7 +80,7 @@ Flutter 3.44 では CanvasKit が default renderer であり、`--web-renderer c
 2. リポジトリ: `syouya0618/irori`
 3. Root Directory: `flutter`
 4. Framework Preset: `Other`
-5. Build Command: `flutter build web --release --dart-define=SUPABASE_URL=$SUPABASE_URL --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY` (Flutter 3.44 では CanvasKit がデフォルト renderer)
+5. Build Command: `flutter build web --release --dart-define=SUPABASE_URL=$SUPABASE_URL --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY` (`--web-renderer` フラグは Flutter 3.29+ で削除済み、`--wasm` 未指定なら canvaskit base)
 6. Output Directory: `build/web`
 7. Install Command: `(空欄)` または `dart pub global activate fvm && fvm install 3.44.0 && fvm flutter pub get`
 
@@ -91,68 +91,20 @@ Flutter 3.44 では CanvasKit が default renderer であり、`--web-renderer c
 Supabase Dashboard → Auth → URL Configuration → Allowed Redirect URLs に
 `https://irori-flutter-*.vercel.app/*` を wildcard 登録 (Section 7.2.1)。
 
-### 8. CI workflow を手動で配置
+### 8. CI workflow
 
-⚠️ **重要**: 以下の YAML ファイルは PR #46 には含まれていない (Claude Code の PreToolUse security hook が `.github/workflows/*.yml` への書き込みを拒否するため)。**主が手動で `.github/workflows/flutter.yml` を作成し、以下の内容を貼り付ける必要がある**。配置後の `git add` + `git commit` も主の手作業じゃ。
+Phase 0 PR で [`.github/workflows/flutter.yml`](../.github/workflows/flutter.yml) を配置済み。
 
-`.github/workflows/flutter.yml` に以下を保存:
+実行内容:
+- `flutter pub get` で依存解決
+- `dart format --set-exit-if-changed` でフォーマット検証
+- `flutter analyze --fatal-infos` で静的解析
+- `flutter test` で widget test 実行
+- `flutter build web --release` で build 検証 (SUPABASE env は CI では注入せず、main.dart の skip ロジックで Hello World のみ build を確認)
 
-```yaml
-name: Flutter CI
+トリガー: `flutter/**` または `.github/workflows/flutter.yml` の変更を含む push (main) / pull_request。
 
-on:
-  push:
-    branches: [main]
-    paths:
-      - 'flutter/**'
-      - '.github/workflows/flutter.yml'
-  pull_request:
-    paths:
-      - 'flutter/**'
-      - '.github/workflows/flutter.yml'
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: flutter
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.44.0'
-          channel: 'stable'
-          cache: true
-
-      - name: Show versions
-        run: |
-          flutter --version
-          dart --version
-
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Verify formatting
-        run: dart format --output=none --set-exit-if-changed .
-
-      - name: Static analysis
-        run: flutter analyze --fatal-infos
-
-      - name: Run tests
-        run: flutter test --reporter=expanded
-
-      - name: Build web (CanvasKit default, no env defines)
-        # SUPABASE_URL / ANON_KEY は CI では注入せず、main.dart の skip ロジックで
-        # Hello World のみ build 可能であることを検証する。
-        # Flutter 3.44 では CanvasKit が default renderer で `--web-renderer` フラグは廃止済み。
-        run: flutter build web --release
-```
-
-セキュリティ注: 本 workflow に untrusted user input (issue title / PR body 等) は使用しておらぬ。固定の `run:` コマンドのみ。
+セキュリティ注: 本 workflow に untrusted user input (issue title / PR body 等) は使用しておらぬ。すべて固定の `run:` コマンド。
 
 ## ディレクトリ構造
 
