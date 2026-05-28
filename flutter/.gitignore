@@ -43,3 +43,6 @@ app.*.map.json
 
 # build_runner generated files が tracked される場合は除外しない
 # (freezed / json_serializable の .g.dart / .freezed.dart は generate して commit する方針)
+
+# FVM Version Cache
+.fvm/

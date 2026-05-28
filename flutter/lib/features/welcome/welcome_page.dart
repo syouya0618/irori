@@ -77,8 +77,8 @@ class _BlurBackdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: const BoxDecoration(
+    return const DecoratedBox(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -89,7 +89,7 @@ class _BlurBackdrop extends StatelessWidget {
         ),
       ),
       child: Stack(
-        children: const [
+        children: [
           Positioned(
             top: 80,
             left: 40,

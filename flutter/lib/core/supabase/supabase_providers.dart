@@ -18,7 +18,10 @@ final authStateChangeProvider = StreamProvider<AuthState>((ref) {
 });
 
 /// 現在のユーザー (簡易 derived state)
+///
+/// Riverpod 3.x で `AsyncValue.valueOrNull` は廃止され、`value` (nullable)
+/// が公式 API。data 不在時は null を返す。
 final currentUserProvider = Provider<User?>((ref) {
   final authState = ref.watch(authStateChangeProvider);
-  return authState.valueOrNull?.session?.user;
+  return authState.value?.session?.user;
 });
