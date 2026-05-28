@@ -64,13 +64,15 @@ fvm flutter test
 fvm flutter run -d chrome   # ローカル browser で Hello World 確認
 ```
 
-### 5. CanvasKit renderer での production build
+### 5. Production build (CanvasKit がデフォルト)
 
 ```bash
-fvm flutter build web --release --web-renderer canvaskit
+fvm flutter build web --release
 ```
 
 出力先: `build/web/`
+
+Flutter 3.44 では CanvasKit が default renderer であり、`--web-renderer canvaskit` フラグは廃止済み (`flutter build web` で自動選択)。WebAssembly + skwasm に切り替えるなら `--wasm` を付けるが、本プロジェクトでは Phase 4 後に再評価する。
 
 ### 6. Vercel deployment (新規 project)
 
@@ -78,7 +80,7 @@ fvm flutter build web --release --web-renderer canvaskit
 2. リポジトリ: `syouya0618/irori`
 3. Root Directory: `flutter`
 4. Framework Preset: `Other`
-5. Build Command: `flutter build web --release --web-renderer canvaskit --dart-define=SUPABASE_URL=$SUPABASE_URL --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY`
+5. Build Command: `flutter build web --release --dart-define=SUPABASE_URL=$SUPABASE_URL --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY` (Flutter 3.44 では CanvasKit がデフォルト renderer)
 6. Output Directory: `build/web`
 7. Install Command: `(空欄)` または `dart pub global activate fvm && fvm install 3.44.0 && fvm flutter pub get`
 
@@ -89,7 +91,9 @@ fvm flutter build web --release --web-renderer canvaskit
 Supabase Dashboard → Auth → URL Configuration → Allowed Redirect URLs に
 `https://irori-flutter-*.vercel.app/*` を wildcard 登録 (Section 7.2.1)。
 
-### 7. CI workflow を手動で配置
+### 8. CI workflow を手動で配置
+
+⚠️ **重要**: 以下の YAML ファイルは PR #46 には含まれていない (Claude Code の PreToolUse security hook が `.github/workflows/*.yml` への書き込みを拒否するため)。**主が手動で `.github/workflows/flutter.yml` を作成し、以下の内容を貼り付ける必要がある**。配置後の `git add` + `git commit` も主の手作業じゃ。
 
 `.github/workflows/flutter.yml` に以下を保存:
 
@@ -141,10 +145,11 @@ jobs:
       - name: Run tests
         run: flutter test --reporter=expanded
 
-      - name: Build web (CanvasKit, no env defines)
+      - name: Build web (CanvasKit default, no env defines)
         # SUPABASE_URL / ANON_KEY は CI では注入せず、main.dart の skip ロジックで
         # Hello World のみ build 可能であることを検証する。
-        run: flutter build web --release --web-renderer canvaskit
+        # Flutter 3.44 では CanvasKit が default renderer で `--web-renderer` フラグは廃止済み。
+        run: flutter build web --release
 ```
 
 セキュリティ注: 本 workflow に untrusted user input (issue title / PR body 等) は使用しておらぬ。固定の `run:` コマンドのみ。
