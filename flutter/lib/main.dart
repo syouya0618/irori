@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -11,20 +12,29 @@ import 'core/theme/app_theme.dart';
 /// `--dart-define=SUPABASE_URL=... --dart-define=SUPABASE_ANON_KEY=...`
 /// で注入する (Vercel env と連動)。
 ///
-/// Phase 0 では env が未設定でも GlassCard の Hello World が描画される設計
-/// (Supabase.initialize は env がある時のみ実行)。
+/// 環境変数取得後は **必ず `.trim()`** を適用すること
+/// (CLAUDE.md 普遍ルール「環境変数は .trim() で防御」、4 回再発の学習)。
+/// Vercel UI からコピペした際の末尾改行・空白で `Supabase.initialize` が
+/// silent fail するのを防ぐ。
 ///
-/// FIXME(phase-1): 本 skip ロジックは Phase 0 限定。auth 機能を加える Phase 1 で、
-/// production build (`kReleaseMode == true`) で env が空なら StateError を throw する
-/// ガードに置換すること。さもないと Vercel env 設定忘れが silent fail で auth 全壊。
+/// release build (`kReleaseMode == true`) で env が空の場合は `StateError`
+/// を throw して fail-fast する。debug build では未設定でも runApp 続行
+/// (Phase 0 互換の Hello World 動作確認用)。
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  const url = String.fromEnvironment('SUPABASE_URL');
-  const anonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+  const rawUrl = String.fromEnvironment('SUPABASE_URL');
+  const rawAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+  final url = rawUrl.trim();
+  final anonKey = rawAnonKey.trim();
 
   if (url.isNotEmpty && anonKey.isNotEmpty) {
     await Supabase.initialize(url: url, anonKey: anonKey);
+  } else if (kReleaseMode) {
+    throw StateError(
+      'SUPABASE_URL / SUPABASE_ANON_KEY が release build で必須です。'
+      ' --dart-define で注入してください。',
+    );
   }
 
   runApp(const ProviderScope(child: IroriApp()));
