@@ -1,9 +1,43 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/supabase/auth_notifier.dart';
+import '../features/auth/presentation/auth_callback_page.dart';
+import '../features/auth/presentation/invite_page.dart';
+import '../features/auth/presentation/login_page.dart';
+import '../features/baby/presentation/baby_dashboard_page.dart';
 import '../features/welcome/welcome_page.dart';
+
+/// Web origin (Magic Link callback URL 組み立て用)。
+///
+/// 本番 Web では `Uri.base.origin` (例: `https://irori-flutter.vercel.app`)。
+/// flutter-test VM では `Uri.base` が `file:` scheme になり `Uri.origin` が
+/// `StateError` を投げるため、**テストでは必ず override する**
+/// (例: `originProvider.overrideWithValue('https://test.example')`)。
+final originProvider = Provider<String>((ref) {
+  final base = Uri.base;
+  // 本番 Web は http(s) で origin が取れる。flutter-test VM は `file:` scheme で
+  // `Uri.origin` が StateError を投げるため空文字を fallback とする
+  // (テストでは originProvider を override して固定 origin を使う想定)。
+  if (base.isScheme('http') || base.isScheme('https')) {
+    return base.origin;
+  }
+  return '';
+});
+
+/// Magic Link callback URL を組み立てる。
+///
+/// `returnTo` (認証後の戻り先) を `?returnTo=` クエリに埋めて伝播させる。これを
+/// 怠ると invite-after-login (招待リンク → 未認証 → login → 認証 → 招待ページへ
+/// 戻る) のチェーンが切れる。`returnTo` は受け手 (AuthCallbackPage) 側で
+/// `sanitizeReturnTo` により Open Redirect 防御される。
+@visibleForTesting
+String buildEmailRedirectTo({required String origin, String? returnTo}) {
+  final base = '$origin/auth/callback';
+  if (returnTo == null || returnTo.isEmpty) return base;
+  return '$base?returnTo=${Uri.encodeQueryComponent(returnTo)}';
+}
 
 /// `GoRouter` 設定 provider。
 ///
@@ -13,35 +47,37 @@ import '../features/welcome/welcome_page.dart';
 /// `ref.watch(authStateChangeProvider)` を Provider 内で呼ぶ anti-pattern を
 /// 取らないことで NavigatorState を破棄せずに保つ。
 ///
-/// redirect 内では `authNotifier.user` を直接読むこと。
-/// `currentUserProvider` 経由にすると、AuthNotifier listener と
-/// currentUserProvider listener の発火順序差で redirect 評価時に値が
-/// stale になりうる (go_router 公式 redirection.dart と同じ pattern を採用)。
+/// redirect 内では `authNotifier.user` を直接読むこと。`currentUserProvider`
+/// 経由にすると AuthNotifier listener との発火順序差で stale になりうる。
 ///
-/// 認証ガード方針:
-/// - 未認証で `/baby` 等の保護ページにアクセス → `/login` へ
-/// - 認証済みで `/login` にいる → `/baby` へ
-/// - `/` (WelcomePage) は Phase 0 既存。Phase 2 cutover 時に廃止予定。
-///
-/// `/login` と `/baby` の本実装は Issue #48 以降。本 PR ではガード動作の
-/// 検証用 placeholder Scaffold を置く (redirect 先が 404 にならないように)。
+/// 認証ガード (Issue #55 で 5 route に配線):
+/// - public: `/` (welcome) / `/login` / `/auth/callback`
+/// - `/invite/:token` は認証必須。未認証なら `?returnTo=<元 URL>` 付きで `/login` へ
+/// - 他の保護 page (`/baby` 等) も未認証なら `/login` へ
+/// - 認証済みで `/login` にいるなら `/baby` へ
 final appRouterProvider = Provider<GoRouter>((ref) {
   final authNotifier = ref.read(authNotifierProvider);
+  // origin は build 時に 1 度だけ解決 (test では originProvider を override)。
+  final origin = ref.read(originProvider);
 
   return GoRouter(
     initialLocation: '/',
     refreshListenable: authNotifier,
     redirect: (context, state) {
-      // notifier 自体が user を保持するため subscription race なく即時参照可能。
       final loggedIn = authNotifier.isAuthenticated;
-      final location = state.matchedLocation;
-      final isLoginPage = location == '/login';
-      final isPublicPage = location == '/';
+      final loc = state.matchedLocation;
+      final isPublic = loc == '/' || loc == '/login' || loc == '/auth/callback';
 
-      if (!loggedIn && !isLoginPage && !isPublicPage) {
+      // 招待リンクは認証必須。未認証なら returnTo に元 URL を載せて login へ。
+      // (login → Magic Link → callback で returnTo に戻り、認証済みで再訪する)
+      if (!loggedIn && loc.startsWith('/invite/')) {
+        final full = state.uri.toString();
+        return '/login?returnTo=${Uri.encodeQueryComponent(full)}';
+      }
+      if (!loggedIn && !isPublic) {
         return '/login';
       }
-      if (loggedIn && isLoginPage) {
+      if (loggedIn && loc == '/login') {
         return '/baby';
       }
       return null;
@@ -51,40 +87,44 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/',
         builder: (context, state) => const WelcomePage(),
       ),
-      // Issue #48 で Magic Link 入力 UI に差し替え予定。
       GoRoute(
         path: '/login',
-        builder: (context, state) => const _PlaceholderPage(
-          title: 'Login',
-          message: 'Login page (Issue #48 で実装予定)',
-        ),
+        builder: (context, state) {
+          final returnTo = state.uri.queryParameters['returnTo'];
+          return LoginPage(
+            emailRedirectTo: buildEmailRedirectTo(
+              origin: origin,
+              returnTo: returnTo,
+            ),
+          );
+        },
       ),
-      // Issue #49 以降で baby dashboard に差し替え予定。
+      GoRoute(
+        path: '/auth/callback',
+        builder: (context, state) {
+          // NOTE: 認証成功後 AuthCallbackPage は context.go(returnTo) する。
+          // onAuthStateChange が authNotifier に伝播する前に go が走ると、
+          // refreshListenable 発火で /baby→/login→/baby と一瞬 bounce しうるが
+          // 自己収束する (実 session が要るため deploy 後検証 / 恒久対応は #54 圏)。
+          return AuthCallbackPage(
+            code: state.uri.queryParameters['code'],
+            returnTo: state.uri.queryParameters['returnTo'],
+          );
+        },
+      ),
+      GoRoute(
+        path: '/invite/:token',
+        builder: (context, state) {
+          final token = state.pathParameters['token']!;
+          // 未認証は上の redirect が /login へ弾くため、ここでは認証済み。
+          final userId = authNotifier.user!.id;
+          return InvitePage(token: token, userId: userId);
+        },
+      ),
       GoRoute(
         path: '/baby',
-        builder: (context, state) => const _PlaceholderPage(
-          title: 'Baby',
-          message: 'Baby dashboard (後続 Issue で実装予定)',
-        ),
+        builder: (context, state) => const BabyDashboardPage(),
       ),
     ],
   );
 });
-
-/// Issue #48 以降に置き換えられる placeholder。
-/// `/login` `/baby` route が存在しないと redirect 先が 404 になるため
-/// 最低限の Scaffold を置く。
-class _PlaceholderPage extends StatelessWidget {
-  const _PlaceholderPage({required this.title, required this.message});
-
-  final String title;
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(title)),
-      body: Center(child: Text(message)),
-    );
-  }
-}
