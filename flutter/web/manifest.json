@@ -1,11 +1,11 @@
 {
-    "name": "irori",
-    "short_name": "irori",
+    "name": "うちのログ",
+    "short_name": "うちログ",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#FFFFFF",
+    "theme_color": "#E56200",
+    "description": "夫婦の献立・買い物・暮らしをひとつに",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
