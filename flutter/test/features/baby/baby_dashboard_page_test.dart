@@ -11,6 +11,8 @@ import 'package:irori/features/baby/data/selected_baby_date_provider.dart';
 import 'package:irori/features/baby/domain/baby_log.dart';
 import 'package:irori/features/baby/presentation/baby_dashboard_page.dart';
 import 'package:irori/features/baby/presentation/widgets/baby_date_nav.dart';
+import 'package:irori/features/baby/presentation/widgets/baby_log_form_sheet.dart';
+import 'package:irori/features/baby/presentation/widgets/baby_quick_actions.dart';
 import 'package:irori/features/baby/presentation/widgets/baby_summary_bar.dart';
 import 'package:irori/features/baby/presentation/widgets/baby_timeline.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -79,7 +81,7 @@ Widget _harness({
     overrides: [
       babyLogsNotifierProvider.overrideWith(logsNotifier),
       selectedBabyDateProvider.overrideWith(
-        () => _FixedDateNotifier(selectedDate ?? formatJstDate()),
+        () => _FixedDateNotifier(selectedDate ?? '2026-01-01'),
       ),
       // now ticker を固定値の単発 Stream に差し替え (周期 Timer を回さない)。
       nowTickerProvider.overrideWith(
@@ -136,6 +138,53 @@ void main() {
 
     expect(find.text('まだ記録がありません'), findsOneWidget);
     expect(find.byIcon(LucideIcons.baby), findsOneWidget);
+  });
+
+  testWidgets('今日の data 分岐は QuickActions を表示する', (tester) async {
+    await tester.pumpWidget(
+      _harness(
+        logsNotifier: () => _FakeLogsNotifier(const []),
+        selectedDate: formatJstDate(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(BabyQuickActions), findsOneWidget);
+  });
+
+  testWidgets('今日以外の data 分岐は QuickActions を表示しない', (tester) async {
+    await tester.pumpWidget(
+      _harness(
+        logsNotifier: () => _FakeLogsNotifier(const []),
+        selectedDate: '2026-01-01',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(BabyQuickActions), findsNothing);
+  });
+
+  testWidgets('Timeline 行 tap で編集 sheet を開く', (tester) async {
+    await tester.pumpWidget(
+      _harness(
+        logsNotifier: () => _FakeLogsNotifier([
+          _log(
+            id: 'f',
+            logType: BabyLogType.feeding,
+            feedingType: FeedingType.bottle,
+            amountMl: 100,
+          ),
+        ]),
+        selectedDate: '2026-01-01',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('ミルク 100ml'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(BabyLogFormSheet), findsOneWidget);
+    expect(find.text('授乳を編集'), findsOneWidget);
   });
 
   testWidgets('サマリー: active sleep があれば「睡眠中」で経過表示', (tester) async {
@@ -226,7 +275,7 @@ void main() {
               ]),
             ),
             selectedBabyDateProvider.overrideWith(
-              () => _FixedDateNotifier(formatJstDate()),
+              () => _FixedDateNotifier('2026-01-01'),
             ),
             nowTickerProvider.overrideWith((ref) => controller.stream),
             lastSleepEndedAtProvider.overrideWith((ref) async => null),

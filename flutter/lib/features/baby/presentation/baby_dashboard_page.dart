@@ -3,19 +3,22 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../widgets/glass_card.dart';
 import '../data/baby_logs_notifier.dart';
+import '../data/baby_repository.dart';
 import '../data/last_sleep_provider.dart';
 import '../data/now_ticker_provider.dart';
+import '../data/selected_baby_date_provider.dart';
 import '../domain/baby_log.dart';
 import 'baby_summary.dart';
 import 'widgets/baby_date_nav.dart';
+import 'widgets/baby_log_form_sheet.dart';
+import 'widgets/baby_quick_actions.dart';
 import 'widgets/baby_summary_bar.dart';
 import 'widgets/baby_timeline.dart';
 
 /// 育児ログ ダッシュボード。Next.js 原典 `baby-dashboard.tsx` の表示側を移植。
 ///
-/// 表示構成 (縦): DateNav → SummaryBar → Timeline。
-/// 書き込み系 (クイックアクション / ログ入力 / 授乳タイマー / 週間サマリー) は
-/// 別 PR のため本 PR では描画しない。
+/// 表示構成 (縦): DateNav → SummaryBar → QuickActions(今日のみ) → Timeline。
+/// 授乳タイマー / 週間サマリーは別 PR のため本 PR では描画しない。
 ///
 /// データ:
 /// - `babyLogsNotifierProvider` を `.when(data/loading/error)` で消費
@@ -66,6 +69,8 @@ class _DashboardBody extends ConsumerWidget {
     // deriveBabySummary は「最初 = 最新」を load-bearing に使うため、
     // この順序を崩す refactor をしないこと (原典 baby-dashboard.tsx L182-206)。
     final summary = deriveBabySummary(logs);
+    final selectedDate = ref.watch(selectedBabyDateProvider);
+    final isToday = selectedDate == formatJstDate();
 
     // now は 60s ごとに更新。初回 emit 前は端末の現在時刻でフォールバック
     // (購読直後に経過が "---" にならないよう即値を出す)。
@@ -91,7 +96,22 @@ class _DashboardBody extends ConsumerWidget {
           now: now,
         ),
         const SizedBox(height: 16),
-        BabyTimeline(logs: logs),
+        if (isToday) ...[
+          BabyQuickActions(
+            activeSleep: summary.activeSleep,
+            now: now,
+            onCreateLog: (type) {
+              showBabyLogFormSheet(context, createLogType: type);
+            },
+          ),
+          const SizedBox(height: 16),
+        ],
+        BabyTimeline(
+          logs: logs,
+          onItemTap: (log) {
+            showBabyLogFormSheet(context, log: log);
+          },
+        ),
       ],
     );
   }

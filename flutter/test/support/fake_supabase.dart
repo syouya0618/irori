@@ -70,6 +70,7 @@ class FakeTransformBuilder extends Fake
 /// (`PostgrestFilterBuilder<PostgrestList>` 相当)。
 /// 末尾で `await` すれば `PostgrestList` を返し、`single()` で
 /// [FakeTransformBuilder] に切り替えられる。
+// ignore: must_be_immutable
 class FakeFilterBuilder extends Fake
     with _FakeFuture<PostgrestList>
     implements PostgrestFilterBuilder<PostgrestList> {
@@ -89,10 +90,27 @@ class FakeFilterBuilder extends Fake
   final Object? cannedError;
 
   final FakeTransformBuilder _single;
+  final eqFilters = <({String column, Object value})>[];
+  final isFilters = <({String column, bool? value})>[];
+  String? selectedColumns;
 
   @override
-  // ignore: avoid_returning_this
-  PostgrestFilterBuilder<PostgrestList> eq(String column, Object value) => this;
+  PostgrestFilterBuilder<PostgrestList> eq(String column, Object value) {
+    eqFilters.add((column: column, value: value));
+    return this;
+  }
+
+  @override
+  PostgrestFilterBuilder<PostgrestList> isFilter(String column, bool? value) {
+    isFilters.add((column: column, value: value));
+    return this;
+  }
+
+  @override
+  PostgrestTransformBuilder<PostgrestList> select([String columns = '*']) {
+    selectedColumns = columns;
+    return this;
+  }
 
   @override
   PostgrestTransformBuilder<PostgrestMap> single() => _single;
@@ -100,14 +118,41 @@ class FakeFilterBuilder extends Fake
 
 /// `from('table')` の結果 (`SupabaseQueryBuilder` 相当)。
 /// `select(...)` で [FakeFilterBuilder] へ切り替える。
+// ignore: must_be_immutable
 class FakeQueryBuilder extends Fake implements SupabaseQueryBuilder {
-  FakeQueryBuilder(this._filter);
+  FakeQueryBuilder(this._filter, {FakeFilterBuilder? mutationFilter})
+    : _mutationFilter = mutationFilter ?? _filter;
 
   final FakeFilterBuilder _filter;
+  final FakeFilterBuilder _mutationFilter;
+  Object? lastInsertValues;
+  Map<dynamic, dynamic>? lastUpdateValues;
+  int deleteCallCount = 0;
 
   @override
   PostgrestFilterBuilder<PostgrestList> select([String columns = '*']) =>
       _filter;
+
+  @override
+  PostgrestFilterBuilder<dynamic> insert(
+    Object values, {
+    bool defaultToNull = true,
+  }) {
+    lastInsertValues = values;
+    return _mutationFilter as PostgrestFilterBuilder<dynamic>;
+  }
+
+  @override
+  PostgrestFilterBuilder<dynamic> update(Map<dynamic, dynamic> values) {
+    lastUpdateValues = values;
+    return _mutationFilter as PostgrestFilterBuilder<dynamic>;
+  }
+
+  @override
+  PostgrestFilterBuilder<dynamic> delete() {
+    deleteCallCount++;
+    return _mutationFilter as PostgrestFilterBuilder<dynamic>;
+  }
 }
 
 /// `rpc(fn)` の結果。RETURNS TABLE 系は `PostgrestList`、RETURNS VOID 系は

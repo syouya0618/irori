@@ -18,6 +18,9 @@ const _kBabyLogColumns =
     'amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, '
     'duration_min, memo, created_at, updated_at';
 
+/// `baby_logs.memo` のアプリ側上限。Next.js 版 `actions.ts` と同値。
+const maxBabyLogMemoLength = 1000;
+
 /// JST (Asia/Tokyo, UTC+9) 固定オフセット。
 ///
 /// `new Date('YYYY-MM-DD')` 相当の UTC 罠を回避するため、日付境界は
@@ -25,6 +28,31 @@ const _kBabyLogColumns =
 /// Postgres `timestamptz` 比較は timezone-aware なので、`+09:00` を付けた
 /// 文字列を渡せば DB 側で正しく JST 日界として解釈される。
 const _kJstOffset = Duration(hours: 9);
+
+/// baby log mutation に必要な認証コンテキスト。
+typedef BabyMutationContext = ({String householdId, String userId});
+
+/// write 系 UI が使う最小コンテキスト。
+///
+/// Next.js 版 `getAuthContext()` と同じ役割を Flutter/Riverpod 側で担う。
+/// 世帯未参加・未認証は握り潰さず `StateError` に倒し、呼び出し側が
+/// user-facing error に変換する。
+final babyMutationContextProvider = FutureProvider<BabyMutationContext>((
+  ref,
+) async {
+  final client = ref.watch(supabaseClientProvider);
+  final householdId = await ref.watch(currentHouseholdIdProvider.future);
+  if (householdId == null) {
+    throw StateError('babyMutationContextProvider: 世帯未参加状態で記録を要求した');
+  }
+
+  final user = client.auth.currentUser;
+  if (user == null) {
+    throw StateError('babyMutationContextProvider: 未認証状態で記録を要求した');
+  }
+
+  return (householdId: householdId, userId: user.id);
+});
 
 /// `baby_logs` テーブルへの読み取り専用アクセスを担うリポジトリ。
 ///
@@ -38,6 +66,245 @@ class BabyRepository {
   BabyRepository(this._client);
 
   final SupabaseClient _client;
+
+  /// 授乳を記録する。
+  Future<void> recordFeeding({
+    required String householdId,
+    required String userId,
+    required FeedingType feedingType,
+    int? amountMl,
+    int? durationMin,
+    String? memo,
+  }) async {
+    _validateMemo(memo);
+    _validateAmountMl(amountMl);
+    _validateDurationMin(durationMin);
+
+    await _insertLog('recordFeeding', householdId, {
+      'household_id': householdId,
+      'log_type': _logTypeValue(BabyLogType.feeding),
+      'logged_by': userId,
+      'feeding_type': _feedingTypeValue(feedingType),
+      'amount_ml': _allowsAmountMl(feedingType) ? amountMl : null,
+      'duration_min': durationMin,
+      'memo': _nullableMemo(memo),
+    });
+  }
+
+  /// おむつ交換を記録する。
+  Future<void> recordDiaper({
+    required String householdId,
+    required String userId,
+    required DiaperType diaperType,
+    String? memo,
+  }) async {
+    _validateMemo(memo);
+
+    await _insertLog('recordDiaper', householdId, {
+      'household_id': householdId,
+      'log_type': _logTypeValue(BabyLogType.diaper),
+      'logged_by': userId,
+      'diaper_type': _diaperTypeValue(diaperType),
+      'memo': _nullableMemo(memo),
+    });
+  }
+
+  /// 睡眠セッションを開始する。
+  Future<void> startSleep({
+    required String householdId,
+    required String userId,
+  }) async {
+    await _insertLog('startSleep', householdId, {
+      'household_id': householdId,
+      'log_type': _logTypeValue(BabyLogType.sleep),
+      'logged_by': userId,
+    });
+  }
+
+  /// 進行中の睡眠セッションを終了する。
+  ///
+  /// `ended_at IS NULL` を filter に入れ、既に終了済みのログを誤って上書きしない。
+  /// `.select('id').single()` で「対象が無い」ケースを PostgREST error として
+  /// 検出し、UI 側で「アクティブな睡眠セッションが見つからない」に変換できる。
+  Future<void> endSleep({
+    required String householdId,
+    required String logId,
+    DateTime? endedAt,
+  }) async {
+    final at = (endedAt ?? DateTime.now()).toUtc().toIso8601String();
+    try {
+      await _client
+          .from('baby_logs')
+          .update({'ended_at': at})
+          .eq('id', logId)
+          .eq('household_id', householdId)
+          .isFilter('ended_at', null)
+          .select('id')
+          .single()
+          .timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      _logMutationError('endSleep', e, st, householdId);
+      rethrow;
+    }
+  }
+
+  /// 体温を記録する。
+  Future<void> recordTemperature({
+    required String householdId,
+    required String userId,
+    required double temperature,
+    String? memo,
+  }) async {
+    _validateTemperature(temperature);
+    _validateMemo(memo);
+
+    await _insertLog('recordTemperature', householdId, {
+      'household_id': householdId,
+      'log_type': _logTypeValue(BabyLogType.temperature),
+      'logged_by': userId,
+      'temperature': temperature,
+      'memo': _nullableMemo(memo),
+    });
+  }
+
+  /// 成長記録を追加する。
+  Future<void> recordGrowth({
+    required String householdId,
+    required String userId,
+    int? weightG,
+    double? heightCm,
+    String? memo,
+  }) async {
+    _validateGrowth(weightG: weightG, heightCm: heightCm);
+    _validateMemo(memo);
+
+    await _insertLog('recordGrowth', householdId, {
+      'household_id': householdId,
+      'log_type': _logTypeValue(BabyLogType.growth),
+      'logged_by': userId,
+      'weight_g': weightG,
+      'height_cm': heightCm,
+      'memo': _nullableMemo(memo),
+    });
+  }
+
+  /// メモを記録する。
+  Future<void> recordMemo({
+    required String householdId,
+    required String userId,
+    required String memo,
+  }) async {
+    final trimmed = memo.trim();
+    if (trimmed.isEmpty) {
+      throw ArgumentError.value(memo, 'memo', 'メモを入力してください');
+    }
+    _validateMemo(trimmed);
+
+    await _insertLog('recordMemo', householdId, {
+      'household_id': householdId,
+      'log_type': _logTypeValue(BabyLogType.memo),
+      'logged_by': userId,
+      'memo': trimmed,
+    });
+  }
+
+  /// 授乳ログを更新する。
+  Future<void> updateFeeding({
+    required String householdId,
+    required String logId,
+    required FeedingType feedingType,
+    int? amountMl,
+    String? memo,
+  }) async {
+    _validateAmountMl(amountMl);
+    _validateMemo(memo);
+
+    await _updateLog('updateFeeding', householdId, logId, {
+      'feeding_type': _feedingTypeValue(feedingType),
+      'amount_ml': _allowsAmountMl(feedingType) ? amountMl : null,
+      'memo': _nullableMemo(memo),
+    });
+  }
+
+  /// おむつログを更新する。
+  Future<void> updateDiaper({
+    required String householdId,
+    required String logId,
+    required DiaperType diaperType,
+    String? memo,
+  }) async {
+    _validateMemo(memo);
+
+    await _updateLog('updateDiaper', householdId, logId, {
+      'diaper_type': _diaperTypeValue(diaperType),
+      'memo': _nullableMemo(memo),
+    });
+  }
+
+  /// 体温ログを更新する。
+  Future<void> updateTemperature({
+    required String householdId,
+    required String logId,
+    required double temperature,
+    String? memo,
+  }) async {
+    _validateTemperature(temperature);
+    _validateMemo(memo);
+
+    await _updateLog('updateTemperature', householdId, logId, {
+      'temperature': temperature,
+      'memo': _nullableMemo(memo),
+    });
+  }
+
+  /// 成長ログを更新する。
+  Future<void> updateGrowth({
+    required String householdId,
+    required String logId,
+    int? weightG,
+    double? heightCm,
+    String? memo,
+  }) async {
+    _validateGrowth(weightG: weightG, heightCm: heightCm);
+    _validateMemo(memo);
+
+    await _updateLog('updateGrowth', householdId, logId, {
+      'weight_g': weightG,
+      'height_cm': heightCm,
+      'memo': _nullableMemo(memo),
+    });
+  }
+
+  /// sleep / memo など型固有フィールドを持たないログのメモのみを更新する。
+  Future<void> updateLogMemo({
+    required String householdId,
+    required String logId,
+    String? memo,
+  }) async {
+    _validateMemo(memo);
+
+    await _updateLog('updateLogMemo', householdId, logId, {
+      'memo': _nullableMemo(memo),
+    });
+  }
+
+  /// ログを削除する。
+  Future<void> deleteLog({
+    required String householdId,
+    required String logId,
+  }) async {
+    try {
+      await _client
+          .from('baby_logs')
+          .delete()
+          .eq('id', logId)
+          .eq('household_id', householdId)
+          .timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      _logMutationError('deleteLog', e, st, householdId);
+      rethrow;
+    }
+  }
 
   /// JST の "YYYY-MM-DD" 日付について、その日 (00:00 JST) 〜 翌日 0:00 JST の
   /// 範囲の `[start, nextStart)` を `+09:00` 付き ISO 文字列で返す。
@@ -158,6 +425,43 @@ class BabyRepository {
     }
   }
 
+  Future<void> _insertLog(
+    String op,
+    String householdId,
+    Map<String, dynamic> row,
+  ) async {
+    try {
+      await _client.from('baby_logs').insert(row).timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      _logMutationError(op, e, st, householdId);
+      rethrow;
+    }
+  }
+
+  Future<void> _updateLog(
+    String op,
+    String householdId,
+    String logId,
+    Map<String, dynamic> values,
+  ) async {
+    try {
+      // `.update()` は 0 行更新でも error null (CLAUDE.md gotcha)。logId が
+      // 他 household / 既削除で対象 0 行のとき silent success になるのを防ぐため、
+      // `.select('id').single()` で行数を検証する (endSleep と同じ防御)。
+      await _client
+          .from('baby_logs')
+          .update(values)
+          .eq('id', logId)
+          .eq('household_id', householdId)
+          .select('id')
+          .single()
+          .timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      _logMutationError(op, e, st, householdId);
+      rethrow;
+    }
+  }
+
   /// `PostgrestException` を握り潰さず構造化ログする (CLAUDE.md)。
   /// householdId は識別子だが機密ではないため、調査用に出力する。
   void _logPostgrestError(
@@ -169,6 +473,21 @@ class BabyRepository {
       'BabyRepository.$op PostgrestException: '
       'code=${e.code} message=${e.message} '
       'details=${e.details} hint=${e.hint} householdId=$householdId',
+    );
+  }
+
+  void _logMutationError(
+    String op,
+    Object error,
+    StackTrace stackTrace,
+    String householdId,
+  ) {
+    if (error is PostgrestException) {
+      _logPostgrestError(op, error, householdId);
+      return;
+    }
+    debugPrint(
+      'BabyRepository.$op error: $error\n$stackTrace householdId=$householdId',
     );
   }
 }
@@ -212,4 +531,102 @@ String shiftYmd(String ymd, int days) {
   final day = int.parse(parts[2]);
   final shifted = DateTime.utc(year, month, day + days);
   return DateFormat('yyyy-MM-dd').format(shifted);
+}
+
+bool _allowsAmountMl(FeedingType type) {
+  return type == FeedingType.bottle || type == FeedingType.solid;
+}
+
+String? _nullableMemo(String? memo) {
+  if (memo == null || memo.isEmpty) return null;
+  return memo;
+}
+
+void _validateMemo(String? memo) {
+  if (memo != null && memo.length > maxBabyLogMemoLength) {
+    throw ArgumentError.value(
+      memo,
+      'memo',
+      'メモは$maxBabyLogMemoLength文字以内で入力してください',
+    );
+  }
+}
+
+void _validateAmountMl(int? amountMl) {
+  if (amountMl == null) return;
+  if (amountMl < 0 || amountMl > 999) {
+    throw ArgumentError.value(amountMl, 'amountMl', '0〜999mlで入力してください');
+  }
+}
+
+void _validateDurationMin(int? durationMin) {
+  if (durationMin == null) return;
+  if (durationMin < 0 || durationMin > 180) {
+    throw ArgumentError.value(durationMin, 'durationMin', '0〜180分で入力してください');
+  }
+}
+
+void _validateTemperature(double temperature) {
+  if (temperature < 34.0 || temperature > 42.0) {
+    throw ArgumentError.value(
+      temperature,
+      'temperature',
+      '34.0〜42.0℃で入力してください',
+    );
+  }
+}
+
+void _validateGrowth({int? weightG, double? heightCm}) {
+  final hasWeight = weightG != null;
+  final hasHeight = heightCm != null;
+  if (!hasWeight && !hasHeight) {
+    throw ArgumentError('体重または身長を入力してください');
+  }
+  if (weightG != null && (weightG < 0 || weightG > 30000)) {
+    throw ArgumentError.value(weightG, 'weightG', '0〜30000gで入力してください');
+  }
+  if (heightCm != null && (heightCm < 0.0 || heightCm > 150.0)) {
+    throw ArgumentError.value(heightCm, 'heightCm', '0〜150cmで入力してください');
+  }
+}
+
+String _logTypeValue(BabyLogType type) {
+  switch (type) {
+    case BabyLogType.feeding:
+      return 'feeding';
+    case BabyLogType.diaper:
+      return 'diaper';
+    case BabyLogType.sleep:
+      return 'sleep';
+    case BabyLogType.temperature:
+      return 'temperature';
+    case BabyLogType.growth:
+      return 'growth';
+    case BabyLogType.memo:
+      return 'memo';
+  }
+}
+
+String _feedingTypeValue(FeedingType type) {
+  switch (type) {
+    case FeedingType.breastLeft:
+      return 'breast_left';
+    case FeedingType.breastRight:
+      return 'breast_right';
+    case FeedingType.bottle:
+      return 'bottle';
+    case FeedingType.solid:
+      return 'solid';
+  }
+}
+
+String _diaperTypeValue(DiaperType type) {
+  switch (type) {
+    case DiaperType.pee:
+      return 'pee';
+    case DiaperType.poop:
+      return 'poop';
+    case DiaperType.both:
+      return 'both';
+  }
 }

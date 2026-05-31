@@ -9,9 +9,9 @@ import 'package:irori/features/baby/data/selected_baby_date_provider.dart';
 import 'package:irori/features/baby/domain/baby_log.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-/// `BabyRepository` のフェイク。`implements` で constructor (SupabaseClient 要求)
-/// を回避し、3 メソッドのみをテストから制御する。
-class _FakeBabyRepository implements BabyRepository {
+/// `BabyRepository` のフェイク。`Fake` で constructor (SupabaseClient 要求)
+/// を回避し、読み取り 3 メソッドのみをテストから制御する。
+class _FakeBabyRepository extends Fake implements BabyRepository {
   _FakeBabyRepository({this.todayLogs = const [], this.error, this.fetchGate});
 
   final List<BabyLog> todayLogs;
