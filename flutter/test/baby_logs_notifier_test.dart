@@ -1,27 +1,42 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:irori/core/supabase/supabase_providers.dart';
 import 'package:irori/features/baby/data/baby_logs_notifier.dart';
 import 'package:irori/features/baby/data/baby_repository.dart';
+import 'package:irori/features/baby/data/selected_baby_date_provider.dart';
 import 'package:irori/features/baby/domain/baby_log.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// `BabyRepository` のフェイク。`implements` で constructor (SupabaseClient 要求)
 /// を回避し、3 メソッドのみをテストから制御する。
 class _FakeBabyRepository implements BabyRepository {
-  _FakeBabyRepository({this.todayLogs = const [], this.error});
+  _FakeBabyRepository({this.todayLogs = const [], this.error, this.fetchGate});
 
   final List<BabyLog> todayLogs;
   final Object? error;
+
+  /// 非 null なら `fetchLogsForDate` がこの future を await してから返す。
+  /// 「subscribe 済みだが fetch 未完」= `_initialized==false` の初期化中 window を
+  /// テストから作り、realtime バッファリング (#54 item2 / C2) を検証するためのゲート。
+  final Future<void>? fetchGate;
+
+  @override
+  Future<List<BabyLog>> fetchLogsForDate(
+    String householdId,
+    String dateJst,
+  ) async {
+    if (fetchGate != null) await fetchGate;
+    if (error != null) throw error!;
+    return todayLogs;
+  }
 
   @override
   Future<List<BabyLog>> fetchTodayLogs(
     String householdId,
     String dateJst,
-  ) async {
-    if (error != null) throw error!;
-    return todayLogs;
-  }
+  ) => fetchLogsForDate(householdId, dateJst);
 
   @override
   Future<DateTime?> fetchLastSleep(String householdId) async => null;
@@ -52,6 +67,38 @@ BabyLog _log(
   );
 }
 
+/// realtime INSERT payload を構築する (C2 seam テスト用)。
+/// `newRecord` は `BabyLog.toJson()` の snake_case 行 (fromJson が受ける形)。
+PostgresChangePayload _insertPayload(BabyLog log) => PostgresChangePayload(
+  schema: 'public',
+  table: 'baby_logs',
+  commitTimestamp: DateTime.utc(2026, 5, 29),
+  eventType: PostgresChangeEvent.insert,
+  newRecord: log.toJson(),
+  oldRecord: const {},
+  errors: null,
+);
+
+/// realtime DELETE payload を構築する (oldRecord に PK のみ)。
+PostgresChangePayload _deletePayload(String id) => PostgresChangePayload(
+  schema: 'public',
+  table: 'baby_logs',
+  commitTimestamp: DateTime.utc(2026, 5, 29),
+  eventType: PostgresChangeEvent.delete,
+  newRecord: const {},
+  oldRecord: {'id': id},
+  errors: null,
+);
+
+/// selectedBabyDate を固定する Notifier (C2 テストで日付を固定し
+/// INSERT date-window guard を通すため)。
+class _FixedDateNotifier extends SelectedBabyDateNotifier {
+  _FixedDateNotifier(this._d);
+  final String _d;
+  @override
+  String build() => _d;
+}
+
 /// テスト用の `ProviderContainer` を構築する。
 ///
 /// `supabaseClientProvider` を直接構築した client で override する。
@@ -64,6 +111,7 @@ BabyLog _log(
 ProviderContainer _makeContainer({
   required _FakeBabyRepository repo,
   required String? householdId,
+  String? selectedDate,
 }) {
   return ProviderContainer(
     overrides: [
@@ -72,6 +120,10 @@ ProviderContainer _makeContainer({
       ),
       currentHouseholdIdProvider.overrideWith((ref) async => householdId),
       babyRepositoryProvider.overrideWithValue(repo),
+      if (selectedDate != null)
+        selectedBabyDateProvider.overrideWith(
+          () => _FixedDateNotifier(selectedDate),
+        ),
     ],
   );
 }
@@ -191,6 +243,33 @@ void main() {
       expect(result.map((l) => l.id), ['a', 'b']);
     });
 
+    test('INSERT: logged_at 降順を維持する位置に挿入される (#54 sorted insert)', () {
+      // 既存: a=05:00, c=01:00 (降順)。新規 b=03:00 は a と c の間に入るべき。
+      final current = [
+        _log('a', loggedAt: DateTime.utc(2026, 5, 29, 5)),
+        _log('c', loggedAt: DateTime.utc(2026, 5, 29, 1)),
+      ];
+      final result = BabyLogsNotifier.reduceForTest(
+        current,
+        PostgresChangeEvent.insert,
+        log: _log('b', loggedAt: DateTime.utc(2026, 5, 29, 3)),
+        dateJst: '2026-05-29',
+      );
+      expect(result.map((l) => l.id), ['a', 'b', 'c']);
+    });
+
+    test('INSERT: 同タイムスタンプなら新規が前 (#54 stable prepend-on-equal)', () {
+      // a/b/c すべて同一 loggedAt。新規 c は先頭に来る (原典 prepend 互換)。
+      final current = [_log('a'), _log('b')];
+      final result = BabyLogsNotifier.reduceForTest(
+        current,
+        PostgresChangeEvent.insert,
+        log: _log('c'),
+        dateJst: '2026-05-29',
+      );
+      expect(result.map((l) => l.id), ['c', 'a', 'b']);
+    });
+
     test('INSERT: 今日 (JST) 範囲外のログは無視される (#49 date-window guard)', () {
       final current = [_log('a'), _log('b')];
       final result = BabyLogsNotifier.reduceForTest(
@@ -204,23 +283,58 @@ void main() {
       expect(result.map((l) => l.id), ['a', 'b']);
     });
 
-    test('UPDATE: 同一 id を置換する', () {
+    // UPDATE 4 遷移 (#54): belongs = log が selectedDate (dateJst) に属するか、
+    // exists = current に同 id があるか。Next.js 原典 baby-dashboard.tsx L123-136。
+    test('UPDATE 遷移1 (belongs && exists): 同一 id を置換する', () {
       final current = [_log('a', memo: '旧'), _log('b')];
       final result = BabyLogsNotifier.reduceForTest(
         current,
         PostgresChangeEvent.update,
         log: _log('a', memo: '新'),
+        dateJst: '2026-05-29', // _log の loggedAt = JST 2026-05-29
       );
       expect(result.length, 2);
       expect(result.firstWhere((l) => l.id == 'a').memo, '新');
     });
 
-    test('UPDATE: 範囲外 (未存在 id) は無視される', () {
+    test('UPDATE 遷移2 (belongs && !exists): selectedDate に入ってきたら追加', () {
+      // 別日のログが編集で selectedDate (5/29) に移動してきたケース。
+      final current = [
+        _log('a', loggedAt: DateTime.utc(2026, 5, 29, 5)),
+        _log('b', loggedAt: DateTime.utc(2026, 5, 29, 1)),
+      ];
+      final result = BabyLogsNotifier.reduceForTest(
+        current,
+        PostgresChangeEvent.update,
+        // 新 loggedAt = 5/29 03:00 UTC → b と a の間 (降順維持なら index 1)
+        log: _log('new', loggedAt: DateTime.utc(2026, 5, 29, 3)),
+        dateJst: '2026-05-29',
+      );
+      // 追加され、logged_at 降順 (a=05:00, new=03:00, b=01:00) を維持する。
+      expect(result.map((l) => l.id), ['a', 'new', 'b']);
+    });
+
+    test('UPDATE 遷移3 (!belongs && exists): selectedDate から外れたら除外', () {
+      // selectedDate (5/29) にあったログが編集で別日に移動したケース。
       final current = [_log('a'), _log('b')];
       final result = BabyLogsNotifier.reduceForTest(
         current,
         PostgresChangeEvent.update,
-        log: _log('z', memo: '範囲外'),
+        // 新 loggedAt が過去日 (5/20) → selectedDate 5/29 に属さない
+        log: _log('a', loggedAt: DateTime.utc(2026, 5, 20, 3)),
+        dateJst: '2026-05-29',
+      );
+      expect(result.map((l) => l.id), ['b']);
+    });
+
+    test('UPDATE 遷移4 (!belongs && !exists): 無関係な更新は noop', () {
+      final current = [_log('a'), _log('b')];
+      final result = BabyLogsNotifier.reduceForTest(
+        current,
+        PostgresChangeEvent.update,
+        // 別日 (5/20) かつ未存在 id
+        log: _log('z', loggedAt: DateTime.utc(2026, 5, 20, 3)),
+        dateJst: '2026-05-29',
       );
       expect(result.map((l) => l.id), ['a', 'b']);
     });
@@ -233,6 +347,98 @@ void main() {
         deletedId: 'b',
       );
       expect(result.map((l) => l.id), ['a', 'c']);
+    });
+  });
+
+  group('BabyLogsNotifier realtime バッファ & live 経路 (#54 item2 / C2)', () {
+    test(
+      '初期化中に届いた INSERT はバッファされ fetch 後に drain される (取りこぼしゼロ)',
+      () async {
+        final gate = Completer<void>();
+        final container = _makeContainer(
+          repo: _FakeBabyRepository(
+            todayLogs: [_log('base')],
+            fetchGate: gate.future,
+          ),
+          householdId: 'hh-1',
+          selectedDate: '2026-05-29', // _log の loggedAt = JST 2026-05-29
+        );
+        addTearDown(container.dispose);
+
+        // build 起動。fetch は gate で停止 → subscribe 済み / _initialized=false。
+        // build() 冒頭で _pendingDuringInit.clear() 済みの状態に到達させる。
+        container.listen(
+          babyLogsNotifierProvider,
+          (_, _) {},
+          fireImmediately: true,
+        );
+        final notifier = container.read(babyLogsNotifierProvider.notifier);
+
+        // build が fetch await (gate) に到達するまで進める。
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        expect(
+          notifier.debugInitialized,
+          isFalse,
+          reason: 'fetch 未完なので未初期化',
+        );
+
+        // 初期化中に realtime INSERT 到着 → 破棄されずバッファに溜まる。
+        notifier.debugHandlePayload(_insertPayload(_log('rt1')));
+        expect(notifier.debugPendingCount, 1);
+
+        // fetch 完了 → build() が drain。
+        gate.complete();
+        await container.read(babyLogsNotifierProvider.future);
+
+        expect(notifier.debugInitialized, isTrue);
+        expect(notifier.debugPendingCount, 0, reason: 'drain 後バッファは空');
+        final state = container.read(babyLogsNotifierProvider);
+        // rt1 (初期化中 event) が取りこぼされず base と共に反映される。
+        expect(state.value!.map((l) => l.id), containsAll(['rt1', 'base']));
+      },
+    );
+
+    test('build 完了後の live INSERT は即 state に反映される', () async {
+      final container = _makeContainer(
+        repo: _FakeBabyRepository(todayLogs: [_log('base')]),
+        householdId: 'hh-1',
+        selectedDate: '2026-05-29',
+      );
+      addTearDown(container.dispose);
+
+      container.listen(
+        babyLogsNotifierProvider,
+        (_, _) {},
+        fireImmediately: true,
+      );
+      final notifier = container.read(babyLogsNotifierProvider.notifier);
+      await container.read(babyLogsNotifierProvider.future);
+      expect(notifier.debugInitialized, isTrue);
+
+      notifier.debugHandlePayload(_insertPayload(_log('rt2')));
+      final state = container.read(babyLogsNotifierProvider);
+      expect(state.value!.map((l) => l.id), containsAll(['rt2', 'base']));
+    });
+
+    test('build 完了後の live DELETE は state から除外される', () async {
+      final container = _makeContainer(
+        repo: _FakeBabyRepository(todayLogs: [_log('a'), _log('b')]),
+        householdId: 'hh-1',
+        selectedDate: '2026-05-29',
+      );
+      addTearDown(container.dispose);
+
+      container.listen(
+        babyLogsNotifierProvider,
+        (_, _) {},
+        fireImmediately: true,
+      );
+      final notifier = container.read(babyLogsNotifierProvider.notifier);
+      await container.read(babyLogsNotifierProvider.future);
+
+      notifier.debugHandlePayload(_deletePayload('a'));
+      final state = container.read(babyLogsNotifierProvider);
+      expect(state.value!.map((l) => l.id), ['b']);
     });
   });
 }

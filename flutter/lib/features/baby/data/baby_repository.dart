@@ -69,8 +69,12 @@ class BabyRepository {
   static String weeklyOrFilter(String from) =>
       'logged_at.gte.$from,and(log_type.eq.sleep,ended_at.gte.$from)';
 
-  /// 指定 JST 日付 (YYYY-MM-DD) の今日のログを `logged_at` 降順で取得。
-  Future<List<BabyLog>> fetchTodayLogs(
+  /// 指定 JST 日付 (YYYY-MM-DD) のログを `logged_at` 降順で取得。
+  ///
+  /// 日付ナビゲーション (#54) の基盤。`selectedBabyDate` で選んだ任意の日の
+  /// ログ取得に使う。JST 日界 (`jstDayBounds`) で `[start, nextStart)` を切り、
+  /// timeout / 構造化ログ / rethrow の防御は `fetchTodayLogs` と共通。
+  Future<List<BabyLog>> fetchLogsForDate(
     String householdId,
     String dateJst,
   ) async {
@@ -86,10 +90,19 @@ class BabyRepository {
           .timeout(_kQueryTimeout);
       return rows.map(BabyLog.fromJson).toList();
     } on PostgrestException catch (e) {
-      _logPostgrestError('fetchTodayLogs', e, householdId);
+      _logPostgrestError('fetchLogsForDate', e, householdId);
       rethrow;
     }
   }
+
+  /// 指定 JST 日付 (YYYY-MM-DD) の今日のログを `logged_at` 降順で取得。
+  ///
+  /// `fetchLogsForDate` への委譲 (後方互換のため signature を維持)。
+  /// 既存呼び出し側 (`BabyLogsNotifier` / 既存テスト) を壊さない。
+  Future<List<BabyLog>> fetchTodayLogs(
+    String householdId,
+    String dateJst,
+  ) => fetchLogsForDate(householdId, dateJst);
 
   /// 直近の「完了済み (ended_at != null)」睡眠セッションの終了時刻を取得。
   /// 完了済み睡眠が 1 件も無ければ null。
@@ -174,4 +187,29 @@ String formatJstDate([DateTime? now]) {
   final utc = (now ?? DateTime.now()).toUtc();
   final jst = utc.add(_kJstOffset);
   return DateFormat('yyyy-MM-dd').format(jst);
+}
+
+/// "YYYY-MM-DD" 文字列を指定日数シフトする。タイムゾーン非依存。
+///
+/// Next.js 原典 `src/lib/utils/date-jst.ts` の `shiftYmd` を移植
+/// (`new Date(Date.UTC(y, m-1, d+days))` → `DateTime.utc(y, m, d+days)`)。
+/// `DateTime.utc` は day overflow/underflow を月・年へ正規化するため、
+/// 月跨ぎ・年跨ぎ・閏年が JS Date と同じ結果になる。
+///
+/// `new DateTime('YYYY-MM-DD')` (= `DateTime.parse`) を使わず数値分解する
+/// ことで、端末 TZ に依存しない (CLAUDE.md「UTC 罠回避」)。
+/// 入力が YYYY-MM-DD 形式でなければ `ArgumentError` を投げる (握り潰さない)。
+String shiftYmd(String ymd, int days) {
+  final parts = ymd.split('-');
+  if (parts.length != 3 ||
+      parts[0].length != 4 ||
+      parts[1].length != 2 ||
+      parts[2].length != 2) {
+    throw ArgumentError.value(ymd, 'ymd', 'YYYY-MM-DD 形式ではない');
+  }
+  final year = int.parse(parts[0]);
+  final month = int.parse(parts[1]);
+  final day = int.parse(parts[2]);
+  final shifted = DateTime.utc(year, month, day + days);
+  return DateFormat('yyyy-MM-dd').format(shifted);
 }
