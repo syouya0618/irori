@@ -91,7 +91,22 @@ fvm flutter build web --release
 Supabase Dashboard → Auth → URL Configuration → Allowed Redirect URLs に
 `https://irori-flutter-*.vercel.app/*` を wildcard 登録 (Section 7.2.1)。
 
-### 8. CI workflow
+### 8. Phase 1 着手前ブロッカー自動検証
+
+Vercel `irori-flutter` project の設定 + Supabase Auth Redirect URL 登録が完了したら、Issue #48 (Auth UI) 着手前に自動検証スクリプトでブロッカー解消を確認できる:
+
+```bash
+# 初回のみ: repo root に .env.local を作成して token を記入
+# (template + 手順は scripts/README.md 参照、.env.local は .gitignore 済み)
+
+# 検証実行
+bash scripts/verify-flutter-readiness.sh
+```
+
+検証項目: R1 (Build Command) / R2 (env 3 environment) / R3 (Supabase Redirect URL wildcard)。
+詳細・token 発行手順は [`scripts/README.md`](../scripts/README.md) を参照。
+
+### 9. CI workflow
 
 Phase 0 PR で [`.github/workflows/flutter.yml`](../.github/workflows/flutter.yml) を配置済み。
 
