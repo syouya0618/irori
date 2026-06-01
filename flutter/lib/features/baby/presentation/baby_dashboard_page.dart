@@ -4,25 +4,30 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../widgets/glass_card.dart';
 import '../data/baby_logs_notifier.dart';
 import '../data/baby_repository.dart';
+import '../data/baby_weekly_summary_provider.dart';
 import '../data/last_sleep_provider.dart';
 import '../data/now_ticker_provider.dart';
 import '../data/selected_baby_date_provider.dart';
 import '../domain/baby_log.dart';
 import 'baby_summary.dart';
 import 'widgets/baby_date_nav.dart';
+import 'widgets/baby_feeding_timer.dart';
 import 'widgets/baby_log_form_sheet.dart';
 import 'widgets/baby_quick_actions.dart';
 import 'widgets/baby_summary_bar.dart';
 import 'widgets/baby_timeline.dart';
+import 'widgets/baby_weekly_summary.dart';
 
 /// 育児ログ ダッシュボード。Next.js 原典 `baby-dashboard.tsx` の表示側を移植。
 ///
-/// 表示構成 (縦): DateNav → SummaryBar → QuickActions(今日のみ) → Timeline。
-/// 授乳タイマー / 週間サマリーは別 PR のため本 PR では描画しない。
+/// 表示構成 (縦): DateNav → SummaryBar → QuickActions(今日のみ) →
+/// WeeklySummary → Timeline。授乳タイマーは QuickActions の左右授乳ボタンから
+/// `showBabyFeedingTimer` で開く (#61)。
 ///
 /// データ:
 /// - `babyLogsNotifierProvider` を `.when(data/loading/error)` で消費
 ///   (`.future` は await しない — doc コメント参照)。
+/// - 週間サマリーは `babyWeeklySummaryProvider` (FutureProvider) を `.when` で消費。
 /// - data 時に `deriveBabySummary` でサマリー導出。
 /// - `lastSleepEndedAt` は **derived 優先**、無ければ `lastSleepEndedAtProvider`
 ///   をフォールバック (原典 `derivedLastSleepEndedAt ?? lastSleepEndedAt`)。
@@ -33,6 +38,16 @@ class BabyDashboardPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final logsAsync = ref.watch(babyLogsNotifierProvider);
+
+    // 週間チャートは自前の cross-client realtime を張らない代わりに、
+    // **realtime 反映される今日ログ** (`babyLogsNotifierProvider`) の変化に追従して
+    // 再取得する。これで配偶者の今日の書き込みもタイムライン経由でチャートへ
+    // 反映され、「今日タイムラインには出るが週間バーは古い」整合崩れを防ぐ
+    // (週全日の cross-client realtime は follow-up)。own write も含め二重
+    // invalidate になるが Riverpod が rebuild を coalesce するため実害なし。
+    ref.listen(babyLogsNotifierProvider, (_, _) {
+      ref.invalidate(babyWeeklySummaryProvider);
+    });
 
     return Scaffold(
       appBar: AppBar(title: const Text('育児ログ')),
@@ -83,6 +98,11 @@ class _DashboardBody extends ConsumerWidget {
     final effectiveLastSleepEndedAt =
         summary.derivedLastSleepEndedAt ?? fallbackLastSleep;
 
+    // 週間サマリー (直近7日)。FutureProvider を `.when` で消費。
+    // loading は無描画 (data 到着でカードが現れる)、error は muted な一行で告知
+    // (今日のタイムライン読み込みは独立しており、週間チャート失敗で page を壊さない)。
+    final weeklyAsync = ref.watch(babyWeeklySummaryProvider);
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
       children: [
@@ -103,9 +123,29 @@ class _DashboardBody extends ConsumerWidget {
             onCreateLog: (type) {
               showBabyLogFormSheet(context, createLogType: type);
             },
+            onStartTimer: (type) {
+              showBabyFeedingTimer(context, ref, initialType: type);
+            },
           ),
           const SizedBox(height: 16),
         ],
+        weeklyAsync.when(
+          skipLoadingOnReload: true,
+          data: (days) => days.isEmpty
+              ? const SizedBox.shrink()
+              : Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: BabyWeeklySummary(days: days),
+                ),
+          loading: () => const SizedBox.shrink(),
+          error: (error, _) => const Padding(
+            padding: EdgeInsets.only(bottom: 16, left: 4),
+            child: Text(
+              '週間サマリーを読み込めませんでした',
+              style: TextStyle(fontSize: 12, color: Color(0xFF475569)),
+            ),
+          ),
+        ),
         BabyTimeline(
           logs: logs,
           onItemTap: (log) {

@@ -11,7 +11,8 @@ import 'baby_timeline_item.dart';
 /// - [logs] が空なら空状態 (Lucide Baby アイコン + "まだ記録がありません")。
 /// - 非空なら見出し "タイムライン" + glass カード内に `BabyTimelineItem` を
 ///   区切り線付きで並べる。
-/// - [onItemTap]: 各行のタップコールバック (編集シートは PR2)。
+/// - [onItemTap]: 各行のタップコールバック。ダッシュボードが編集シート
+///   (`showBabyLogFormSheet`) を開く配線済み (#61)。
 class BabyTimeline extends StatelessWidget {
   const BabyTimeline({
     required this.logs,

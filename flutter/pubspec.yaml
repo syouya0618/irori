@@ -37,6 +37,10 @@ dependencies:
   # Icons (既存 Lucide React の移植)
   lucide_icons_flutter: ^3.1.14
 
+  # 授乳タイマーの中断復元 (原典 feeding-timer.tsx の localStorage 相当)。
+  # 既に transitive 解決済み (supabase_flutter 経由) の版を direct に昇格。
+  shared_preferences: ^2.5.5
+
   cupertino_icons: ^1.0.9
 
 dev_dependencies:

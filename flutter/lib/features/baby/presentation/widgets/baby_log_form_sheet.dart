@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/baby_logs_notifier.dart';
 import '../../data/baby_repository.dart';
+import '../../data/baby_weekly_summary_provider.dart';
 import '../../data/last_sleep_provider.dart';
 import '../../domain/baby_log.dart';
 import '../baby_display_utils.dart';
@@ -257,6 +258,9 @@ class _BabyLogFormSheetState extends ConsumerState<BabyLogFormSheet> {
       final repo = ref.read(babyRepositoryProvider);
       await action(mutationContext, repo);
       ref.invalidate(babyLogsNotifierProvider);
+      // 週間チャートも create/update/delete を反映 (取りこぼし防止: 必ず
+      // babyLogsNotifierProvider の invalidate と同じ場所に並べる)。
+      ref.invalidate(babyWeeklySummaryProvider);
       if (refreshLastSleep) {
         ref.invalidate(lastSleepEndedAtProvider);
       }

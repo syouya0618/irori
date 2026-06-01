@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/theme/radii.dart';
 import '../../data/baby_logs_notifier.dart';
 import '../../data/baby_repository.dart';
+import '../../data/baby_weekly_summary_provider.dart';
 import '../../data/last_sleep_provider.dart';
 import '../../domain/baby_log.dart';
 import '../baby_display_utils.dart';
@@ -64,6 +65,9 @@ class _BabyQuickActionsState extends ConsumerState<BabyQuickActions> {
       );
       await action(mutationContext);
       ref.invalidate(babyLogsNotifierProvider);
+      // 週間チャートも自分の write を反映 (取りこぼし防止: babyLogsNotifierProvider
+      // の invalidate と必ず同じ場所に並べる — baby_weekly_summary_provider 参照)。
+      ref.invalidate(babyWeeklySummaryProvider);
       if (refreshLastSleep) {
         ref.invalidate(lastSleepEndedAtProvider);
       }

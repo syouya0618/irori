@@ -5,16 +5,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:irori/features/baby/data/baby_logs_notifier.dart';
 import 'package:irori/features/baby/data/baby_repository.dart';
+import 'package:irori/features/baby/data/baby_weekly_summary_provider.dart';
+import 'package:irori/features/baby/data/feeding_timer_store.dart';
 import 'package:irori/features/baby/data/last_sleep_provider.dart';
 import 'package:irori/features/baby/data/now_ticker_provider.dart';
 import 'package:irori/features/baby/data/selected_baby_date_provider.dart';
 import 'package:irori/features/baby/domain/baby_log.dart';
+import 'package:irori/features/baby/domain/baby_weekly_summary.dart';
 import 'package:irori/features/baby/presentation/baby_dashboard_page.dart';
 import 'package:irori/features/baby/presentation/widgets/baby_date_nav.dart';
 import 'package:irori/features/baby/presentation/widgets/baby_log_form_sheet.dart';
 import 'package:irori/features/baby/presentation/widgets/baby_quick_actions.dart';
 import 'package:irori/features/baby/presentation/widgets/baby_summary_bar.dart';
 import 'package:irori/features/baby/presentation/widgets/baby_timeline.dart';
+import 'package:irori/features/baby/presentation/widgets/baby_weekly_summary.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 BabyLog _log({
@@ -71,11 +75,23 @@ class _FixedDateNotifier extends SelectedBabyDateNotifier {
   String build() => _d;
 }
 
+/// in-memory な授乳タイマーストア (本物の SharedPreferences プラグインを避ける)。
+class _FakeTimerStore implements FeedingTimerStore {
+  FeedingTimerState? state;
+  @override
+  Future<FeedingTimerState?> load() async => state;
+  @override
+  Future<void> save(FeedingTimerState newState) async => state = newState;
+  @override
+  Future<void> clear() async => state = null;
+}
+
 Widget _harness({
   required BabyLogsNotifier Function() logsNotifier,
   String? selectedDate,
   DateTime? now,
   DateTime? lastSleepFallback,
+  List<BabyWeeklySummaryDay>? weeklyDays,
 }) {
   return ProviderScope(
     overrides: [
@@ -88,6 +104,12 @@ Widget _harness({
         (ref) => Stream.value(now ?? DateTime.utc(2026, 1, 1, 12)),
       ),
       lastSleepEndedAtProvider.overrideWith((ref) async => lastSleepFallback),
+      // 週間サマリーを決定的に (既定は空 = カード非表示)。
+      babyWeeklySummaryProvider.overrideWith(
+        (ref) async => weeklyDays ?? const [],
+      ),
+      // 授乳タイマー起動時の永続化を in-memory fake に (プラグイン未初期化回避)。
+      feedingTimerStoreProvider.overrideWithValue(_FakeTimerStore()),
     ],
     child: const MaterialApp(home: BabyDashboardPage()),
   );
@@ -279,6 +301,8 @@ void main() {
             ),
             nowTickerProvider.overrideWith((ref) => controller.stream),
             lastSleepEndedAtProvider.overrideWith((ref) async => null),
+            babyWeeklySummaryProvider.overrideWith((ref) async => const []),
+            feedingTimerStoreProvider.overrideWithValue(_FakeTimerStore()),
           ],
           child: const MaterialApp(home: BabyDashboardPage()),
         ),
@@ -297,4 +321,47 @@ void main() {
       expect(find.text('1時間'), findsOneWidget);
     },
   );
+
+  testWidgets('週間サマリーカードをダッシュボードに組み込んで表示する', (tester) async {
+    final weekly = <BabyWeeklySummaryDay>[
+      for (var i = 5; i <= 11; i++)
+        (
+          date: '2026-01-${i.toString().padLeft(2, '0')}',
+          feedingCount: i == 10 ? 3 : 0,
+          diaperCount: 0,
+          sleepMinutes: 0,
+        ),
+    ];
+
+    await tester.pumpWidget(
+      _harness(
+        logsNotifier: () => _FakeLogsNotifier(const []),
+        selectedDate: formatJstDate(),
+        weeklyDays: weekly,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(BabyWeeklySummary), findsOneWidget);
+    expect(find.text('週間サマリー'), findsOneWidget);
+  });
+
+  testWidgets('左授乳のタップで授乳タイマーが開く (onStartTimer 配線)', (tester) async {
+    await tester.pumpWidget(
+      _harness(
+        logsNotifier: () => _FakeLogsNotifier(const []),
+        selectedDate: formatJstDate(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // QuickActions の左授乳ボタンをタップ → feeding timer の modal sheet が開く。
+    await tester.tap(find.text('左'));
+    // タイマーは periodic ticker を回すため pumpAndSettle は使えない。
+    await tester.pump(); // modal route 起動 + restore microtask
+    await tester.pump(const Duration(milliseconds: 50)); // restore 完了
+
+    expect(find.text('授乳タイマー'), findsOneWidget);
+    expect(find.text('停止して記録'), findsOneWidget);
+  });
 }

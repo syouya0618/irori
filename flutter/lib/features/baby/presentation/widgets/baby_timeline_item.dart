@@ -56,8 +56,9 @@ const Map<BabyLogType, _LogTypeStyle> _logTypeStyles = {
 /// 種別アイコン丸背景 + `getLogSummary` 要約 + (あれば) memo 補足 +
 /// `formatTimeJst` の右端時刻 + chevron。
 ///
-/// [onTap]: 編集シートは PR2 のため、ここでは optional コールバックを受けるのみ
-/// (デフォルト no-op)。タップ領域 (>=44px 高) は確保し、PR2 で配線できるようにする。
+/// [onTap]: optional コールバック。ダッシュボードが編集シートを開く配線済み
+/// (#61)。未指定なら no-op (InkWell は表示するがアクションなし)。
+/// タップ領域は >=44px 高を確保する。
 class BabyTimelineItem extends StatelessWidget {
   const BabyTimelineItem({
     required this.log,
@@ -67,8 +68,8 @@ class BabyTimelineItem extends StatelessWidget {
 
   final BabyLog log;
 
-  /// 行タップ時のコールバック。PR2 で編集シートを開く配線に使う想定。
-  /// PR1 では未指定 = no-op (InkWell は表示するがアクションなし)。
+  /// 行タップ時のコールバック。ダッシュボードが編集シートを開く配線で使う (#61)。
+  /// 未指定 = no-op (InkWell は表示するがアクションなし)。
   final void Function(BabyLog log)? onTap;
 
   @override
