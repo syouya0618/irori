@@ -449,6 +449,10 @@ export interface Database {
         Args: { target_user_id: string }
         Returns: void
       }
+      create_household: {
+        Args: { p_name: string }
+        Returns: string
+      }
     }
     Enums: {
       meal_type: MealType
