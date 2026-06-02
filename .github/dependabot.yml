@@ -1,0 +1,46 @@
+version: 2
+updates:
+  # Next.js / web (リポジトリルートの pnpm-lock.yaml)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      # minor / patch をまとめて PR ノイズを削減。
+      # major は grouped から外れ個別 PR となり、破壊的変更を精査できる。
+      npm-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Flutter / Dart (flutter/pubspec.yaml)
+  - package-ecosystem: "pub"
+    directory: "/flutter"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      pub-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions ワークフローの action バージョン
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

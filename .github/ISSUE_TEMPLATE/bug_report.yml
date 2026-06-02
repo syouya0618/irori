@@ -1,0 +1,45 @@
+name: バグ報告
+description: 不具合を報告する
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 何が起きたか
+      description: 不具合の概要と、できれば再現手順を記載してください。
+      placeholder: |
+        1. ... を開く
+        2. ... を押す
+        3. ... が起きる
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待した挙動
+    validations:
+      required: false
+  - type: dropdown
+    id: surface
+    attributes:
+      label: 発生箇所
+      options:
+        - Web (Next.js)
+        - Flutter
+        - 不明 / その他
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: 環境
+      placeholder: "例: macOS 15 / Chrome 130、または iOS 18 / Flutter 3.x"
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ / スクリーンショット
+      description: 関連するコンソールログやスクリーンショットがあれば添付してください。
+    validations:
+      required: false

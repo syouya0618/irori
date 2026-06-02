@@ -1,0 +1,5 @@
+# コードオーナー（Pull Request のレビュアーを自動アサイン）
+# 参考: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# デフォルトの所有者
+* @syouya0618

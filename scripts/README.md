@@ -35,8 +35,8 @@ VERCEL_TOKEN=<your_vercel_token>
 SUPABASE_ACCESS_TOKEN=<your_supabase_token>
 
 # 以下はデフォルト値。変更したい場合のみ記入。
-SUPABASE_PROJECT_REF=rkzbpoeiiiptqptkxdyi
-VERCEL_TEAM_ID=team_agIHQOjUiDPI6tLSjdQRdXce
+SUPABASE_PROJECT_REF=<your_supabase_project_ref>
+VERCEL_TEAM_ID=<your_vercel_team_id>
 FLUTTER_PROJECT_NAME=irori-flutter
 ```
 

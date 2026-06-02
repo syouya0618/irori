@@ -30,8 +30,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="$REPO_ROOT/.env.local"
 
 # 設定 (環境変数で上書き可能)。env-load は main() 内で行う (テストが source する際の汚染防止)。
-SUPABASE_PROJECT_REF="${SUPABASE_PROJECT_REF:-rkzbpoeiiiptqptkxdyi}"
-VERCEL_TEAM_ID="${VERCEL_TEAM_ID:-team_agIHQOjUiDPI6tLSjdQRdXce}"
+SUPABASE_PROJECT_REF="${SUPABASE_PROJECT_REF:-your-project-ref}"
+VERCEL_TEAM_ID="${VERCEL_TEAM_ID:-your-vercel-team-id}"
 FLUTTER_PROJECT_NAME="${FLUTTER_PROJECT_NAME:-irori-flutter}"
 
 # tri-state を保持するグローバル変数 (各 check 関数が直接代入する)。

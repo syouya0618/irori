@@ -50,8 +50,7 @@ class WelcomePage extends StatelessWidget {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'See docs/plans/2026-05-27-flutter-migration-design.md '
-                          'for the full plan.',
+                          'See the repository README for details.',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
