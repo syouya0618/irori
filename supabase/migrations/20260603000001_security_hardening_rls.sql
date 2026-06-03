@@ -107,52 +107,17 @@ CREATE POLICY "eating_out_photos_delete" ON storage.objects
   );
 
 -- ------------------------------------------------------------
--- H3: 承認関数に自世帯スコープを追加
+-- H3 (承認関数) は本 migration では変更しない（当初案を撤回）
 -- ------------------------------------------------------------
--- owner であることに加え「自世帯の承認待ちユーザーのみ」を対象とし、
--- 全世帯の email 漏洩・越権承認を防ぐ。
-CREATE OR REPLACE FUNCTION get_pending_approvals()
-RETURNS TABLE (
-  id UUID,
-  display_name TEXT,
-  email TEXT,
-  created_at TIMESTAMPTZ
-) AS $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM public.profiles
-    WHERE public.profiles.id = auth.uid() AND role = 'owner'
-  ) THEN
-    RETURN;
-  END IF;
-
-  RETURN QUERY
-  SELECT p.id, p.display_name, u.email::TEXT, p.created_at
-  FROM public.profiles p
-  JOIN auth.users u ON u.id = p.id
-  WHERE p.is_approved = false
-    AND p.household_id = get_my_household_id();
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
-
-CREATE OR REPLACE FUNCTION approve_user(target_user_id UUID)
-RETURNS VOID AS $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM public.profiles
-    WHERE public.profiles.id = auth.uid() AND role = 'owner'
-  ) THEN
-    RAISE EXCEPTION 'Only owners can approve users';
-  END IF;
-
-  UPDATE public.profiles
-  SET is_approved = true
-  WHERE id = target_user_id
-    AND is_approved = false
-    AND household_id = get_my_household_id();
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'User not found or already approved';
-  END IF;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+-- 当初 get_pending_approvals / approve_user に「自世帯フィルタ
+-- （household_id = get_my_household_id()）」を追加する案だったが、独立レビューで
+-- 回帰と判明したため撤回した。
+-- 理由: 承認待ち(is_approved=false)ユーザーは必ず household_id=NULL になる
+-- （handle_new_user は household 未設定、create_household / accept_invitation は
+-- is_approved=true を同時設定するため）。本承認系は「グローバル allowlist
+-- （owner が新規サインアップ全体を承認 → 承認後に各自が /setup で世帯作成）」の
+-- 設計であり、自世帯フィルタを入れると NULL = owner_uuid が常に false となって
+-- 承認導線が全損し、招待なしの新規ユーザーが /pending-approval に恒久的に詰む。
+-- 「全 owner が全 pending を見る」のは本設計では意図された挙動。マルチテナント
+-- 分離（独立した複数家族の併存）が要件化した場合は、承認モデル自体の再設計
+-- （pending ユーザーを対象 household に紐付ける導線の新設）で対応すること。
