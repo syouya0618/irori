@@ -15,30 +15,20 @@ export async function createHousehold(name: string) {
     return { error: "認証されていません。ログインしてください。" }
   }
 
-  const householdId = crypto.randomUUID()
+  // 世帯作成は SECURITY DEFINER 関数 create_household 経由で行う。
+  // profiles の household_id / role / is_approved はユーザーが直接書込不可
+  // （列権限で制限）であり、世帯の作成・owner 付与・自動承認をこの関数が
+  // アトミックに実施する。
+  const { error } = await supabase.rpc("create_household", { p_name: name })
 
-  const { error: householdError } = await supabase
-    .from("households")
-    .insert({ id: householdId, name })
-
-  if (householdError) {
-    return { error: "世帯の作成に失敗しました。もう一度お試しください。" }
-  }
-
-  // .select("id").single() で更新が実際に1行影響したことを検証。
-  // 0行影響（プロフィール未存在等）の場合 PGRST116 エラーで検知する。
-  const { error: profileError } = await supabase
-    .from("profiles")
-    .update({
-      household_id: householdId,
-      role: "owner" as const,
+  if (error) {
+    console.error("createHousehold failed", {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
     })
-    .eq("id", user.id)
-    .select("id")
-    .single()
-
-  if (profileError) {
-    return { error: "プロフィールの更新に失敗しました。もう一度お試しください。" }
+    return { error: "世帯の作成に失敗しました。もう一度お試しください。" }
   }
 
   revalidatePath("/meals")
