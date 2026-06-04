@@ -21,7 +21,7 @@ dependencies:
   # riverpod 3.x は API 変更あり (StreamNotifier → AsyncNotifier 推奨等)
   # 設計書 Section 4 のサンプルは Phase 1 着手時に 3.x API で再執筆する。
   flutter_riverpod: ^3.3.1
-  go_router: ^17.2.3
+  go_router: ^17.3.0
 
   # PDF (baby-report はクライアントサイド生成 — Section 4 / 7.2.3 参照)
   pdf: ^3.12.0
