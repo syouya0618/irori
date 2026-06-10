@@ -6,6 +6,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/supabase/supabase_providers.dart';
 import '../domain/baby_log.dart';
 
+/// `formatJstDate` / `shiftYmd` は Phase 2 共有基盤 (F0) で
+/// `core/utils/jst_date.dart` へ移設した。既存の import 元
+/// (`selected_baby_date_provider.dart` / `baby_date_nav.dart` / 各テスト等) を
+/// 壊さないための後方互換 re-export。新規コードは core 側を直接 import する。
+export '../../../core/utils/jst_date.dart' show formatJstDate, shiftYmd;
+
 /// 全 Supabase 呼び出しに付与するタイムアウト。
 /// CLAUDE.md「外部API呼び出しにはタイムアウト設定必須」。
 const _kQueryTimeout = Duration(seconds: 10);
@@ -20,14 +26,6 @@ const _kBabyLogColumns =
 
 /// `baby_logs.memo` のアプリ側上限。Next.js 版 `actions.ts` と同値。
 const maxBabyLogMemoLength = 1000;
-
-/// JST (Asia/Tokyo, UTC+9) 固定オフセット。
-///
-/// `new Date('YYYY-MM-DD')` 相当の UTC 罠を回避するため、日付境界は
-/// 「JST の 00:00:00」を明示的に `+09:00` 付き ISO 文字列で表現する。
-/// Postgres `timestamptz` 比較は timezone-aware なので、`+09:00` を付けた
-/// 文字列を渡せば DB 側で正しく JST 日界として解釈される。
-const _kJstOffset = Duration(hours: 9);
 
 /// baby log mutation に必要な認証コンテキスト。
 typedef BabyMutationContext = ({String householdId, String userId});
@@ -496,42 +494,6 @@ class BabyRepository {
 final babyRepositoryProvider = Provider<BabyRepository>((ref) {
   return BabyRepository(ref.watch(supabaseClientProvider));
 });
-
-/// JST の現在日付 (YYYY-MM-DD) を返す。
-///
-/// `DateTime.now().toUtc()` に +9h して壁時計の日付を取り出すことで、
-/// 端末の OS タイムゾーンに依存せず JST 日界を決定する
-/// (CLAUDE.md「UTC 罠回避 / JST 計算は明示的に」)。
-String formatJstDate([DateTime? now]) {
-  final utc = (now ?? DateTime.now()).toUtc();
-  final jst = utc.add(_kJstOffset);
-  return DateFormat('yyyy-MM-dd').format(jst);
-}
-
-/// "YYYY-MM-DD" 文字列を指定日数シフトする。タイムゾーン非依存。
-///
-/// Next.js 原典 `src/lib/utils/date-jst.ts` の `shiftYmd` を移植
-/// (`new Date(Date.UTC(y, m-1, d+days))` → `DateTime.utc(y, m, d+days)`)。
-/// `DateTime.utc` は day overflow/underflow を月・年へ正規化するため、
-/// 月跨ぎ・年跨ぎ・閏年が JS Date と同じ結果になる。
-///
-/// `new DateTime('YYYY-MM-DD')` (= `DateTime.parse`) を使わず数値分解する
-/// ことで、端末 TZ に依存しない (CLAUDE.md「UTC 罠回避」)。
-/// 入力が YYYY-MM-DD 形式でなければ `ArgumentError` を投げる (握り潰さない)。
-String shiftYmd(String ymd, int days) {
-  final parts = ymd.split('-');
-  if (parts.length != 3 ||
-      parts[0].length != 4 ||
-      parts[1].length != 2 ||
-      parts[2].length != 2) {
-    throw ArgumentError.value(ymd, 'ymd', 'YYYY-MM-DD 形式ではない');
-  }
-  final year = int.parse(parts[0]);
-  final month = int.parse(parts[1]);
-  final day = int.parse(parts[2]);
-  final shifted = DateTime.utc(year, month, day + days);
-  return DateFormat('yyyy-MM-dd').format(shifted);
-}
 
 bool _allowsAmountMl(FeedingType type) {
   return type == FeedingType.bottle || type == FeedingType.solid;
