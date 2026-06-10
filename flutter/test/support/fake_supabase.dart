@@ -66,6 +66,19 @@ class FakeTransformBuilder extends Fake
   final Object? cannedError;
 }
 
+/// `maybeSingle()` の結果 (`PostgrestTransformBuilder<PostgrestMap?>` 相当)。
+/// 0 行は canned null で表現する (meals PR-F1 で追加 — additive)。
+class FakeMaybeSingleBuilder extends Fake
+    with _FakeFuture<PostgrestMap?>
+    implements PostgrestTransformBuilder<PostgrestMap?> {
+  FakeMaybeSingleBuilder({this.cannedValue, this.cannedError});
+
+  @override
+  final PostgrestMap? cannedValue;
+  @override
+  final Object? cannedError;
+}
+
 /// `from('x').select(...).eq(...)` のチェーン
 /// (`PostgrestFilterBuilder<PostgrestList>` 相当)。
 /// 末尾で `await` すれば `PostgrestList` を返し、`single()` で
@@ -79,9 +92,15 @@ class FakeFilterBuilder extends Fake
     this.cannedError,
     PostgrestMap? singleValue,
     Object? singleError,
+    PostgrestMap? maybeSingleValue,
+    Object? maybeSingleError,
   }) : _single = FakeTransformBuilder(
          cannedValue: singleValue,
          cannedError: singleError,
+       ),
+       _maybeSingle = FakeMaybeSingleBuilder(
+         cannedValue: maybeSingleValue,
+         cannedError: maybeSingleError,
        );
 
   @override
@@ -90,8 +109,12 @@ class FakeFilterBuilder extends Fake
   final Object? cannedError;
 
   final FakeTransformBuilder _single;
+  final FakeMaybeSingleBuilder _maybeSingle;
   final eqFilters = <({String column, Object value})>[];
   final isFilters = <({String column, bool? value})>[];
+  final gteFilters = <({String column, Object value})>[];
+  final lteFilters = <({String column, Object value})>[];
+  final orderCalls = <({String column, bool ascending})>[];
   String? selectedColumns;
 
   @override
@@ -107,6 +130,29 @@ class FakeFilterBuilder extends Fake
   }
 
   @override
+  PostgrestFilterBuilder<PostgrestList> gte(String column, Object value) {
+    gteFilters.add((column: column, value: value));
+    return this;
+  }
+
+  @override
+  PostgrestFilterBuilder<PostgrestList> lte(String column, Object value) {
+    lteFilters.add((column: column, value: value));
+    return this;
+  }
+
+  @override
+  PostgrestTransformBuilder<PostgrestList> order(
+    String column, {
+    bool ascending = false,
+    bool nullsFirst = false,
+    String? referencedTable,
+  }) {
+    orderCalls.add((column: column, ascending: ascending));
+    return this;
+  }
+
+  @override
   PostgrestTransformBuilder<PostgrestList> select([String columns = '*']) {
     selectedColumns = columns;
     return this;
@@ -114,6 +160,9 @@ class FakeFilterBuilder extends Fake
 
   @override
   PostgrestTransformBuilder<PostgrestMap> single() => _single;
+
+  @override
+  PostgrestTransformBuilder<PostgrestMap?> maybeSingle() => _maybeSingle;
 }
 
 /// `from('table')` の結果 (`SupabaseQueryBuilder` 相当)。
@@ -129,9 +178,14 @@ class FakeQueryBuilder extends Fake implements SupabaseQueryBuilder {
   Map<dynamic, dynamic>? lastUpdateValues;
   int deleteCallCount = 0;
 
+  /// read 系 `select(...)` に渡された列文字列 (meals PR-F1 で追加 — additive)。
+  String? lastSelectColumns;
+
   @override
-  PostgrestFilterBuilder<PostgrestList> select([String columns = '*']) =>
-      _filter;
+  PostgrestFilterBuilder<PostgrestList> select([String columns = '*']) {
+    lastSelectColumns = columns;
+    return _filter;
+  }
 
   @override
   PostgrestFilterBuilder<dynamic> insert(
@@ -244,12 +298,17 @@ class FakeSupabaseClient extends Fake implements SupabaseClient {
   Map<String, dynamic>? lastRpcParams;
   String? lastFromTable;
 
+  /// `from(table)` 呼び出し順の記録 (meals PR-F1 で追加 — additive)。
+  /// deleteMeal の「子テーブル → 親テーブル」削除順などの検証に使う。
+  final fromTables = <String>[];
+
   @override
   GoTrueClient get auth => _auth;
 
   @override
   SupabaseQueryBuilder from(String table) {
     lastFromTable = table;
+    fromTables.add(table);
     final builder = _fromBuilders[table];
     if (builder == null) {
       throw StateError('FakeSupabaseClient: from("$table") は未設定です');
