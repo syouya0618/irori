@@ -16,6 +16,9 @@ const eslintConfig = defineConfig([
     // lint すると Node が heap OOM でクラッシュするため除外する (CI には存在しない)。
     "flutter/**",
     ".worktrees/**",
+    // Claude Code のエージェント worktree (リポジトリ全体のコピーが入るため、
+    // 除外しないと素の eslint が数万件の重複 lint を report する)
+    ".claude/worktrees/**",
     ".codex-pet-runs/**",
   ]),
   {
