@@ -3,47 +3,18 @@
 import { revalidatePath } from "next/cache"
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
-import { getCachedStockItems } from "@/lib/supabase/cached-queries"
-import type { ItemCategory, MealReaction } from "@/lib/types/database"
+import { autoAddLowStockItems } from "@/lib/supabase/low-stock"
+import { fetchRecipeSuggestions } from "@/lib/supabase/recipe-suggestion-queries"
 import {
-  rankSuggestions,
+  getNextSortOrder,
+  searchPurchaseHistory,
+} from "@/lib/supabase/shopping-queries"
+import {
   calculateDailyRate,
-  estimateRemainingDays,
+  parseStockFormData,
   type RecipeSuggestion,
-  type StockItemInput,
-  type TemplateIngredient,
-  type TemplateInput,
 } from "@/lib/domain"
 import { todayJstString, shiftYmd } from "@/lib/utils/date-jst"
-
-type ParsedStockFields = {
-  name: string
-  category: ItemCategory
-  quantity: number
-  unit: string | null
-  expires_at: string | null
-}
-
-function parseStockFormData(
-  formData: FormData,
-): ParsedStockFields | { error: string } {
-  const name = formData.get("name")
-  if (typeof name !== "string" || name.trim().length === 0) {
-    return { error: "アイテム名を入力してください" }
-  }
-
-  const unit = formData.get("unit")
-  const expiresAt = formData.get("expires_at")
-
-  return {
-    name: name.trim(),
-    category: (formData.get("category") as ItemCategory) || "other_food",
-    quantity: Number(formData.get("quantity")) || 1,
-    unit: typeof unit === "string" && unit.length > 0 ? unit : null,
-    expires_at:
-      typeof expiresAt === "string" && expiresAt.length > 0 ? expiresAt : null,
-  }
-}
 
 export async function addStockItem(formData: FormData) {
   const parsed = parseStockFormData(formData)
@@ -117,25 +88,15 @@ export async function getStockSuggestions(query: string) {
   if (result.error !== null) return { suggestions: [] }
   const { supabase, householdId } = result.context
 
-  const { data, error } = await supabase
-    .from("purchase_history")
-    .select("item_name, category")
-    .eq("household_id", householdId)
-    .ilike("item_name", `%${query.trim().replace(/[%_\\]/g, "\\$&")}%`)
-    .order("purchased_at", { ascending: false })
-    .limit(20)
+  const { items: unique, error } = await searchPurchaseHistory(
+    supabase,
+    householdId,
+    query,
+  )
 
   if (error) {
     return { suggestions: [] }
   }
-
-  const seen = new Set<string>()
-  const unique = (data ?? []).filter((item) => {
-    const key = item.item_name.toLowerCase()
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
 
   return {
     suggestions: unique.map((item) => ({
@@ -178,22 +139,8 @@ export async function addToShoppingList(itemId: string) {
     return { error: "既に買い物リストにあります" }
   }
 
-  // 空リスト (0 行) は正常系ゆえ maybeSingle
-  const { data: maxOrder, error: maxOrderError } = await supabase
-    .from("shopping_items")
-    .select("sort_order")
-    .eq("household_id", householdId)
-    .order("sort_order", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  if (maxOrderError) {
-    logSupabaseError("stock", "sort_order lookup failed", maxOrderError, {
-      householdId,
-    })
-  }
-
-  const sortOrder = (maxOrder?.sort_order ?? 0) + 1
+  // sort_order の最大値 + 1 を取得 (log scope は stock)
+  const sortOrder = await getNextSortOrder(supabase, householdId, "stock")
 
   const { error: insertError } = await supabase
     .from("shopping_items")
@@ -229,62 +176,7 @@ export async function getRecipeSuggestions(): Promise<{
   }
   const { supabase, householdId } = result.context
 
-  // 在庫は getCachedStockItems 経由で取得し、page.tsx との同一リクエスト内の
-  // 重複フェッチを排除する。
-  const [stockResult, templateResult, reactionResult] = await Promise.all([
-    getCachedStockItems(householdId),
-    supabase
-      .from("meal_templates")
-      .select("id, title, ingredients")
-      .eq("household_id", householdId),
-    supabase
-      .from("meals")
-      .select("template_id, meal_reactions ( reaction )")
-      .eq("household_id", householdId)
-      .not("template_id", "is", null),
-  ])
-
-  if (stockResult.error || templateResult.error || reactionResult.error) {
-    return { error: "レシピ提案の取得に失敗しました", data: [] }
-  }
-
-  const stockItems: StockItemInput[] = (stockResult.data ?? []).map((s) => ({
-    id: s.id,
-    name: s.name,
-    category: s.category as ItemCategory,
-    expires_at: s.expires_at,
-  }))
-
-  // Database 型の Relationships が空のため as unknown as で型を宣言
-  const reactionRows = (reactionResult.data ?? []) as unknown as Array<{
-    template_id: string | null
-    meal_reactions: Array<{ reaction: MealReaction }> | null
-  }>
-  const reactionMap = new Map<string, MealReaction[]>()
-  for (const meal of reactionRows) {
-    if (!meal.template_id) continue
-    const existing = reactionMap.get(meal.template_id) ?? []
-    for (const r of meal.meal_reactions ?? []) {
-      existing.push(r.reaction)
-    }
-    reactionMap.set(meal.template_id, existing)
-  }
-
-  const templates: TemplateInput[] = (templateResult.data ?? []).map((t) => {
-    const ingredients = Array.isArray(t.ingredients)
-      ? (t.ingredients as unknown as TemplateIngredient[])
-      : []
-    return {
-      id: t.id,
-      title: t.title,
-      ingredients,
-      reactionHistory: reactionMap.get(t.id) ?? [],
-    }
-  })
-
-  const suggestions = rankSuggestions(templates, stockItems)
-
-  return { error: null, data: suggestions }
+  return fetchRecipeSuggestions(supabase, householdId)
 }
 
 /**
@@ -341,109 +233,11 @@ export async function checkAndAutoAddLowStock(): Promise<{
   }
   const { supabase, userId, householdId } = result.context
 
-  const now = new Date()
-  const today = todayJstString(now)
-  const weekAgo = shiftYmd(today, -7)
+  const outcome = await autoAddLowStockItems(supabase, householdId, userId)
 
-  // 独立クエリを並列実行（authコンテキストを共有して重複排除）
-  const [householdResult, logsResult, stockResult, shoppingResult] =
-    await Promise.all([
-      supabase
-        .from("households")
-        .select("auto_stock_categories")
-        .eq("id", householdId)
-        .single(),
-      supabase
-        .from("baby_logs")
-        .select("log_type, logged_at, amount_ml")
-        .eq("household_id", householdId)
-        .in("log_type", ["diaper", "feeding"])
-        .gte("logged_at", `${weekAgo}T00:00:00`)
-        .limit(500),
-      supabase
-        .from("stock_items")
-        .select("id, name, category, quantity")
-        .eq("household_id", householdId),
-      supabase
-        .from("shopping_items")
-        .select("name")
-        .eq("household_id", householdId)
-        .eq("is_checked", false),
-    ])
-
-  if (
-    householdResult.error ||
-    logsResult.error ||
-    stockResult.error ||
-    shoppingResult.error ||
-    !householdResult.data
-  ) {
-    return { error: null, addedItems: [] }
+  // insert 成功時のみ addedItems が非空になる（低在庫なし・重複のみ等は空のまま）
+  if (outcome.addedItems.length > 0) {
+    revalidatePath("/shopping")
   }
-
-  const autoCategories = householdResult.data.auto_stock_categories as string[]
-  if (!Array.isArray(autoCategories) || autoCategories.length === 0) {
-    return { error: null, addedItems: [] }
-  }
-
-  const diaperRate = calculateDailyRate(logsResult.data ?? [], "diaper", now)
-  const rates: Record<string, number | null> = { baby: diaperRate }
-
-  // 残日数≤3のアイテムを抽出
-  const lowStockItems = (stockResult.data ?? []).filter((item) => {
-    if (!autoCategories.includes(item.category)) return false
-    const rate = rates[item.category]
-    if (rate == null) return false
-    const remaining = estimateRemainingDays(item.quantity, rate)
-    return remaining !== null && remaining <= 3
-  })
-
-  if (lowStockItems.length === 0) return { error: null, addedItems: [] }
-
-  const existingNames = new Set(
-    (shoppingResult.data ?? []).map((i) => i.name.toLowerCase()),
-  )
-
-  const toAdd = lowStockItems.filter(
-    (item) => !existingNames.has(item.name.toLowerCase()),
-  )
-
-  if (toAdd.length === 0) return { error: null, addedItems: [] }
-
-  // sort_order の最大値を取得 (空リストは正常系ゆえ maybeSingle)
-  const { data: maxOrder, error: maxOrderError } = await supabase
-    .from("shopping_items")
-    .select("sort_order")
-    .eq("household_id", householdId)
-    .order("sort_order", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  if (maxOrderError) {
-    logSupabaseError("stock", "sort_order lookup failed", maxOrderError, {
-      householdId,
-    })
-  }
-
-  let nextOrder = (maxOrder?.sort_order ?? 0) + 1
-
-  const insertRows = toAdd.map((item) => ({
-    household_id: householdId,
-    name: item.name,
-    category: item.category as ItemCategory,
-    store_type: "drugstore" as const,
-    created_by: userId,
-    sort_order: nextOrder++,
-  }))
-
-  const { error: insertError } = await supabase
-    .from("shopping_items")
-    .insert(insertRows)
-
-  if (insertError) {
-    return { error: "買い物リストへの追加に失敗しました", addedItems: [] }
-  }
-
-  revalidatePath("/shopping")
-  return { error: null, addedItems: toAdd.map((i) => i.name) }
+  return outcome
 }
