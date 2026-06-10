@@ -1,0 +1,63 @@
+name: E2E
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        # version は package.json の `packageManager` フィールドから自動取得する
+        # (二重指定すると ERR_PNPM_BAD_PM_VERSION で失敗する)。
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: supabase/setup-cli@v1
+
+      - name: Start Supabase local stack
+        # E2E に不要なサービスは除外して起動を軽くする
+        # (-x の有効値は `supabase start --help` 参照。analytics = Logflare)
+        run: supabase start -x studio,imgproxy,edge-runtime,vector,analytics
+
+      - name: Generate .env.e2e
+        run: ./scripts/e2e-env.sh
+
+      - name: Build Next.js with E2E env
+        run: ./scripts/e2e-build.sh
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install chromium --with-deps
+
+      - name: Run Playwright tests
+        run: pnpm exec playwright test
+
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

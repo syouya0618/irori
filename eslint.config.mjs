@@ -34,6 +34,14 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  {
+    // e2e/ は Playwright テストコード。fixture の第2引数 `use` を React の
+    // `use` フックと誤検知する react-hooks/rules-of-hooks を無効化する。
+    files: ["e2e/**/*.ts", "playwright.config.ts"],
+    rules: {
+      "react-hooks/rules-of-hooks": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;
