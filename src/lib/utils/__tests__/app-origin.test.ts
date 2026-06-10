@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { getAppOrigin } from "../app-origin"
 
 // Request は Node 組込み (undici) を使用。host ヘッダが construction で
@@ -7,7 +7,18 @@ function makeRequest(url: string, headers: Record<string, string> = {}): Request
   return new Request(url, { headers })
 }
 
+beforeEach(() => {
+  // 第2引数に undefined を渡しても JS の default parameter は発動し
+  // process.env.NEXT_PUBLIC_APP_URL (app-origin.ts:17) が評価されるため、
+  // 実環境の env からテストを密閉する。vitest 4 の stubEnv(name, undefined)
+  // は env 変数を削除する (vi.stubEnv 実装が value === undefined で
+  // delete を行い、metaEnv Proxy 経由で process.env 本体に透過する) ので、
+  // 「env 未設定」テストは default 引数経由でも真の undefined を受け取る。
+  vi.stubEnv("NEXT_PUBLIC_APP_URL", undefined)
+})
+
 afterEach(() => {
+  vi.unstubAllEnvs()
   vi.restoreAllMocks()
 })
 
