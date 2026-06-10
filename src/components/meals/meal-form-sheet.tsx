@@ -14,16 +14,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
   Loader2,
-  Plus,
-  Trash2,
   BookMarked,
   BookOpen,
 } from "lucide-react"
@@ -34,20 +25,12 @@ import {
   deleteMeal,
   saveAsTemplate,
 } from "@/app/(main)/meals/actions"
+import { MealDeleteConfirm } from "@/components/meals/meal-delete-confirm"
+import { MealIngredientFields } from "@/components/meals/meal-ingredient-fields"
 import { TemplateSelector } from "@/components/meals/template-selector"
-import { getCategoryColor, allCategories } from "@/lib/utils/categories"
 import { MEAL_TYPE_LABELS, MEAL_TYPES } from "@/lib/utils/meal-types"
-import type { MealType, ItemCategory } from "@/lib/types/database"
-
-const FOOD_CATEGORIES = allCategories.filter((c) =>
-  ["vegetable", "meat", "fish", "dairy", "grain", "egg", "seasoning", "frozen", "other_food"].includes(c.value)
-)
-
-interface IngredientInput {
-  name: string
-  quantity: string
-  category: ItemCategory
-}
+import type { IngredientInput } from "@/components/meals/meal-ingredient-fields"
+import type { MealType } from "@/lib/types/database"
 
 interface MealFormData {
   id?: string
@@ -114,29 +97,6 @@ export function MealFormSheet({
       setMealType(defaultMealType)
     }
     onOpenChange(nextOpen)
-  }
-
-  function addIngredient() {
-    setIngredients((prev) => [
-      ...prev,
-      { name: "", quantity: "", category: "other_food" },
-    ])
-  }
-
-  function removeIngredient(index: number) {
-    setIngredients((prev) => prev.filter((_, i) => i !== index))
-  }
-
-  function updateIngredient(
-    index: number,
-    field: keyof IngredientInput,
-    value: string
-  ) {
-    setIngredients((prev) =>
-      prev.map((ing, i) =>
-        i === index ? { ...ing, [field]: value } : ing
-      )
-    )
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -335,159 +295,20 @@ export function MealFormSheet({
             </div>
 
             {/* Ingredients */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label>食材</Label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={addIngredient}
-                  className="gap-1 text-primary"
-                >
-                  <Plus className="size-3.5" />
-                  追加
-                </Button>
-              </div>
-
-              {ingredients.length === 0 ? (
-                <button
-                  type="button"
-                  onClick={addIngredient}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border/60 px-3 py-4 text-sm text-muted-foreground transition-colors duration-200 hover:border-primary/40 hover:text-foreground"
-                >
-                  <Plus className="size-4" />
-                  食材を追加
-                </button>
-              ) : (
-                <div className="space-y-2">
-                  {ingredients.map((ing, index) => (
-                    <div
-                      key={index}
-                      className="flex items-start gap-1.5 rounded-lg bg-muted/30 p-2"
-                    >
-                      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                        <Input
-                          placeholder="食材名"
-                          value={ing.name}
-                          onChange={(e) =>
-                            updateIngredient(index, "name", e.target.value)
-                          }
-                          disabled={isPending}
-                          autoComplete="off"
-                          className="h-8 rounded-md text-sm"
-                        />
-                        <div className="flex gap-1.5">
-                          <Input
-                            placeholder="量"
-                            value={ing.quantity}
-                            onChange={(e) =>
-                              updateIngredient(
-                                index,
-                                "quantity",
-                                e.target.value
-                              )
-                            }
-                            disabled={isPending}
-                            autoComplete="off"
-                            className="h-7 w-20 rounded-md text-xs"
-                          />
-                          <Select
-                            value={ing.category}
-                            onValueChange={(val) =>
-                              updateIngredient(
-                                index,
-                                "category",
-                                val as ItemCategory
-                              )
-                            }
-                          >
-                            <SelectTrigger
-                              size="sm"
-                              className="h-7 flex-1 text-xs"
-                            >
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {FOOD_CATEGORIES.map((cat) => (
-                                <SelectItem
-                                  key={cat.value}
-                                  value={cat.value}
-                                >
-                                  <span
-                                    className={`rounded-full px-1.5 py-0.5 text-xs font-medium ${
-                                      getCategoryColor(cat.value as ItemCategory)
-                                    }`}
-                                  >
-                                    {cat.label}
-                                  </span>
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={() => removeIngredient(index)}
-                        disabled={isPending}
-                        aria-label="食材を削除"
-                        className="mt-1 text-muted-foreground hover:text-destructive"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <MealIngredientFields
+              ingredients={ingredients}
+              setIngredients={setIngredients}
+              isPending={isPending}
+            />
 
             {/* Delete section (editing only) */}
             {isEditing && (
-              <div className="border-t pt-3">
-                {showDeleteConfirm ? (
-                  <div className="flex items-center gap-2">
-                    <p className="flex-1 text-sm text-destructive">
-                      本当に削除しますか？
-                    </p>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowDeleteConfirm(false)}
-                      disabled={isPending}
-                    >
-                      キャンセル
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      size="sm"
-                      onClick={handleDelete}
-                      disabled={isPending}
-                    >
-                      {isPending ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        "削除する"
-                      )}
-                    </Button>
-                  </div>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowDeleteConfirm(true)}
-                    className="w-full text-destructive hover:text-destructive"
-                  >
-                    <Trash2 className="size-3.5" />
-                    この献立を削除
-                  </Button>
-                )}
-              </div>
+              <MealDeleteConfirm
+                showDeleteConfirm={showDeleteConfirm}
+                setShowDeleteConfirm={setShowDeleteConfirm}
+                isPending={isPending}
+                handleDelete={handleDelete}
+              />
             )}
           </form>
 
