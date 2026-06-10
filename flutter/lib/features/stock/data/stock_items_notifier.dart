@@ -199,6 +199,22 @@ class StockItemsNotifier extends AsyncNotifier<List<StockItem>> {
     ];
   }
 
+  /// 自分の削除操作を一覧へ即時反映する楽観更新 (web `stock-list.tsx`
+  /// `handleOptimisticDelete` 相当 — F6 UI の削除確定時に呼ばれる)。
+  ///
+  /// - 後追いで届く realtime DELETE は `_reduceDelete` の filter が冪等に
+  ///   吸収する (二重削除しても結果は同じ)。
+  /// - 削除の repository 呼び出しが失敗した場合は、呼び出し側 (F6 UI) が
+  ///   `ref.invalidate` の refetch でサーバ実体へ復元する (web は rollback
+  ///   しないが、Flutter は実データとの乖離を残さない)。
+  /// - state 未確定 (初回 fetch 完了前) は no-op — その window では UI に
+  ///   行が表示されておらず削除操作も発生しない。
+  void removeItemOptimistic(String id) {
+    final current = state.value;
+    if (current == null) return;
+    state = AsyncData(_reduceDelete(current, id));
+  }
+
   /// テスト/手動リフレッシュ用に reducer を公開 (純粋関数なので副作用なし)。
   /// `BabyLogsNotifier.reduceForTest` と同名規約。
   @visibleForTesting
