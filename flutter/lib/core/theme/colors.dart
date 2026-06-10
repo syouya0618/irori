@@ -37,6 +37,12 @@ class IroriColors {
   // Border (light mode で可視 — `border-white/10` は非推奨)
   static const Color border = Color(0xFFE5E7EB); // gray-200
 
+  /// Muted surface。web `--muted: oklch(0.96 0.008 75)` (わずかに温かみのある
+  /// light gray) の CSS Color 4 → sRGB 変換値 = RGB(245, 241, 236)。
+  /// 献立週ビューの非今日 day セクション背景 (`bg-muted/30`) や入力行の
+  /// 背景 (`bg-muted/30` / `bg-muted/50`) は本色 + `withValues(alpha:)` で表す。
+  static const Color muted = Color(0xFFF5F1EC);
+
   // Status
   static const Color success = Color(0xFF16A34A); // green-600
   static const Color warning = Color(0xFFEAB308); // yellow-500
