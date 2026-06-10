@@ -55,3 +55,7 @@ __pycache__/
 
 # git worktrees (並列開発用、リポジトリには含めない)
 .worktrees/
+
+# claude code (個人設定・内部作業ディレクトリは含めない)
+.claude/settings.local.json
+.claude/worktrees/

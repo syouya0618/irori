@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // ローカル専用ディレクトリ。flutter/build/web/main.dart.js (数MBの生成JS) を
+    // lint すると Node が heap OOM でクラッシュするため除外する (CI には存在しない)。
+    "flutter/**",
+    ".worktrees/**",
+    ".codex-pet-runs/**",
   ]),
   {
     rules: {
