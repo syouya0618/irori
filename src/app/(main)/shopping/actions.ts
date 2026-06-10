@@ -3,95 +3,13 @@
 import { revalidatePath } from "next/cache"
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
-import { getCurrentWeekRange } from "@/lib/utils/date"
-import type { AuthContext } from "@/lib/supabase/auth-context"
+import { autoAddToStock } from "@/lib/supabase/auto-stock"
+import {
+  getNewIngredientsForWeek,
+  getNextSortOrder,
+  searchPurchaseHistory,
+} from "@/lib/supabase/shopping-queries"
 import type { ItemCategory, StoreType } from "@/lib/types/database"
-
-// ─── Helper: 今週の献立から新しい食材を取得 ──────────────────
-async function getNewIngredientsForWeek(
-  supabase: AuthContext["supabase"],
-  householdId: string
-) {
-  const { startDate, endDate } = getCurrentWeekRange()
-
-  // 今週の献立（外食を除く）を取得
-  const { data: meals, error: mealsError } = await supabase
-    .from("meals")
-    .select("id")
-    .eq("household_id", householdId)
-    .eq("is_eating_out", false)
-    .gte("date", startDate)
-    .lte("date", endDate)
-
-  if (mealsError) {
-    return { error: "献立の取得に失敗しました" as const, newIngredients: [], existingCount: 0 }
-  }
-
-  if (!meals || meals.length === 0) {
-    return { error: "no_meals" as const, newIngredients: [], existingCount: 0 }
-  }
-
-  const mealIds = meals.map((m) => m.id)
-
-  const { data: ingredients, error: ingredientsError } = await supabase
-    .from("meal_ingredients")
-    .select("name, quantity, category, meal_id")
-    .in("meal_id", mealIds)
-
-  if (ingredientsError) {
-    return { error: "食材の取得に失敗しました" as const, newIngredients: [], existingCount: 0 }
-  }
-
-  if (!ingredients || ingredients.length === 0) {
-    return { error: "no_ingredients" as const, newIngredients: [], existingCount: 0 }
-  }
-
-  // 既存の買い物リストに同名のアイテムがないかチェック
-  const { data: existingItems, error: existingItemsError } = await supabase
-    .from("shopping_items")
-    .select("name")
-    .eq("household_id", householdId)
-
-  if (existingItemsError) {
-    logSupabaseError("shopping", "existing items lookup failed", existingItemsError, {
-      householdId,
-    })
-  }
-
-  const existingNames = new Set(
-    (existingItems ?? []).map((i) => i.name.toLowerCase())
-  )
-
-  // 重複を除外
-  const newIngredients = ingredients.filter(
-    (ing) => !existingNames.has(ing.name.toLowerCase())
-  )
-
-  const existingCount = ingredients.length - newIngredients.length
-
-  return { error: null, newIngredients, existingCount }
-}
-
-// ─── Helper: 次のsort_orderを取得 ──────────────────────
-async function getNextSortOrder(
-  supabase: AuthContext["supabase"],
-  householdId: string
-): Promise<number> {
-  // 空リスト (0 行) は正常系ゆえ maybeSingle
-  const { data, error } = await supabase
-    .from("shopping_items")
-    .select("sort_order")
-    .eq("household_id", householdId)
-    .order("sort_order", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-  if (error) {
-    logSupabaseError("shopping", "sort_order lookup failed", error, {
-      householdId,
-    })
-  }
-  return (data?.sort_order ?? 0) + 1
-}
 
 // ─── アイテム追加 ────────────────────────────────────────
 export async function addItem(formData: FormData) {
@@ -177,71 +95,6 @@ export async function toggleItem(itemId: string, isChecked: boolean) {
   revalidatePath("/shopping")
   if (autoStocked) revalidatePath("/stock")
   return { success: true, autoStocked, autoStockedName }
-}
-
-// ─── Helper: 在庫自動追加 ─────────────────────────────────
-async function autoAddToStock(
-  supabase: AuthContext["supabase"],
-  householdId: string,
-  userId: string,
-  itemName: string,
-  itemCategory: ItemCategory,
-): Promise<boolean> {
-  // 世帯の自動追加対象カテゴリを取得
-  const { data: household, error: householdError } = await supabase
-    .from("households")
-    .select("auto_stock_categories")
-    .eq("id", householdId)
-    .single()
-
-  if (householdError) {
-    logSupabaseError("shopping", "household lookup failed", householdError, {
-      householdId,
-    })
-  }
-
-  if (!household) return false
-
-  const categories = household.auto_stock_categories as string[]
-  if (!Array.isArray(categories) || !categories.includes(itemCategory)) {
-    return false
-  }
-
-  // 同名の在庫アイテムがあるか確認（完全一致で検索）
-  const { data: matchedItems, error: matchedItemsError } = await supabase
-    .from("stock_items")
-    .select("id, name, quantity")
-    .eq("household_id", householdId)
-    .eq("name", itemName.trim())
-    .limit(1)
-
-  if (matchedItemsError) {
-    logSupabaseError("shopping", "stock item match lookup failed", matchedItemsError, {
-      householdId,
-    })
-  }
-
-  const existing = matchedItems?.[0] ?? null
-
-  if (existing) {
-    const { error: updateError } = await supabase
-      .from("stock_items")
-      .update({ quantity: existing.quantity + 1 })
-      .eq("id", existing.id)
-    if (updateError) return false
-  } else {
-    const { error: insertError } = await supabase.from("stock_items").insert({
-      household_id: householdId,
-      name: itemName.trim(),
-      category: itemCategory,
-      quantity: 1,
-      unit: "個",
-      created_by: userId,
-    })
-    if (insertError) return false
-  }
-
-  return true
 }
 
 // ─── アイテム削除 ────────────────────────────────────────
@@ -413,26 +266,15 @@ export async function getSuggestions(query: string) {
   if (result.error !== null) return { suggestions: [] }
   const { supabase, householdId } = result.context
 
-  const { data, error } = await supabase
-    .from("purchase_history")
-    .select("item_name, category, store_type")
-    .eq("household_id", householdId)
-    .ilike("item_name", `%${query.trim().replace(/[%_\\]/g, "\\$&")}%`)
-    .order("purchased_at", { ascending: false })
-    .limit(20)
+  const { items: unique, error } = await searchPurchaseHistory(
+    supabase,
+    householdId,
+    query,
+  )
 
   if (error) {
     return { suggestions: [] }
   }
-
-  // 名前でユニーク化（最新の履歴を優先）
-  const seen = new Set<string>()
-  const unique = (data ?? []).filter((item) => {
-    const key = item.item_name.toLowerCase()
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
 
   return {
     suggestions: unique.map((item) => ({
