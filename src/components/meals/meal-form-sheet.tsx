@@ -61,6 +61,7 @@ export function MealFormSheet({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showTemplateSelector, setShowTemplateSelector] = useState(false)
 
+  // 親がkey={formKey}で毎回remountするため、propsから直接初期化
   const [title, setTitle] = useState(initialData?.title ?? "")
   const [mealType, setMealType] = useState<MealType>(
     initialData?.mealType ?? defaultMealType
@@ -72,32 +73,6 @@ export function MealFormSheet({
   const [ingredients, setIngredients] = useState<IngredientInput[]>(
     initialData?.ingredients ?? []
   )
-
-  function resetForm() {
-    setTitle("")
-    setMealType(defaultMealType)
-    setDate(defaultDate)
-    setIsEatingOut(false)
-    setIngredients([])
-    setShowDeleteConfirm(false)
-  }
-
-  function handleOpenChange(nextOpen: boolean) {
-    if (!nextOpen) {
-      resetForm()
-    } else if (initialData) {
-      setTitle(initialData.title)
-      setMealType(initialData.mealType)
-      setDate(initialData.date)
-      setIsEatingOut(initialData.isEatingOut)
-      setIngredients(initialData.ingredients)
-      setShowDeleteConfirm(false)
-    } else {
-      setDate(defaultDate)
-      setMealType(defaultMealType)
-    }
-    onOpenChange(nextOpen)
-  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -142,7 +117,7 @@ export function MealFormSheet({
         }
         toast.success("献立を追加しました")
       }
-      handleOpenChange(false)
+      onOpenChange(false)
     })
   }
 
@@ -156,7 +131,7 @@ export function MealFormSheet({
         return
       }
       toast.success("献立を削除しました")
-      handleOpenChange(false)
+      onOpenChange(false)
     })
   }
 
@@ -183,7 +158,7 @@ export function MealFormSheet({
 
   return (
     <>
-      <Sheet open={open} onOpenChange={handleOpenChange}>
+      <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent
           side="bottom"
           className="max-h-[85dvh] overflow-hidden rounded-t-2xl safe-bottom"
