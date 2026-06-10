@@ -42,3 +42,4 @@ export {
   type BabyWeeklySummaryLogInput,
   type BabyWeeklySummaryDay,
 } from "./baby-weekly-summary"
+export { parseStockFormData, type ParsedStockFields } from "./stock-form"

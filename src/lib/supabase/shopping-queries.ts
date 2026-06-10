@@ -77,9 +77,14 @@ export async function getNewIngredientsForWeek(
 }
 
 // ─── Helper: 次のsort_orderを取得 ──────────────────────
+/**
+ * `logScope` は logSupabaseError の scope 文言。shopping 側の既存呼び出しは
+ * 既定値 "shopping" のまま挙動不変。stock 側 (R4) からは "stock" を渡す。
+ */
 export async function getNextSortOrder(
   supabase: AuthContext["supabase"],
-  householdId: string
+  householdId: string,
+  logScope = "shopping"
 ): Promise<number> {
   // 空リスト (0 行) は正常系ゆえ maybeSingle
   const { data, error } = await supabase
@@ -90,7 +95,7 @@ export async function getNextSortOrder(
     .limit(1)
     .maybeSingle()
   if (error) {
-    logSupabaseError("shopping", "sort_order lookup failed", error, {
+    logSupabaseError(logScope, "sort_order lookup failed", error, {
       householdId,
     })
   }
