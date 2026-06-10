@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthContext } from "@/lib/supabase/auth-context"
+import { getAppOrigin } from "@/lib/utils/app-origin"
 
 export async function updateProfile(formData: FormData) {
   const displayName = formData.get("display_name")
@@ -46,7 +47,7 @@ export async function generateInvite() {
     return { error: "招待リンクの生成に失敗しました" }
   }
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
+  const baseUrl = getAppOrigin()
   const inviteUrl = `${baseUrl}/invite/${invitation.token}`
 
   return { success: true, url: inviteUrl }

@@ -246,11 +246,12 @@ export async function loginViaMagicLink(
   const link = await fetchMagicLink(email, sentAtMs)
   await page.goto(link)
 
-  // ローカル `next start` + proxy.ts 経由では route handler の request.url の
-  // origin が内部値 `localhost:3000` に化けるため、callback 成功後の
-  // `redirect(origin + "/")` は localhost へ飛ぶ（実測: Host ヘッダが
-  // 127.0.0.1:3000 でも Location が http://localhost:3000/ になる）。
-  // セッション Cookie は callback レスポンス時点で 127.0.0.1 ジャーに保存済み
-  // なので、明示的に baseURL (127.0.0.1) へ戻って認証済み状態から再開する。
+  // issue #16 修正済み: callback の origin は getAppOrigin（NEXT_PUBLIC_APP_URL
+  // 優先、e2e build では http://127.0.0.1:3000）で解決されるため、Location は
+  // 127.0.0.1 を維持する。Next.js には NextRequest の loopback host を
+  // localhost に正規化する仕様 (next/dist/server/web/next-url.js の
+  // REGEX_LOCALHOST_HOSTNAME) があり、localhost への回帰をここで機械検証する。
+  await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:3000\//)
+  // 防御として残置: 仕様変更等で origin が揺れても baseURL へ冪等に帰還する。
   await page.goto("/")
 }
