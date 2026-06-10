@@ -202,7 +202,7 @@ export function AddItemForm() {
           <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border/50 pt-3">
             <div className="flex items-center gap-1.5">
               <span className="text-xs text-muted-foreground">カテゴリ:</span>
-              <Select value={category} onValueChange={(v) => setCategory(v as ItemCategory)}>
+              <Select items={allCategories} value={category} onValueChange={(v) => setCategory(v as ItemCategory)}>
                 <SelectTrigger size="sm" className="h-7 min-w-24 text-xs">
                   <SelectValue />
                 </SelectTrigger>
@@ -218,7 +218,7 @@ export function AddItemForm() {
 
             <div className="flex items-center gap-1.5">
               <span className="text-xs text-muted-foreground">購入先:</span>
-              <Select value={storeType} onValueChange={(v) => setStoreType(v as StoreType)}>
+              <Select items={allStores} value={storeType} onValueChange={(v) => setStoreType(v as StoreType)}>
                 <SelectTrigger size="sm" className="h-7 min-w-24 text-xs">
                   <SelectValue />
                 </SelectTrigger>

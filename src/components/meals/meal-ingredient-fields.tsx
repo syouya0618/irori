@@ -117,6 +117,7 @@ export function MealIngredientFields({
                     className="h-7 w-20 rounded-md text-xs"
                   />
                   <Select
+                    items={FOOD_CATEGORIES}
                     value={ing.category}
                     onValueChange={(val) =>
                       updateIngredient(
