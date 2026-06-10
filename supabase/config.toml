@@ -175,7 +175,9 @@ password_requirements = ""
 
 [auth.rate_limit]
 # Number of emails that can be sent per hour. Requires auth.email.smtp to be enabled.
-email_sent = 2
+# ローカル E2E（Playwright）がテスト毎にマジックリンクメールを送信するため、
+# デフォルトの 2 では即枯渇する。ローカル専用設定のため 100 に引き上げる。
+email_sent = 100
 # Number of SMS messages that can be sent per hour. Requires auth.sms to be enabled.
 sms_sent = 30
 # Number of anonymous sign-ins that can be made per hour per IP address. Requires enable_anonymous_sign_ins = true.

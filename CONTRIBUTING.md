@@ -47,6 +47,26 @@ pnpm exec tsc --noEmit # 型チェック
 pnpm build             # ビルド
 ```
 
+## E2E テスト（Playwright）
+
+ローカルの Supabase スタック（Docker 必須）に対して Playwright の E2E テストを実行できます。
+認証はメール OTP（マジックリンク）の実経路を使い、メールは Mailpit（ポート 54324）から取得します。
+
+```bash
+supabase start   # ローカル Supabase スタックを起動（Docker が必要）
+pnpm e2e:env     # supabase status から .env.e2e を生成
+pnpm e2e:build   # .env.e2e の値で Next.js を本番ビルド（.env.local は変更されません）
+pnpm e2e         # Playwright テストを実行（next start は Playwright が自動起動）
+```
+
+補足:
+
+- 初回は `pnpm exec playwright install chromium` でブラウザのインストールが必要です。
+- `pnpm e2e:ui`（UI モード）/ `pnpm e2e:headed`（ブラウザ表示）も使えます。
+- ベース URL は `http://127.0.0.1:3000` 固定です（GoTrue の `site_url` と一致させるため、`localhost` は使いません）。
+- E2E 用ビルドは `.next/` を上書きします。通常の開発に戻る場合は `pnpm dev` をそのまま使えます。
+- CI では `.github/workflows/e2e.yml` が同じ手順を実行します。
+
 ## コーディング規約
 
 - デザイン指針は [`docs/DESIGN_SYSTEM.md`](./docs/DESIGN_SYSTEM.md) を参照してください。
