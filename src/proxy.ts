@@ -87,7 +87,10 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
+  // /offline は SW の precache が未認証で取得する静的フォールバックページ。
+  // 個人データゼロのため認証チェックから除外しても無害 (除外しないと
+  // /login への redirect が precache に誤保存されるリスクがある)。
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|icons/|manifest\\.webmanifest|sw\\.js|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|icons/|manifest\\.webmanifest|sw\\.js|offline$|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 }

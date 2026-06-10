@@ -2,6 +2,7 @@ import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { BottomNav } from "@/components/common/bottom-nav"
+import { CacheUserGuard } from "@/components/common/cache-user-guard"
 
 export default async function MainLayout({
   children,
@@ -37,6 +38,8 @@ export default async function MainLayout({
 
   return (
     <div className="min-h-dvh bg-background">
+      {/* 別ユーザーログイン時に前ユーザーの世帯キャッシュ (SW) を破棄 */}
+      <CacheUserGuard userId={user.id} />
       <main className="mx-auto max-w-lg pb-20">{children}</main>
       <BottomNav />
     </div>
