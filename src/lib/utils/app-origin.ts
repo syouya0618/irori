@@ -10,6 +10,12 @@ const DEV_FALLBACK_ORIGIN = "http://localhost:3000"
  * env 未設定時は x-forwarded-host / host ヘッダ（正規化を受けない実アクセス値）
  * にフォールバックする。
  *
+ * 信頼境界: x-forwarded-host / host はクライアント可変値であり、正準 origin と
+ * しては「env 未設定のローカル/セルフホスト」専用の縮退経路。本番は
+ * NEXT_PUBLIC_APP_URL の設定を必須とする (デプロイ runbook 参照)。Vercel では
+ * Host ベースのルーティングと x-forwarded-host の権威的設定により、偽 Host が
+ * この関数に到達する経路はない。
+ *
  * envAppUrl はテスト注入用の省略可能引数 (date-jst.ts の now 注入と同規約)。
  */
 export function getAppOrigin(
