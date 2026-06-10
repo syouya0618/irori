@@ -76,6 +76,43 @@ export function shiftYmd(ymd: string, days: number): string {
   return dt.toISOString().slice(0, 10)
 }
 
+/**
+ * YYYY-MM-DD 文字列が属する週の月曜日を YYYY-MM-DD で返す。
+ * タイムゾーンに一切依存しない（Date.UTC + getUTCDay のみ使用）。
+ * 日曜は「進行中の週の末尾」として同週の月曜に丸める —
+ * flutter/lib/core/utils/jst_date.dart の weekStartMonday と同一セマンティクス。
+ *
+ * @returns 月曜の YYYY-MM-DD。パース失敗時は null（daysBetweenYmd と同じ規約）。
+ */
+export function weekStartMonday(ymd: string): string | null {
+  const parsed = parseYmd(ymd)
+  if (!parsed) return null
+  const day = new Date(
+    Date.UTC(parsed.y, parsed.m - 1, parsed.d)
+  ).getUTCDay() // 0 = 日曜
+  return shiftYmd(ymd, day === 0 ? -6 : 1 - day)
+}
+
+/**
+ * JST の今日が属する週（月〜日）の範囲を YYYY-MM-DD で返す。
+ * サーバー (UTC) でもクライアント (JST) でも同じ週を返す。
+ */
+export function currentWeekRangeJst(now: Date = new Date()): {
+  startDate: string
+  endDate: string
+} {
+  const monday = weekStartMonday(todayJstString(now))
+  // todayJstString (en-CA) の出力は常に YYYY-MM-DD のため null は到達不能だが、
+  // 万一 Intl の挙動が変わった場合に silent な前週表示ではなく
+  // エラーとして顕在化させるため throw で防御する。
+  if (monday === null) {
+    throw new Error(
+      "currentWeekRangeJst: todayJstString が YYYY-MM-DD を返しませんでした"
+    )
+  }
+  return { startDate: monday, endDate: shiftYmd(monday, 6) }
+}
+
 // JST 時刻フォーマッター（モジュールスコープで1回だけ生成）
 const JST_TIME_FORMATTER = new Intl.DateTimeFormat("ja-JP", {
   timeZone: "Asia/Tokyo",

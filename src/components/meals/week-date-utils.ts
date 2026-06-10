@@ -1,4 +1,5 @@
-import { addDays } from "@/lib/utils/date"
+import { addDays, formatDateKey } from "@/lib/utils/date"
+import { todayJstString } from "@/lib/utils/date-jst"
 
 export const DAY_NAMES = ["月", "火", "水", "木", "金", "土", "日"]
 
@@ -21,10 +22,6 @@ export function formatWeekRange(monday: Date): string {
 }
 
 export function isToday(d: Date): boolean {
-  const today = new Date()
-  return (
-    d.getFullYear() === today.getFullYear() &&
-    d.getMonth() === today.getMonth() &&
-    d.getDate() === today.getDate()
-  )
+  // JST 固定: SSR (UTC) とクライアントで同一判定になり hydration 不整合を防ぐ
+  return formatDateKey(d) === todayJstString()
 }
