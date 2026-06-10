@@ -60,16 +60,19 @@ function formatError(error: {
 }
 
 /**
- * webServer (next start) と同一プロセス TZ で今日の日付キーを返す。
- * /meals の週範囲はサーバー側 (src/lib/utils/date.ts の getMonday/formatDateKey =
- * ローカル TZ 基準) で計算されるため、テスト側も同じローカル TZ で揃えれば
- * 「今日」は常に今週 (月〜日) に含まれる。
+ * 「今日」(Asia/Tokyo) の YYYY-MM-DD。
+ * /meals の週範囲はサーバー側で JST 固定 (date-jst.ts の currentWeekRangeJst)
+ * 計算になったため、runner プロセスの TZ (CI は UTC) に依存しない
+ * Intl Asia/Tokyo 方式で揃える (golden-path.spec.ts の todayJst と同セマンティクス)。
+ * これで「今日」は常に JST の今週 (月〜日) に含まれる。
  */
 function todayKey(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate()
-  ).padStart(2, "0")}`
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date())
 }
 
 /** service_role で 1 行 insert し、行が返ることまで検証する (silent fail 防止) */

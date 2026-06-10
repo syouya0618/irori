@@ -14,10 +14,11 @@ function buildWebServerEnv(): Record<string, string> {
     if (value !== undefined) env[key] = value
   }
   Object.assign(env, loadE2eEnv())
-  // SSR の週境界 (getMonday 等) はサーバー TZ 依存 — ブラウザ (timezoneId) /
-  // テスト (todayJst) と揃えねば JST 月曜早朝 (UTC 日曜 15:00-24:00) に
-  // 「今日」が前週扱いになり CI が決定的に落ちる
-  env.TZ = "Asia/Tokyo"
+  // 本番 Vercel と同一の TZ=UTC で next start を走らせる。
+  // SSR の週境界・今日判定は JST 固定実装 (date-jst.ts の currentWeekRangeJst /
+  // todayJstString) になったため、サーバー TZ に依存しないことを E2E 全体で
+  // 常時検証する (issue #23 の回帰検出。以前の TZ=Asia/Tokyo 注入はバグ隠蔽だった)
+  env.TZ = "UTC"
   return env
 }
 
