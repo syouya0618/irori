@@ -202,7 +202,11 @@ export async function fetchMagicLink(
 
   while (Date.now() < deadline) {
     const result = await fetchJson<MailpitSearchResponse>(searchUrl)
-    const latest = result.messages?.[0]
+    // Mailpit 公式 doc は検索結果の sort 順を保証していないため、
+    // 「先頭 = 最新」を仮定せず Created 降順に明示 sort してから先頭を取る
+    const latest = [...(result.messages ?? [])].sort(
+      (a, b) => new Date(b.Created).getTime() - new Date(a.Created).getTime()
+    )[0]
 
     if (latest && new Date(latest.Created).getTime() >= createdAfterMs) {
       const detail = await fetchJson<MailpitMessageDetail>(

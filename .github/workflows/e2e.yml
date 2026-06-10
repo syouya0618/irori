@@ -28,6 +28,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - uses: supabase/setup-cli@v1
+        with:
+          # ローカルで実証済みの版に pin する。latest だと CLI 世代差で
+          # config.toml のキー解釈や -x のサービス名が変わり起動に失敗する
+          # (実例: 別世代 CLI は auth.oauth_server / db.health_timeout 等を
+          # invalid keys として拒否し、-x の analytics も認識しない)。
+          version: 2.101.0
 
       - name: Start Supabase local stack
         # E2E に不要なサービスは除外して起動を軽くする
@@ -45,6 +51,9 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          # lockfile 変更時もフルダウンロードを避け、旧 cache から復元する
+          restore-keys: |
+            playwright-${{ runner.os }}-
 
       - name: Install Playwright Chromium
         run: pnpm exec playwright install chromium --with-deps
