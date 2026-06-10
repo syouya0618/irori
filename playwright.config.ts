@@ -14,6 +14,10 @@ function buildWebServerEnv(): Record<string, string> {
     if (value !== undefined) env[key] = value
   }
   Object.assign(env, loadE2eEnv())
+  // SSR の週境界 (getMonday 等) はサーバー TZ 依存 — ブラウザ (timezoneId) /
+  // テスト (todayJst) と揃えねば JST 月曜早朝 (UTC 日曜 15:00-24:00) に
+  // 「今日」が前週扱いになり CI が決定的に落ちる
+  env.TZ = "Asia/Tokyo"
   return env
 }
 
