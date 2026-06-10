@@ -163,6 +163,22 @@ class FakeFilterBuilder extends Fake
 
   @override
   PostgrestTransformBuilder<PostgrestMap?> maybeSingle() => _maybeSingle;
+
+  // ─── F3 shopping 用 (additive) ─────────────────────────────
+  // `ShoppingRepository._nextSortOrder` の
+  // `.order(...).limit(1).maybeSingle()` チェーン検証用。
+
+  /// `limit(n)` の呼び出し記録 (F3 shopping 用)。
+  final limitCalls = <int>[];
+
+  @override
+  PostgrestTransformBuilder<PostgrestList> limit(
+    int count, {
+    String? referencedTable,
+  }) {
+    limitCalls.add(count);
+    return this;
+  }
 }
 
 /// `from('table')` の結果 (`SupabaseQueryBuilder` 相当)。
