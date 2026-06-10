@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
 import { Toaster } from "@/components/ui/sonner"
+import { ServiceWorkerManager } from "@/components/common/service-worker-manager"
+import { OfflineBanner } from "@/components/common/offline-banner"
 import "./globals.css"
 
 const geistSans = Geist({
@@ -52,6 +54,8 @@ export default function RootLayout({
       <body className="min-h-dvh bg-background font-sans antialiased">
         {children}
         <Toaster position="top-center" richColors />
+        <ServiceWorkerManager />
+        <OfflineBanner />
       </body>
     </html>
   )

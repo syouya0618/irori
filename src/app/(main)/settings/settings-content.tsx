@@ -15,6 +15,10 @@ import {
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { signOut } from "@/app/(main)/settings/actions"
+import {
+  purgeHouseholdCaches,
+  LAST_USER_ID_STORAGE_KEY,
+} from "@/lib/pwa/sw-messages"
 import { ProfileCard } from "@/components/settings/profile-card"
 import { InviteCard } from "@/components/settings/invite-card"
 import { ApprovalCard, type PendingUser } from "@/components/settings/approval-card"
@@ -66,6 +70,14 @@ export function SettingsContent({
   const handleSignOut = () => {
     setIsSigningOut(true)
     startTransition(async () => {
+      // signOut() の redirect は throw ベースのため、後続コードは実行保証がない。
+      // 世帯キャッシュ破棄と localStorage 掃除は必ず signOut() より前に行う。
+      await purgeHouseholdCaches()
+      try {
+        localStorage.removeItem(LAST_USER_ID_STORAGE_KEY)
+      } catch (err) {
+        console.warn("[settings] localStorage の削除に失敗:", err)
+      }
       await signOut()
     })
   }
