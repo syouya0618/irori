@@ -16,6 +16,11 @@ import 'package:irori/features/meals/data/meals_repository.dart';
 import 'package:irori/features/meals/data/meals_week_notifier.dart';
 import 'package:irori/features/meals/domain/meal.dart';
 import 'package:irori/features/meals/presentation/meals_page.dart';
+import 'package:irori/features/shopping/data/household_members_provider.dart';
+import 'package:irori/features/shopping/data/shopping_items_notifier.dart';
+import 'package:irori/features/shopping/data/shopping_repository.dart';
+import 'package:irori/features/shopping/domain/shopping_item.dart';
+import 'package:irori/features/shopping/presentation/shopping_page.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../support/fake_supabase.dart';
@@ -223,6 +228,80 @@ void main() {
       expect(find.byType(BabyDashboardPage), findsNothing);
     });
 
+    testWidgets('認証済みで /shopping に到達できる (F4 追加ケース)', (tester) async {
+      final container = _authedShellContainer();
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const _RouterHarness(),
+        ),
+      );
+
+      container.read(appRouterProvider).go('/shopping');
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ShoppingPage), findsOneWidget);
+      expect(find.byType(NavigationBar), findsOneWidget);
+      // AppShell は AppBar を持たないため、ページ自前の 1 つだけ。
+      expect(find.byType(AppBar), findsOneWidget);
+      expect(find.text('買い物リスト'), findsOneWidget);
+    });
+
+    testWidgets('BottomNav の「買い物」タップで /shopping ブランチへ切り替わる (F4 追加ケース)', (
+      tester,
+    ) async {
+      final container = _authedShellContainer();
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const _RouterHarness(),
+        ),
+      );
+
+      container.read(appRouterProvider).go('/meals');
+      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(find.byType(MealsPage), findsOneWidget);
+
+      // 「買い物」タブへ (web タブ順: 献立 → 買い物 → 育児)。
+      await tester.tap(find.text('買い物'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ShoppingPage), findsOneWidget);
+      expect(find.byType(MealsPage), findsNothing);
+
+      // 「育児」タブへ → ShoppingPage は Offstage になり finder から消える。
+      await tester.tap(find.text('育児'));
+      await tester.pumpAndSettle();
+      expect(find.byType(BabyDashboardPage), findsOneWidget);
+      expect(find.byType(ShoppingPage), findsNothing);
+    });
+
+    testWidgets('未認証で /shopping にアクセスすると /login へ redirect される (F4 追加ケース)', (
+      tester,
+    ) async {
+      final container = _unauthedContainer();
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const _RouterHarness(),
+        ),
+      );
+
+      container.read(appRouterProvider).go('/shopping');
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(LoginPage), findsOneWidget);
+      expect(find.byType(ShoppingPage), findsNothing);
+    });
+
     testWidgets('未認証で /meals にアクセスすると /login へ redirect される', (tester) async {
       final container = _unauthedContainer();
       addTearDown(container.dispose);
@@ -294,6 +373,12 @@ class _EmptyLogsNotifier extends BabyLogsNotifier {
   Future<List<BabyLog>> build() async => const [];
 }
 
+/// 空の買い物リストを返す AsyncNotifier (シェル配線テスト用 — F4 追加)。
+class _EmptyShoppingItemsNotifier extends ShoppingItemsNotifier {
+  @override
+  Future<List<ShoppingItem>> build() async => const [];
+}
+
 /// 認証済み (initialUser 固定) の ProviderContainer。
 ///
 /// シェル内ブランチ (`MealsPage` / `BabyDashboardPage`) が build 時に
@@ -320,6 +405,14 @@ ProviderContainer _authedShellContainer() {
       // meals ブランチのデータ層 fake。
       mealsWeekNotifierProvider.overrideWith(_EmptyWeekNotifier.new),
       mealsMutationContextProvider.overrideWith(
+        (ref) async => (householdId: 'hh-1', userId: 'user-1'),
+      ),
+      // shopping ブランチのデータ層 fake (F4 追加 — 既存 override は不変)。
+      shoppingItemsNotifierProvider.overrideWith(
+        _EmptyShoppingItemsNotifier.new,
+      ),
+      householdMembersProvider.overrideWith((ref) async => const []),
+      shoppingMutationContextProvider.overrideWith(
         (ref) async => (householdId: 'hh-1', userId: 'user-1'),
       ),
       // baby ブランチのデータ層 fake (baby_dashboard_page_test と同じ流儀)。

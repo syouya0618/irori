@@ -7,9 +7,9 @@ import '../core/theme/colors.dart';
 /// `StatefulShellRoute.indexedStack` の外殻。BottomNav のみを提供する。
 ///
 /// Next.js 原典 `src/components/common/bottom-nav.tsx` の Flutter 移植。
-/// タブ順は web に従う (献立 → 育児)。web の 5 タブのうち本シェルは
-/// Phase 2 F2 時点で移植済みの 2 つだけを持つ:
-/// - 買い物 (`ShoppingCart`) は F4、在庫 (`Package`) は F6 で追加する。
+/// タブ順は web に従う (献立 → 買い物 → 育児)。web の 5 タブのうち本シェルは
+/// Phase 2 F4 時点で移植済みの 3 つを持つ:
+/// - 在庫 (`Package`) は F6 で 買い物 と 育児 の間に追加する。
 /// - 設定 (`Settings`) は将来の設定画面移植時に追加する。
 ///
 /// AppBar は各ページが自前で持つ (baby との干渉を避けるため、本シェルは
@@ -43,6 +43,16 @@ class AppShell extends StatelessWidget {
               color: IroriColors.primary,
             ),
             label: '献立',
+          ),
+          // web bottom-nav.tsx: { href: "/shopping", label: "買い物", icon: ShoppingCart }
+          NavigationDestination(
+            icon: Icon(LucideIcons.shoppingCart, size: 20),
+            selectedIcon: Icon(
+              LucideIcons.shoppingCart,
+              size: 20,
+              color: IroriColors.primary,
+            ),
+            label: '買い物',
           ),
           // web bottom-nav.tsx: { href: "/baby", label: "育児", icon: Baby }
           NavigationDestination(

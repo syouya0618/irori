@@ -8,6 +8,7 @@ import '../features/auth/presentation/invite_page.dart';
 import '../features/auth/presentation/login_page.dart';
 import '../features/baby/presentation/baby_dashboard_page.dart';
 import '../features/meals/presentation/meals_page.dart';
+import '../features/shopping/presentation/shopping_page.dart';
 import '../features/welcome/welcome_page.dart';
 import 'app_shell.dart';
 
@@ -58,10 +59,11 @@ String buildEmailRedirectTo({required String origin, String? returnTo}) {
 /// - 他の保護 page (`/meals` / `/baby` 等) も未認証なら `/login` へ
 /// - 認証済みで `/login` にいるなら `/baby` へ
 ///
-/// シェル構成 (F2): `/meals` と `/baby` は `StatefulShellRoute.indexedStack`
-/// のブランチに置き、`AppShell` (BottomNav) で包む。redirect は
-/// `state.matchedLocation` ベースのため、シェル化してもパスは変わらず
-/// 上記ガードはそのまま効く (`/meals` も `isPublic` に該当しない)。
+/// シェル構成 (F2 / F4): `/meals` / `/shopping` / `/baby` は
+/// `StatefulShellRoute.indexedStack` のブランチに置き、`AppShell` (BottomNav)
+/// で包む。redirect は `state.matchedLocation` ベースのため、シェル化しても
+/// パスは変わらず上記ガードはそのまま効く (`/meals` / `/shopping` も
+/// `isPublic` に該当しない)。
 final appRouterProvider = Provider<GoRouter>((ref) {
   final authNotifier = ref.read(authNotifierProvider);
   // origin は build 時に 1 度だけ解決 (test では originProvider を override)。
@@ -130,7 +132,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       // 認証後のメイン画面群。IndexedStack でブランチごとの Navigator /
       // スクロール位置を保持し、AppShell が BottomNav を提供する。
-      // ブランチ順は web bottom-nav.tsx のタブ順 (献立 → 育児)。
+      // ブランチ順は web bottom-nav.tsx のタブ順 (献立 → 買い物 → 育児。
+      // web の「在庫」は F6 で 買い物 と 育児 の間に追加される)。
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>
             AppShell(shell: navigationShell),
@@ -140,6 +143,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: '/meals',
                 builder: (context, state) => const MealsPage(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/shopping',
+                builder: (context, state) => const ShoppingPage(),
               ),
             ],
           ),
