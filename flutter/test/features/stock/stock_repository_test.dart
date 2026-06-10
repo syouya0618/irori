@@ -186,12 +186,12 @@ void main() {
       expect(r.table.lastInsertValues, isNull);
     });
 
-    test('quantity が 1 未満なら ArgumentError で insert に進まない', () async {
+    test('quantity が 0 以下 / 非有限なら ArgumentError で insert に進まない', () async {
       // web は `|| 1` で 0/NaN を黙って 1 に補完するが、Flutter は型付き
       // 引数のため黙殺せず表面化させる (意図的差異)。
       final r = _repo();
 
-      for (final quantity in [0, -1]) {
+      for (final quantity in <num>[0, -1, double.nan, double.infinity]) {
         await expectLater(
           r.repo.addItem(
             householdId: 'hh-1',
@@ -205,7 +205,9 @@ void main() {
       expect(r.table.lastInsertValues, isNull);
     });
 
-    test('quantity の境界値 1 は通る', () async {
+    test('quantity の境界値 1 と正の小数 (web step=0.1 が許す値) は通る', () async {
+      // `< 1` で弾くと web が DB に保存した 0.5 等の在庫を Flutter で
+      // 編集できなくなる (PR #19 レビュー指摘) ため、正の有限値は全て受理。
       final r = _repo();
 
       await r.repo.addItem(
@@ -214,8 +216,17 @@ void main() {
         name: '塩',
         quantity: 1,
       );
-
       expect(r.table.lastInsertValues, isNotNull);
+
+      await r.repo.addItem(
+        householdId: 'hh-1',
+        userId: 'user-1',
+        name: '豚肉',
+        quantity: 0.5,
+      );
+      final values = r.table.lastInsertValues as Map<String, dynamic>?;
+      expect(values, isNotNull);
+      expect(values!['quantity'], 0.5);
     });
 
     test('expiresAt が YYYY-MM-DD 形式でなければ ArgumentError', () async {
@@ -276,6 +287,48 @@ void main() {
         (column: 'household_id', value: 'hh-1'),
       ]);
       expect(r.mutation.selectedColumns, 'id');
+    });
+
+    test('web が書いた小数 quantity を fetch→update しても値が変わらない', () async {
+      // 回帰防止 (PR #19 レビュー指摘): 旧実装は int + round() で
+      // 1.5 → 2 に丸め、別項目編集の保存で DB の 1.5 を 2 へ恒久破壊していた。
+      // CLAUDE.md「外部APIレスポンスの値で既存値を破壊しない」。
+      final r = _repo(
+        rows: [
+          {
+            'id': 'stock-1',
+            'household_id': 'hh-1',
+            'name': '豚肉',
+            'category': 'meat',
+            'quantity': 1.5, // web (step=0.1) が保存した小数在庫
+            'unit': 'kg',
+            'expires_at': '2026-06-13',
+            'created_by': 'user-1',
+            'created_at': '2026-06-08T00:00:00+09:00',
+            'updated_at': '2026-06-08T00:00:00+09:00',
+          },
+        ],
+        singleValue: {'id': 'stock-1'},
+      );
+
+      final fetched = (await r.repo.fetchItems('hh-1')).single;
+      expect(fetched.quantity, 1.5, reason: 'fetch で丸めない');
+
+      // 期限だけ変えて保存する F6 の編集フロー相当 — quantity は fetch 値を
+      // そのまま渡す。
+      await r.repo.updateItem(
+        householdId: 'hh-1',
+        itemId: fetched.id,
+        name: fetched.name,
+        category: fetched.category,
+        quantity: fetched.quantity,
+        unit: fetched.unit,
+        expiresAt: '2026-06-20',
+      );
+
+      final updated = r.table.lastUpdateValues;
+      expect(updated, isNotNull);
+      expect(updated!['quantity'], 1.5, reason: 'update の書き戻しでも丸めない');
     });
 
     test('対象 0 行 (他世帯/既削除) の PGRST116 は rethrow される', () async {

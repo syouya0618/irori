@@ -16,23 +16,26 @@ ItemCategory _itemCategoryFromJson(Object? value) =>
     ItemCategory.fromDbValue(value is String ? value : '');
 
 /// `stock_items.quantity` (Postgres `NUMERIC NOT NULL DEFAULT 1`) の
-/// tolerant パーサ。
+/// tolerant パーサ。**値を保存する** (丸めない)。
 ///
 /// `numeric` 列は PostgREST が JSON 数値ではなく **引用符付き文字列** で返す
 /// 場合がある (`baby_log.dart` の `_numericFromJson` で確認済みの挙動)。
 /// また web のフォームは `step="0.1"` で小数も許す (DB も NUMERIC) ため、
-/// int / double / String のいずれが来ても壊れないよう吸収する。
+/// int / double / String のいずれが来ても壊れないよう `num` で吸収する
+/// (同じ NUMERIC 列を double で受ける baby_log の temperature/height_cm と
+/// 内部整合)。
 ///
-/// Dart 側モデルは F5 仕様で `int` を採用するため、小数は `round()` で丸める
-/// (web が小数を保存した場合の表示差は意図的 — PR 本文に明記)。
+/// **`int` + `round()` にしない理由 (PR #19 レビュー指摘)**: web が 1.5 を
+/// 保存 → Flutter が 2 に丸めて保持 → 別項目 (期限等) の編集保存で
+/// `updateItem` が 2 を書き戻し → DB の 1.5 が恒久的に破壊される経路ができる
+/// (CLAUDE.md「外部APIレスポンスの値で既存値を破壊しない」違反)。
 /// パース不能・null は web `parseStockFormData` の `|| 1` / DB DEFAULT 1 と
 /// 同じ fallback 値 1 に倒し、1 行の異常で一覧全体を落とさない。
-int _quantityFromJson(Object? value) {
-  if (value is int) return value;
-  if (value is num) return value.round();
+num _quantityFromJson(Object? value) {
+  if (value is num) return value;
   if (value is String) {
     final parsed = num.tryParse(value);
-    if (parsed != null) return parsed.round();
+    if (parsed != null) return parsed;
   }
   return 1;
 }
@@ -41,7 +44,8 @@ int _quantityFromJson(Object? value) {
 ///
 /// 列構成の正は Next.js 原典 `src/lib/types/database.ts` の
 /// `stock_items.Row`。Dart 型対応:
-/// - `quantity` : Postgres `numeric` → `int` (tolerant パーサで丸め)
+/// - `quantity` : Postgres `numeric` → `num` (値保存の tolerant パーサ —
+///   丸めると fetch→update 往復で web の小数在庫を破壊するため丸めない)
 /// - `expires_at` : DATE 列の "YYYY-MM-DD" を **String? のまま** 保持する。
 ///   `DateTime.parse('YYYY-MM-DD')` は UTC 真夜中扱いになり、端末 TZ 次第で
 ///   日付がずれる (CLAUDE.md「UTC 罠」)。期限の日数計算は
@@ -58,7 +62,7 @@ sealed class StockItem with _$StockItem {
     @JsonKey(name: 'household_id') required String householdId,
     required String name,
     @JsonKey(fromJson: _itemCategoryFromJson) required ItemCategory category,
-    @JsonKey(fromJson: _quantityFromJson) required int quantity,
+    @JsonKey(fromJson: _quantityFromJson) required num quantity,
     String? unit,
     @JsonKey(name: 'expires_at') String? expiresAt,
     @JsonKey(name: 'created_by') required String createdBy,

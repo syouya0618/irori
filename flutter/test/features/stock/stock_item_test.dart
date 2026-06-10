@@ -100,7 +100,7 @@ void main() {
     });
   });
 
-  group('StockItem.fromJson の quantity tolerant パース (NUMERIC 列)', () {
+  group('StockItem.fromJson の quantity tolerant パース (NUMERIC 列・値保存)', () {
     StockItem parse(Object? quantity) => StockItem.fromJson(<String, dynamic>{
       'id': 'x',
       'household_id': 'hh-1',
@@ -115,16 +115,18 @@ void main() {
       expect(parse(3).quantity, 3);
     });
 
-    test('double (web は step=0.1 で小数を保存しうる) は round される', () {
-      expect(parse(2.5).quantity, 3);
-      expect(parse(1.4).quantity, 1);
-      expect(parse(0.5).quantity, 1);
+    test('double (web は step=0.1 で小数を保存しうる) は値が保存される (丸めない)', () {
+      // round() すると fetch→update 往復で web の小数在庫を破壊する
+      // (PR #19 レビュー指摘) ため、値をそのまま保持する。
+      expect(parse(2.5).quantity, 2.5);
+      expect(parse(1.4).quantity, 1.4);
+      expect(parse(0.5).quantity, 0.5);
     });
 
-    test('引用符付き文字列 (PostgREST の numeric 列挙動) もパースされる', () {
+    test('引用符付き文字列 (PostgREST の numeric 列挙動) も値保存でパースされる', () {
       // baby_log.dart `_numericFromJson` で確認済みの PostgREST 挙動。
       expect(parse('2').quantity, 2);
-      expect(parse('0.5').quantity, 1);
+      expect(parse('0.5').quantity, 0.5);
     });
 
     test('null / パース不能は web `|| 1` / DB DEFAULT 1 と同じ 1 に fallback', () {

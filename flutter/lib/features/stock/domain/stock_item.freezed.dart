@@ -15,7 +15,7 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$StockItem {
 
- String get id;@JsonKey(name: 'household_id') String get householdId; String get name;@JsonKey(fromJson: _itemCategoryFromJson) ItemCategory get category;@JsonKey(fromJson: _quantityFromJson) int get quantity; String? get unit;@JsonKey(name: 'expires_at') String? get expiresAt;@JsonKey(name: 'created_by') String get createdBy;@JsonKey(name: 'created_at') DateTime get createdAt;// updated_at は NOT NULL だが、realtime payload 等での欠落に備えて
+ String get id;@JsonKey(name: 'household_id') String get householdId; String get name;@JsonKey(fromJson: _itemCategoryFromJson) ItemCategory get category;@JsonKey(fromJson: _quantityFromJson) num get quantity; String? get unit;@JsonKey(name: 'expires_at') String? get expiresAt;@JsonKey(name: 'created_by') String get createdBy;@JsonKey(name: 'created_at') DateTime get createdAt;// updated_at は NOT NULL だが、realtime payload 等での欠落に備えて
 // nullable で受ける (`baby_log.dart` と同じ防御)。
 @JsonKey(name: 'updated_at') DateTime? get updatedAt;
 /// Create a copy of StockItem
@@ -50,7 +50,7 @@ abstract mixin class $StockItemCopyWith<$Res>  {
   factory $StockItemCopyWith(StockItem value, $Res Function(StockItem) _then) = _$StockItemCopyWithImpl;
 @useResult
 $Res call({
- String id,@JsonKey(name: 'household_id') String householdId, String name,@JsonKey(fromJson: _itemCategoryFromJson) ItemCategory category,@JsonKey(fromJson: _quantityFromJson) int quantity, String? unit,@JsonKey(name: 'expires_at') String? expiresAt,@JsonKey(name: 'created_by') String createdBy,@JsonKey(name: 'created_at') DateTime createdAt,@JsonKey(name: 'updated_at') DateTime? updatedAt
+ String id,@JsonKey(name: 'household_id') String householdId, String name,@JsonKey(fromJson: _itemCategoryFromJson) ItemCategory category,@JsonKey(fromJson: _quantityFromJson) num quantity, String? unit,@JsonKey(name: 'expires_at') String? expiresAt,@JsonKey(name: 'created_by') String createdBy,@JsonKey(name: 'created_at') DateTime createdAt,@JsonKey(name: 'updated_at') DateTime? updatedAt
 });
 
 
@@ -74,7 +74,7 @@ as String,householdId: null == householdId ? _self.householdId : householdId // 
 as String,name: null == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
 as String,category: null == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
 as ItemCategory,quantity: null == quantity ? _self.quantity : quantity // ignore: cast_nullable_to_non_nullable
-as int,unit: freezed == unit ? _self.unit : unit // ignore: cast_nullable_to_non_nullable
+as num,unit: freezed == unit ? _self.unit : unit // ignore: cast_nullable_to_non_nullable
 as String?,expiresAt: freezed == expiresAt ? _self.expiresAt : expiresAt // ignore: cast_nullable_to_non_nullable
 as String?,createdBy: null == createdBy ? _self.createdBy : createdBy // ignore: cast_nullable_to_non_nullable
 as String,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable
@@ -161,7 +161,7 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id, @JsonKey(name: 'household_id')  String householdId,  String name, @JsonKey(fromJson: _itemCategoryFromJson)  ItemCategory category, @JsonKey(fromJson: _quantityFromJson)  int quantity,  String? unit, @JsonKey(name: 'expires_at')  String? expiresAt, @JsonKey(name: 'created_by')  String createdBy, @JsonKey(name: 'created_at')  DateTime createdAt, @JsonKey(name: 'updated_at')  DateTime? updatedAt)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id, @JsonKey(name: 'household_id')  String householdId,  String name, @JsonKey(fromJson: _itemCategoryFromJson)  ItemCategory category, @JsonKey(fromJson: _quantityFromJson)  num quantity,  String? unit, @JsonKey(name: 'expires_at')  String? expiresAt, @JsonKey(name: 'created_by')  String createdBy, @JsonKey(name: 'created_at')  DateTime createdAt, @JsonKey(name: 'updated_at')  DateTime? updatedAt)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _StockItem() when $default != null:
 return $default(_that.id,_that.householdId,_that.name,_that.category,_that.quantity,_that.unit,_that.expiresAt,_that.createdBy,_that.createdAt,_that.updatedAt);case _:
@@ -182,7 +182,7 @@ return $default(_that.id,_that.householdId,_that.name,_that.category,_that.quant
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id, @JsonKey(name: 'household_id')  String householdId,  String name, @JsonKey(fromJson: _itemCategoryFromJson)  ItemCategory category, @JsonKey(fromJson: _quantityFromJson)  int quantity,  String? unit, @JsonKey(name: 'expires_at')  String? expiresAt, @JsonKey(name: 'created_by')  String createdBy, @JsonKey(name: 'created_at')  DateTime createdAt, @JsonKey(name: 'updated_at')  DateTime? updatedAt)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id, @JsonKey(name: 'household_id')  String householdId,  String name, @JsonKey(fromJson: _itemCategoryFromJson)  ItemCategory category, @JsonKey(fromJson: _quantityFromJson)  num quantity,  String? unit, @JsonKey(name: 'expires_at')  String? expiresAt, @JsonKey(name: 'created_by')  String createdBy, @JsonKey(name: 'created_at')  DateTime createdAt, @JsonKey(name: 'updated_at')  DateTime? updatedAt)  $default,) {final _that = this;
 switch (_that) {
 case _StockItem():
 return $default(_that.id,_that.householdId,_that.name,_that.category,_that.quantity,_that.unit,_that.expiresAt,_that.createdBy,_that.createdAt,_that.updatedAt);}
@@ -199,7 +199,7 @@ return $default(_that.id,_that.householdId,_that.name,_that.category,_that.quant
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id, @JsonKey(name: 'household_id')  String householdId,  String name, @JsonKey(fromJson: _itemCategoryFromJson)  ItemCategory category, @JsonKey(fromJson: _quantityFromJson)  int quantity,  String? unit, @JsonKey(name: 'expires_at')  String? expiresAt, @JsonKey(name: 'created_by')  String createdBy, @JsonKey(name: 'created_at')  DateTime createdAt, @JsonKey(name: 'updated_at')  DateTime? updatedAt)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id, @JsonKey(name: 'household_id')  String householdId,  String name, @JsonKey(fromJson: _itemCategoryFromJson)  ItemCategory category, @JsonKey(fromJson: _quantityFromJson)  num quantity,  String? unit, @JsonKey(name: 'expires_at')  String? expiresAt, @JsonKey(name: 'created_by')  String createdBy, @JsonKey(name: 'created_at')  DateTime createdAt, @JsonKey(name: 'updated_at')  DateTime? updatedAt)?  $default,) {final _that = this;
 switch (_that) {
 case _StockItem() when $default != null:
 return $default(_that.id,_that.householdId,_that.name,_that.category,_that.quantity,_that.unit,_that.expiresAt,_that.createdBy,_that.createdAt,_that.updatedAt);case _:
@@ -221,7 +221,7 @@ class _StockItem implements StockItem {
 @override@JsonKey(name: 'household_id') final  String householdId;
 @override final  String name;
 @override@JsonKey(fromJson: _itemCategoryFromJson) final  ItemCategory category;
-@override@JsonKey(fromJson: _quantityFromJson) final  int quantity;
+@override@JsonKey(fromJson: _quantityFromJson) final  num quantity;
 @override final  String? unit;
 @override@JsonKey(name: 'expires_at') final  String? expiresAt;
 @override@JsonKey(name: 'created_by') final  String createdBy;
@@ -263,7 +263,7 @@ abstract mixin class _$StockItemCopyWith<$Res> implements $StockItemCopyWith<$Re
   factory _$StockItemCopyWith(_StockItem value, $Res Function(_StockItem) _then) = __$StockItemCopyWithImpl;
 @override @useResult
 $Res call({
- String id,@JsonKey(name: 'household_id') String householdId, String name,@JsonKey(fromJson: _itemCategoryFromJson) ItemCategory category,@JsonKey(fromJson: _quantityFromJson) int quantity, String? unit,@JsonKey(name: 'expires_at') String? expiresAt,@JsonKey(name: 'created_by') String createdBy,@JsonKey(name: 'created_at') DateTime createdAt,@JsonKey(name: 'updated_at') DateTime? updatedAt
+ String id,@JsonKey(name: 'household_id') String householdId, String name,@JsonKey(fromJson: _itemCategoryFromJson) ItemCategory category,@JsonKey(fromJson: _quantityFromJson) num quantity, String? unit,@JsonKey(name: 'expires_at') String? expiresAt,@JsonKey(name: 'created_by') String createdBy,@JsonKey(name: 'created_at') DateTime createdAt,@JsonKey(name: 'updated_at') DateTime? updatedAt
 });
 
 
@@ -287,7 +287,7 @@ as String,householdId: null == householdId ? _self.householdId : householdId // 
 as String,name: null == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
 as String,category: null == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
 as ItemCategory,quantity: null == quantity ? _self.quantity : quantity // ignore: cast_nullable_to_non_nullable
-as int,unit: freezed == unit ? _self.unit : unit // ignore: cast_nullable_to_non_nullable
+as num,unit: freezed == unit ? _self.unit : unit // ignore: cast_nullable_to_non_nullable
 as String?,expiresAt: freezed == expiresAt ? _self.expiresAt : expiresAt // ignore: cast_nullable_to_non_nullable
 as String?,createdBy: null == createdBy ? _self.createdBy : createdBy // ignore: cast_nullable_to_non_nullable
 as String,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable

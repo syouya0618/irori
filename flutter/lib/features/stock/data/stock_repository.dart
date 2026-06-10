@@ -100,7 +100,7 @@ class StockRepository {
     required String userId,
     required String name,
     ItemCategory category = ItemCategory.otherFood,
-    int quantity = 1,
+    num quantity = 1,
     String? unit,
     String? expiresAt,
   }) async {
@@ -141,7 +141,7 @@ class StockRepository {
     required String itemId,
     required String name,
     ItemCategory category = ItemCategory.otherFood,
-    int quantity = 1,
+    num quantity = 1,
     String? unit,
     String? expiresAt,
   }) async {
@@ -248,11 +248,23 @@ String _validatedName(String name) {
 
 /// quantity の範囲検証。web は `Number(...) || 1` で 0/NaN を黙って 1 に
 /// 補完するが (falsy 衝突の既知の罠 / CLAUDE.md)、Flutter は型付き引数の
-/// ため黙殺せず `ArgumentError` で表面化させる (意図的差異 — PR 本文に明記)。
+/// ため黙殺せず `ArgumentError` で表面化させる。
+///
+/// 下限を `< 1` ではなく `<= 0` にする理由 (PR #19 レビュー指摘):
+/// web のフォームは `step="0.1"` + `|| 1` で **0.5 等の正の小数を素通しで
+/// DB (NUMERIC) に保存しうる**。`< 1` で弾くと、web が保存した 0.5 の在庫を
+/// Flutter 側で fetch→編集→保存できなくなる (編集不能化)。ゆえに
+/// 「正の有限値」のみ要求し、web が書きうる値は全て受理する。
+/// NaN は `<= 0` 比較で検出できないため `isFinite` で明示的に弾く
+/// (Infinity も同経路で reject)。
 /// 上限は web に存在しないため設けない (DB は NUMERIC で制約なし)。
-void _validateQuantity(int quantity) {
-  if (quantity < 1) {
-    throw ArgumentError.value(quantity, 'quantity', '数量は1以上で入力してください');
+void _validateQuantity(num quantity) {
+  if (quantity <= 0 || !quantity.isFinite) {
+    throw ArgumentError.value(
+      quantity,
+      'quantity',
+      '数量は0より大きい値で入力してください',
+    );
   }
 }
 

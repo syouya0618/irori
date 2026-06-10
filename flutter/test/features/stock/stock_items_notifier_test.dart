@@ -33,7 +33,7 @@ StockItem _item(
   String id, {
   String name = '何か',
   ItemCategory category = ItemCategory.otherFood,
-  int quantity = 1,
+  num quantity = 1,
 }) {
   return StockItem(
     id: id,
