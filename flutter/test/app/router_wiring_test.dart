@@ -21,6 +21,9 @@ import 'package:irori/features/shopping/data/shopping_items_notifier.dart';
 import 'package:irori/features/shopping/data/shopping_repository.dart';
 import 'package:irori/features/shopping/domain/shopping_item.dart';
 import 'package:irori/features/shopping/presentation/shopping_page.dart';
+import 'package:irori/features/stock/data/stock_items_notifier.dart';
+import 'package:irori/features/stock/domain/stock_item.dart';
+import 'package:irori/features/stock/presentation/stock_page.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../support/fake_supabase.dart';
@@ -321,6 +324,85 @@ void main() {
       expect(find.byType(MealsPage), findsNothing);
     });
 
+    testWidgets('認証済みで /stock に到達できる (F6 追加ケース)', (tester) async {
+      final container = _authedShellContainer();
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const _RouterHarness(),
+        ),
+      );
+
+      container.read(appRouterProvider).go('/stock');
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(StockPage), findsOneWidget);
+      expect(find.byType(NavigationBar), findsOneWidget);
+      // AppBar は StockPage 自前の 1 つだけ (シェルは持たない)。
+      expect(find.byType(AppBar), findsOneWidget);
+    });
+
+    testWidgets('BottomNav の在庫タブで /meals → /stock → /baby を切り替える (F6 追加ケース)', (
+      tester,
+    ) async {
+      final container = _authedShellContainer();
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const _RouterHarness(),
+        ),
+      );
+
+      container.read(appRouterProvider).go('/meals');
+      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(find.byType(MealsPage), findsOneWidget);
+
+      // 「在庫」タブへ (タブ順は web: 献立 → 在庫 → 育児)。
+      await tester.tap(find.text('在庫'));
+      await tester.pumpAndSettle();
+      expect(find.byType(StockPage), findsOneWidget);
+      expect(find.byType(MealsPage), findsNothing);
+
+      // 「育児」タブへ → 在庫ブランチは Offstage になる。
+      await tester.tap(find.text('育児'));
+      await tester.pumpAndSettle();
+      expect(find.byType(BabyDashboardPage), findsOneWidget);
+      expect(find.byType(StockPage), findsNothing);
+
+      // 「在庫」タブへ戻れる。
+      await tester.tap(find.text('在庫'));
+      await tester.pumpAndSettle();
+      expect(find.byType(StockPage), findsOneWidget);
+      expect(find.byType(BabyDashboardPage), findsNothing);
+    });
+
+    testWidgets('未認証で /stock にアクセスすると /login へ redirect される (F6 追加ケース)', (
+      tester,
+    ) async {
+      final container = _unauthedContainer();
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const _RouterHarness(),
+        ),
+      );
+
+      container.read(appRouterProvider).go('/stock');
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(LoginPage), findsOneWidget);
+      expect(find.byType(StockPage), findsNothing);
+    });
+
     testWidgets('認証済みの /login は /baby へ redirect される (シェル化後も契約不変)', (
       tester,
     ) async {
@@ -379,6 +461,12 @@ class _EmptyShoppingItemsNotifier extends ShoppingItemsNotifier {
   Future<List<ShoppingItem>> build() async => const [];
 }
 
+/// 空の在庫一覧を返す AsyncNotifier (シェル配線テスト用)。
+class _EmptyStockNotifier extends StockItemsNotifier {
+  @override
+  Future<List<StockItem>> build() async => const [];
+}
+
 /// 認証済み (initialUser 固定) の ProviderContainer。
 ///
 /// シェル内ブランチ (`MealsPage` / `BabyDashboardPage`) が build 時に
@@ -415,6 +503,8 @@ ProviderContainer _authedShellContainer() {
       shoppingMutationContextProvider.overrideWith(
         (ref) async => (householdId: 'hh-1', userId: 'user-1'),
       ),
+      // stock ブランチのデータ層 fake (F6)。
+      stockItemsNotifierProvider.overrideWith(_EmptyStockNotifier.new),
       // baby ブランチのデータ層 fake (baby_dashboard_page_test と同じ流儀)。
       babyLogsNotifierProvider.overrideWith(_EmptyLogsNotifier.new),
       nowTickerProvider.overrideWith(

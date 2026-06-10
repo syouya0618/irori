@@ -9,6 +9,7 @@ import '../features/auth/presentation/login_page.dart';
 import '../features/baby/presentation/baby_dashboard_page.dart';
 import '../features/meals/presentation/meals_page.dart';
 import '../features/shopping/presentation/shopping_page.dart';
+import '../features/stock/presentation/stock_page.dart';
 import '../features/welcome/welcome_page.dart';
 import 'app_shell.dart';
 
@@ -132,8 +133,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       // 認証後のメイン画面群。IndexedStack でブランチごとの Navigator /
       // スクロール位置を保持し、AppShell が BottomNav を提供する。
-      // ブランチ順は web bottom-nav.tsx のタブ順 (献立 → 買い物 → 育児。
-      // web の「在庫」は F6 で 買い物 と 育児 の間に追加される)。
+      // ブランチ順は web bottom-nav.tsx のタブ順 (献立 → 買い物 → 在庫 → 育児)。
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>
             AppShell(shell: navigationShell),
@@ -151,6 +151,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: '/shopping',
                 builder: (context, state) => const ShoppingPage(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/stock',
+                builder: (context, state) => const StockPage(),
               ),
             ],
           ),

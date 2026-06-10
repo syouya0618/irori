@@ -1,0 +1,188 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+
+import '../../../../core/theme/colors.dart';
+import '../../../../core/theme/radii.dart';
+import '../../domain/stock_item.dart';
+import '../stock_display_utils.dart';
+
+/// 在庫アイテム 1 行。Next.js 原典 `stock-item.tsx` の Flutter 移植。
+///
+/// 表示: 名前 (truncate) + 数量+単位 (web `{quantity}{unit ? \` \${unit}\` : ""}`
+/// の書式 — `num` ゆえ 1.5 は "1.5"、2 は "2") + 期限バッジ
+/// ([stockExpiryBadge] — 期限切れ/今日まで=赤、3日以内=アンバー、
+/// 7日以内=イエロー、それ以外=muted の M/D)。
+///
+/// 操作:
+/// - 行タップ → [onEdit] (親が編集 sheet を開く)
+/// - 削除はワンタップ確認方式 (web `confirmDelete` + 3 秒タイマーと同一):
+///   1 回目のタップで destructive 表示に変わり、3 秒以内の 2 回目で
+///   [onDelete] を呼ぶ。3 秒経過で自動解除。
+///
+/// 意図的差異 (PR 本文にも明記):
+/// - カテゴリバッジは出さない (一覧側がカテゴリ見出しでグループ表示するため
+///   モバイル幅では冗長 — web は見出し+バッジの二重表示)
+/// - 「買い物リストに追加」ボタン (`addToShoppingList`) は Phase 2.5 スコープ
+/// - 残日数バッジ (消費レートベース) も Phase 2.5 スコープ
+class StockItemTile extends StatefulWidget {
+  const StockItemTile({
+    required this.item,
+    required this.todayYmd,
+    required this.onEdit,
+    required this.onDelete,
+    super.key,
+  });
+
+  final StockItem item;
+
+  /// 期限分類の基準日 "YYYY-MM-DD"。親が `formatJstDate()` を 1 回だけ
+  /// 計算して配る (`stock_expiry.dart` の設計方針 — テスト容易性)。
+  final String todayYmd;
+
+  /// 行タップ時 (編集 sheet を開く)。
+  final ValueChanged<StockItem> onEdit;
+
+  /// 削除確定時 (確認 2 タップ目) のみ呼ばれる。
+  final ValueChanged<StockItem> onDelete;
+
+  @override
+  State<StockItemTile> createState() => _StockItemTileState();
+}
+
+class _StockItemTileState extends State<StockItemTile> {
+  bool _confirmDelete = false;
+  Timer? _confirmTimer;
+
+  @override
+  void dispose() {
+    _confirmTimer?.cancel();
+    super.dispose();
+  }
+
+  void _handleDelete() {
+    if (!_confirmDelete) {
+      // 1 回目: 確認状態に入る。web と同じ 3 秒で自動解除。
+      _confirmTimer?.cancel();
+      setState(() => _confirmDelete = true);
+      _confirmTimer = Timer(const Duration(seconds: 3), () {
+        if (mounted) setState(() => _confirmDelete = false);
+      });
+      return;
+    }
+
+    // 2 回目: 確定。実行は親 (楽観更新 + repository 呼び出し) に委譲する。
+    _confirmTimer?.cancel();
+    setState(() => _confirmDelete = false);
+    widget.onDelete(widget.item);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final item = widget.item;
+    final unit = item.unit;
+    // web: `{item.quantity}{item.unit ? ` ${item.unit}` : ""}`
+    final quantityLabel = (unit == null || unit.isEmpty)
+        ? formatStockQuantity(item.quantity)
+        : '${formatStockQuantity(item.quantity)} $unit';
+    final badge = stockExpiryBadge(widget.todayYmd, item.expiresAt);
+
+    return ConstrainedBox(
+      // 44px タッチターゲット (CLAUDE.md / 原典 `min-h-11`)。
+      constraints: const BoxConstraints(minHeight: 44),
+      child: Row(
+        children: [
+          Expanded(
+            child: InkWell(
+              onTap: () => widget.onEdit(item),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              item.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: IroriColors.textPrimary,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            quantityLabel,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: IroriColors.textMuted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (badge != null) ...[
+                      const SizedBox(width: 8),
+                      _ExpiryBadge(badge: badge),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // 削除 (web: ghost → confirm で destructive)。
+          IconButton(
+            onPressed: _handleDelete,
+            icon: const Icon(LucideIcons.trash2, size: 16),
+            tooltip: _confirmDelete ? '${item.name}を削除（確認）' : '${item.name}を削除',
+            style: _confirmDelete
+                ? IconButton.styleFrom(
+                    backgroundColor: IroriColors.error,
+                    foregroundColor: Colors.white,
+                  )
+                : IconButton.styleFrom(foregroundColor: IroriColors.textMuted),
+            // 44x44 の最小タッチ領域 (CLAUDE.md)。
+            constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+            padding: EdgeInsets.zero,
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
+    );
+  }
+}
+
+/// 期限バッジ (web: `rounded-full px-2 py-0.5 text-xs font-medium`)。
+/// `background` null (normal) は pill 背景なしのプレーン表示。
+class _ExpiryBadge extends StatelessWidget {
+  const _ExpiryBadge({required this.badge});
+
+  final StockExpiryBadge badge;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('stockExpiryBadge'),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: badge.background == null
+          ? null
+          : BoxDecoration(
+              color: badge.background,
+              borderRadius: BorderRadius.circular(IroriRadii.pill),
+            ),
+      child: Text(
+        badge.label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+          color: badge.foreground,
+        ),
+      ),
+    );
+  }
+}
