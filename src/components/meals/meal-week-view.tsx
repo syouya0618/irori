@@ -349,6 +349,7 @@ export function MealWeekView({
           return (
             <div
               key={dateKey}
+              data-testid={`meal-day-${dateKey}`}
               className={`rounded-2xl p-3 ${
                 todayFlag
                   ? "glass shadow-lg shadow-black/[0.04] ring-1 ring-primary/20"

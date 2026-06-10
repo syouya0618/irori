@@ -78,6 +78,7 @@ export function EmptyMealSlot({ mealType, onTap }: EmptyMealSlotProps) {
     <button
       type="button"
       onClick={onTap}
+      data-testid={`empty-meal-slot-${mealType}`}
       className={cn(
         "flex w-full flex-col items-center justify-center gap-1 rounded-2xl border border-dashed border-border/60 p-3",
         "min-h-11 transition-colors duration-200 hover:border-primary/40 hover:bg-primary/5"
