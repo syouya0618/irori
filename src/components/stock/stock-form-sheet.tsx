@@ -138,6 +138,7 @@ export function StockFormSheet({
           <div className="flex flex-col gap-2">
             <Label>カテゴリ</Label>
             <Select
+              items={allCategories}
               value={category}
               onValueChange={(v) => setCategory(v as ItemCategory)}
             >
@@ -171,7 +172,7 @@ export function StockFormSheet({
             </div>
             <div className="flex flex-1 flex-col gap-2">
               <Label>単位</Label>
-              <Select value={unit} onValueChange={(v) => setUnit(v ?? "")}>
+              <Select items={STOCK_UNITS} value={unit} onValueChange={(v) => setUnit(v ?? "")}>
                 <SelectTrigger className="h-11">
                   <SelectValue placeholder="選択" />
                 </SelectTrigger>
