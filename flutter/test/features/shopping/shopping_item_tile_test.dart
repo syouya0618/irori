@@ -42,6 +42,10 @@ class _Repo extends Fake implements ShoppingRepository {
   /// 非 null なら toggle がこの Completer の完了まで停止する。
   Completer<void>? toggleGate;
 
+  /// toggle 成功時の戻り値 (在庫自動登録の結果 — web actions.ts:97 の
+  /// `{ autoStocked, autoStockedName }`)。既定は「自動登録なし」。
+  ToggleItemResult toggleResult = (autoStocked: false, autoStockedName: null);
+
   Object? deleteError;
 
   int toggleCount = 0;
@@ -52,7 +56,7 @@ class _Repo extends Fake implements ShoppingRepository {
   ({String householdId, String itemId})? lastDelete;
 
   @override
-  Future<void> toggleItem({
+  Future<ToggleItemResult> toggleItem({
     required String householdId,
     required String itemId,
     required bool isChecked,
@@ -67,6 +71,7 @@ class _Repo extends Fake implements ShoppingRepository {
     );
     if (toggleGate != null) await toggleGate!.future;
     if (toggleError != null) throw toggleError!;
+    return toggleResult;
   }
 
   @override
@@ -130,6 +135,38 @@ void main() {
     await tester.pumpAndSettle();
 
     // 完了後も維持される (realtime UPDATE が届くまで楽観値を表示)。
+    expect(_checkboxValue(tester), isTrue);
+  });
+
+  testWidgets('autoStocked=true なら「{名前}を在庫に追加しました」SnackBar を表示する', (
+    tester,
+  ) async {
+    final repo = _Repo()
+      ..toggleResult = (autoStocked: true, autoStockedName: 'おむつ');
+    await tester.pumpWidget(
+      _wrap(
+        repo: repo,
+        item: _item(name: 'おむつ'),
+      ),
+    );
+
+    await tester.tap(find.byType(Checkbox));
+    await tester.pumpAndSettle();
+
+    // 文言は web `shopping-item.tsx:62` の toast.success と同一。
+    expect(find.text('おむつを在庫に追加しました'), findsOneWidget);
+    // チェック自体も成功扱い (楽観値を維持)。
+    expect(_checkboxValue(tester), isTrue);
+  });
+
+  testWidgets('autoStocked=false なら在庫追加 SnackBar は出さない', (tester) async {
+    final repo = _Repo(); // 既定 (autoStocked: false)
+    await tester.pumpWidget(_wrap(repo: repo, item: _item()));
+
+    await tester.tap(find.byType(Checkbox));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('を在庫に追加しました'), findsNothing);
     expect(_checkboxValue(tester), isTrue);
   });
 

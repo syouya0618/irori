@@ -42,21 +42,31 @@ class NoCheckedShoppingItemsException implements Exception {
 /// shopping mutation に必要な認証コンテキスト。
 typedef ShoppingMutationContext = ({String householdId, String userId});
 
-/// `shopping_items` / `purchase_history` へのアクセスを担うリポジトリ。
-/// Next.js 版 `shopping/page.tsx` (read) + `actions.ts` (write) の
-/// セマンティクスを移植する。
+/// [ShoppingRepository.toggleItem] の戻り値。web `toggleItem` action の
+/// `{ success, autoStocked, autoStockedName }` (actions.ts:97) のうち
+/// success を除いたもの (Dart では失敗を例外で表現)。UI は autoStocked 時に
+/// 成功 toast「{名前}を在庫に追加しました」を出す (`shopping-item.tsx:61-63`)。
+typedef ToggleItemResult = ({bool autoStocked, String? autoStockedName});
+
+/// `shopping_items` / `purchase_history` と、在庫自動登録
+/// ([autoAddToStock]) のための `households` / `stock_items` への
+/// アクセスを担うリポジトリ。Next.js 版 `shopping/page.tsx` (read) +
+/// `actions.ts` (write) + `auto-stock.ts` のセマンティクスを移植する。
+///
+/// `households` の read は web 同様このリポジトリ内の inline select とし、
+/// 共有 provider へ抽象化しない (Phase 2.5 計画 — 過剰抽象の回避)。
 ///
 /// **Phase 2.5 送り (本リポジトリに含めない web 機能)**:
-/// - `toggleItem` の在庫自動登録 (`autoAddToStock`) — stock 機能ごと Phase 2.5
 /// - `generateFromMeals` / `previewMealIngredients` (献立からの食材生成)
 /// - `getSuggestions` (購入履歴サジェスト)
 ///
 /// エラー方針 (CLAUDE.md / `BabyRepository` / `MealsRepository` と同形):
 /// - `PostgrestException` は plain object のため、code/message/details/hint を
 ///   構造化して `debugPrint` し、握り潰さず rethrow する。
-/// - 例外: `_nextSortOrder` の lookup 失敗 (web parity の fallback) と
-///   `clearChecked` の履歴 insert 失敗 (web parity の続行) のみ、構造化ログの
-///   うえ rethrow しない — 各メソッドの doc コメント参照。
+/// - 例外: `_nextSortOrder` の lookup 失敗 (web parity の fallback)、
+///   `clearChecked` の履歴 insert 失敗 (web parity の続行)、
+///   [autoAddToStock] 内の各失敗 (web parity の bool false 戻し) のみ、
+///   構造化ログのうえ rethrow しない — 各メソッドの doc コメント参照。
 class ShoppingRepository {
   ShoppingRepository(this._client);
 
@@ -156,29 +166,33 @@ class ShoppingRepository {
     }
   }
 
-  /// チェック状態を切り替える。
+  /// チェック状態を切り替え、在庫自動登録の結果を返す。
   ///
-  /// web `toggleItem` の更新列と同じ `is_checked` / `checked_by` /
-  /// `checked_at` のみを更新する。チェック ON で checked_by = [userId] /
-  /// checked_at = 現在時刻、OFF で両方 null (web と同一)。
+  /// web `toggleItem` (actions.ts:51-98) の移植:
+  /// - 更新列は `is_checked` / `checked_by` / `checked_at` のみ。チェック ON
+  ///   で checked_by = [userId] / checked_at = 現在時刻、OFF で両方 null
+  ///   (web と同一)。
+  /// - household スコープ + `.select('name, category').single()` で「対象
+  ///   0 行 (他世帯 or 既削除)」を silent success にしない (CLAUDE.md
+  ///   「`.update()` は 0 行更新でも error: null」)。返却列は web
+  ///   actions.ts:66 と同一で、行数検証と [autoAddToStock] への入力取得を
+  ///   兼ねる。
+  /// - チェック ON のときのみ [autoAddToStock] を実行する (actions.ts:73-93)。
+  ///   その**失敗・throw はチェック操作自体に影響させない** — actions.ts:90-92
+  ///   の `catch {}` parity。ただし Dart 版は握り潰さず構造化ログを出す
+  ///   (CLAUDE.md「エラー握り潰し禁止」— 挙動中立の追加)。
   ///
-  /// household スコープ + `.select('id').single()` の行数検証で「対象 0 行
-  /// (他世帯 or 既削除)」を silent success にしない (CLAUDE.md「`.update()` は
-  /// 0 行更新でも error: null」/ web の「世帯に属するアイテムか確認してから
-  /// 更新」に相当)。
-  ///
-  /// **在庫自動登録 (`autoAddToStock`) は含めない** — stock 機能ごと
-  /// Phase 2.5 のプラットフォーム差 (クラス doc 参照)。web が
-  /// `.select("name, category")` で返却列を取るのは autoAddToStock 用のため、
-  /// Flutter 版は行数検証に必要な `id` のみ取る。
-  Future<void> toggleItem({
+  /// 戻り値は web の `{ autoStocked, autoStockedName }` に対応し、UI が成功
+  /// toast を出すのに使う ([ToggleItemResult] doc 参照)。
+  Future<ToggleItemResult> toggleItem({
     required String householdId,
     required String itemId,
     required bool isChecked,
     required String userId,
   }) async {
+    final PostgrestMap updatedItem;
     try {
-      await _client
+      updatedItem = await _client
           .from('shopping_items')
           .update({
             'is_checked': isChecked,
@@ -189,13 +203,188 @@ class ShoppingRepository {
           })
           .eq('id', itemId)
           .eq('household_id', householdId)
-          .select('id')
+          .select('name, category')
           .single()
           .timeout(_kQueryTimeout);
     } on Object catch (e, st) {
       _logMutationError('toggleItem', e, st, 'householdId=$householdId');
       rethrow;
     }
+
+    var autoStocked = false;
+    String? autoStockedName;
+
+    // 在庫自動追加: チェック ON 時のみ (web actions.ts:77 の
+    // `isChecked && updatedItem` — Dart は single() が非 null を保証する
+    // ため isChecked のみで等価)。
+    if (isChecked) {
+      try {
+        final stocked = await autoAddToStock(
+          householdId: householdId,
+          userId: userId,
+          itemName: updatedItem['name'] as String,
+          itemCategory: updatedItem['category'] as String,
+        );
+        if (stocked) {
+          autoStocked = true;
+          autoStockedName = updatedItem['name'] as String;
+        }
+      } on Object catch (e, st) {
+        // auto-stock の失敗はチェック操作自体には影響させない
+        // (web actions.ts:90-92)。握り潰さず構造化ログ (CLAUDE.md)。
+        _logMutationError(
+          'toggleItem/autoStock',
+          e,
+          st,
+          'householdId=$householdId',
+        );
+      }
+    }
+
+    return (autoStocked: autoStocked, autoStockedName: autoStockedName);
+  }
+
+  /// チェック ON 時の在庫自動追加 — web `auto-stock.ts:15-77` の忠実移植。
+  ///
+  /// 世帯の `auto_stock_categories` に含まれるカテゴリのみ対象。同名在庫が
+  /// あれば quantity +1、なければ quantity 1 / unit「個」で新規作成する。
+  /// 失敗は bool (false) で返すのみで、呼び出し側のチェック操作には影響
+  /// させない (web auto-stock.ts:10-11 の方針)。
+  ///
+  /// **web parity の意図的 quirk — レビューで「統一・修正」しないこと**
+  /// (Phase 2.5 計画 risks 欄 / CLAUDE.md「防御コード削除禁止」と同類。
+  /// 直す場合は web と同時に別 issue で):
+  /// - 在庫名照合は `eq('name', itemName.trim())` — **trim のみの
+  ///   case-sensitive 完全一致** (web auto-stock.ts:47)。買い物リスト生成
+  ///   (Phase 2.5 PR-C) の toLowerCase 照合とは意図的に規格が異なる。
+  /// - 既存在庫の quantity +1 は **read-modify-write のまま**
+  ///   (web auto-stock.ts:45,61) — atomic 化 (RPC 等) しない。
+  /// - `limit(1)` は **order なし** (web auto-stock.ts:48) — 同名複数行が
+  ///   あるときは非決定で 1 行を選ぶ。
+  /// - 照合 lookup の失敗はログのみで「既存なし」扱いとなり**新規 insert に
+  ///   進む** (web auto-stock.ts:50-56 の `matchedItems?.[0] ?? null`)。
+  ///
+  /// [itemCategory] は DB の生文字列のまま受け取る (web actions.ts:84 の
+  /// `as ItemCategory` は型 cast のみで実行時変換なし)。
+  /// `ItemCategory.fromDbValue` の tolerant fallback (未知値 → other_daily)
+  /// を通すと照合・insert の挙動が web から乖離するため enum 化しない。
+  ///
+  /// quantity は num のまま +1 する (`StockItem.quantity` doc 参照 —
+  /// int キャスト / round() はデータ破壊)。
+  Future<bool> autoAddToStock({
+    required String householdId,
+    required String userId,
+    required String itemName,
+    required String itemCategory,
+  }) async {
+    // 世帯の自動追加対象カテゴリを取得。supabase-dart はエラーを throw する
+    // ため、web の `if (householdError) log` + `if (!household) return false`
+    // (auto-stock.ts:29-35) は catch + 構造化ログ + false で等価になる。
+    final PostgrestMap household;
+    try {
+      household = await _client
+          .from('households')
+          .select('auto_stock_categories')
+          .eq('id', householdId)
+          .single()
+          .timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      _logMutationError(
+        'autoAddToStock/household',
+        e,
+        st,
+        'householdId=$householdId',
+      );
+      return false;
+    }
+
+    // カテゴリ対象外は silent skip (web auto-stock.ts:37-40 の
+    // `Array.isArray` ガード + `includes`)。web は無ログだが、Dart 版は
+    // 調査用に debug ログのみ足す (挙動中立 — DB アクセス・戻り値は不変)。
+    final categories = household['auto_stock_categories'];
+    if (categories is! List<dynamic> || !categories.contains(itemCategory)) {
+      debugPrint(
+        'ShoppingRepository.autoAddToStock skip: '
+        'category=$itemCategory は auto_stock_categories 対象外 '
+        'householdId=$householdId',
+      );
+      return false;
+    }
+
+    // 同名の在庫アイテムがあるか確認 — trim のみ・case-sensitive eq・
+    // order なし limit(1) (web auto-stock.ts:43-48。メソッド doc の quirk
+    // 一覧参照)。
+    PostgrestList matchedItems;
+    try {
+      matchedItems = await _client
+          .from('stock_items')
+          .select('id, name, quantity')
+          .eq('household_id', householdId)
+          .eq('name', itemName.trim())
+          .limit(1)
+          .timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      // web parity: 照合失敗はログのみで existing = null 扱い
+      // (auto-stock.ts:50-56) — このまま新規 insert へ進む。
+      _logMutationError(
+        'autoAddToStock/match',
+        e,
+        st,
+        'householdId=$householdId',
+      );
+      matchedItems = const [];
+    }
+
+    final existing = matchedItems.firstOrNull;
+
+    if (existing != null) {
+      // read-modify-write の +1 (web auto-stock.ts:58-63 — atomic 化しない)。
+      // quantity は num のまま加算する (1.5 + 1 = 2.5)。
+      final newQuantity = (existing['quantity'] as num) + 1;
+      try {
+        await _client
+            .from('stock_items')
+            .update({'quantity': newQuantity})
+            .eq('id', existing['id'] as String)
+            .timeout(_kQueryTimeout);
+      } on Object catch (e, st) {
+        // web は `if (updateError) return false` (auto-stock.ts:63)。
+        // Dart 版は CLAUDE.md「エラー握り潰し禁止」により構造化ログを足す
+        // (挙動中立の追加)。
+        _logMutationError(
+          'autoAddToStock/update',
+          e,
+          st,
+          'householdId=$householdId',
+        );
+        return false;
+      }
+    } else {
+      try {
+        await _client
+            .from('stock_items')
+            .insert({
+              'household_id': householdId,
+              'name': itemName.trim(),
+              'category': itemCategory,
+              'quantity': 1,
+              'unit': '個',
+              'created_by': userId,
+            })
+            .timeout(_kQueryTimeout);
+      } on Object catch (e, st) {
+        // web は `if (insertError) return false` (auto-stock.ts:73)。同上。
+        _logMutationError(
+          'autoAddToStock/insert',
+          e,
+          st,
+          'householdId=$householdId',
+        );
+        return false;
+      }
+    }
+
+    return true;
   }
 
   /// アイテムを削除する。

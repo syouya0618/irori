@@ -12,7 +12,15 @@ const _kExpectedItemColumns =
     'id, household_id, name, quantity, category, store_type, is_checked, '
     'checked_by, checked_at, meal_id, sort_order, created_by, created_at';
 
-/// shopping_items / purchase_history の 2 テーブル fake 一式。
+/// households fake の既定行。auto_stock_categories は DB DEFAULT
+/// `'["baby","cleaning","hygiene"]'` (migration 20260411000002) と同一。
+const PostgrestMap _kDefaultHouseholdRow = {
+  'auto_stock_categories': ['baby', 'cleaning', 'hygiene'],
+};
+
+/// shopping_items / purchase_history / households / stock_items の
+/// 4 テーブル fake 一式 (households / stock_items は PR P2.5-B の
+/// `autoAddToStock` 用 — fake_supabase 本体は変更せず builder 登録のみ)。
 ({
   ShoppingRepository repo,
   FakeSupabaseClient client,
@@ -21,6 +29,11 @@ const _kExpectedItemColumns =
   FakeFilterBuilder itemsMutation,
   FakeQueryBuilder history,
   FakeFilterBuilder historyMutation,
+  FakeQueryBuilder households,
+  FakeFilterBuilder householdsRead,
+  FakeQueryBuilder stock,
+  FakeFilterBuilder stockRead,
+  FakeFilterBuilder stockMutation,
 })
 _repo({
   PostgrestList itemsRows = const [],
@@ -30,6 +43,11 @@ _repo({
   PostgrestMap? itemsSingleValue,
   Object? itemsSingleError,
   Object? historyInsertError,
+  PostgrestMap? householdRow = _kDefaultHouseholdRow,
+  Object? householdReadError,
+  PostgrestList stockRows = const [],
+  Object? stockReadError,
+  Object? stockMutationError,
 }) {
   final itemsRead = FakeFilterBuilder(
     cannedValue: itemsRows,
@@ -53,8 +71,30 @@ _repo({
     mutationFilter: historyMutation,
   );
 
+  final householdsRead = FakeFilterBuilder(
+    cannedValue: const [],
+    singleValue: householdRow,
+    singleError: householdReadError,
+  );
+  final households = FakeQueryBuilder(householdsRead);
+
+  final stockRead = FakeFilterBuilder(
+    cannedValue: stockRows,
+    cannedError: stockReadError,
+  );
+  final stockMutation = FakeFilterBuilder(
+    cannedValue: const [],
+    cannedError: stockMutationError,
+  );
+  final stock = FakeQueryBuilder(stockRead, mutationFilter: stockMutation);
+
   final client = FakeSupabaseClient(
-    fromBuilders: {'shopping_items': items, 'purchase_history': history},
+    fromBuilders: {
+      'shopping_items': items,
+      'purchase_history': history,
+      'households': households,
+      'stock_items': stock,
+    },
   );
   return (
     repo: ShoppingRepository(client),
@@ -64,7 +104,32 @@ _repo({
     itemsMutation: itemsMutation,
     history: history,
     historyMutation: historyMutation,
+    households: households,
+    householdsRead: householdsRead,
+    stock: stock,
+    stockRead: stockRead,
+    stockMutation: stockMutation,
   );
+}
+
+/// `autoAddToStock` を強制 throw させる stub。`toggleItem` がこの throw を
+/// 握り込んでチェック操作を成功させる防御 (web actions.ts:90-92 の
+/// `catch {}` parity) の検証用。
+class _ThrowingAutoStockRepository extends ShoppingRepository {
+  _ThrowingAutoStockRepository(super.client);
+
+  int autoStockCalls = 0;
+
+  @override
+  Future<bool> autoAddToStock({
+    required String householdId,
+    required String userId,
+    required String itemName,
+    required String itemCategory,
+  }) async {
+    autoStockCalls++;
+    throw StateError('autoAddToStock boom');
+  }
 }
 
 /// fetch 系が返す生 row (全 13 列)。
@@ -209,14 +274,18 @@ void main() {
 
   group('ShoppingRepository.toggleItem', () {
     test('チェック ON: is_checked/checked_by/checked_at のみ更新 + 行数検証', () async {
-      final r = _repo(itemsSingleValue: {'id': 'item-1'});
+      // dairy は auto_stock_categories の既定値に含まれない → この test は
+      // 在庫自動登録に入らず、update payload の検証に集中する。
+      final r = _repo(itemsSingleValue: {'name': '牛乳', 'category': 'dairy'});
 
-      await r.repo.toggleItem(
+      final result = await r.repo.toggleItem(
         householdId: 'hh-1',
         itemId: 'item-1',
         isChecked: true,
         userId: 'user-2',
       );
+
+      expect(result, (autoStocked: false, autoStockedName: null));
 
       final values = r.items.lastUpdateValues!;
       expect(
@@ -229,29 +298,38 @@ void main() {
       expect(values['checked_at'], isA<String>());
       expect(DateTime.parse(values['checked_at'] as String).isUtc, isTrue);
 
-      // household スコープ + .select('id').single() の行数検証
-      // (CLAUDE.md「.update() は 0 行更新でも error: null」)。
+      // household スコープ + .select('name, category').single()。
+      // 行数検証 (CLAUDE.md「.update() は 0 行更新でも error: null」) と
+      // autoAddToStock への入力取得を兼ねる (web actions.ts:66 と同一列)。
       expect(r.itemsMutation.eqFilters, [
         (column: 'id', value: 'item-1'),
         (column: 'household_id', value: 'hh-1'),
       ]);
-      expect(r.itemsMutation.selectedColumns, 'id');
+      expect(r.itemsMutation.selectedColumns, 'name, category');
     });
 
-    test('チェック OFF: checked_by / checked_at が null に戻る', () async {
-      final r = _repo(itemsSingleValue: {'id': 'item-1'});
+    test('チェック OFF: checked_by / checked_at が null に戻り、'
+        '在庫自動登録には一切入らない', () async {
+      final r = _repo(itemsSingleValue: {'name': 'おむつ', 'category': 'baby'});
 
-      await r.repo.toggleItem(
+      final result = await r.repo.toggleItem(
         householdId: 'hh-1',
         itemId: 'item-1',
         isChecked: false,
         userId: 'user-2',
       );
 
+      expect(result, (autoStocked: false, autoStockedName: null));
+
       final values = r.items.lastUpdateValues!;
       expect(values['is_checked'], false);
       expect(values['checked_by'], isNull);
       expect(values['checked_at'], isNull);
+
+      // OFF では autoAddToStock 自体を呼ばない (web actions.ts:77 の
+      // `if (isChecked && updatedItem)`) — auto 対象カテゴリ (baby) でも
+      // households / stock_items に触れない。
+      expect(r.client.fromTables, ['shopping_items']);
     });
 
     test('対象 0 行 (他世帯/既削除) の PGRST116 は rethrow される', () async {
@@ -273,6 +351,213 @@ void main() {
           isA<PostgrestException>().having((e) => e.code, 'code', 'PGRST116'),
         ),
       );
+    });
+  });
+
+  group('ShoppingRepository.toggleItem の在庫自動登録 (web auto-stock.ts:15-77)', () {
+    /// チェック ON の toggle を実行する共通呼び出し
+    /// (このグループの関心は autoAddToStock 側のため引数は固定)。
+    Future<ToggleItemResult> toggleOn(ShoppingRepository repo) {
+      return repo.toggleItem(
+        householdId: 'hh-1',
+        itemId: 'item-1',
+        isChecked: true,
+        userId: 'user-2',
+      );
+    }
+
+    test('(a) auto 対象カテゴリ & 同名在庫あり: 既存 quantity + 1 の update を発行する', () async {
+      final r = _repo(
+        itemsSingleValue: {'name': 'おむつ', 'category': 'baby'},
+        stockRows: [
+          {'id': 'stock-1', 'name': 'おむつ', 'quantity': 2},
+        ],
+      );
+
+      final result = await toggleOn(r.repo);
+
+      expect(result, (autoStocked: true, autoStockedName: 'おむつ'));
+      // toggle 更新 → households lookup → 在庫照合 → 在庫 update の順。
+      expect(r.client.fromTables, [
+        'shopping_items',
+        'households',
+        'stock_items',
+        'stock_items',
+      ]);
+      expect(r.households.lastSelectColumns, 'auto_stock_categories');
+      expect(r.householdsRead.eqFilters, [(column: 'id', value: 'hh-1')]);
+      // read-modify-write の +1 (web auto-stock.ts:58-63。atomic 化しない)。
+      expect(r.stock.lastUpdateValues, {'quantity': 3});
+      expect(r.stockMutation.eqFilters, [(column: 'id', value: 'stock-1')]);
+      expect(r.stock.lastInsertValues, isNull);
+    });
+
+    test(
+      '(a補) quantity は num のまま +1 する (1.5 → 2.5、int 化・round() しない)',
+      () async {
+        final r = _repo(
+          itemsSingleValue: {'name': 'おむつ', 'category': 'baby'},
+          stockRows: [
+            {'id': 'stock-1', 'name': 'おむつ', 'quantity': 1.5},
+          ],
+        );
+
+        await toggleOn(r.repo);
+
+        // StockItem.quantity は num (int 化はデータ破壊 — stock_item.dart doc)。
+        expect(r.stock.lastUpdateValues, {'quantity': 2.5});
+      },
+    );
+
+    test('(b) 同名在庫なし: quantity 1 / unit 個 で新規 insert する', () async {
+      final r = _repo(
+        itemsSingleValue: {'name': 'おしりふき', 'category': 'baby'},
+        stockRows: const [],
+      );
+
+      final result = await toggleOn(r.repo);
+
+      expect(result, (autoStocked: true, autoStockedName: 'おしりふき'));
+      // insert 行は web auto-stock.ts:65-72 と同一 (category は DB の生値
+      // パススルー — enum 往復しない)。
+      expect(r.stock.lastInsertValues, {
+        'household_id': 'hh-1',
+        'name': 'おしりふき',
+        'category': 'baby',
+        'quantity': 1,
+        'unit': '個',
+        'created_by': 'user-2',
+      });
+      expect(r.stock.lastUpdateValues, isNull);
+    });
+
+    test('(f) 在庫照合は trim のみの case-sensitive eq + order なし limit(1) '
+        '(web auto-stock.ts:43-48)', () async {
+      final r = _repo(
+        itemsSingleValue: {'name': '  Baby Wipes  ', 'category': 'baby'},
+        stockRows: const [],
+      );
+
+      await toggleOn(r.repo);
+
+      expect(r.stock.lastSelectColumns, 'id, name, quantity');
+      // trim はするが toLowerCase はしない (case-sensitive — 意図的 quirk。
+      // 機能ごとに照合規格が異なる: 計画 risks 欄参照)。
+      expect(r.stockRead.eqFilters, [
+        (column: 'household_id', value: 'hh-1'),
+        (column: 'name', value: 'Baby Wipes'),
+      ]);
+      expect(r.stockRead.limitCalls, [1]);
+      // order なしの limit(1) (web parity — 同名複数行は非決定で 1 行)。
+      expect(r.stockRead.orderCalls, isEmpty);
+      // insert する name も trim 済みの生値 (web auto-stock.ts:67)。
+      final inserted = r.stock.lastInsertValues as Map<dynamic, dynamic>?;
+      expect(inserted?['name'], 'Baby Wipes');
+    });
+
+    test('(c) カテゴリが auto 対象外なら stock_items にアクセスしない', () async {
+      final r = _repo(itemsSingleValue: {'name': '牛乳', 'category': 'dairy'});
+
+      final result = await toggleOn(r.repo);
+
+      expect(result, (autoStocked: false, autoStockedName: null));
+      expect(r.client.fromTables, ['shopping_items', 'households']);
+      expect(r.stock.lastInsertValues, isNull);
+      expect(r.stock.lastUpdateValues, isNull);
+    });
+
+    test('(c補) auto_stock_categories が配列でない場合も skip する '
+        '(web Array.isArray ガード)', () async {
+      final r = _repo(
+        itemsSingleValue: {'name': 'おむつ', 'category': 'baby'},
+        householdRow: {'auto_stock_categories': 'baby'},
+      );
+
+      final result = await toggleOn(r.repo);
+
+      expect(result, (autoStocked: false, autoStockedName: null));
+      expect(r.client.fromTables, ['shopping_items', 'households']);
+    });
+
+    test('(d) households 取得エラーはログのみで skip し、チェック操作は成功する', () async {
+      final r = _repo(
+        itemsSingleValue: {'name': 'おむつ', 'category': 'baby'},
+        householdReadError: const PostgrestException(
+          message: 'household boom',
+          code: '500',
+        ),
+      );
+
+      final result = await toggleOn(r.repo);
+
+      // throw されずチェック操作は完了 (web auto-stock.ts:29-35 の
+      // log + `if (!household) return false`)。
+      expect(result, (autoStocked: false, autoStockedName: null));
+      expect(r.client.fromTables, ['shopping_items', 'households']);
+      expect(r.stock.lastInsertValues, isNull);
+    });
+
+    test('在庫照合の失敗はログのみで「既存なし」扱いとなり insert に進む '
+        '(web auto-stock.ts:56 の matchedItems?.[0] ?? null)', () async {
+      final r = _repo(
+        itemsSingleValue: {'name': 'おむつ', 'category': 'baby'},
+        stockReadError: const PostgrestException(
+          message: 'match boom',
+          code: '500',
+        ),
+      );
+
+      final result = await toggleOn(r.repo);
+
+      expect(result, (autoStocked: true, autoStockedName: 'おむつ'));
+      expect(r.stock.lastInsertValues, isNotNull);
+      expect(r.stock.lastUpdateValues, isNull);
+    });
+
+    test('在庫 update 失敗は autoStocked=false でチェック操作は成功する '
+        '(web auto-stock.ts:63)', () async {
+      final r = _repo(
+        itemsSingleValue: {'name': 'おむつ', 'category': 'baby'},
+        stockRows: [
+          {'id': 'stock-1', 'name': 'おむつ', 'quantity': 2},
+        ],
+        stockMutationError: const PostgrestException(
+          message: 'update boom',
+          code: '500',
+        ),
+      );
+
+      final result = await toggleOn(r.repo);
+
+      expect(result, (autoStocked: false, autoStockedName: null));
+    });
+
+    test('在庫 insert 失敗は autoStocked=false でチェック操作は成功する '
+        '(web auto-stock.ts:73)', () async {
+      final r = _repo(
+        itemsSingleValue: {'name': 'おむつ', 'category': 'baby'},
+        stockRows: const [],
+        stockMutationError: const PostgrestException(
+          message: 'insert boom',
+          code: '500',
+        ),
+      );
+
+      final result = await toggleOn(r.repo);
+
+      expect(result, (autoStocked: false, autoStockedName: null));
+    });
+
+    test('(e) autoAddToStock 自体の throw は toggleItem を fail させない '
+        '(web actions.ts:90-92)', () async {
+      final r = _repo(itemsSingleValue: {'name': 'おむつ', 'category': 'baby'});
+      final repo = _ThrowingAutoStockRepository(r.client);
+
+      final result = await toggleOn(repo);
+
+      // throw は握り込まれ (構造化ログのみ)、チェック操作は成功扱い。
+      expect(repo.autoStockCalls, 1);
+      expect(result, (autoStocked: false, autoStockedName: null));
     });
   });
 

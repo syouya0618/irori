@@ -29,9 +29,9 @@ const _kConfirmDeleteTimeout = Duration(seconds: 3);
 ///   `confirmDelete`)。確定後は楽観的に行を隠し、失敗時は**復元** + SnackBar
 ///   (web は復元しないが、巻き戻す方が安全側 — 削除されていない行を
 ///   見えないままにしない)。
-///
-/// 在庫自動登録 (`autoStocked` toast) は stock 機能ごと Phase 2.5
-/// (`ShoppingRepository.toggleItem` doc 参照) のため無し。
+/// - チェック ON で在庫自動登録された場合は成功 SnackBar
+///   「{名前}を在庫に追加しました」を表示する (原典 `shopping-item.tsx:61-63`
+///   の `toast.success` と同一文言)。
 class ShoppingItemTile extends ConsumerStatefulWidget {
   const ShoppingItemTile({required this.item, this.checkedByName, super.key});
 
@@ -89,7 +89,7 @@ class _ShoppingItemTileState extends ConsumerState<ShoppingItemTile> {
       final mutationContext = await ref.read(
         shoppingMutationContextProvider.future,
       );
-      await ref
+      final result = await ref
           .read(shoppingRepositoryProvider)
           .toggleItem(
             householdId: mutationContext.householdId,
@@ -98,6 +98,12 @@ class _ShoppingItemTileState extends ConsumerState<ShoppingItemTile> {
             userId: mutationContext.userId,
           );
       // 成功時は楽観 override を保持したまま realtime UPDATE を待つ。
+      // 在庫自動登録の成功 toast (web `shopping-item.tsx:61-63` と同一文言)。
+      if (result.autoStocked && result.autoStockedName != null) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('${result.autoStockedName}を在庫に追加しました')),
+        );
+      }
     } on Object catch (e, st) {
       // 握り潰さない (CLAUDE.md)。repository 側でも構造化ログ済み。
       debugPrint('ShoppingItemTile toggleItem 失敗: $e\n$st');
