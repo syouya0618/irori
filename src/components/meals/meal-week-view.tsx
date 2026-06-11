@@ -48,6 +48,11 @@ export function MealWeekView({
   const [editingMeal, setEditingMeal] = useState<MealWithDetails | null>(null)
   const [selectedDate, setSelectedDate] = useState("")
   const [selectedMealType, setSelectedMealType] = useState<MealType>("dinner")
+  // open のたびに formKey を進めて MealFormSheet を remount し、useState 初期値を
+  // 最新 props から評価させる (baby-dashboard.tsx と同パターン)。
+  // 注意: open 中に formKey が変わると入力途中の内容が消えるため、
+  // setFormKey は open する直前 (closed 状態) でのみ呼ぶこと。
+  const [formKey, setFormKey] = useState(0)
   const [prefilledFromTemplate, setPrefilledFromTemplate] = useState<{
     title: string
     ingredients: Array<{
@@ -76,6 +81,7 @@ export function MealWeekView({
         setEditingMeal(null)
         setSelectedDate(today)
         setSelectedMealType("dinner")
+        setFormKey((k) => k + 1)
         setSheetOpen(true)
       } else {
         // data も error もない想定外ケース
@@ -96,6 +102,7 @@ export function MealWeekView({
     setEditingMeal(null)
     setSelectedDate(date)
     setSelectedMealType(mealType)
+    setFormKey((k) => k + 1)
     setSheetOpen(true)
   }
 
@@ -103,6 +110,7 @@ export function MealWeekView({
     setEditingMeal(meal)
     setSelectedDate(meal.date)
     setSelectedMealType(meal.meal_type)
+    setFormKey((k) => k + 1)
     setSheetOpen(true)
   }
 
@@ -214,8 +222,9 @@ export function MealWeekView({
         })}
       </div>
 
-      {/* Meal form sheet */}
+      {/* Meal form sheet: key={formKey} で open ごとに remount してプリフィルを保証 */}
       <MealFormSheet
+        key={formKey}
         open={sheetOpen}
         onOpenChange={handleSheetClose}
         initialData={formInitialData}
