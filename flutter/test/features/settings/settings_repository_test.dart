@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:irori/features/settings/data/settings_repository.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -217,6 +219,24 @@ void main() {
       // household=null のまま描画する。Flutter も同一挙動 (忠実移植)。
       final r = _repo(
         householdError: const PostgrestException(message: 'boom', code: '500'),
+      );
+
+      final settings = await r.repo.fetchSettings(userId: 'user-1');
+
+      expect(settings.householdId, 'hh-1');
+      expect(settings.householdName, isNull);
+      expect(settings.autoStockCategories, kDefaultAutoStockCategories);
+      expect(settings.babyName, isNull);
+      expect(settings.babyBirthDate, isNull);
+    });
+
+    test('households 取得失敗が PostgrestException 以外 (timeout 等) でも縮退する', () async {
+      // PR #40 レビュー対応 F4: web `settings/page.tsx` は household の
+      // **全失敗** で縮退する (supabase-js は throw せず error を返す)。
+      // Flutter 側も `.timeout(_kQueryTimeout)` の TimeoutException や
+      // socket 例外で fetch 全体を倒さず、profiles が取れていれば縮退する。
+      final r = _repo(
+        householdError: TimeoutException('households fetch timeout'),
       );
 
       final settings = await r.repo.fetchSettings(userId: 'user-1');

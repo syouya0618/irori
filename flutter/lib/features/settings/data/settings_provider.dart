@@ -58,7 +58,12 @@ final settingsProvider = FutureProvider<SettingsData>((ref) async {
       .fetchSettings(userId: user.id);
 
   // best-effort 同期キャッシュへ反映 (router の /login redirect が読む)。
-  ref.read(defaultPageCacheProvider).value = settings.defaultPage;
+  // fetch 中にサインアウト/ユーザー切替が起きた場合は書き戻さない —
+  // signOut 時の `cache.value = null` (クラス doc の防御) を、遅れて完了
+  // した fetch が旧ユーザーの値で上書きする stale-write レースを塞ぐ。
+  if (client.auth.currentUser?.id == user.id) {
+    ref.read(defaultPageCacheProvider).value = settings.defaultPage;
+  }
 
   return (settings: settings, email: user.email ?? '');
 });

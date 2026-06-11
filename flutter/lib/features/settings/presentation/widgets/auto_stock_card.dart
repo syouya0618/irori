@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -20,10 +21,18 @@ const _kAutoStockOptions = [
 /// 在庫自動追加カード。Next.js 原典 `auto-stock-card.tsx` の Flutter 移植。
 ///
 /// 楽観更新 + 失敗ロールバック (原典 `handleToggle` / :43-51 の流儀):
-/// タップで即時にトグルを反映し、失敗時は **初期値**
-/// (`initialCategories` prop) へ巻き戻す (web の
-/// `setSelected(new Set(initialCategories))` の忠実移植 — 直前状態ではなく
-/// props 由来の初期値へ戻る quirk ごと移植する)。
+/// タップで即時にトグルを反映し、失敗時は `initialCategories` prop へ
+/// 巻き戻す (web の `setSelected(new Set(initialCategories))` 対応 —
+/// 直前状態ではなく props 由来の値へ戻る quirk ごと移植する)。
+/// didUpdateWidget 再同期により props は「直近に観測したサーバ値」を指す
+/// ため、rollback 先は web の「mount 時 props」より stale が縮小する
+/// (意図的差異)。
+///
+/// タブ再表示 refetch (`AppShell` のタップ契機 invalidate) の新 props は
+/// [didUpdateWidget] で再同期する — IndexedStack で State が dispose され
+/// ないため、initState だけでは相方の変更がアプリ再起動まで見えず、全量
+/// 配列 PUT ゆえ lost-update の窓も広がる。保存中 (`_pending`) は楽観
+/// 選択を優先する。
 ///
 /// 選択値は DB 文字列 (`Set<String>`) のまま保持する。enum 経由にすると
 /// DB 上の未知値が黙って書き換わり、web (string[] を素通し) と乖離するため
@@ -47,6 +56,19 @@ class _AutoStockCategoriesCardState
   void initState() {
     super.initState();
     _selected = Set.of(widget.initialCategories);
+  }
+
+  @override
+  void didUpdateWidget(AutoStockCategoriesCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // タブ再表示 refetch の新 props を反映する (クラス doc 参照)。比較は
+    // 内容ベース (listEquals) — refetch は毎回新 List インスタンスを返す
+    // ため、同一内容の identity 差で「保存成功直後の楽観値」を stale な
+    // 並走 fetch 結果で巻き戻さない。保存応答待ちの間も上書きしない。
+    if (!_pending &&
+        !listEquals(widget.initialCategories, oldWidget.initialCategories)) {
+      _selected = Set.of(widget.initialCategories);
+    }
   }
 
   Future<void> _toggle(String category) async {

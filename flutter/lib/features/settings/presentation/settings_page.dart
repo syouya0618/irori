@@ -26,10 +26,10 @@ import 'widgets/profile_card.dart';
 ///   更新が永遠に届かない — p25plan risks)。
 /// - 書き込みは各カード → `SettingsRepository`。
 ///
-/// サインアウトは素の `auth.signOut()` のみ。web の SW キャッシュ purge /
-/// localStorage 掃除 (`settings-content.tsx` handleSignOut) は PWA 固有機構
-/// のため移植しない (意図的差異)。遷移は `authNotifier`
-/// (`refreshListenable`) → router redirect が自動処理する。
+/// サインアウトは `auth.signOut()` (10s timeout 付き) のみ。web の SW
+/// キャッシュ purge / localStorage 掃除 (`settings-content.tsx`
+/// handleSignOut) は PWA 固有機構のため移植しない (意図的差異)。遷移は
+/// `authNotifier` (`refreshListenable`) → router redirect が自動処理する。
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
 
@@ -193,7 +193,9 @@ class _SignOutButtonState extends ConsumerState<_SignOutButton> {
       // 同じ理由 — 後続処理の実行保証がないため)。失敗しても次回 fetch で
       // 再度温まるだけで安全側。
       cache.value = null;
-      await auth.signOut();
+      // CLAUDE.md「外部 API 呼び出しにはタイムアウト設定必須」
+      // (login_page の signInWithOtp と同じ 10s)。
+      await auth.signOut().timeout(const Duration(seconds: 10));
       // 画面遷移はしない: authNotifier (refreshListenable) の signedOut 通知で
       // router redirect が /login へ送る。
     } on Object catch (e, st) {

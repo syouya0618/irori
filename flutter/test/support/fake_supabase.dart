@@ -260,10 +260,17 @@ class FakeGoTrueClient extends Fake implements GoTrueClient {
   /// `currentUser` の canned 値 (P2.5-H settings 用 — additive)。
   /// null は「未認証」。従来この getter は未実装 (noSuchMethod throw) で、
   /// 既存テストは一切読まないことを grep 確認済み (挙動変更なし)。
-  final User? cannedCurrentUser;
+  ///
+  /// mutable (PR #40 レビュー対応 F3 — additive): fetch 中のサインアウト
+  /// (`cannedCurrentUser = null` へ差し替え) を再現するため final にしない。
+  User? cannedCurrentUser;
 
   /// `signOut` が投げる例外 (null なら成功 — P2.5-H settings 用 additive)。
   Object? signOutError;
+
+  /// 非 null なら `signOut` がこの Completer の完了まで停止する
+  /// (PR #40 レビュー対応 F2: timeout 検証用 — additive)。
+  Completer<void>? signOutGate;
 
   // --- 呼び出し記録 (assert 用) ---
   int signInCallCount = 0;
@@ -307,6 +314,7 @@ class FakeGoTrueClient extends Fake implements GoTrueClient {
   @override
   Future<void> signOut({SignOutScope scope = SignOutScope.local}) async {
     signOutCallCount++;
+    if (signOutGate != null) await signOutGate!.future;
     if (signOutError != null) throw signOutError!;
   }
 }

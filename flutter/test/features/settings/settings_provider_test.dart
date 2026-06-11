@@ -29,7 +29,7 @@ User _user({String? email}) => User(
   createdAt: DateTime.utc(2026, 6, 1).toIso8601String(),
 );
 
-ProviderContainer _container({User? currentUser}) {
+ProviderContainer _container({User? currentUser, FakeGoTrueClient? auth}) {
   final profiles = FakeQueryBuilder(
     FakeFilterBuilder(singleValue: _kProfileRow),
   );
@@ -37,7 +37,7 @@ ProviderContainer _container({User? currentUser}) {
     FakeFilterBuilder(singleValue: _kHouseholdRow),
   );
   final client = FakeSupabaseClient(
-    auth: FakeGoTrueClient(cannedCurrentUser: currentUser),
+    auth: auth ?? FakeGoTrueClient(cannedCurrentUser: currentUser),
     fromBuilders: {'profiles': profiles, 'households': households},
   );
   return ProviderContainer(
@@ -78,6 +78,28 @@ void main() {
       final data = await container.read(settingsProvider.future);
 
       expect(data.email, '');
+    });
+
+    test('fetch 完了前にサインアウトしたら DefaultPageCache を書き戻さない', () async {
+      // PR #40 レビュー対応 F3: provider doc が宣言する「サインアウト時に
+      // null へ戻す」防御を stale-write レースからも守る (fetch 中に
+      // signOut → cache.value=null した後、fetch 完了が旧ユーザーの値を
+      // 書き戻す穴を塞ぐ)。
+      final auth = FakeGoTrueClient(
+        cannedCurrentUser: _user(email: 'taro@example.com'),
+      );
+      final container = _container(auth: auth);
+      addTearDown(container.dispose);
+
+      final future = container.read(settingsProvider.future);
+      // fake の fetch はマイクロタスクで完了する — その前にサインアウト。
+      auth.cannedCurrentUser = null;
+      final data = await future;
+
+      // バンドル自体は返る (呼び出し側は redirect 圏内) が、
+      // キャッシュへ旧ユーザーの default_page を書き戻さない。
+      expect(data.settings.defaultPage, 'stock');
+      expect(container.read(defaultPageCacheProvider).value, isNull);
     });
 
     test('未認証 (currentUser=null) は StateError を投げる', () async {

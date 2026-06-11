@@ -363,6 +363,122 @@ void main() {
     });
   });
 
+  // PR #40 レビュー対応 F1: IndexedStack で State が dispose されないため、
+  // initState だけの props 取り込みでは AppShell のタップ契機 invalidate
+  // (タブ再表示 refetch) の新データがカードへ届かない。didUpdateWidget の
+  // 再同期 (保存中 _pending を除く) を固定する。
+  group('タブ再表示 refetch の反映 (didUpdateWidget 再同期)', () {
+    testWidgets('invalidate → 新 props でトグルカードの選択状態と生年月日が再同期される', (
+      tester,
+    ) async {
+      _useTallViewport(tester);
+      var data = _data();
+      await tester.pumpWidget(
+        _harness(repo: _FakeSettingsRepository(), data: (ref) async => data),
+      );
+      await tester.pumpAndSettle();
+
+      final pageCard = find.byType(DefaultPageCard);
+      final stockCard = find.byType(AutoStockCategoriesCard);
+      final babyCard = find.byType(BabyProfileCard);
+
+      // 初期: meals 選択 / その他 OFF / 2026-01-15。
+      expect(_labelColor(tester, pageCard, '献立'), Colors.white);
+      expect(_labelColor(tester, stockCard, 'その他'), IroriColors.textMuted);
+      expect(find.text('2026-01-15'), findsOneWidget);
+
+      // 名前は入力途中のテキストを再現 (refetch で消えないことの観測点)。
+      await tester.enterText(
+        find.descendant(of: babyCard, matching: find.byType(TextField)),
+        'ひより',
+      );
+
+      // 相方の変更が反映された新バンドル → AppShell のタップ契機 invalidate。
+      data = _data(
+        settings: _settings(
+          defaultPage: 'stock',
+          autoStockCategories: const [
+            'baby',
+            'cleaning',
+            'hygiene',
+            'other_daily',
+          ],
+          babyName: 'ゆめ',
+          babyBirthDate: '2026-03-01',
+        ),
+      );
+      _containerOf(tester).invalidate(settingsProvider);
+      await tester.pumpAndSettle();
+
+      // トグルカード 2 枚 + 生年月日は新 props へ再同期される。
+      expect(_labelColor(tester, pageCard, '在庫'), Colors.white);
+      expect(_labelColor(tester, pageCard, '献立'), IroriColors.textMuted);
+      expect(_labelColor(tester, stockCard, 'その他'), IroriColors.primary);
+      expect(find.text('2026-03-01'), findsOneWidget);
+      expect(find.text('2026-01-15'), findsNothing);
+      // 名前入力は保持される (web defaultValue parity — クラス doc の stickiness)。
+      final nameField = tester.widget<TextField>(
+        find.descendant(of: babyCard, matching: find.byType(TextField)),
+      );
+      expect(nameField.controller?.text, 'ひより');
+    });
+
+    testWidgets('保存中 (_pending) の refetch は楽観選択を上書きしない', (tester) async {
+      _useTallViewport(tester);
+      var data = _data();
+      final repo = _FakeSettingsRepository()..defaultPageGate = Completer();
+      await tester.pumpWidget(_harness(repo: repo, data: (ref) async => data));
+      await tester.pumpAndSettle();
+
+      final card = find.byType(DefaultPageCard);
+      await tester.tap(find.descendant(of: card, matching: find.text('在庫')));
+      await tester.pump();
+      expect(_labelColor(tester, card, '在庫'), Colors.white); // 楽観反映
+
+      // 保存応答前に新 props (相方が shopping へ変更) が届いても上書きしない。
+      data = _data(settings: _settings(defaultPage: 'shopping'));
+      _containerOf(tester).invalidate(settingsProvider);
+      await tester.pump();
+      await tester.pump();
+      expect(_labelColor(tester, card, '在庫'), Colors.white);
+
+      repo.defaultPageGate!.complete();
+      await tester.pumpAndSettle();
+      // 自身の保存成功が最新の truth — 楽観値を維持する。
+      expect(_labelColor(tester, card, '在庫'), Colors.white);
+    });
+
+    testWidgets('失敗 rollback は「最後に同期した props 値」へ戻る (mount 時の値ではない)', (
+      tester,
+    ) async {
+      _useTallViewport(tester);
+      var data = _data(); // mount 時: meals
+      final repo = _FakeSettingsRepository();
+      await tester.pumpWidget(_harness(repo: repo, data: (ref) async => data));
+      await tester.pumpAndSettle();
+
+      // refetch で props が stock へ更新 (didUpdateWidget 同期)。
+      data = _data(settings: _settings(defaultPage: 'stock'));
+      _containerOf(tester).invalidate(settingsProvider);
+      await tester.pumpAndSettle();
+      final card = find.byType(DefaultPageCard);
+      expect(_labelColor(tester, card, '在庫'), Colors.white);
+
+      // 以後の保存失敗は mount 時の meals ではなく直近同期の stock へ巻き戻す
+      // (web の「mount 時 props へ巻き戻し」より stale rollback が縮小する方向)。
+      repo.defaultPageError = const PostgrestException(
+        message: 'boom',
+        code: '500',
+      );
+      await tester.tap(find.descendant(of: card, matching: find.text('育児')));
+      await tester.pumpAndSettle();
+
+      expect(_labelColor(tester, card, '在庫'), Colors.white);
+      expect(_labelColor(tester, card, '育児'), IroriColors.textMuted);
+      expect(find.text('設定の更新に失敗しました'), findsOneWidget);
+    });
+  });
+
   group('赤ちゃん情報カード', () {
     testWidgets('保存で名前と生年月日が repository へ渡り、成功 SnackBar が出る', (tester) async {
       _useTallViewport(tester);
@@ -422,6 +538,30 @@ void main() {
 
       expect(auth.signOutCallCount, 1);
       expect(_containerOf(tester).read(defaultPageCacheProvider).value, isNull);
+    });
+
+    testWidgets('signOut が 10 秒応答しない場合は timeout で表面化する', (tester) async {
+      // PR #40 レビュー対応 F2: CLAUDE.md「外部 API 呼び出しにはタイムアウト
+      // 設定必須」(login_page signInWithOtp の 10s と同形)。
+      _useTallViewport(tester);
+      final auth = FakeGoTrueClient()..signOutGate = Completer<void>();
+      await tester.pumpWidget(
+        _harness(repo: _FakeSettingsRepository(), auth: auth),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('ログアウト'));
+      await tester.pump();
+      expect(auth.signOutCallCount, 1);
+      expect(find.text('ログアウトに失敗しました'), findsNothing);
+
+      // 10s 経過で TimeoutException → SnackBar (永久ハングしない)。
+      await tester.pump(const Duration(seconds: 11));
+      expect(find.text('ログアウトに失敗しました'), findsOneWidget);
+
+      // teardown: 宙吊り future を完了させ pending を残さない。
+      auth.signOutGate!.complete();
+      await tester.pumpAndSettle();
     });
 
     testWidgets('signOut 失敗は SnackBar で表面化する (握り潰さない)', (tester) async {

@@ -23,9 +23,16 @@ const _kPageOptions = [
 /// router の redirect が同期参照する。cold start での完全適用はスコープ外。
 ///
 /// 楽観更新 + 失敗ロールバック (web `handleSelect` と同じ):
-/// タップで即時に選択を切り替え、失敗時は **初期値** (`initialPage` prop) へ
-/// 巻き戻す (web の `setSelected(defaultPage)` の忠実移植 — 直前の選択では
-/// なく props 由来の初期値へ戻る quirk ごと移植する)。
+/// タップで即時に選択を切り替え、失敗時は `initialPage` prop へ巻き戻す
+/// (web の `setSelected(defaultPage)` 対応 — 直前の選択ではなく props 由来の
+/// 値へ戻る quirk ごと移植する)。didUpdateWidget 再同期により props は
+/// 「直近に観測したサーバ値」を指すため、rollback 先は web の「mount 時
+/// props」より stale が縮小する (意図的差異)。
+///
+/// タブ再表示 refetch (`AppShell` のタップ契機 invalidate) の新 props は
+/// [didUpdateWidget] で再同期する — IndexedStack で State が dispose され
+/// ないため、initState だけでは相方の変更がアプリ再起動まで見えない。
+/// 保存中 (`_pending`) は楽観選択を優先する。
 class DefaultPageCard extends ConsumerStatefulWidget {
   const DefaultPageCard({required this.initialPage, super.key});
 
@@ -43,6 +50,16 @@ class _DefaultPageCardState extends ConsumerState<DefaultPageCard> {
   void initState() {
     super.initState();
     _selected = widget.initialPage;
+  }
+
+  @override
+  void didUpdateWidget(DefaultPageCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // タブ再表示 refetch の新 props を反映する (クラス doc 参照)。保存応答
+    // 待ちの間は楽観選択が最新の truth のため上書きしない。
+    if (!_pending && widget.initialPage != oldWidget.initialPage) {
+      _selected = widget.initialPage;
+    }
   }
 
   Future<void> _select(String page) async {

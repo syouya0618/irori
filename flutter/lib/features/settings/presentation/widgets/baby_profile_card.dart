@@ -18,8 +18,11 @@ import '../../data/settings_repository.dart';
 ///   「赤ちゃん情報の更新に失敗しました」へ丸めて表示する (web parity)。
 /// - 成功: SnackBar「赤ちゃん情報を更新しました」+ `settingsProvider`
 ///   invalidate (web `router.refresh()` 相当)。
-/// - 入力欄は uncontrolled 風 (web `defaultValue` 同様、refetch で props が
-///   変わっても入力中のテキストは保持する)。
+/// - 名前入力欄は uncontrolled 風 (web `defaultValue` 同様、refetch で props
+///   が変わっても入力中のテキストは保持する)。生年月日はテキスト入力ではない
+///   ため stickiness の対象外 — タブ再表示 refetch の新 props を
+///   [didUpdateWidget] で再同期する (保存中 `_pending` を除く。IndexedStack
+///   で State が dispose されないため initState だけでは相方の変更が届かない)。
 class BabyProfileCard extends ConsumerStatefulWidget {
   const BabyProfileCard({
     required this.initialName,
@@ -49,6 +52,16 @@ class _BabyProfileCardState extends ConsumerState<BabyProfileCard> {
     super.initState();
     _nameController = TextEditingController(text: widget.initialName ?? '');
     _birthDate = widget.initialBirthDate;
+  }
+
+  @override
+  void didUpdateWidget(BabyProfileCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 生年月日のみ新 props で再同期する (クラス doc 参照 — 名前は web
+    // defaultValue parity の stickiness を保つため触らない)。
+    if (!_pending && widget.initialBirthDate != oldWidget.initialBirthDate) {
+      _birthDate = widget.initialBirthDate;
+    }
   }
 
   @override

@@ -174,14 +174,14 @@ class SettingsRepository {
           .eq('id', householdId)
           .single()
           .timeout(_kQueryTimeout);
-    } on PostgrestException catch (e) {
+    } on Object catch (e, st) {
       // web parity: households の取得失敗は fatal にせず縮退する
       // (握り潰しではない — 構造化ログした上で既定値描画に切り替える)。
-      _logPostgrestError(
-        'fetchSettings(households)',
-        e,
-        'householdId=$householdId',
-      );
+      // PostgrestException に限定しない: web `settings/page.tsx`:38-48 は
+      // **全失敗** で縮退する (supabase-js は throw せず error を返す) ため、
+      // `.timeout` の TimeoutException / socket 例外でも profiles が取れて
+      // いれば縮退表示できるよう catch を広げる。
+      _logError('fetchSettings(households)', e, st, 'householdId=$householdId');
       household = null;
     }
 
@@ -230,7 +230,7 @@ class SettingsRepository {
           .single()
           .timeout(_kQueryTimeout);
     } on Object catch (e, st) {
-      _logMutationError('updateDisplayName', e, st, 'userId=$userId');
+      _logError('updateDisplayName', e, st, 'userId=$userId');
       rethrow;
     }
   }
@@ -255,7 +255,7 @@ class SettingsRepository {
           .single()
           .timeout(_kQueryTimeout);
     } on Object catch (e, st) {
-      _logMutationError('updateDefaultPage', e, st, 'userId=$userId');
+      _logError('updateDefaultPage', e, st, 'userId=$userId');
       rethrow;
     }
   }
@@ -287,7 +287,7 @@ class SettingsRepository {
           .single()
           .timeout(_kQueryTimeout);
     } on Object catch (e, st) {
-      _logMutationError(
+      _logError(
         'updateAutoStockCategories',
         e,
         st,
@@ -337,7 +337,7 @@ class SettingsRepository {
           .single()
           .timeout(_kQueryTimeout);
     } on Object catch (e, st) {
-      _logMutationError(
+      _logError(
         'updateBabyProfile',
         e,
         st,
@@ -369,7 +369,9 @@ class SettingsRepository {
     );
   }
 
-  void _logMutationError(
+  /// 任意の失敗を握り潰さずログする (read / write 共用)。
+  /// `PostgrestException` は構造化、それ以外は raw + stack を出す。
+  void _logError(
     String op,
     Object error,
     StackTrace stackTrace,
