@@ -8,6 +8,9 @@ import '../features/auth/presentation/invite_page.dart';
 import '../features/auth/presentation/login_page.dart';
 import '../features/baby/presentation/baby_dashboard_page.dart';
 import '../features/meals/presentation/meals_page.dart';
+import '../features/settings/data/settings_provider.dart';
+import '../features/settings/data/settings_repository.dart';
+import '../features/settings/presentation/settings_page.dart';
 import '../features/shopping/presentation/shopping_page.dart';
 import '../features/stock/presentation/stock_page.dart';
 import '../features/welcome/welcome_page.dart';
@@ -43,6 +46,24 @@ String buildEmailRedirectTo({required String origin, String? returnTo}) {
   return '$base?returnTo=${Uri.encodeQueryComponent(returnTo)}';
 }
 
+/// 認証済みユーザーが `/login` に居る時の landing 先を解決する (P2.5-H)。
+///
+/// `profiles.default_page` の **best-effort 適用** (設計裁定):
+/// - GoRouter の redirect は同期評価のため、ここで profiles を非同期取得する
+///   とチラつき/デッドロックの恐れがある。よって [DefaultPageCache] の
+///   **同期キャッシュのみ** を読み、未取得 (null) は従来どおり `/baby`。
+/// - キャッシュ値は whitelist ([kValidDefaultPages]) で再検証する。DB 値の
+///   汚染や将来の page 追加で任意 path へ redirect しないための防御。
+/// - cold start での完全適用 (splash で profiles fetch を待つ) はスコープ外。
+@visibleForTesting
+String resolveLoginLandingPath(String? cachedDefaultPage) {
+  if (cachedDefaultPage != null &&
+      kValidDefaultPages.contains(cachedDefaultPage)) {
+    return '/$cachedDefaultPage';
+  }
+  return '/baby';
+}
+
 /// `GoRouter` 設定 provider。
 ///
 /// 設計意図 (設計書 Section 7.1.5 / Issue #47):
@@ -60,11 +81,15 @@ String buildEmailRedirectTo({required String origin, String? returnTo}) {
 /// - 他の保護 page (`/meals` / `/baby` 等) も未認証なら `/login` へ
 /// - 認証済みで `/login` にいるなら `/baby` へ
 ///
-/// シェル構成 (F2 / F4): `/meals` / `/shopping` / `/baby` は
-/// `StatefulShellRoute.indexedStack` のブランチに置き、`AppShell` (BottomNav)
-/// で包む。redirect は `state.matchedLocation` ベースのため、シェル化しても
-/// パスは変わらず上記ガードはそのまま効く (`/meals` / `/shopping` も
-/// `isPublic` に該当しない)。
+/// シェル構成 (F2 / F4 / F6 / P2.5-H): `/meals` / `/shopping` / `/stock` /
+/// `/baby` / `/settings` は `StatefulShellRoute.indexedStack` のブランチに
+/// 置き、`AppShell` (BottomNav) で包む。redirect は `state.matchedLocation`
+/// ベースのため、シェル化してもパスは変わらず上記ガードはそのまま効く
+/// (シェル内パスはいずれも `isPublic` に該当しない)。
+///
+/// 認証済み `/login` の landing は P2.5-H で `/baby` 固定から
+/// `resolveLoginLandingPath` (default_page キャッシュの best-effort 適用) へ
+/// 変更。未取得時の挙動は従来どおり `/baby`。
 final appRouterProvider = Provider<GoRouter>((ref) {
   final authNotifier = ref.read(authNotifierProvider);
   // origin は build 時に 1 度だけ解決 (test では originProvider を override)。
@@ -88,7 +113,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         return '/login';
       }
       if (loggedIn && loc == '/login') {
-        return '/baby';
+        // default_page の best-effort 適用 (P2.5-H)。同期キャッシュのみ参照
+        // (resolveLoginLandingPath の doc 参照)。redirect は同期評価のため
+        // ref.read で即値を取る (watch にすると GoRouter 再構築の恐れ)。
+        return resolveLoginLandingPath(
+          ref.read(defaultPageCacheProvider).value,
+        );
       }
       return null;
     },
@@ -133,7 +163,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       // 認証後のメイン画面群。IndexedStack でブランチごとの Navigator /
       // スクロール位置を保持し、AppShell が BottomNav を提供する。
-      // ブランチ順は web bottom-nav.tsx のタブ順 (献立 → 買い物 → 在庫 → 育児)。
+      // ブランチ順は web bottom-nav.tsx のタブ順
+      // (献立 → 買い物 → 在庫 → 育児 → 設定)。
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>
             AppShell(shell: navigationShell),
@@ -167,6 +198,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: '/baby',
                 builder: (context, state) => const BabyDashboardPage(),
+              ),
+            ],
+          ),
+          // 設定タブ (P2.5-H)。AppShell.kSettingsBranchIndex (= 4) と
+          // 対応する — ブランチ順を変える時は両方を更新すること。
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/settings',
+                builder: (context, state) => const SettingsPage(),
               ),
             ],
           ),

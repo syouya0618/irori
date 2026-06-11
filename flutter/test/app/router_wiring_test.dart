@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,6 +18,9 @@ import 'package:irori/features/meals/data/meals_repository.dart';
 import 'package:irori/features/meals/data/meals_week_notifier.dart';
 import 'package:irori/features/meals/domain/meal.dart';
 import 'package:irori/features/meals/presentation/meals_page.dart';
+import 'package:irori/features/settings/data/settings_provider.dart';
+import 'package:irori/features/settings/data/settings_repository.dart';
+import 'package:irori/features/settings/presentation/settings_page.dart';
 import 'package:irori/features/shopping/data/household_members_provider.dart';
 import 'package:irori/features/shopping/data/shopping_items_notifier.dart';
 import 'package:irori/features/shopping/data/shopping_repository.dart';
@@ -424,6 +429,172 @@ void main() {
       expect(find.byType(LoginPage), findsNothing);
       expect(find.byType(NavigationBar), findsOneWidget);
     });
+
+    testWidgets('認証済みで /settings に到達できる (P2.5-H 追加ケース)', (tester) async {
+      final container = _authedShellContainer();
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const _RouterHarness(),
+        ),
+      );
+
+      container.read(appRouterProvider).go('/settings');
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SettingsPage), findsOneWidget);
+      expect(find.byType(NavigationBar), findsOneWidget);
+      // AppBar は SettingsPage 自前の 1 つだけ (シェルは持たない)。
+      expect(find.byType(AppBar), findsOneWidget);
+    });
+
+    testWidgets(
+      '未認証で /settings にアクセスすると /login へ redirect される (P2.5-H 追加ケース)',
+      (
+        tester,
+      ) async {
+        final container = _unauthedContainer();
+        addTearDown(container.dispose);
+
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: const _RouterHarness(),
+          ),
+        );
+
+        container.read(appRouterProvider).go('/settings');
+        await tester.pump();
+        await tester.pump();
+
+        expect(find.byType(LoginPage), findsOneWidget);
+        expect(find.byType(SettingsPage), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'BottomNav の「設定」タップで /settings ブランチへ切り替わり、表示ごとに refetch する '
+      '(P2.5-H 追加ケース)',
+      (tester) async {
+        // profiles / households は Realtime 非対象のため、タブ表示ごとに
+        // AppShell が settingsProvider を invalidate して refetch する設計を
+        // fetch 回数で固定する。
+        var fetchCount = 0;
+        final container = _authedShellContainer(
+          settingsFetch: (ref) async {
+            fetchCount++;
+            return _settingsData();
+          },
+        );
+        addTearDown(container.dispose);
+
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: const _RouterHarness(),
+          ),
+        );
+
+        // 設定ページ内にも「献立」「設定」等のテキストが存在するため、
+        // タブ操作は NavigationBar 配下に絞って一意にする。
+        Finder navLabel(String label) => find.descendant(
+          of: find.byType(NavigationBar),
+          matching: find.text(label),
+        );
+
+        container.read(appRouterProvider).go('/meals');
+        await tester.pump();
+        await tester.pumpAndSettle();
+        expect(find.byType(MealsPage), findsOneWidget);
+
+        // 「設定」タブへ (web タブ順 5 番目)。初回表示で fetch #1。
+        await tester.tap(navLabel('設定'));
+        await tester.pumpAndSettle();
+        expect(find.byType(SettingsPage), findsOneWidget);
+        expect(find.byType(MealsPage), findsNothing);
+        expect(fetchCount, 1);
+
+        // 他タブへ離れて戻ると invalidate → fetch #2 (タブ表示ごと refetch)。
+        await tester.tap(navLabel('献立'));
+        await tester.pumpAndSettle();
+        expect(find.byType(MealsPage), findsOneWidget);
+
+        await tester.tap(navLabel('設定'));
+        await tester.pumpAndSettle();
+        expect(find.byType(SettingsPage), findsOneWidget);
+        expect(fetchCount, 2);
+      },
+    );
+
+    testWidgets(
+      '認証済み /login は default_page キャッシュがあればその branch へ redirect される '
+      '(P2.5-H best-effort 適用)',
+      (tester) async {
+        final container = _authedShellContainer();
+        addTearDown(container.dispose);
+        // 設定 fetch / 起動タブ更新成功で温まる同期キャッシュを模す。
+        container.read(defaultPageCacheProvider).value = 'stock';
+
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: const _RouterHarness(),
+          ),
+        );
+
+        container.read(appRouterProvider).go('/login');
+        await tester.pump();
+        await tester.pumpAndSettle();
+
+        expect(find.byType(StockPage), findsOneWidget);
+        expect(find.byType(LoginPage), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'default_page キャッシュが whitelist 外なら /baby へ fallback する (P2.5-H)',
+      (tester) async {
+        final container = _authedShellContainer();
+        addTearDown(container.dispose);
+        // DB 値の汚染や将来の page 追加に備え、redirect 側でも whitelist する。
+        container.read(defaultPageCacheProvider).value = 'settings';
+
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: const _RouterHarness(),
+          ),
+        );
+
+        container.read(appRouterProvider).go('/login');
+        await tester.pump();
+        await tester.pumpAndSettle();
+
+        expect(find.byType(BabyDashboardPage), findsOneWidget);
+      },
+    );
+  });
+
+  group('resolveLoginLandingPath (P2.5-H)', () {
+    test('whitelist 内のキャッシュ値は /<page> を返す', () {
+      expect(resolveLoginLandingPath('meals'), '/meals');
+      expect(resolveLoginLandingPath('shopping'), '/shopping');
+      expect(resolveLoginLandingPath('stock'), '/stock');
+      expect(resolveLoginLandingPath('baby'), '/baby');
+    });
+
+    test('未取得 (null) は /baby へ fallback する', () {
+      expect(resolveLoginLandingPath(null), '/baby');
+    });
+
+    test('whitelist 外は /baby へ fallback する (任意 path への redirect を防ぐ)', () {
+      expect(resolveLoginLandingPath('settings'), '/baby');
+      expect(resolveLoginLandingPath(''), '/baby');
+      expect(resolveLoginLandingPath('../evil'), '/baby');
+    });
   });
 }
 
@@ -467,12 +638,32 @@ class _EmptyStockNotifier extends StockItemsNotifier {
   Future<List<StockItem>> build() async => const [];
 }
 
+/// 設定ブランチ用の canned バンドル (P2.5-H — 配線テストの焦点は到達性のみ)。
+SettingsData _settingsData() => (
+  settings: const HouseholdSettings(
+    displayName: '太郎',
+    role: 'owner',
+    defaultPage: 'meals',
+    householdId: 'hh-1',
+    householdName: 'いろり家',
+    autoStockCategories: ['baby', 'cleaning', 'hygiene'],
+    babyName: null,
+    babyBirthDate: null,
+  ),
+  email: 'taro@example.com',
+);
+
 /// 認証済み (initialUser 固定) の ProviderContainer。
 ///
 /// シェル内ブランチ (`MealsPage` / `BabyDashboardPage`) が build 時に
 /// 実 Supabase へ触れないよう、各データ provider も fake に差し替える
 /// (焦点は「router 配線でページに到達できるか」のみ)。
-ProviderContainer _authedShellContainer() {
+///
+/// [settingsFetch] は設定タブの refetch 回数検証用の差し替え口
+/// (P2.5-H 追加 — 既存呼び出しは引数なしで挙動不変)。
+ProviderContainer _authedShellContainer({
+  FutureOr<SettingsData> Function(Ref ref)? settingsFetch,
+}) {
   return ProviderContainer(
     overrides: [
       originProvider.overrideWithValue('https://test.example'),
@@ -505,6 +696,10 @@ ProviderContainer _authedShellContainer() {
       ),
       // stock ブランチのデータ層 fake (F6)。
       stockItemsNotifierProvider.overrideWith(_EmptyStockNotifier.new),
+      // settings ブランチのデータ層 fake (P2.5-H 追加 — 既存 override は不変)。
+      settingsProvider.overrideWith(
+        settingsFetch ?? (ref) async => _settingsData(),
+      ),
       // baby ブランチのデータ層 fake (baby_dashboard_page_test と同じ流儀)。
       babyLogsNotifierProvider.overrideWith(_EmptyLogsNotifier.new),
       nowTickerProvider.overrideWith(

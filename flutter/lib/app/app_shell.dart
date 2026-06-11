@@ -1,27 +1,39 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../core/theme/colors.dart';
+import '../features/settings/data/settings_provider.dart';
 
 /// `StatefulShellRoute.indexedStack` の外殻。BottomNav のみを提供する。
 ///
 /// Next.js 原典 `src/components/common/bottom-nav.tsx` の Flutter 移植。
-/// タブ順は web に従う (献立 → 買い物 → 在庫 → 育児)。web の 5 タブのうち
-/// 本シェルは移植済みの 4 つを持つ (買い物は F4、在庫は F6 で追加):
-/// - 設定 (`Settings`) は将来の設定画面移植時に追加する。
+/// タブ順は web に従う (献立 → 買い物 → 在庫 → 育児 → 設定)。web の 5 タブ
+/// すべてを持つ (買い物は F4、在庫は F6、設定は P2.5-H で追加)。
 ///
 /// AppBar は各ページが自前で持つ (baby との干渉を避けるため、本シェルは
 /// `bottomNavigationBar` だけを差し込む)。タブ切替は `IndexedStack` により
 /// 各ブランチの Navigator/スクロール位置を保持する。
-class AppShell extends StatelessWidget {
+///
+/// `ConsumerWidget` 化 (P2.5-H): profiles / households は Realtime
+/// publication 非対象のため、設定タブは **表示のたびに** `settingsProvider`
+/// を invalidate して refetch する (realtime 前提だと更新が永遠に届かない —
+/// p25plan risks)。IndexedStack では非アクティブブランチも mount されたまま
+/// provider を watch し続けるため、autoDispose ではタブ切替の refetch は
+/// 起こせない — タップを契機にするのが構造的に確実。
+class AppShell extends ConsumerWidget {
   const AppShell({required this.shell, super.key});
 
   /// go_router が渡すブランチコンテナ。`currentIndex` / `goBranch` を持つ。
   final StatefulNavigationShell shell;
 
+  /// 設定ブランチの index (router.dart の branches 5 番目と対応 —
+  /// ブランチ順を変える時は両方を更新すること)。
+  static const kSettingsBranchIndex = 4;
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       body: shell,
       bottomNavigationBar: NavigationBar(
@@ -30,8 +42,14 @@ class AppShell extends StatelessWidget {
         selectedIndex: shell.currentIndex,
         // 同一タブ再タップはブランチ初期 location へ戻す (go_router 公式の
         // 推奨パターン。web の BottomNav 再タップ ≒ ルートへ戻る挙動に対応)。
-        onDestinationSelected: (i) =>
-            shell.goBranch(i, initialLocation: i == shell.currentIndex),
+        onDestinationSelected: (i) {
+          if (i == kSettingsBranchIndex) {
+            // タブ表示ごとに refetch (P2.5-H — クラス doc 参照)。provider が
+            // 未生成 (初回表示前) の invalidate は no-op で無害。
+            ref.invalidate(settingsProvider);
+          }
+          shell.goBranch(i, initialLocation: i == shell.currentIndex);
+        },
         destinations: const [
           // web bottom-nav.tsx: { href: "/meals", label: "献立", icon: UtensilsCrossed }
           NavigationDestination(
@@ -72,6 +90,16 @@ class AppShell extends StatelessWidget {
               color: IroriColors.primary,
             ),
             label: '育児',
+          ),
+          // web bottom-nav.tsx: { href: "/settings", label: "設定", icon: Settings }
+          NavigationDestination(
+            icon: Icon(LucideIcons.settings, size: 20),
+            selectedIcon: Icon(
+              LucideIcons.settings,
+              size: 20,
+              color: IroriColors.primary,
+            ),
+            label: '設定',
           ),
         ],
       ),
