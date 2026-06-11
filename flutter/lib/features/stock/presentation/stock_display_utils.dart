@@ -10,6 +10,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../../../core/domain/consumption_rate.dart';
 import '../../../core/domain/item_category.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/utils/jst_date.dart';
@@ -24,6 +25,8 @@ const _amberBg = Color(0xFFFEF3C7); // amber-100
 const _amberFg = Color(0xFFB45309); // amber-700
 const _yellowBg = Color(0xFFFEFCE8); // yellow-50
 const _yellowFg = Color(0xFFA16207); // yellow-700
+const _blueBg = Color(0xFFEFF6FF); // blue-50
+const _blueFg = Color(0xFF1D4ED8); // blue-700
 
 /// 数量 (`num`) を web と同じ書式の文字列にする。
 ///
@@ -98,6 +101,36 @@ StockExpiryBadge? stockExpiryBadge(String todayYmd, String? expiresAtYmd) {
 String _monthDayLabel(String ymd) {
   final parts = ymd.split('-');
   return '${int.parse(parts[1])}/${int.parse(parts[2])}';
+}
+
+/// 残日数バッジ (消費レートベース、PR-G)。バッジなし (レート算出不能) は
+/// null。戻り値の typedef は期限バッジと同 shape のため [StockExpiryBadge]
+/// を共用する。
+///
+/// web `stock-item.tsx` `getRemainingDaysStatus` と 1:1:
+///
+/// | 条件 | label | className |
+/// |---|---|---|
+/// | remaining <= 3 | あとN日分 | bg-red-100 text-red-700 |
+/// | remaining <= 7 | あとN日分 | bg-amber-100 text-amber-700 |
+/// | それ以外 | あとN日分 | bg-blue-50 text-blue-700 |
+///
+/// **`estimateRemainingDays` の 0 は「今日切れ」の有効値** — 非表示判定は
+/// `remaining == null` のみで行う。`remaining == 0` を「無し」扱いする
+/// falsy 風判定を書くと残 0 日の在庫がバッジから漏れる
+/// (`estimateRemainingDays` doc / Phase 2.5 計画 risks。テストで機械防御)。
+StockExpiryBadge? stockRemainingDaysBadge(num quantity, num? dailyRate) {
+  final remaining = estimateRemainingDays(quantity, dailyRate);
+  if (remaining == null) return null;
+
+  final label = 'あと$remaining日分';
+  if (remaining <= 3) {
+    return (label: label, background: _redBg, foreground: _redFg);
+  }
+  if (remaining <= 7) {
+    return (label: label, background: _amberBg, foreground: _amberFg);
+  }
+  return (label: label, background: _blueBg, foreground: _blueFg);
 }
 
 /// 「期限切れ間近」アラートの件数。
