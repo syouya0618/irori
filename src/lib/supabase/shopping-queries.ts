@@ -1,5 +1,5 @@
 import { logSupabaseError } from "@/lib/supabase/log-error"
-import { getCurrentWeekRange } from "@/lib/utils/date"
+import { currentWeekRangeJst } from "@/lib/utils/date-jst"
 import type { AuthContext } from "@/lib/supabase/auth-context"
 
 /**
@@ -16,7 +16,7 @@ export async function getNewIngredientsForWeek(
   supabase: AuthContext["supabase"],
   householdId: string
 ) {
-  const { startDate, endDate } = getCurrentWeekRange()
+  const { startDate, endDate } = currentWeekRangeJst()
 
   // 今週の献立（外食を除く）を取得
   const { data: meals, error: mealsError } = await supabase

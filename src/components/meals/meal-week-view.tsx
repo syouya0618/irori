@@ -11,6 +11,7 @@ import { useWeekMeals } from "@/components/meals/use-week-meals"
 import { formatWeekRange } from "@/components/meals/week-date-utils"
 import { loadTemplate } from "@/app/(main)/meals/actions"
 import { formatDateKey } from "@/lib/utils/date"
+import { todayJstString } from "@/lib/utils/date-jst"
 import type { MealWithDetails } from "@/components/meals/use-week-meals"
 import type { MealType, ItemCategory } from "@/lib/types/database"
 
@@ -70,7 +71,7 @@ export function MealWeekView({
       if (result.error) {
         toast.error(result.error)
       } else if (result.data) {
-        const today = formatDateKey(new Date())
+        const today = todayJstString()
         setPrefilledFromTemplate(result.data)
         setEditingMeal(null)
         setSelectedDate(today)

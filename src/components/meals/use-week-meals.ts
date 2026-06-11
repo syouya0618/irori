@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { logSupabaseError } from "@/lib/supabase/log-error"
-import { getMonday, addDays, formatDateKey } from "@/lib/utils/date"
+import { addDays, formatDateKey } from "@/lib/utils/date"
+import { todayJstString, weekStartMonday } from "@/lib/utils/date-jst"
 import type { MealType, MealReaction } from "@/lib/types/database"
 
 export interface MealWithDetails {
@@ -58,8 +59,9 @@ export function useWeekMeals({
   }, [meals])
 
   const isCurrentWeek = useMemo(() => {
-    const currentMonday = getMonday(new Date())
-    return formatDateKey(weekStart) === formatDateKey(currentMonday)
+    // JST 固定: サーバー SSR (UTC) と端末 TZ のどちらでも同じ判定になる
+    const currentMonday = weekStartMonday(todayJstString())
+    return formatDateKey(weekStart) === currentMonday
   }, [weekStart])
 
   const fetchMeals = useCallback(
@@ -110,7 +112,12 @@ export function useWeekMeals({
   }
 
   function goToCurrentWeek() {
-    const monday = getMonday(new Date())
+    const mondayYmd = weekStartMonday(todayJstString())
+    // todayJstString は常に YYYY-MM-DD を返すため null は到達不能
+    // （weekStartMonday の型を絞るための防御。表示専用パスゆえ現状維持で安全）
+    if (mondayYmd === null) return
+    // 時刻付き文字列はローカル解釈される（state 初期化と同形の UTC 罠回避）
+    const monday = new Date(mondayYmd + "T00:00:00")
     setWeekStart(monday)
     fetchMeals(monday)
   }

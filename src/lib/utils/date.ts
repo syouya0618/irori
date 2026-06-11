@@ -1,10 +1,7 @@
-export function getMonday(d: Date): Date {
-  const date = new Date(d)
-  const day = date.getDay()
-  date.setDate(date.getDate() + (day === 0 ? -6 : 1 - day))
-  date.setHours(0, 0, 0, 0)
-  return date
-}
+// 週境界（月曜起点）の計算はここに置かない。かつてここにあった週境界関数は
+// プロセスのローカル TZ に依存し Vercel (UTC) で前週を返すバグの温床だったため
+// 削除済み (issue #23)。週境界は date-jst.ts の weekStartMonday /
+// currentWeekRangeJst（JST 固定・TZ 非依存）を使うこと。
 
 export function addDays(d: Date, days: number): Date {
   const result = new Date(d)
@@ -14,10 +11,4 @@ export function addDays(d: Date, days: number): Date {
 
 export function formatDateKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
-}
-
-export function getCurrentWeekRange(): { startDate: string; endDate: string } {
-  const monday = getMonday(new Date())
-  const sunday = addDays(monday, 6)
-  return { startDate: formatDateKey(monday), endDate: formatDateKey(sunday) }
 }

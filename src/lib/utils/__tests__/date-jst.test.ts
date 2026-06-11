@@ -3,6 +3,8 @@ import {
   todayJstString,
   daysBetweenYmd,
   daysFromTodayJst,
+  weekStartMonday,
+  currentWeekRangeJst,
 } from "../date-jst"
 
 describe("todayJstString", () => {
@@ -54,6 +56,70 @@ describe("daysBetweenYmd", () => {
     expect(daysBetweenYmd("2026/04/09", "2026-04-10")).toBe(null)
     expect(daysBetweenYmd("invalid", "2026-04-10")).toBe(null)
     expect(daysBetweenYmd("2026-4-9", "2026-04-10")).toBe(null)
+  })
+})
+
+describe("weekStartMonday", () => {
+  it("月曜自身はそのまま返す", () => {
+    expect(weekStartMonday("2026-06-08")).toBe("2026-06-08")
+  })
+
+  it("土曜は同週の月曜を返す", () => {
+    expect(weekStartMonday("2026-06-13")).toBe("2026-06-08")
+  })
+
+  it("日曜は進行中週の月曜を返す（前週に巻き戻さない）", () => {
+    // flutter/lib/core/utils/jst_date.dart の weekStartMonday と同値
+    // (日曜 = 進行中週の末尾セマンティクス)
+    expect(weekStartMonday("2026-06-14")).toBe("2026-06-08")
+  })
+
+  it("月を跨いでも正しく計算", () => {
+    expect(weekStartMonday("2026-06-02")).toBe("2026-06-01")
+    expect(weekStartMonday("2026-05-01")).toBe("2026-04-27")
+  })
+
+  it("年を跨いでも正しく計算", () => {
+    expect(weekStartMonday("2026-01-01")).toBe("2025-12-29")
+  })
+
+  it("不正なフォーマットは null を返す", () => {
+    expect(weekStartMonday("2026/06/08")).toBe(null)
+  })
+})
+
+describe("currentWeekRangeJst", () => {
+  it("UTC 日曜 15:30 (= JST 月曜 00:30) は JST の今週を返す【issue #23 核心境界】", () => {
+    // 2026-06-07 15:30 UTC = 2026-06-08 00:30 JST (月曜)
+    // 旧実装（ローカル TZ 依存の週範囲計算）は UTC プロセスで "2026-06-01" を返していた窓
+    const now = new Date("2026-06-07T15:30:00Z")
+    expect(currentWeekRangeJst(now)).toEqual({
+      startDate: "2026-06-08",
+      endDate: "2026-06-14",
+    })
+  })
+
+  it("バグ窓の終端 UTC 日曜 23:59 (= JST 月曜 08:59) も JST の今週を返す", () => {
+    const now = new Date("2026-06-07T23:59:00Z")
+    expect(currentWeekRangeJst(now).startDate).toBe("2026-06-08")
+  })
+
+  it("JST 日曜 23:59 (= UTC 日曜 14:59) は前の週のまま", () => {
+    // 2026-06-07 14:59 UTC = 2026-06-07 23:59 JST (日曜)
+    const now = new Date("2026-06-07T14:59:00Z")
+    expect(currentWeekRangeJst(now)).toEqual({
+      startDate: "2026-06-01",
+      endDate: "2026-06-07",
+    })
+  })
+
+  it("JST 日曜 0:00 (= UTC 土曜 15:00) は日曜が属する週を返す", () => {
+    // 2026-06-13 15:00 UTC = 2026-06-14 00:00 JST (日曜)
+    const now = new Date("2026-06-13T15:00:00Z")
+    expect(currentWeekRangeJst(now)).toEqual({
+      startDate: "2026-06-08",
+      endDate: "2026-06-14",
+    })
   })
 })
 

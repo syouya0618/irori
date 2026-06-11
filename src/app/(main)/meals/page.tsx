@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { MealWeekView } from "@/components/meals/meal-week-view"
-import { getMonday, addDays, formatDateKey } from "@/lib/utils/date"
+import { currentWeekRangeJst } from "@/lib/utils/date-jst"
 
 export default async function MealsPage() {
   const supabase = await createClient()
@@ -23,10 +23,8 @@ export default async function MealsPage() {
 
   if (!profile?.household_id) return null
 
-  const monday = getMonday(new Date())
-  const sunday = addDays(monday, 6)
-  const startStr = formatDateKey(monday)
-  const endStr = formatDateKey(sunday)
+  // Vercel (UTC) でもクライアント (JST) でも同じ「JST の今週」を返す
+  const { startDate, endDate } = currentWeekRangeJst()
 
   const { data: meals, error: mealsError } = await supabase
     .from("meals")
@@ -38,8 +36,8 @@ export default async function MealsPage() {
     `
     )
     .eq("household_id", profile.household_id)
-    .gte("date", startStr)
-    .lte("date", endStr)
+    .gte("date", startDate)
+    .lte("date", endDate)
     .order("date")
 
   if (mealsError) {
@@ -54,7 +52,7 @@ export default async function MealsPage() {
       initialMeals={(meals as unknown as Parameters<typeof MealWeekView>[0]["initialMeals"]) ?? []}
       householdId={profile.household_id}
       userId={user.id}
-      initialWeekStart={startStr}
+      initialWeekStart={startDate}
     />
   )
 }
