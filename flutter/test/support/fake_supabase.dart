@@ -245,6 +245,7 @@ class FakeGoTrueClient extends Fake implements GoTrueClient {
     this.signInError,
     this.exchangeError,
     this.exchangeResponse,
+    this.cannedCurrentUser,
   });
 
   /// `signInWithOtp` が投げる例外 (null なら成功)。
@@ -256,6 +257,14 @@ class FakeGoTrueClient extends Fake implements GoTrueClient {
   /// `exchangeCodeForSession` の戻り値 (success 時)。
   final AuthSessionUrlResponse? exchangeResponse;
 
+  /// `currentUser` の canned 値 (P2.5-H settings 用 — additive)。
+  /// null は「未認証」。従来この getter は未実装 (noSuchMethod throw) で、
+  /// 既存テストは一切読まないことを grep 確認済み (挙動変更なし)。
+  final User? cannedCurrentUser;
+
+  /// `signOut` が投げる例外 (null なら成功 — P2.5-H settings 用 additive)。
+  Object? signOutError;
+
   // --- 呼び出し記録 (assert 用) ---
   int signInCallCount = 0;
   String? lastEmail;
@@ -263,6 +272,9 @@ class FakeGoTrueClient extends Fake implements GoTrueClient {
 
   int exchangeCallCount = 0;
   String? lastAuthCode;
+
+  /// `signOut` の呼び出し回数 (P2.5-H settings 用 — additive)。
+  int signOutCallCount = 0;
 
   @override
   Future<void> signInWithOtp({
@@ -287,6 +299,15 @@ class FakeGoTrueClient extends Fake implements GoTrueClient {
     lastAuthCode = authCode;
     if (exchangeError != null) throw exchangeError!;
     return exchangeResponse ?? _emptyAuthSessionUrlResponse();
+  }
+
+  @override
+  User? get currentUser => cannedCurrentUser;
+
+  @override
+  Future<void> signOut({SignOutScope scope = SignOutScope.local}) async {
+    signOutCallCount++;
+    if (signOutError != null) throw signOutError!;
   }
 }
 
