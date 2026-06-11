@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr"
 import { NextResponse, type NextRequest } from "next/server"
 import { logSupabaseError } from "@/lib/supabase/log-error"
+import { getAppOrigin } from "@/lib/utils/app-origin"
 
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -42,9 +43,13 @@ export async function proxy(request: NextRequest) {
   if (!user) {
     // public / invite 以外 → /login
     if (!isPublicRoute && !isInviteRoute) {
+      // nextUrl は loopback host を localhost に正規化するため (issue #16)、
+      // origin は getAppOrigin で解決する (NextResponse.redirect は絶対 URL 必須)
       const url = request.nextUrl.clone()
       url.pathname = "/login"
-      return NextResponse.redirect(url)
+      return NextResponse.redirect(
+        new URL(url.pathname + url.search, getAppOrigin(request))
+      )
     }
     return supabaseResponse
   }
@@ -72,14 +77,18 @@ export async function proxy(request: NextRequest) {
     if (!isPendingRoute && !isInviteRoute) {
       const url = request.nextUrl.clone()
       url.pathname = "/pending-approval"
-      return NextResponse.redirect(url)
+      return NextResponse.redirect(
+        new URL(url.pathname + url.search, getAppOrigin(request))
+      )
     }
   } else {
     // 承認済み: public / pending-approval → / (default_page 解決は page.tsx に委譲)
     if (isPublicRoute || isPendingRoute) {
       const url = request.nextUrl.clone()
       url.pathname = "/"
-      return NextResponse.redirect(url)
+      return NextResponse.redirect(
+        new URL(url.pathname + url.search, getAppOrigin(request))
+      )
     }
   }
 
