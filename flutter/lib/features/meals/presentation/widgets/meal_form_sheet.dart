@@ -8,6 +8,7 @@ import '../../../../core/theme/radii.dart';
 import '../../data/meals_repository.dart';
 import '../../data/meals_week_notifier.dart';
 import '../../domain/meal.dart';
+import '../../domain/meal_template.dart';
 import '../meal_display_utils.dart';
 import 'meal_ingredient_fields.dart';
 import 'template_selector_dialog.dart';
@@ -16,6 +17,9 @@ import 'template_selector_dialog.dart';
 ///
 /// [existing] が null なら追加モード ([date] / [mealType] が初期値)、
 /// 非 null なら編集モード (既存値で埋める)。
+/// [prefill] は追加モードのテンプレート初期値 (P2.5-F — 在庫タブ
+/// 「献立に追加」経由。web `meal-week-view.tsx` の `prefilledFromTemplate`
+/// → `formInitialData` 経路に相当し、[existing] とは併用しない)。
 /// シグネチャは `showBabyFeedingTimer(context, ref, ...)` と統一
 /// ([ref] は close 後の provider 操作を足す際の拡張点。現在は sheet 内部の
 /// 自前 ref が invalidate まで担う)。
@@ -25,6 +29,7 @@ Future<void> showMealFormSheet(
   required String date,
   required MealType mealType,
   Meal? existing,
+  MealTemplatePrefill? prefill,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -34,6 +39,7 @@ Future<void> showMealFormSheet(
       defaultDate: date,
       defaultMealType: mealType,
       existing: existing,
+      prefill: prefill,
     ),
   );
 }
@@ -64,6 +70,7 @@ class MealFormSheet extends ConsumerStatefulWidget {
     required this.defaultDate,
     required this.defaultMealType,
     this.existing,
+    this.prefill,
     super.key,
   });
 
@@ -75,6 +82,10 @@ class MealFormSheet extends ConsumerStatefulWidget {
 
   /// 編集対象。null なら追加モード。
   final Meal? existing;
+
+  /// 追加モードのテンプレート初期値 (P2.5-F)。[existing] が非 null の
+  /// ときは無視する (web `formInitialData` は editingMeal 優先の三項分岐)。
+  final MealTemplatePrefill? prefill;
 
   @override
   ConsumerState<MealFormSheet> createState() => _MealFormSheetState();
@@ -117,12 +128,19 @@ class _MealFormSheetState extends ConsumerState<MealFormSheet> {
   void initState() {
     super.initState();
     final existing = widget.existing;
-    _titleController = TextEditingController(text: existing?.title ?? '');
+    // 編集 > prefill > 空 の優先順 (web `formInitialData` の三項分岐と同形)。
+    final prefill = existing == null ? widget.prefill : null;
+    _titleController = TextEditingController(
+      text: existing?.title ?? prefill?.title ?? '',
+    );
     _mealType = existing?.mealType ?? widget.defaultMealType;
     _date = existing?.date ?? widget.defaultDate;
     _isEatingOut = existing?.isEatingOut ?? false;
     _ingredients = [
-      for (final ing in existing?.ingredients ?? const <MealIngredient>[])
+      for (final ing
+          in existing?.ingredients ??
+              prefill?.ingredients ??
+              const <MealIngredient>[])
         _IngredientEntry(
           name: ing.name,
           quantity: ing.quantity ?? '',

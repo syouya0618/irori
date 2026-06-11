@@ -195,6 +195,23 @@ class FakeFilterBuilder extends Fake
     inFilters.add((column: column, values: values));
     return this;
   }
+
+  // ─── P2.5-F recipe suggestions 用 (additive) ──────────────
+  // `MealsRepository.fetchTemplateReactions` の
+  // `.not('template_id', 'is', null)` チェーン検証用。
+
+  /// `not(column, operator, value)` の呼び出し記録 (P2.5-F 用)。
+  final notFilters = <({String column, String operator, Object? value})>[];
+
+  @override
+  PostgrestFilterBuilder<PostgrestList> not(
+    String column,
+    String operator,
+    Object? value,
+  ) {
+    notFilters.add((column: column, operator: operator, value: value));
+    return this;
+  }
 }
 
 /// `from('table')` の結果 (`SupabaseQueryBuilder` 相当)。

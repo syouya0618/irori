@@ -6,6 +6,7 @@ import '../../../core/utils/jst_date.dart';
 import '../../../widgets/glass_card.dart';
 import '../data/meals_repository.dart';
 import '../data/meals_week_notifier.dart';
+import '../data/pending_template_prefill_provider.dart';
 import '../data/selected_week_start_provider.dart';
 import '../domain/meal.dart';
 import 'meal_display_utils.dart';
@@ -26,12 +27,47 @@ import 'widgets/meal_week_nav.dart';
 ///   `skipLoadingOnReload: true` で前週データを保持する (baby と同じ流儀)。
 /// - 書き込みは sheet (F2) → `MealsRepository`。成功時の一覧反映は
 ///   sheet 側の invalidate + F1 realtime refetch。
+/// - 在庫タブ「献立に追加」(P2.5-F) は [pendingTemplatePrefillProvider] 経由で
+///   届き、1 回だけ消費して sheet をプリフィル open する
+///   (web `meal-week-view.tsx:66-100` の `?template=` 処理に相当)。
 class MealsPage extends ConsumerWidget {
   const MealsPage({super.key});
+
+  /// prefill を 1 回だけ取り出して sheet を開く (web: 今日 + dinner +
+  /// prefill で open)。`consume()` が atomically null へ戻すため、listen と
+  /// post-frame の二重経路・再 build でも 2 回目以降は no-op
+  /// (web `hasProcessedUrlTemplate` ref + `router.replace` 相当)。
+  void _consumePrefill(BuildContext context, WidgetRef ref) {
+    final prefill = ref.read(pendingTemplatePrefillProvider.notifier).consume();
+    if (prefill == null) return;
+    showMealFormSheet(
+      context,
+      ref,
+      date: formatJstDate(),
+      mealType: MealType.dinner,
+      prefill: prefill,
+    );
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final mealsAsync = ref.watch(mealsWeekNotifierProvider);
+
+    // ページ生存中 (IndexedStack で常駐) に在庫タブから積まれた prefill を
+    // 消費する。listen は変化時のみ発火するため、本ページの初回 build より
+    // 前に積まれていた分は post-frame で別途拾う (下)。
+    ref.listen(pendingTemplatePrefillProvider, (_, next) {
+      if (next == null) return;
+      _consumePrefill(context, ref);
+    });
+    if (ref.read(pendingTemplatePrefillProvider) != null) {
+      // build 中は Navigator 操作 (sheet open) ができないため初回 frame 後に
+      // 消費する。複数回スケジュールされても consume() の 1 回消費保証で
+      // 2 回目以降は no-op。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (context.mounted) _consumePrefill(context, ref);
+      });
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('献立')),

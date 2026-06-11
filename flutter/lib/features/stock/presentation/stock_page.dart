@@ -14,6 +14,7 @@ import '../domain/stock_item.dart';
 import 'stock_display_utils.dart';
 import 'widgets/stock_form_sheet.dart';
 import 'widgets/stock_item_tile.dart';
+import 'widgets/stock_suggestions_section.dart';
 
 // Tailwind palette (web `stock-list.tsx` 期限間近バナーの配色トーン)。
 const _amberBannerBg = Color(0xFFFFFBEB); // amber-50
@@ -22,9 +23,10 @@ const _amberBannerFg = Color(0xFFB45309); // amber-700
 /// 在庫一覧。Next.js 原典 `stock-list.tsx` (+ `stock/page.tsx`) の表示側を
 /// 移植。
 ///
-/// 表示構成 (縦): 期限間近バナー (対象 0 件なら非表示) → カテゴリ別グループ
-/// (見出し: アイコン + ラベル + 件数 / 中身: glass カードに区切り線付きの行)。
-/// AppBar に「在庫」+ 件数 + 追加ボタン (web のページヘッダー相当)。
+/// 表示構成 (縦): 期限間近バナー (対象 0 件なら非表示) → おすすめ献立
+/// section (P2.5-F、web `stock-list.tsx:191-205` と同じ並び) → カテゴリ別
+/// グループ (見出し: アイコン + ラベル + 件数 / 中身: glass カードに
+/// 区切り線付きの行)。AppBar に「在庫」+ 件数 + 追加ボタン。
 ///
 /// データ:
 /// - `stockItemsNotifierProvider` を `.when(data/loading/error)` で消費
@@ -32,9 +34,11 @@ const _amberBannerFg = Color(0xFFB45309); // amber-700
 /// - 書き込みは sheet (`showStockFormSheet`) → `StockRepository`。一覧反映は
 ///   F5 realtime reducer 任せ。削除のみ web `handleOptimisticDelete` と同じ
 ///   楽観更新で即時除外し、失敗時は invalidate でサーバ実体へ復元する。
+/// - レシピ提案は `recipeSuggestionsProvider` (在庫 realtime 変化に 1000ms
+///   デバウンスで追従) — `StockSuggestionsSection` が消費する。
 ///
-/// レシピ提案 (`StockSuggestions`) / 消費レート残日数バッジ / 低在庫自動追加
-/// (`checkAndAutoAddLowStock`) / 買い物リストへ追加は Phase 2.5 スコープ。
+/// 消費レート残日数バッジ / 低在庫自動追加 (`checkAndAutoAddLowStock`) /
+/// 買い物リストへ追加は Phase 2.5 PR-G スコープ。
 class StockPage extends ConsumerWidget {
   const StockPage({super.key});
 
@@ -114,37 +118,46 @@ class _StockBody extends ConsumerWidget {
     final grouped = groupStockItems(items);
     final expiringCount = countExpiringStockItems(todayYmd, items);
 
-    // 原典の空状態 (`grouped.length === 0`)。
+    // 原典の空状態 (`grouped.length === 0`)。web はこの場合も提案 section を
+    // 上に出す (stock-list.tsx:202-205 — section 自身が空コピーを表示する)。
     if (grouped.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              LucideIcons.package,
-              size: 48,
-              // 原典 `text-muted-foreground/30`。
-              color: Color(0x4D475569),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              '在庫が登録されていません',
-              style: TextStyle(fontSize: 14, color: IroriColors.textMuted),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: () => showStockFormSheet(context, ref),
-              icon: const Icon(LucideIcons.plus, size: 16),
-              label: const Text('最初のアイテムを追加'),
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size(44, 44),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(IroriRadii.button),
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        children: [
+          const StockSuggestionsSection(),
+          // 原典 `min-h-[40dvh]` の中央寄せブロック相当。
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 48),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  LucideIcons.package,
+                  size: 48,
+                  // 原典 `text-muted-foreground/30`。
+                  color: Color(0x4D475569),
                 ),
-              ),
+                const SizedBox(height: 12),
+                const Text(
+                  '在庫が登録されていません',
+                  style: TextStyle(fontSize: 14, color: IroriColors.textMuted),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () => showStockFormSheet(context, ref),
+                  icon: const Icon(LucideIcons.plus, size: 16),
+                  label: const Text('最初のアイテムを追加'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(44, 44),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(IroriRadii.button),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       );
     }
 
@@ -179,6 +192,10 @@ class _StockBody extends ConsumerWidget {
               ],
             ),
           ),
+        // おすすめ献立 section (web stock-list.tsx:202-205 — バナーの下、
+        // アイテム一覧の上)。
+        if (expiringCount > 0) const SizedBox(height: 12),
+        const StockSuggestionsSection(),
         for (final (category, categoryItems) in grouped) ...[
           _CategoryHeader(category: category, count: categoryItems.length),
           GlassCard(
