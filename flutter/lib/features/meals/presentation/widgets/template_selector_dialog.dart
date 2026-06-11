@@ -365,8 +365,14 @@ class _TemplatesErrorView extends ConsumerWidget {
 ///   マッチ食材チップ。不足チップ・「献立に追加」ボタンは出さない
 ///   (行タップ = 選択)。
 ///
-/// loading は web の per-open スピナーに対応 (open 時の invalidate で
-/// 前回値なしの AsyncLoading になる)。error は web の toast + 空状態でなく
+/// loading 挙動は web と意図的に異なる (stale-while-revalidate):
+/// provider は非 autoDispose ゆえ、初回 open のみスピナーで、2 回目以降の
+/// open は invalidate 中も前回リストを表示したまま完了時に差し替わる
+/// (riverpod の invalidate 再 build は前回値を `isRefresh` で継承するため。
+/// web は open ごとスピナー → fresh)。`skipLoadingOnReload: true` は
+/// open 中に在庫 realtime 由来の再計算が走った際のスピナー flash 防止で、
+/// 在庫タブ section と同じ「前回値を出し続ける」挙動に揃えておる。
+/// error は web の toast + 空状態でなく
 /// error 表示 + 再試行 (`_TemplatesErrorView` と同じ rethrow 裁定の UI)。
 class _SuggestionsTab extends ConsumerWidget {
   const _SuggestionsTab({required this.enabled, required this.onSelect});
@@ -379,6 +385,8 @@ class _SuggestionsTab extends ConsumerWidget {
     final suggestionsAsync = ref.watch(recipeSuggestionsProvider);
 
     return suggestionsAsync.when(
+      // class doc 参照: open 中の再計算でリストがスピナーに化けるのを防ぐ
+      skipLoadingOnReload: true,
       data: (suggestions) {
         if (suggestions.isEmpty) {
           return Padding(

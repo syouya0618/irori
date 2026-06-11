@@ -77,6 +77,11 @@ class RecipeSuggestionsNotifier extends AsyncNotifier<List<RecipeSuggestion>> {
   /// build の初回計算中に在庫変化が届いたか (完了時に 1 回へ畳む)。
   bool _pendingRecompute = false;
 
+  /// build が try/finally 到達前に throw して終わったか (在庫エラー即 throw /
+  /// waiter completeError)。true の間に在庫データが届いたら listener が
+  /// invalidateSelf で自己回復させる (_pendingRecompute は flush 主が居らぬ)。
+  bool _buildFailedEarly = false;
+
   @override
   Future<List<RecipeSuggestion>> build() async {
     // 再 build (ダイアログ open の invalidate / 認証変化) で旧 build の
@@ -87,6 +92,7 @@ class RecipeSuggestionsNotifier extends AsyncNotifier<List<RecipeSuggestion>> {
     _generation++;
     _liveRecomputeEnabled = false;
     _pendingRecompute = false;
+    _buildFailedEarly = false;
     _householdId = null;
 
     ref.onDispose(() {
@@ -124,6 +130,16 @@ class RecipeSuggestionsNotifier extends AsyncNotifier<List<RecipeSuggestion>> {
       // loading/error への遷移では再計算しない (データ変化のみが対象)。
       if (next.value == null) return;
       if (!_liveRecomputeEnabled) {
+        if (_buildFailedEarly) {
+          // build が try/finally 到達前に throw した経路 (在庫エラー即 throw /
+          // waiter completeError)。_pendingRecompute を積んでも flush する
+          // finally が存在せぬ dead end ゆえ、在庫データの到着で rebuild させる。
+          // Riverpod の自動 retry は有界 (defaultRetry: 最大 10 回・Error 型は
+          // 対象外) で、これが無いと長い障害後は手動再試行までエラーが残る。
+          _buildFailedEarly = false;
+          ref.invalidateSelf();
+          return;
+        }
         // build の初回計算がまだ in-flight。完了時に 1 回へ畳む
         // (ここで直接スケジュールすると再計算と build 結果が後勝ち競合する)。
         _pendingRecompute = true;
@@ -139,15 +155,24 @@ class RecipeSuggestionsNotifier extends AsyncNotifier<List<RecipeSuggestion>> {
       initialStock = stockNow;
     } else if (stockState.hasError) {
       // 在庫 fetch 失敗時は提案も計算不能 (web `fetchRecipeSuggestions` は
-      // stockResult.error でエラーに倒す)。在庫側の自動 retry 復帰後は
-      // realtime data 到着 → 本 provider も Riverpod retry で復帰する。
+      // stockResult.error でエラーに倒す)。復帰は (a) Riverpod の有界 retry、
+      // (b) 手動再試行/invalidate、(c) 在庫データ到着時の listener 側
+      // invalidateSelf (_buildFailedEarly) の 3 経路。
+      _buildFailedEarly = true;
       Error.throwWithStackTrace(
         stockState.error!,
         stockState.stackTrace ?? StackTrace.current,
       );
     } else {
       final waiter = stockWaiter = Completer<List<StockItem>>();
-      initialStock = await waiter.future;
+      try {
+        initialStock = await waiter.future;
+      } catch (_) {
+        // completeError 経路も try/finally 未到達で抜ける — 自己回復フラグを
+        // 立てて listener 側の invalidateSelf に委ねる (上の分岐と同じ理由)。
+        _buildFailedEarly = true;
+        rethrow;
+      }
     }
 
     try {

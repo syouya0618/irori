@@ -34,6 +34,23 @@ class _StockSource extends StockItemsNotifier {
   void emit(List<StockItem> items) => state = AsyncData(items);
 }
 
+/// 初回 build が throw する在庫 fake (自己回復テスト (e) 用)。
+class _FailingStockSource extends StockItemsNotifier {
+  bool failNext = true;
+
+  @override
+  Future<List<StockItem>> build() async {
+    if (failNext) {
+      failNext = false;
+      throw StateError('stock down');
+    }
+    return const [];
+  }
+
+  /// realtime reducer による復活データの模擬。
+  void emit(List<StockItem> items) => state = AsyncData(items);
+}
+
 /// `MealsRepository` の fake (template_selector_dialog_test の `_Repo` と
 /// 同じ流儀 + 呼び出し回数 / gate 制御)。
 class _FakeMealsRepository extends Fake implements MealsRepository {
@@ -299,5 +316,39 @@ void main() {
     final state = h.container.read(recipeSuggestionsProvider);
     expect(state.hasError, isFalse, reason: 'web parity: 古い提案を保持する');
     expect(state.value!.single.templateId, 'tpl-1');
+  });
+
+  test('(e) 在庫エラーで早期終了した build は在庫データ到着で自己回復する', () async {
+    // 早期 throw 経路 (try/finally 未到達) は _pendingRecompute を flush する
+    // 主が居らぬ dead end — _buildFailedEarly + invalidateSelf の自己回復を固定。
+    // StateError は Error 型ゆえ Riverpod defaultRetry の対象外 = 決定的。
+    final stockSource = _FailingStockSource();
+    final repo = _FakeMealsRepository()
+      ..templates = [
+        _template('tpl-1', 'カレー', ingredients: [_ingredient('玉ねぎ')]),
+      ];
+    final container = ProviderContainer(
+      overrides: [
+        currentHouseholdIdProvider.overrideWith((ref) async => 'hh-1'),
+        stockItemsNotifierProvider.overrideWith(() => stockSource),
+        mealsRepositoryProvider.overrideWithValue(repo),
+      ],
+    );
+    addTearDown(container.dispose);
+    final sub = container.listen(recipeSuggestionsProvider, (_, _) {});
+    addTearDown(sub.close);
+
+    await expectLater(
+      container.read(recipeSuggestionsProvider.future),
+      throwsA(isA<StateError>()),
+    );
+    expect(container.read(recipeSuggestionsProvider).hasError, isTrue);
+
+    // 在庫復活 (realtime 相当) → listener の invalidateSelf → 自動再 build
+    stockSource.emit([_stock('s1', '玉ねぎ')]);
+    final result = await container.read(recipeSuggestionsProvider.future);
+
+    expect(result, hasLength(1));
+    expect(result.single.templateId, 'tpl-1');
   });
 }
