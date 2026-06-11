@@ -10,6 +10,7 @@ import '../../data/meals_week_notifier.dart';
 import '../../domain/meal.dart';
 import '../meal_display_utils.dart';
 import 'meal_ingredient_fields.dart';
+import 'template_selector_dialog.dart';
 
 /// 献立の追加 / 編集 sheet を開く。
 ///
@@ -42,13 +43,22 @@ Future<void> showMealFormSheet(
 /// Next.js 原典 `meal-form-sheet.tsx` の Flutter 移植。
 /// 項目: メニュー名 (必須) / 食事タイプ (セグメント 4 種 — 原典 `MEAL_TYPES`
 /// と同じく snack も選べる) / 日付 (原典 `<input type="date">` 相当の
-/// DatePicker) / 外食 Switch / 食材リスト (追加・削除)。
-/// テンプレート機能 (作成・保存ボタン) は Phase 2.5 スコープ。
+/// DatePicker) / 外食 Switch / 食材リスト (追加・削除) /
+/// テンプレート 2 ボタン (P2.5-E):
+/// - 「テンプレートから作成」(常時) — 選択ダイアログ
+///   ([showTemplateSelectorDialog]) を開き、選択された prefill で
+///   メニュー名 + 食材リストを**置換**する (原典 handleTemplateSelect)。
+/// - 「テンプレート保存」(編集時のみ — 原典 `isEditing &&`) — 表示中の
+///   既存献立を `saveAsTemplate` し、sheet は閉じない。
 ///
 /// 文言は原典 toast / ラベルと同一:
 /// - 成功: 「献立を追加しました」「献立を更新しました」「献立を削除しました」
+///   「テンプレートとして保存しました」
 /// - 重複 (23505): 「この日時のメニューは既に登録されています。」
 ///   ([DuplicateMealException.message])
+/// - テンプレート保存失敗: 「テンプレートの保存に失敗しました。」(actions.ts の
+///   汎用文言。web の権限分岐文言は repository が PGRST116 throw に畳むため
+///   出し分けない — `MealsRepository.saveAsTemplate` doc 参照)
 class MealFormSheet extends ConsumerStatefulWidget {
   const MealFormSheet({
     required this.defaultDate,
@@ -225,6 +235,71 @@ class _MealFormSheetState extends ConsumerState<MealFormSheet> {
     );
   }
 
+  /// 「テンプレートから作成」: 選択ダイアログを開き、選択された prefill で
+  /// メニュー名 + 食材リストを置換する (原典 handleTemplateSelect は
+  /// `setTitle` + `setIngredients` の全置換)。
+  Future<void> _openTemplateSelector() async {
+    if (_pending) return;
+    final prefill = await showTemplateSelectorDialog(context, ref);
+    if (prefill == null || !mounted) return;
+
+    setState(() {
+      _titleController.text = prefill.title;
+      for (final entry in _ingredients) {
+        entry.dispose();
+      }
+      _ingredients
+        ..clear()
+        ..addAll([
+          for (final ing in prefill.ingredients)
+            _IngredientEntry(
+              name: ing.name,
+              quantity: ing.quantity ?? '',
+              category: ing.category,
+            ),
+        ]);
+    });
+  }
+
+  /// 「テンプレート保存」(編集時のみ): 既存献立をテンプレート化する。
+  /// 原典 handleSaveAsTemplate と同じく **sheet は閉じない** ため、
+  /// [_run] (成功時 pop) は使わない。一覧の template_id リンク反映は
+  /// meals の realtime UPDATE → 週 notifier の refetch で届く
+  /// (web の revalidatePath("/meals") 相当)。
+  Future<void> _saveAsTemplate() async {
+    final existing = widget.existing;
+    if (existing == null || _pending) return;
+    setState(() => _pending = true);
+
+    final messenger = ScaffoldMessenger.of(context);
+
+    try {
+      final mutationContext = await ref.read(
+        mealsMutationContextProvider.future,
+      );
+      await ref
+          .read(mealsRepositoryProvider)
+          .saveAsTemplate(
+            householdId: mutationContext.householdId,
+            userId: mutationContext.userId,
+            mealId: existing.id,
+          );
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(content: Text('テンプレートとして保存しました')),
+      );
+    } on Object catch (e, st) {
+      // 握り潰さない (CLAUDE.md)。repository 側でも構造化ログ済み。
+      debugPrint('MealFormSheet saveAsTemplate 失敗: $e\n$st');
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(content: Text('テンプレートの保存に失敗しました。')),
+      );
+    } finally {
+      if (mounted) setState(() => _pending = false);
+    }
+  }
+
   Future<void> _run({
     required Future<void> Function(
       MealsMutationContext context,
@@ -305,6 +380,44 @@ class _MealFormSheetState extends ConsumerState<MealFormSheet> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    // テンプレート 2 ボタン (原典 "Template button" 行 —
+                    // 保存ボタンは編集時のみ)。
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: _pending ? null : _openTemplateSelector,
+                          icon: const Icon(LucideIcons.bookOpen, size: 14),
+                          label: const Text('テンプレートから作成'),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(44, 44),
+                            foregroundColor: IroriColors.textPrimary,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                IroriRadii.button,
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (_isEditing)
+                          OutlinedButton.icon(
+                            onPressed: _pending ? null : _saveAsTemplate,
+                            icon: const Icon(LucideIcons.bookMarked, size: 14),
+                            label: const Text('テンプレート保存'),
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(44, 44),
+                              foregroundColor: IroriColors.textPrimary,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(
+                                  IroriRadii.button,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
                     const _Label('メニュー名'),
                     TextField(
                       controller: _titleController,
