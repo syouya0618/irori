@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/domain/item_category.dart';
 import '../../../core/domain/store_type.dart';
 import '../../../core/supabase/supabase_providers.dart';
+import '../../../core/utils/jst_date.dart';
 import '../domain/shopping_item.dart';
 
 /// 全 Supabase 呼び出しに付与するタイムアウト。
@@ -39,6 +40,42 @@ class NoCheckedShoppingItemsException implements Exception {
   String toString() => message;
 }
 
+/// `generateFromMeals` で今週の献立 (外食を除く) が 0 件
+/// (web `actions.ts:184-186` の `no_meals` 分岐)。
+class NoMealsThisWeekException implements Exception {
+  const NoMealsThisWeekException();
+
+  /// web `actions.ts` と同一文言。
+  static const String message = '今週の献立が登録されていません';
+
+  @override
+  String toString() => message;
+}
+
+/// `generateFromMeals` で今週の献立に食材が 0 件
+/// (web `actions.ts:187-189` の `no_ingredients` 分岐)。
+class NoIngredientsThisWeekException implements Exception {
+  const NoIngredientsThisWeekException();
+
+  /// web `actions.ts` と同一文言。
+  static const String message = '今週の献立に食材が登録されていません';
+
+  @override
+  String toString() => message;
+}
+
+/// `generateFromMeals` で全食材が既存リストと重複し、追加できる新規食材が
+/// 0 件 (web `actions.ts:196-198` 分岐)。
+class NoNewIngredientsException implements Exception {
+  const NoNewIngredientsException();
+
+  /// web `actions.ts` と同一文言。
+  static const String message = '追加できる新しい食材がありません';
+
+  @override
+  String toString() => message;
+}
+
 /// shopping mutation に必要な認証コンテキスト。
 typedef ShoppingMutationContext = ({String householdId, String userId});
 
@@ -49,23 +86,27 @@ typedef ShoppingMutationContext = ({String householdId, String userId});
 typedef ToggleItemResult = ({bool autoStocked, String? autoStockedName});
 
 /// `shopping_items` / `purchase_history` と、在庫自動登録
-/// ([autoAddToStock]) のための `households` / `stock_items` への
+/// ([autoAddToStock]) のための `households` / `stock_items`、献立からの
+/// 食材生成 ([generateFromMeals]) のための `meals` / `meal_ingredients` への
 /// アクセスを担うリポジトリ。Next.js 版 `shopping/page.tsx` (read) +
-/// `actions.ts` (write) + `auto-stock.ts` のセマンティクスを移植する。
+/// `actions.ts` (write) + `auto-stock.ts` + `shopping-queries.ts` の
+/// セマンティクスを移植する。
 ///
-/// `households` の read は web 同様このリポジトリ内の inline select とし、
-/// 共有 provider へ抽象化しない (Phase 2.5 計画 — 過剰抽象の回避)。
+/// `households` / `meals` 系の read は web 同様このリポジトリ内の inline
+/// select とし、共有 provider へ抽象化しない (Phase 2.5 計画 — 過剰抽象の
+/// 回避)。
 ///
 /// **Phase 2.5 送り (本リポジトリに含めない web 機能)**:
-/// - `generateFromMeals` / `previewMealIngredients` (献立からの食材生成)
-/// - `getSuggestions` (購入履歴サジェスト)
+/// - `getSuggestions` (購入履歴サジェスト — PR-D)
 ///
 /// エラー方針 (CLAUDE.md / `BabyRepository` / `MealsRepository` と同形):
 /// - `PostgrestException` は plain object のため、code/message/details/hint を
 ///   構造化して `debugPrint` し、握り潰さず rethrow する。
 /// - 例外: `_nextSortOrder` の lookup 失敗 (web parity の fallback)、
 ///   `clearChecked` の履歴 insert 失敗 (web parity の続行)、
-///   [autoAddToStock] 内の各失敗 (web parity の bool false 戻し) のみ、
+///   [autoAddToStock] 内の各失敗 (web parity の bool false 戻し)、
+///   [_newIngredientsForWeek] の既存リスト取得失敗 (web parity の空 Set
+///   続行)、[previewMealIngredients] (web parity の count 0 縮退) のみ、
 ///   構造化ログのうえ rethrow しない — 各メソッドの doc コメント参照。
 class ShoppingRepository {
   ShoppingRepository(this._client);
@@ -104,7 +145,7 @@ class ShoppingRepository {
   ///   (`"other_food"` / `"supermarket"`) と同一。
   /// - `sort_order` は既存の最大値 + 1 ([_nextSortOrder])。
   /// - `meal_id` は設定しない (web `addItem` も設定しない。meal_id を書くのは
-  ///   `generateFromMeals` のみで、それは Phase 2.5 — クラス doc 参照)。
+  ///   [generateFromMeals] のみ)。
   Future<void> addItem({
     required String householdId,
     required String userId,
@@ -256,7 +297,7 @@ class ShoppingRepository {
   /// 直す場合は web と同時に別 issue で):
   /// - 在庫名照合は `eq('name', itemName.trim())` — **trim のみの
   ///   case-sensitive 完全一致** (web auto-stock.ts:47)。買い物リスト生成
-  ///   (Phase 2.5 PR-C) の toLowerCase 照合とは意図的に規格が異なる。
+  ///   ([generateFromMeals]) の toLowerCase 照合とは意図的に規格が異なる。
   /// - 既存在庫の quantity +1 は **read-modify-write のまま**
   ///   (web auto-stock.ts:45,61) — atomic 化 (RPC 等) しない。
   /// - `limit(1)` は **order なし** (web auto-stock.ts:48) — 同名複数行が
@@ -495,6 +536,224 @@ class ShoppingRepository {
     }
 
     return checkedItems.length;
+  }
+
+  /// 今週の献立の食材を買い物リストへ一括追加し、追加件数を返す。
+  ///
+  /// web `generateFromMeals` (actions.ts:177-236) +
+  /// `getNewIngredientsForWeek` (shopping-queries.ts:15-77) の移植:
+  /// 1. 今週の新規食材を [_newIngredientsForWeek] で取得 (0 件系は
+  ///    [NoMealsThisWeekException] / [NoIngredientsThisWeekException])。
+  /// 2. 全件が既存重複なら [NoNewIngredientsException]
+  ///    (web actions.ts:196-198 — 判定は getNextSortOrder より前)。
+  /// 3. 同名 (toLowerCase) は**先勝ち**でユニーク化 — 最初に現れた行の
+  ///    name/quantity/meal_id が勝つ (web actions.ts:204-213 の
+  ///    `if (!uniqueMap.has(key)) set`)。
+  /// 4. insert 行は web actions.ts:215-224 と同一 shape:
+  ///    `store_type` は **'supermarket' 固定**、`meal_id` で献立にリンク、
+  ///    `sort_order` は [_nextSortOrder] からの連番。category / quantity は
+  ///    取得した生の値をパススルー ([autoAddToStock] / [clearChecked] と同じ
+  ///    方針 — enum 往復で未知値を fallback 変換しない)。
+  ///    insert 失敗は構造化ログ + rethrow (web「食材の追加に失敗しました」)。
+  ///
+  /// [now] はテスト用の現在時刻注入 (`formatJstDate([DateTime? now])` と同じ
+  /// 流儀)。production は省略して実時刻を使う。
+  Future<int> generateFromMeals({
+    required String householdId,
+    required String userId,
+    DateTime? now,
+  }) async {
+    final newIngredients = await _newIngredientsForWeek(householdId, now);
+
+    if (newIngredients.isEmpty) {
+      throw const NoNewIngredientsException();
+    }
+
+    var sortOrder = await _nextSortOrder(householdId);
+
+    // 名前で重複をまとめる (同じ食材が複数の献立に含まれる場合) — 先勝ち。
+    final uniqueIngredients = <String, PostgrestMap>{};
+    for (final ingredient in newIngredients) {
+      uniqueIngredients.putIfAbsent(
+        (ingredient['name'] as String).toLowerCase(),
+        () => ingredient,
+      );
+    }
+
+    final rows = [
+      for (final ingredient in uniqueIngredients.values)
+        {
+          'household_id': householdId,
+          'name': ingredient['name'],
+          'quantity': ingredient['quantity'],
+          'category': ingredient['category'],
+          'store_type': StoreType.supermarket.dbValue,
+          'created_by': userId,
+          'meal_id': ingredient['meal_id'],
+          'sort_order': sortOrder++,
+        },
+    ];
+
+    try {
+      await _client.from('shopping_items').insert(rows).timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      _logMutationError(
+        'generateFromMeals/insert',
+        e,
+        st,
+        'householdId=$householdId rowCount=${rows.length}',
+      );
+      rethrow;
+    }
+
+    return rows.length;
+  }
+
+  /// 確認ダイアログ用: 今週追加できる新規食材のユニーク名 (toLowerCase) 数。
+  ///
+  /// web `previewMealIngredients` (actions.ts:239-257) の移植。**全エラーを
+  /// count 0 に縮退する** (web は getAuthContext 失敗・取得失敗・0 件系の
+  /// いずれも `{ count: 0 }`) — rethrow しない例外則はクラス doc 参照。
+  /// 読み取り専用で、sort_order lookup / insert には一切進まない。
+  ///
+  /// [now] はテスト用の現在時刻注入 ([generateFromMeals] と同じ流儀)。
+  Future<int> previewMealIngredients(
+    String householdId, {
+    DateTime? now,
+  }) async {
+    try {
+      final newIngredients = await _newIngredientsForWeek(householdId, now);
+      final uniqueNames = <String>{
+        for (final ingredient in newIngredients)
+          (ingredient['name'] as String).toLowerCase(),
+      };
+      return uniqueNames.length;
+    } on Object catch (e, st) {
+      // web parity: preview は全エラー → count 0 (actions.ts:246-248)。
+      // 0 件系の型付き例外も「プレビュー 0 件」として正常縮退する。
+      _logMutationError(
+        'previewMealIngredients',
+        e,
+        st,
+        'householdId=$householdId',
+      );
+      return 0;
+    }
+  }
+
+  /// 今週の献立の食材から、既存買い物リストと重複しないものを返す。
+  ///
+  /// web `getNewIngredientsForWeek` (shopping-queries.ts:15-77) の移植。
+  ///
+  /// **週範囲は JST 固定**: `weekStartMonday(formatJstDate(now))` 〜
+  /// `shiftYmd(+6)`。web も PR #32 (issue #23) で `currentWeekRangeJst`
+  /// (date-jst.ts:100-114 = `weekStartMonday(todayJstString(now))` 〜
+  /// `shiftYmd(monday, 6)`) に修正済みで、本実装と同一意味論
+  /// (JST 今日基準・月曜開始・日曜は同週の末尾) — 新規 TZ 計算は発明しない。
+  ///
+  /// フロー (web と同一順序):
+  /// 1. `meals` から今週の献立 id を取得 — household / `is_eating_out=false` /
+  ///    date gte/lte (shopping-queries.ts:22-28)。失敗は rethrow
+  ///    (web「献立の取得に失敗しました」)。0 件は [NoMealsThisWeekException]。
+  /// 2. `meal_ingredients` を `inFilter('meal_id', mealIds)` で取得
+  ///    (同 :40-43)。失敗は rethrow (web「食材の取得に失敗しました」)。
+  ///    0 件は [NoIngredientsThisWeekException]。
+  /// 3. `shopping_items` の name 全件 (**is_checked 不問** — チェック済みも
+  ///    除外対象。同 :54-57) と **toLowerCase 完全一致**で重複除外 (同 :65-72)。
+  ///    **取得失敗は構造化ログのみで空 Set 続行** (同 :59-63 の
+  ///    `logSupabaseError` — web parity の rethrow しない例外則)。
+  ///
+  /// **名前照合は toLowerCase 完全一致 — [autoAddToStock] の trim のみ
+  /// case-sensitive `eq` (auto-stock.ts:47) とは意図的に別規格**。機能ごとに
+  /// 照合規格が異なるのは web の現挙動で、「統一」すると重複判定が web から
+  /// 乖離する (Phase 2.5 計画 risks 欄。直す場合は web と同時に別 issue)。
+  Future<List<PostgrestMap>> _newIngredientsForWeek(
+    String householdId,
+    DateTime? now,
+  ) async {
+    final startDate = weekStartMonday(formatJstDate(now));
+    final endDate = shiftYmd(startDate, 6);
+
+    // ── 1. 今週の献立 (外食を除く) ──
+    final PostgrestList meals;
+    try {
+      meals = await _client
+          .from('meals')
+          .select('id')
+          .eq('household_id', householdId)
+          .eq('is_eating_out', false)
+          .gte('date', startDate)
+          .lte('date', endDate)
+          .timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      _logMutationError(
+        'newIngredientsForWeek/meals',
+        e,
+        st,
+        'householdId=$householdId week=$startDate..$endDate',
+      );
+      rethrow;
+    }
+
+    if (meals.isEmpty) {
+      throw const NoMealsThisWeekException();
+    }
+
+    final mealIds = [for (final meal in meals) meal['id'] as String];
+
+    // ── 2. 献立の食材 ──
+    final PostgrestList ingredients;
+    try {
+      ingredients = await _client
+          .from('meal_ingredients')
+          .select('name, quantity, category, meal_id')
+          .inFilter('meal_id', mealIds)
+          .timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      _logMutationError(
+        'newIngredientsForWeek/ingredients',
+        e,
+        st,
+        'householdId=$householdId mealCount=${mealIds.length}',
+      );
+      rethrow;
+    }
+
+    if (ingredients.isEmpty) {
+      throw const NoIngredientsThisWeekException();
+    }
+
+    // ── 3. 既存リストとの重複除外 (toLowerCase 完全一致・is_checked 不問) ──
+    PostgrestList existingItems;
+    try {
+      existingItems = await _client
+          .from('shopping_items')
+          .select('name')
+          .eq('household_id', householdId)
+          .timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      // web parity: 既存リスト取得失敗は log のみで空 Set 続行
+      // (shopping-queries.ts:59-63 — 重複除外なしで全食材を新規扱い)。
+      _logMutationError(
+        'newIngredientsForWeek/existing',
+        e,
+        st,
+        'householdId=$householdId',
+      );
+      existingItems = const [];
+    }
+
+    final existingNames = <String>{
+      for (final item in existingItems) (item['name'] as String).toLowerCase(),
+    };
+
+    return [
+      for (final ingredient in ingredients)
+        if (!existingNames.contains(
+          (ingredient['name'] as String).toLowerCase(),
+        ))
+          ingredient,
+    ];
   }
 
   /// `PostgrestException` を握り潰さず構造化ログする (CLAUDE.md)。

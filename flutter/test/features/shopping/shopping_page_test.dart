@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -58,7 +60,7 @@ class _HookedItemsNotifier extends ShoppingItemsNotifier {
   Future<List<ShoppingItem>> build() => _onBuild();
 }
 
-/// クリアダイアログ検証用の fake repository。
+/// クリア / 献立から追加ダイアログ検証用の fake repository。
 class _FakeRepository extends Fake implements ShoppingRepository {
   Object? clearError;
   int clearResult = 0;
@@ -71,6 +73,42 @@ class _FakeRepository extends Fake implements ShoppingRepository {
     lastClearHouseholdId = householdId;
     if (clearError != null) throw clearError!;
     return clearResult;
+  }
+
+  // ─── P2.5-C generateFromMeals ダイアログ用 (additive) ───
+
+  int previewResult = 0;
+
+  /// 設定時は preview を未解決のまま保持する (確認中スピナーの検証用)。
+  Completer<int>? previewGate;
+  int previewCallCount = 0;
+  String? lastPreviewHouseholdId;
+
+  Object? generateError;
+  int generateResult = 0;
+  int generateCallCount = 0;
+  String? lastGenerateHouseholdId;
+  String? lastGenerateUserId;
+
+  @override
+  Future<int> previewMealIngredients(String householdId, {DateTime? now}) {
+    previewCallCount++;
+    lastPreviewHouseholdId = householdId;
+    if (previewGate != null) return previewGate!.future;
+    return Future.value(previewResult);
+  }
+
+  @override
+  Future<int> generateFromMeals({
+    required String householdId,
+    required String userId,
+    DateTime? now,
+  }) async {
+    generateCallCount++;
+    lastGenerateHouseholdId = householdId;
+    lastGenerateUserId = userId;
+    if (generateError != null) throw generateError!;
+    return generateResult;
   }
 }
 
@@ -422,5 +460,138 @@ void main() {
     expect(attempts, 2);
     expect(find.text('買い物リストの読み込みに失敗しました。'), findsNothing);
     expect(find.text('リトライ後のアイテム'), findsOneWidget);
+  });
+
+  // ─── 献立から追加 (P2.5-C generateFromMeals ダイアログ) ───
+
+  /// ダイアログ内の確定ボタン。`FilledButton.icon` の runtimeType は
+  /// `_FilledButtonWithIcon` のため `byType(FilledButton)` では拾えず、
+  /// `is FilledButton` の predicate + AlertDialog スコープで特定する。
+  FilledButton confirmButton(WidgetTester tester) {
+    return tester.widget<FilledButton>(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byWidgetPredicate((w) => w is FilledButton),
+      ),
+    );
+  }
+
+  testWidgets('献立から追加: preview 取得中は「確認中...」で確定 disabled、'
+      '0 件なら 0 件文言のまま disabled', (tester) async {
+    final repository = _FakeRepository()..previewGate = Completer<int>();
+    await tester.pumpWidget(
+      _harness(
+        notifier: () => _FakeItemsNotifier(const []),
+        repository: repository,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // リストが空でも「献立から追加」は有効 (web の trigger に disabled なし)。
+    await tester.tap(find.text('献立から追加'));
+    // preview 未解決の間はスピナーが回り続けるため pumpAndSettle は使わない。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('献立から食材を追加'), findsOneWidget);
+    expect(find.text('確認中...'), findsOneWidget);
+    expect(confirmButton(tester).onPressed, isNull);
+
+    // preview 解決: 0 件 → 専用文言 + disabled のまま (web と同一文言)。
+    repository.previewGate!.complete(0);
+    await tester.pumpAndSettle();
+
+    expect(repository.previewCallCount, 1);
+    expect(repository.lastPreviewHouseholdId, 'hh-1');
+    expect(
+      find.text(
+        '今週の献立から追加できる食材がありません。'
+        '献立を登録するか、既にリストに追加済みでないか確認してください。',
+      ),
+      findsOneWidget,
+    );
+    expect(confirmButton(tester).onPressed, isNull);
+    expect(repository.generateCallCount, 0);
+  });
+
+  testWidgets('献立から追加: preview N 件文言 → 確定で repository 呼び出し + '
+      '成功 SnackBar + ダイアログが閉じる', (tester) async {
+    final repository = _FakeRepository()
+      ..previewResult = 3
+      ..generateResult = 3;
+    await tester.pumpWidget(
+      _harness(
+        notifier: () => _FakeItemsNotifier(const []),
+        repository: repository,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('献立から追加'));
+    await tester.pumpAndSettle();
+
+    // web と同一の確認文言。確定は enabled。
+    expect(
+      find.text('今週の献立から3件の食材を買い物リストに追加しますか？（既にリストにある食材は除外されます）'),
+      findsOneWidget,
+    );
+    expect(confirmButton(tester).onPressed, isNotNull);
+
+    await tester.tap(find.text('追加する'));
+    await tester.pumpAndSettle();
+
+    expect(repository.generateCallCount, 1);
+    expect(repository.lastGenerateHouseholdId, 'hh-1');
+    expect(repository.lastGenerateUserId, 'user-1');
+    // 成功 SnackBar (web `${count}件の食材を追加しました`) + ダイアログ close。
+    expect(find.text('3件の食材を追加しました'), findsOneWidget);
+    expect(find.text('献立から食材を追加'), findsNothing);
+  });
+
+  testWidgets('献立から追加: 確定時の型付き例外は文言 SnackBar + ダイアログを閉じる '
+      '(web は全分岐で close)', (tester) async {
+    final repository = _FakeRepository()
+      ..previewResult = 2
+      ..generateError = const NoNewIngredientsException();
+    await tester.pumpWidget(
+      _harness(
+        notifier: () => _FakeItemsNotifier(const []),
+        repository: repository,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('献立から追加'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('追加する'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('追加できる新しい食材がありません'), findsOneWidget);
+    // ClearCheckedDialog (エラー時は開いたまま) と異なり、web
+    // generate-from-meals.tsx:46-56 は全分岐で `setOpen(false)`。
+    expect(find.text('献立から食材を追加'), findsNothing);
+  });
+
+  testWidgets('献立から追加: 想定外エラーは「食材の追加に失敗しました」SnackBar + close', (
+    tester,
+  ) async {
+    final repository = _FakeRepository()
+      ..previewResult = 2
+      ..generateError = StateError('boom');
+    await tester.pumpWidget(
+      _harness(
+        notifier: () => _FakeItemsNotifier(const []),
+        repository: repository,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('献立から追加'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('追加する'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('食材の追加に失敗しました'), findsOneWidget);
+    expect(find.text('献立から食材を追加'), findsNothing);
   });
 }

@@ -12,6 +12,7 @@ import '../data/shopping_items_notifier.dart';
 import '../domain/shopping_item.dart';
 import 'widgets/add_item_form.dart';
 import 'widgets/clear_checked_dialog.dart';
+import 'widgets/generate_from_meals_dialog.dart';
 import 'widgets/shopping_category_group.dart';
 import 'widgets/store_filter_tabs.dart';
 
@@ -20,7 +21,7 @@ import 'widgets/store_filter_tabs.dart';
 ///
 /// 表示構成 (縦): 追加フォーム → 店舗フィルタタブ → (空状態) →
 /// カテゴリ別グループ (未チェック) → チェック済み折りたたみ →
-/// チェック済みクリアボタン。
+/// アクション行 (献立から追加 / チェック済みクリア)。
 ///
 /// データ:
 /// - `shoppingItemsNotifierProvider` を `.when(data/loading/error)` で消費
@@ -30,9 +31,6 @@ import 'widgets/store_filter_tabs.dart';
 /// - チェック者名は `householdMembersProvider` (web の memberMap)。
 /// - 書き込みは各 widget → `ShoppingRepository`。一覧反映は realtime
 ///   reducer に任せ、自分の操作は widget 局所の楽観更新 (tile / form 参照)。
-///
-/// 献立からの食材生成 (`GenerateFromMeals`) は Phase 2.5
-/// (`ShoppingRepository` クラス doc 参照)。
 class ShoppingPage extends ConsumerWidget {
   const ShoppingPage({super.key});
 
@@ -181,25 +179,50 @@ class _ShoppingBody extends ConsumerWidget {
             ],
           ],
           const SizedBox(height: 16),
-          // チェック済みクリア (原典の Dialog trigger ボタン。disabled 条件も
-          // 同一: 表示中のチェック済みが 0 件なら押せない)。
-          OutlinedButton.icon(
-            onPressed: checked.isEmpty
-                ? null
-                : () => showClearCheckedDialog(
-                    context,
-                    ref,
-                    checkedCount: checked.length,
+          // アクション行 (原典 shopping-list.tsx:347-349 の
+          // `flex items-center gap-2` — 両ボタン flex-1 の横並び)。
+          Row(
+            children: [
+              // 献立から追加 (原典 GenerateFromMeals の trigger。disabled
+              // 条件なし — 0 件判定はダイアログ内の preview が担う)。
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => showGenerateFromMealsDialog(context, ref),
+                  icon: const Icon(LucideIcons.calendarDays, size: 16),
+                  label: const Text('献立から追加'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(44),
+                    foregroundColor: IroriColors.textPrimary,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(IroriRadii.button),
+                    ),
                   ),
-            icon: const Icon(LucideIcons.trash2, size: 16),
-            label: const Text('チェック済みを削除'),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size.fromHeight(44),
-              foregroundColor: IroriColors.textPrimary,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(IroriRadii.button),
+                ),
               ),
-            ),
+              const SizedBox(width: 8),
+              // チェック済みクリア (原典の Dialog trigger ボタン。disabled
+              // 条件も同一: 表示中のチェック済みが 0 件なら押せない)。
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: checked.isEmpty
+                      ? null
+                      : () => showClearCheckedDialog(
+                          context,
+                          ref,
+                          checkedCount: checked.length,
+                        ),
+                  icon: const Icon(LucideIcons.trash2, size: 16),
+                  label: const Text('チェック済みを削除'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(44),
+                    foregroundColor: IroriColors.textPrimary,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(IroriRadii.button),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
