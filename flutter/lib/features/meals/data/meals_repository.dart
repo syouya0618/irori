@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/supabase/supabase_providers.dart';
 import '../../../core/utils/jst_date.dart';
 import '../domain/meal.dart';
+import '../domain/meal_template.dart';
 
 /// 全 Supabase 呼び出しに付与するタイムアウト。
 /// CLAUDE.md「外部API呼び出しにはタイムアウト設定必須」。
@@ -343,6 +344,211 @@ class MealsRepository {
     return false;
   }
 
+  // ─── テンプレート (P2.5-E) ──────────────────────────────────
+  // web `meals/actions.ts:248-392` (saveAsTemplate / loadTemplate /
+  // deleteTemplate / getTemplates) の移植。`meal_templates` は Realtime
+  // publication 非対象 (migrations 検証済) のため notifier は持たず、
+  // 選択ダイアログが open ごとに refetch する ([mealTemplatesProvider])。
+
+  /// 既存の献立をテンプレートとして保存し、作成した template の id を返す。
+  ///
+  /// web `saveAsTemplate` と同じ流れ:
+  /// 1. meals から title を取得。web は select 後に app 層で
+  ///    `household_id !== householdId` を照合するが、Flutter は
+  ///    `.eq('household_id')` を query に畳む (RLS と二重の防御)。対象 0 行
+  ///    (他世帯 / 既削除) は PGRST116 で throw — web の
+  ///    「この献立をテンプレートとして保存する権限がありません。」分岐に相当。
+  /// 2. meal_ingredients を web と同一列 (`name, quantity, category`) で取得。
+  ///    **意図的差異**: web は取得エラーを log して空配列で保存を続行する
+  ///    (actions.ts:273-277 + `ingredients || []`) が、Dart は rethrow する —
+  ///    食材が静かに欠落したテンプレートを作らない (エラー握り潰し禁止)。
+  /// 3. meal_templates へ insert (`.select('id').single()` で id 取得)。
+  ///    ingredients は取得行をそのまま JSONB として渡す (web と同形)。
+  /// 4. meals.template_id へのリンク update。**web parity**: web は
+  ///    `.error` を検証しない (actions.ts:295-298) ため、Dart も失敗を
+  ///    構造化ログのみで握り、テンプレート保存自体は成功扱いにする
+  ///    (テンプレート行は既に作成済み — リンクは付加情報)。観測性のため
+  ///    web に無い行数検証 (`.select('id').single()`) を足すが、その失敗も
+  ///    log のみ (挙動中立)。
+  Future<String> saveAsTemplate({
+    required String householdId,
+    required String userId,
+    required String mealId,
+  }) async {
+    final PostgrestMap meal;
+    try {
+      meal = await _client
+          .from('meals')
+          .select('title')
+          .eq('id', mealId)
+          .eq('household_id', householdId)
+          .single()
+          .timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      _logMutationError('saveAsTemplate/lookup', e, st, 'mealId=$mealId');
+      rethrow;
+    }
+
+    final PostgrestList ingredientRows;
+    try {
+      ingredientRows = await _client
+          .from('meal_ingredients')
+          .select('name, quantity, category')
+          .eq('meal_id', mealId)
+          .timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      _logMutationError('saveAsTemplate/ingredients', e, st, 'mealId=$mealId');
+      rethrow;
+    }
+
+    final PostgrestMap template;
+    try {
+      template = await _client
+          .from('meal_templates')
+          .insert({
+            'household_id': householdId,
+            'title': meal['title'] as String,
+            'ingredients': ingredientRows,
+            'created_by': userId,
+          })
+          .select('id')
+          .single()
+          .timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      _logMutationError('saveAsTemplate/insert', e, st, 'mealId=$mealId');
+      rethrow;
+    }
+    final templateId = template['id'] as String;
+
+    try {
+      await _client
+          .from('meals')
+          .update({'template_id': templateId})
+          .eq('id', mealId)
+          .eq('household_id', householdId)
+          .select('id')
+          .single()
+          .timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      // 握り潰しではなく web parity の意図的継続 (メソッド doc 4. 参照)。
+      _logMutationError(
+        'saveAsTemplate/link',
+        e,
+        st,
+        'mealId=$mealId templateId=$templateId',
+      );
+    }
+    return templateId;
+  }
+
+  /// テンプレート一覧を `created_at` 降順で取得する (web `getTemplates`)。
+  ///
+  /// **意図的差異 (裁定済)**: web はエラー時に log + 空配列を返し
+  /// 「エラー」と「0 件」を UI が区別できないが、Flutter は既存 fetch 系規約
+  /// ([fetchWeekMeals] と同形) どおり rethrow し、選択ダイアログが
+  /// error 表示 + 再試行を出す。
+  ///
+  /// `ingredients` JSONB の破損行は [mealTemplateIngredientsFromJson] が
+  /// 空リスト / 要素 skip に倒すため、1 行の破損で一覧全体は落ちない。
+  Future<List<MealTemplate>> getTemplates(String householdId) async {
+    try {
+      final rows = await _client
+          .from('meal_templates')
+          .select('id, title, ingredients, created_at')
+          .eq('household_id', householdId)
+          // web の .order("created_at", { ascending: false })。supabase-dart の
+          // 既定も descending だが、web との対応を明示する。
+          .order('created_at', ascending: false)
+          .timeout(_kQueryTimeout);
+      return rows.map(MealTemplate.fromJson).toList();
+    } on PostgrestException catch (e) {
+      _logPostgrestError('getTemplates', e, 'householdId=$householdId');
+      rethrow;
+    }
+  }
+
+  /// テンプレート 1 件をフォーム prefill 用に取得する (web `loadTemplate`)。
+  ///
+  /// web は select に `household_id` を足して app 層で照合するが、Flutter は
+  /// `.eq('household_id')` を query に畳む (RLS と二重の防御)。対象 0 行
+  /// (他世帯 / 既削除) は PGRST116 で throw — web の
+  /// 「テンプレートが見つかりません。」分岐に相当。
+  ///
+  /// `ingredients` は web の無検証 cast (actions.ts:329) と違い
+  /// [mealTemplateIngredientsFromJson] で防御的にパースする (非配列 → 空)。
+  Future<MealTemplatePrefill> loadTemplate({
+    required String householdId,
+    required String templateId,
+  }) async {
+    final PostgrestMap row;
+    try {
+      row = await _client
+          .from('meal_templates')
+          .select('title, ingredients')
+          .eq('id', templateId)
+          .eq('household_id', householdId)
+          .single()
+          .timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      _logMutationError('loadTemplate', e, st, 'templateId=$templateId');
+      rethrow;
+    }
+    return (
+      title: row['title'] as String,
+      ingredients: mealTemplateIngredientsFromJson(row['ingredients']),
+    );
+  }
+
+  /// テンプレートを削除する (web `deleteTemplate`)。
+  ///
+  /// web と同じ順序: meals の unlink update (`template_id = null`) →
+  /// meal_templates delete。
+  ///
+  /// - unlink は web と同じく `template_id` のみで絞る (meals に household
+  ///   スコープは付けない — 他世帯の行は RLS で不可視)。**web parity**: web は
+  ///   unlink の `.error` を検証しない (actions.ts:356-359) ため、Dart も
+  ///   失敗を構造化ログのみで握って delete に進む。`meals.template_id` は
+  ///   FK `ON DELETE SET NULL` のため、unlink が失敗しても delete 成功時に
+  ///   DB 側で null 化され孤児リンクは残らない (initial_schema.sql:129)。
+  /// - delete は household スコープ + `.select('id').single()` の行数検証
+  ///   ([deleteMeal] と同形)。対象 0 行は PGRST116 で throw — web の
+  ///   「このテンプレートを削除する権限がありません。」分岐 (ownership
+  ///   事前 select) を query 化したもの。
+  Future<void> deleteTemplate({
+    required String householdId,
+    required String templateId,
+  }) async {
+    try {
+      await _client
+          .from('meals')
+          .update({'template_id': null})
+          .eq('template_id', templateId)
+          .timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      // 握り潰しではなく web parity の意図的継続 (メソッド doc 参照)。
+      _logMutationError(
+        'deleteTemplate/unlink',
+        e,
+        st,
+        'templateId=$templateId',
+      );
+    }
+
+    try {
+      await _client
+          .from('meal_templates')
+          .delete()
+          .eq('id', templateId)
+          .eq('household_id', householdId)
+          .select('id')
+          .single()
+          .timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      _logMutationError('deleteTemplate', e, st, 'templateId=$templateId');
+      rethrow;
+    }
+  }
+
   /// `meal_ingredients` への一括 insert 行を組み立てる。
   /// web と同じく `quantity` の空文字は null に正規化する
   /// (`quantity: ing.quantity || null`)。
@@ -417,6 +623,23 @@ final mealsMutationContextProvider = FutureProvider<MealsMutationContext>((
 /// `MealsRepository` の DI provider。
 final mealsRepositoryProvider = Provider<MealsRepository>((ref) {
   return MealsRepository(ref.watch(supabaseClientProvider));
+});
+
+/// テンプレート一覧 (`created_at` 降順)。
+///
+/// `meal_templates` は Realtime publication 非対象 (migrations grep 検証済) の
+/// ため、realtime 連動の notifier では更新が永遠に届かない (p25plan risks)。
+/// 裁定どおり、選択ダイアログ (`showTemplateSelectorDialog`) が **open ごとに
+/// `ref.invalidate(mealTemplatesProvider)` で refetch** する。
+///
+/// householdId は [mealsMutationContextProvider] から取る (一覧はダイアログの
+/// load/delete 操作と一体で、認証 + 世帯参加の前提を共有する)。
+/// エラーは rethrow 規約 ([MealsRepository.getTemplates] doc) により
+/// AsyncError になり、ダイアログが error 表示 + 再試行を出す。
+final mealTemplatesProvider = FutureProvider<List<MealTemplate>>((ref) async {
+  final context = await ref.watch(mealsMutationContextProvider.future);
+  final repo = ref.watch(mealsRepositoryProvider);
+  return repo.getTemplates(context.householdId);
 });
 
 /// web の `quantity: ing.quantity || null` 相当: 空文字を null に正規化する

@@ -4,12 +4,54 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:irori/core/domain/item_category.dart';
 import 'package:irori/features/meals/data/meals_repository.dart';
 import 'package:irori/features/meals/domain/meal.dart';
+import 'package:irori/features/meals/domain/meal_template.dart';
 import 'package:irori/features/meals/presentation/widgets/meal_form_sheet.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 class _Repo extends Fake implements MealsRepository {
   /// 非 null なら create/update/delete がこの例外で失敗する。
   Object? error;
+
+  /// 非 null なら saveAsTemplate がこの例外で失敗する。
+  Object? saveTemplateError;
+
+  /// getTemplates が返す一覧 (選択ダイアログ用)。
+  List<MealTemplate> templates = [];
+
+  /// loadTemplate が返す prefill。
+  MealTemplatePrefill prefill = (title: '', ingredients: []);
+
+  ({String householdId, String userId, String mealId})? savedAsTemplate;
+  ({String householdId, String templateId})? loadedTemplate;
+
+  @override
+  Future<String> saveAsTemplate({
+    required String householdId,
+    required String userId,
+    required String mealId,
+  }) async {
+    if (saveTemplateError != null) throw saveTemplateError!;
+    savedAsTemplate = (
+      householdId: householdId,
+      userId: userId,
+      mealId: mealId,
+    );
+    return 'tpl-new';
+  }
+
+  @override
+  Future<List<MealTemplate>> getTemplates(String householdId) async {
+    return templates;
+  }
+
+  @override
+  Future<MealTemplatePrefill> loadTemplate({
+    required String householdId,
+    required String templateId,
+  }) async {
+    loadedTemplate = (householdId: householdId, templateId: templateId);
+    return prefill;
+  }
 
   ({
     String householdId,
@@ -339,6 +381,162 @@ void main() {
       expect(find.text('本当に削除しますか？'), findsNothing);
       expect(find.text('この献立を削除'), findsOneWidget);
       expect(repo.deleted, isNull);
+    });
+  });
+
+  group('MealFormSheet テンプレート連携', () {
+    testWidgets('追加モード: 「テンプレートから作成」のみ表示 (保存ボタンは編集時のみ)', (
+      tester,
+    ) async {
+      final repo = _Repo();
+      await tester.pumpWidget(_wrap(repo: repo));
+
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('テンプレートから作成'), findsOneWidget);
+      expect(find.text('テンプレート保存'), findsNothing);
+    });
+
+    testWidgets('編集モード: 「テンプレート保存」で saveAsTemplate が呼ばれ sheet は閉じない', (
+      tester,
+    ) async {
+      final repo = _Repo();
+      await tester.pumpWidget(_wrap(repo: repo, existing: _existingMeal()));
+
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('テンプレート保存'), findsOneWidget);
+      await tester.tap(find.text('テンプレート保存'));
+      await tester.pumpAndSettle();
+
+      expect(
+        repo.savedAsTemplate,
+        (householdId: 'hh-1', userId: 'user-1', mealId: 'meal-1'),
+      );
+      // 原典 handleSaveAsTemplate と同一文言。sheet は開いたまま。
+      expect(find.text('テンプレートとして保存しました'), findsOneWidget);
+      expect(find.text('更新する'), findsOneWidget);
+    });
+
+    testWidgets('テンプレート保存の失敗は actions.ts と同一文言で sheet を閉じない', (tester) async {
+      final repo = _Repo()
+        ..saveTemplateError = StateError('saveAsTemplate failed');
+      await tester.pumpWidget(_wrap(repo: repo, existing: _existingMeal()));
+
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('テンプレート保存'));
+      await tester.pumpAndSettle();
+
+      expect(repo.savedAsTemplate, isNull);
+      expect(find.text('テンプレートの保存に失敗しました。'), findsOneWidget);
+      expect(find.text('更新する'), findsOneWidget);
+    });
+
+    testWidgets('「テンプレートから作成」→ 行タップでメニュー名と食材がプリフィルされる', (tester) async {
+      final repo = _Repo()
+        ..templates = [
+          MealTemplate(
+            id: 'tpl-1',
+            title: 'カレーライス',
+            ingredients: const [
+              MealIngredient(
+                name: 'にんじん',
+                quantity: '2本',
+                category: ItemCategory.vegetable,
+              ),
+            ],
+            createdAt: DateTime.parse('2026-06-10T12:00:00+00:00'),
+          ),
+        ]
+        ..prefill = (
+          title: 'カレーライス',
+          ingredients: const [
+            MealIngredient(
+              name: 'にんじん',
+              quantity: '2本',
+              category: ItemCategory.vegetable,
+            ),
+            MealIngredient(
+              name: '豚肉',
+              quantity: null,
+              category: ItemCategory.meat,
+            ),
+          ],
+        );
+      await tester.pumpWidget(_wrap(repo: repo));
+
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('テンプレートから作成'));
+      await tester.pumpAndSettle();
+
+      // ダイアログに一覧 (title + 食材数) が出る。
+      expect(find.text('保存済みのテンプレートを選択してください'), findsOneWidget);
+      expect(find.text('食材 1品'), findsOneWidget);
+
+      await tester.tap(find.text('カレーライス'));
+      await tester.pumpAndSettle();
+
+      // ダイアログが閉じ、フォームへプリフィルされる (原典 handleTemplateSelect)。
+      expect(
+        repo.loadedTemplate,
+        (householdId: 'hh-1', templateId: 'tpl-1'),
+      );
+      expect(find.text('保存済みのテンプレートを選択してください'), findsNothing);
+      expect(find.widgetWithText(TextField, 'カレーライス'), findsOneWidget);
+      expect(find.widgetWithText(TextField, 'にんじん'), findsOneWidget);
+      expect(find.widgetWithText(TextField, '豚肉'), findsOneWidget);
+
+      // プリフィル後そのまま保存すると食材ごと repository に渡る。
+      await tester.tap(find.text('追加する'));
+      await tester.pumpAndSettle();
+      expect(repo.created, isNotNull);
+      expect(repo.created!.title, 'カレーライス');
+      expect(repo.created!.ingredients, hasLength(2));
+      expect(repo.created!.ingredients[1].name, '豚肉');
+      // quantity null は空文字 controller 経由で '' → repository 側で null 化
+      // される入力契約 (_validIngredients は raw 値を渡す)。
+      expect(repo.created!.ingredients[1].quantity, '');
+    });
+
+    testWidgets('プリフィルは既存の食材行を置換する (継ぎ足さない)', (tester) async {
+      final repo = _Repo()
+        ..templates = [
+          MealTemplate(
+            id: 'tpl-1',
+            title: 'うどん',
+            ingredients: const [],
+            createdAt: DateTime.parse('2026-06-10T12:00:00+00:00'),
+          ),
+        ]
+        ..prefill = (
+          title: 'うどん',
+          ingredients: const [
+            MealIngredient(
+              name: 'ねぎ',
+              quantity: null,
+              category: ItemCategory.vegetable,
+            ),
+          ],
+        );
+      await tester.pumpWidget(_wrap(repo: repo, existing: _existingMeal()));
+
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(TextField, 'じゃがいも'), findsOneWidget);
+
+      await tester.tap(find.text('テンプレートから作成'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('うどん'));
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(TextField, 'うどん'), findsOneWidget);
+      expect(find.widgetWithText(TextField, 'ねぎ'), findsOneWidget);
+      // 既存の食材行 (じゃがいも) は置換されて消える (web setIngredients 同様)。
+      expect(find.widgetWithText(TextField, 'じゃがいも'), findsNothing);
     });
   });
 }
