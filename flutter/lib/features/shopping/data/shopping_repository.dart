@@ -189,6 +189,9 @@ class ShoppingRepository {
   ///   `(data?.sort_order ?? 0) + 1` = 1 に fallback して insert へ進む。
   ///   Dart 版も握り潰さず構造化ログし (CLAUDE.md「maybeSingle の error を
   ///   必ず受け取る」)、同じ fallback 値 1 を返す。
+  ///
+  /// `StockRepository._nextShoppingSortOrder` に同型の意図的な複製あり —
+  /// 挙動を変える時は両方を直すこと (相互参照)。
   Future<int> _nextSortOrder(String householdId) async {
     try {
       final row = await _client

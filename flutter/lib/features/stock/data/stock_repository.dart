@@ -36,7 +36,7 @@ typedef StockMutationContext = ({String householdId, String userId});
 class DuplicateShoppingItemException implements Exception {
   const DuplicateShoppingItemException();
 
-  /// web `stock/actions.ts:135` と同一文言。
+  /// web `stock/actions.ts:139` と同一文言。
   static const String message = '既に買い物リストにあります';
 
   @override
@@ -242,7 +242,7 @@ class StockRepository {
   /// 2. `shopping_items` を `.ilike('name', 生の name)` + `limit(1)` で重複
   ///    チェック。
   ///    **【web parity の意図的 quirk — レビューで「修正」しないこと】**
-  ///    web actions.ts:128 `.ilike("name", stockItem.name)` は `%` `_` を
+  ///    web actions.ts:129 `.ilike("name", stockItem.name)` は `%` `_` を
   ///    エスケープしない。名前に `%` / `_` を含む在庫は wildcard として
   ///    誤マッチする latent quirk ごと移植する (直すなら web と同時に別 issue
   ///    — Phase 2.5 計画 risks 欄)。照合規格が `autoAddToStock` の
@@ -251,7 +251,7 @@ class StockRepository {
   /// 3. 重複チェックの **read 失敗はログのみで insert へ続行**
   ///    (web actions.ts:130-134 — `logSupabaseError` のみで return しない)。
   /// 4. 重複なら [DuplicateShoppingItemException]。
-  /// 5. `store_type: 'supermarket'` で insert (web actions.ts:147。
+  /// 5. `store_type: 'supermarket'` で insert (web actions.ts:151。
   ///    [autoAddLowStockItems] の drugstore とは意図的に異なる)。`category` は
   ///    取得した生文字列のパススルー (web の `as ItemCategory` は型 cast のみ
   ///    — enum 往復で fallback 変換しない。`autoAddToStock` と同じ方針)。
@@ -350,7 +350,7 @@ class StockRepository {
   /// (low-stock.ts:47-50, 86-92) — チェック済みの同名は除外されず再追加される
   /// (web parity。「買った直後にまた残り少ない」を許す現挙動)。
   ///
-  /// insert は `store_type: 'drugstore'` (low-stock.ts:100 — おむつ等の
+  /// insert は `store_type: 'drugstore'` (low-stock.ts:99 — おむつ等の
   /// 消耗品はドラッグストア導線。[addToShoppingList] の supermarket とは
   /// 意図的に異なる)。insert 失敗のみ `error` 非 null
   /// ([AutoAddLowStockResult] doc 参照)。
@@ -489,7 +489,7 @@ class StockRepository {
         st,
         'householdId=$householdId itemCount=${insertRows.length}',
       );
-      // web low-stock.ts:115-117 と同一文言。error 非 null はこの経路のみ。
+      // web low-stock.ts:108-110 と同一文言。error 非 null はこの経路のみ。
       return (
         error: '買い物リストへの追加に失敗しました',
         addedItems: const <String>[],
