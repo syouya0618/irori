@@ -74,6 +74,21 @@ void main() {
       // todayYmd 側の不正も none (web daysBetweenYmd は from/to 両対応)。
       expect(classifyExpiry('garbage', '2026-06-13'), StockExpiryStatus.none);
     });
+
+    // Issue #38: Dart の `int.parse` は前後空白・符号 prefix・0x prefix を
+    // 許容するため、jst_date の桁数チェックをすり抜けて expired 等に
+    // 誤分類されていた。web `parseYmd` (`date-jst.ts`) の
+    // `^\d{4}-\d{2}-\d{2}$` と同一の regex 事前検証で none に倒す。
+    test('int.parse が許容する lax 形式も none に倒す (Issue #38)', () {
+      expect(classifyExpiry(today, '2026-04-9 '), StockExpiryStatus.none);
+      expect(classifyExpiry(today, '+123-01-02'), StockExpiryStatus.none);
+      expect(classifyExpiry(today, '0x10-01-02'), StockExpiryStatus.none);
+      // todayYmd 側も regex で弾く (web daysBetweenYmd は from/to 両対応)。
+      expect(
+        classifyExpiry('+123-01-02', '2026-06-13'),
+        StockExpiryStatus.none,
+      );
+    });
   });
 
   group('StockExpiryStatus.isExpiringAlert (web countExpiringItems と等価)', () {

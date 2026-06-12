@@ -56,6 +56,16 @@ void main() {
       expect(daysUntilExpiry('2026-4-09', kToday), isNull);
       expect(daysUntilExpiry('abcd-ef-gh', kToday), isNull);
     });
+
+    // Issue #38: Dart の `int.parse` は前後空白・符号 prefix・0x prefix を
+    // 許容するため、jst_date の桁数チェックをすり抜けて数値が返っていた
+    // (例: '+123-01-02' → -695154)。web `parseYmd` (`date-jst.ts`) の
+    // `^\d{4}-\d{2}-\d{2}$` と同一の regex 事前検証で null に倒す。
+    test('int.parse が許容する lax 形式も null を返す (Issue #38)', () {
+      expect(daysUntilExpiry('2026-04-9 ', kToday), isNull); // 末尾空白+1桁日
+      expect(daysUntilExpiry('+123-01-02', kToday), isNull); // 符号 prefix
+      expect(daysUntilExpiry('0x10-01-02', kToday), isNull); // 16進 prefix
+    });
   });
 
   group('calculateExpiryBonus', () {

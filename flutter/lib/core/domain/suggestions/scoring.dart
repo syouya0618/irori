@@ -10,6 +10,16 @@ import '../../utils/jst_date.dart';
 import 'matching.dart';
 import 'types.dart';
 
+/// web `parseYmd` (`src/lib/utils/date-jst.ts`) と同一の厳密形式検証
+/// (Issue #38)。
+///
+/// `jst_date.dart` の `daysBetweenYmd` は桁数チェック + `int.parse` のため、
+/// `int.parse` が許容する前後空白 (`'9 '`)・符号 prefix (`'+123'`)・
+/// 16進 prefix (`'0x10'`) をすり抜けて数値を返してしまう。web は regex
+/// 不一致で null のため、`daysBetweenYmd` へ渡す前に同じ regex で弾く
+/// (`jst_date.dart` 本体は正規形保証済みの呼び出し元があるため変えない)。
+final _ymdPattern = RegExp(r'^\d{4}-\d{2}-\d{2}$');
+
 /// 指定された [expiresAt] (YYYY-MM-DD) から、今日 (JST) までの日数差を返す。
 /// 期限切れは負の値、当日は 0、未来は正の値。
 /// [expiresAt] が null または不正な場合は null を返す。
@@ -18,19 +28,24 @@ import 'types.dart';
 /// (原典は「サーバー(UTC)とクライアント(JST)で同じ結果」)。
 ///
 /// 原典 `daysUntilExpiry` は `daysFromTodayJst` (= `daysBetweenYmd` の
-/// パース失敗 null 経路) に委譲する。Dart 側の `daysBetweenYmd` は
-/// 形式不正で throw する規約のため、`ArgumentError` / `FormatException` を
+/// パース失敗 null 経路) に委譲する。Dart 側は web `parseYmd` と同一の
+/// `_ymdPattern` で事前検証して不一致を null に倒し (Issue #38)、さらに
+/// `daysBetweenYmd` の throw 規約 (`ArgumentError` / `FormatException`) も
 /// 捕捉して null へ倒す — `stock_expiry.dart` の `classifyExpiry` と同流儀。
 int? daysUntilExpiry(String? expiresAt, DateTime today) {
   // 原典 `if (!expiresAt) return null` — null と空文字の両方を弾く。
   if (expiresAt == null || expiresAt.isEmpty) return null;
+  // 原典 `parseYmd` の regex 検証 — 不一致は null (Issue #38)。
+  if (!_ymdPattern.hasMatch(expiresAt)) return null;
   try {
     return daysBetweenYmd(formatJstDate(today), expiresAt);
   } on ArgumentError {
     // "YYYY-MM-DD" の桁構成でない (jst_date の形式検証)。
+    // regex 事前検証後は理論上到達しないが、防御として残す。
     return null;
   } on FormatException {
     // 桁構成は合うが数値でない ("abcd-ef-gh" 等の int.parse 失敗)。
+    // 同上 — regex 事前検証後は到達しないが、防御として残す。
     return null;
   }
 }
