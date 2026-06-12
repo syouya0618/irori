@@ -1,27 +1,12 @@
-import { createClient } from "@/lib/supabase/server"
+import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { ShoppingList } from "@/components/shopping/shopping-list"
 
 export default async function ShoppingPage() {
-  const supabase = await createClient()
-
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return null
-
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("household_id")
-    .eq("id", user.id)
-    .single()
-
-  if (profileError) {
-    logSupabaseError("shopping", "profile lookup failed", profileError, {
-      userId: user.id,
-    })
-  }
-
-  if (!profile?.household_id) return null
-  const householdId = profile.household_id
+  // layout と同一リクエスト内のため React.cache() で auth クエリは dedupe される
+  const { context } = await getAuthContext()
+  if (!context) return null
+  const { supabase, userId, householdId } = context
 
   // 買い物アイテムを取得
   const { data: items, error: itemsError } = await supabase
@@ -34,7 +19,7 @@ export default async function ShoppingPage() {
 
   if (itemsError) {
     logSupabaseError("shopping", "shopping items lookup failed", itemsError, {
-      userId: user.id,
+      userId,
       householdId,
     })
   }
@@ -47,7 +32,7 @@ export default async function ShoppingPage() {
 
   if (membersError) {
     logSupabaseError("shopping", "household members lookup failed", membersError, {
-      userId: user.id,
+      userId,
       householdId,
     })
   }

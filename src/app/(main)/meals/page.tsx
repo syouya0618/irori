@@ -1,27 +1,13 @@
-import { createClient } from "@/lib/supabase/server"
+import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { MealWeekView } from "@/components/meals/meal-week-view"
 import { currentWeekRangeJst } from "@/lib/utils/date-jst"
 
 export default async function MealsPage() {
-  const supabase = await createClient()
-
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return null
-
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("household_id")
-    .eq("id", user.id)
-    .single()
-
-  if (profileError) {
-    logSupabaseError("meals", "profile lookup failed", profileError, {
-      userId: user.id,
-    })
-  }
-
-  if (!profile?.household_id) return null
+  // layout と同一リクエスト内のため React.cache() で auth クエリは dedupe される
+  const { context } = await getAuthContext()
+  if (!context) return null
+  const { supabase, userId, householdId } = context
 
   // Vercel (UTC) でもクライアント (JST) でも同じ「JST の今週」を返す
   const { startDate, endDate } = currentWeekRangeJst()
@@ -35,23 +21,23 @@ export default async function MealsPage() {
       meal_ingredients ( name, quantity, category )
     `
     )
-    .eq("household_id", profile.household_id)
+    .eq("household_id", householdId)
     .gte("date", startDate)
     .lte("date", endDate)
     .order("date")
 
   if (mealsError) {
     logSupabaseError("meals", "meals lookup failed", mealsError, {
-      userId: user.id,
-      householdId: profile.household_id,
+      userId,
+      householdId,
     })
   }
 
   return (
     <MealWeekView
       initialMeals={(meals as unknown as Parameters<typeof MealWeekView>[0]["initialMeals"]) ?? []}
-      householdId={profile.household_id}
-      userId={user.id}
+      householdId={householdId}
+      userId={userId}
       initialWeekStart={startDate}
     />
   )
