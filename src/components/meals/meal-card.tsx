@@ -23,9 +23,16 @@ interface MealCardProps {
   meal: MealCardData
   currentUserId: string
   onTap: () => void
+  /** 自分のリアクションの楽観反映 (null は解除)。MealReactions へ中継する */
+  onOptimisticReaction: (mealId: string, reaction: MealReaction | null) => void
 }
 
-export function MealCard({ meal, currentUserId, onTap }: MealCardProps) {
+export function MealCard({
+  meal,
+  currentUserId,
+  onTap,
+  onOptimisticReaction,
+}: MealCardProps) {
   return (
     <div
       role="button"
@@ -62,6 +69,7 @@ export function MealCard({ meal, currentUserId, onTap }: MealCardProps) {
           mealId={meal.id}
           currentUserId={currentUserId}
           reactions={meal.reactions}
+          onOptimisticReaction={onOptimisticReaction}
         />
       </div>
     </div>

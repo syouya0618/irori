@@ -4,7 +4,7 @@ import { MealCard, EmptyMealSlot } from "@/components/meals/meal-card"
 import { formatDayHeader, isToday } from "@/components/meals/week-date-utils"
 import { MEAL_TYPE_SHORT_LABELS } from "@/lib/utils/meal-types"
 import type { MealWithDetails } from "@/components/meals/use-week-meals"
-import type { MealType } from "@/lib/types/database"
+import type { MealType, MealReaction } from "@/lib/types/database"
 
 // 週ビューは snack を除く3食のみ表示する
 const WEEK_VIEW_MEAL_TYPES: MealType[] = ["breakfast", "lunch", "dinner"]
@@ -16,6 +16,7 @@ interface MealDayRowProps {
   userId: string
   openEditMeal: (meal: MealWithDetails) => void
   openNewMeal: (date: string, mealType: MealType) => void
+  onOptimisticReaction: (mealId: string, reaction: MealReaction | null) => void
 }
 
 export function MealDayRow({
@@ -25,6 +26,7 @@ export function MealDayRow({
   userId,
   openEditMeal,
   openNewMeal,
+  onOptimisticReaction,
 }: MealDayRowProps) {
   const todayFlag = isToday(day)
 
@@ -77,6 +79,7 @@ export function MealDayRow({
                   }}
                   currentUserId={userId}
                   onTap={() => openEditMeal(meal)}
+                  onOptimisticReaction={onOptimisticReaction}
                 />
               ) : (
                 <EmptyMealSlot

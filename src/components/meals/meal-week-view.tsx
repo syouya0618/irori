@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, startTransition } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { toast } from "sonner"
@@ -9,17 +9,38 @@ import { MealDayRow } from "@/components/meals/meal-day-row"
 import { MealFormSheet } from "@/components/meals/meal-form-sheet"
 import { useWeekMeals } from "@/components/meals/use-week-meals"
 import { formatWeekRange } from "@/components/meals/week-date-utils"
-import { loadTemplate } from "@/app/(main)/meals/actions"
+import {
+  loadTemplate,
+  createMeal,
+  updateMeal,
+  deleteMeal,
+} from "@/app/(main)/meals/actions"
 import { formatDateKey } from "@/lib/utils/date"
 import { todayJstString } from "@/lib/utils/date-jst"
+import type { MealFormSubmitData } from "@/components/meals/meal-form-sheet"
 import type { MealWithDetails } from "@/components/meals/use-week-meals"
-import type { MealType, ItemCategory } from "@/lib/types/database"
+import type { MealType, ItemCategory, MealReaction } from "@/lib/types/database"
 
 interface MealWeekViewProps {
   initialMeals: MealWithDetails[]
   householdId: string
   userId: string
   initialWeekStart: string // YYYY-MM-DD (Monday)
+}
+
+// 作成の楽観行に使うローカル擬似 id の連番。createMeal が確定 id を返すか
+// Realtime refetch が来るまでの間だけ存在する (同一セッション内の一意性で十分)
+let tempIdSeq = 0
+
+/** フォーム入力 (IngredientInput) を SELECT 結果と同じ行 shape へ変換する */
+function toOptimisticIngredients(
+  ingredients: MealFormSubmitData["ingredients"]
+): MealWithDetails["meal_ingredients"] {
+  return ingredients.map((ing) => ({
+    name: ing.name,
+    quantity: ing.quantity || null,
+    category: ing.category,
+  }))
 }
 
 export function MealWeekView({
@@ -41,6 +62,10 @@ export function MealWeekView({
     goToPreviousWeek,
     goToNextWeek,
     goToCurrentWeek,
+    upsertMealOptimistic,
+    removeMealOptimistic,
+    replaceMealIdOptimistic,
+    applyReactionOptimistic,
   } = useWeekMeals({ initialMeals, householdId, initialWeekStart })
 
   // Sheet state
@@ -120,6 +145,121 @@ export function MealWeekView({
       setEditingMeal(null)
       setPrefilledFromTemplate(null)
     }
+  }
+
+  // ── 楽観更新オーケストレーション ─────────────────────────
+  // 方針: UI へ即時反映してシートを閉じ、server action は裏で走らせる。
+  // 失敗時のみロールバック + toast (シートは閉じたまま)。成功時は
+  // meals テーブルの Realtime refetch が配列を丸ごと真値で置換して収束する。
+
+  function handleSubmitMeal(data: MealFormSubmitData) {
+    if (data.id) {
+      // ── 更新: 該当 meal を楽観置換 (reactions / template_id は既存値を維持)
+      const mealId = data.id
+      const previous = meals.find((m) => m.id === mealId)
+      const rollback = () => {
+        // snapshot があれば復元。refetch 等で既に消えていた場合は楽観行ごと除去
+        if (previous) upsertMealOptimistic(previous)
+        else removeMealOptimistic(mealId)
+      }
+      upsertMealOptimistic({
+        id: mealId,
+        date: data.date,
+        meal_type: data.mealType,
+        title: data.title,
+        is_eating_out: data.isEatingOut,
+        template_id: previous?.template_id ?? null,
+        meal_reactions: previous?.meal_reactions ?? [],
+        meal_ingredients: toOptimisticIngredients(data.ingredients),
+      })
+      handleSheetClose(false)
+
+      startTransition(async () => {
+        try {
+          const result = await updateMeal({
+            id: mealId,
+            date: data.date,
+            mealType: data.mealType,
+            title: data.title,
+            isEatingOut: data.isEatingOut,
+            ingredients: data.ingredients,
+          })
+          if (result.error) {
+            rollback()
+            toast.error(result.error)
+          }
+        } catch (err) {
+          console.error("[meals] updateMeal failed", { mealId, err })
+          rollback()
+          toast.error("献立の更新に失敗しました。通信環境をご確認ください。")
+        }
+      })
+    } else {
+      // ── 作成: temp id で楽観挿入 → 成功時に確定 id へ差し替え
+      const tempId = `optimistic-${++tempIdSeq}`
+      upsertMealOptimistic({
+        id: tempId,
+        date: data.date,
+        meal_type: data.mealType,
+        title: data.title,
+        is_eating_out: data.isEatingOut,
+        template_id: null,
+        meal_reactions: [],
+        meal_ingredients: toOptimisticIngredients(data.ingredients),
+      })
+      handleSheetClose(false)
+
+      startTransition(async () => {
+        try {
+          const result = await createMeal({
+            date: data.date,
+            mealType: data.mealType,
+            title: data.title,
+            isEatingOut: data.isEatingOut,
+            ingredients: data.ingredients,
+          })
+          if (result.error !== null) {
+            removeMealOptimistic(tempId)
+            toast.error(result.error)
+            return
+          }
+          // refetch 到着前にカードを編集/リアクションしても正しい id で
+          // action が飛ぶよう確定 id へ差し替える (refetch 先行時は no-op)
+          replaceMealIdOptimistic(tempId, result.mealId)
+        } catch (err) {
+          console.error("[meals] createMeal failed", { err })
+          removeMealOptimistic(tempId)
+          toast.error("献立の追加に失敗しました。通信環境をご確認ください。")
+        }
+      })
+    }
+  }
+
+  function handleDeleteMeal(mealId: string) {
+    const previous = meals.find((m) => m.id === mealId)
+    removeMealOptimistic(mealId)
+    handleSheetClose(false)
+
+    startTransition(async () => {
+      try {
+        const result = await deleteMeal(mealId)
+        if (result.error) {
+          if (previous) upsertMealOptimistic(previous)
+          toast.error(result.error)
+        }
+      } catch (err) {
+        console.error("[meals] deleteMeal failed", { mealId, err })
+        if (previous) upsertMealOptimistic(previous)
+        toast.error("献立の削除に失敗しました。通信環境をご確認ください。")
+      }
+    })
+  }
+
+  function handleOptimisticReaction(
+    mealId: string,
+    reaction: MealReaction | null
+  ) {
+    applyReactionOptimistic(mealId, userId, reaction)
   }
 
   const formInitialData = editingMeal
@@ -217,6 +357,7 @@ export function MealWeekView({
               userId={userId}
               openEditMeal={openEditMeal}
               openNewMeal={openNewMeal}
+              onOptimisticReaction={handleOptimisticReaction}
             />
           )
         })}
@@ -230,6 +371,8 @@ export function MealWeekView({
         initialData={formInitialData}
         defaultDate={selectedDate}
         defaultMealType={selectedMealType}
+        onSubmitMeal={handleSubmitMeal}
+        onDeleteMeal={handleDeleteMeal}
       />
     </div>
   )
