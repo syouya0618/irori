@@ -1200,7 +1200,7 @@ void main() {
         (column: 'household_id', value: 'hh-1'),
       ]);
       // エスケープは**本検索の規格** — addToShoppingList 系の重複チェック
-      // ilike (web stock/actions.ts:128) は逆に生値のままが正で、別規格
+      // ilike (web stock/actions.ts:129) は逆に生値のままが正で、別規格
       // (Phase 2.5 計画 risks 欄 — 統一しない)。
       expect(r.historyRead.ilikeFilters, [
         (column: 'item_name', pattern: r'%50\%引き\_テスト\\%'),

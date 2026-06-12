@@ -571,7 +571,7 @@ class ShoppingRepository {
   /// **web parity の意図的な規格差 — レビューで「統一」しないこと**
   /// (Phase 2.5 計画 risks 欄): 本検索の ilike は**エスケープする**側の
   /// 規格。在庫→買い物リスト追加の重複チェック ilike (web
-  /// stock/actions.ts:128) は**生値のまま**が正 (% _ を含む名前で誤マッチ
+  /// stock/actions.ts:129) は**生値のまま**が正 (% _ を含む名前で誤マッチ
   /// する latent quirk ごと移植する方針 — PR-G)。直す場合は web と同時に
   /// 別 issue で。
   Future<List<PurchaseSuggestion>> searchSuggestions({
