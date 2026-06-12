@@ -7,6 +7,13 @@ import { addDays, formatDateKey } from "@/lib/utils/date"
 import { todayJstString, weekStartMonday } from "@/lib/utils/date-jst"
 import type { MealType, MealReaction } from "@/lib/types/database"
 
+/**
+ * 作成の楽観行に使うローカル擬似 id の prefix。
+ * meal-week-view.tsx の temp id 生成と、fetchMeals 失敗時の temp 行
+ * クリーンアップが同じ判定を共有するため、ここで一元定義する。
+ */
+export const OPTIMISTIC_MEAL_ID_PREFIX = "optimistic-"
+
 export interface MealWithDetails {
   id: string
   date: string
@@ -93,6 +100,14 @@ export function useWeekMeals({
 
       if (data) {
         setMeals(data as unknown as MealWithDetails[])
+      } else {
+        // 真値が取れなかった場合は temp 楽観行のみ除去する。
+        // 残すと「作成が確定したか分からない行」が編集可能なまま残留し、
+        // temp id (optimistic-*) のまま updateMeal が飛んで権限エラーになる。
+        // 確定 id 行は消さない (真値が取れない時に既存表示を壊さない)。
+        setMeals((prev) =>
+          prev.filter((m) => !m.id.startsWith(OPTIMISTIC_MEAL_ID_PREFIX))
+        )
       }
       setIsLoading(false)
     },

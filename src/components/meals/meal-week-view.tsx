@@ -7,7 +7,10 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { MealDayRow } from "@/components/meals/meal-day-row"
 import { MealFormSheet } from "@/components/meals/meal-form-sheet"
-import { useWeekMeals } from "@/components/meals/use-week-meals"
+import {
+  useWeekMeals,
+  OPTIMISTIC_MEAL_ID_PREFIX,
+} from "@/components/meals/use-week-meals"
 import { formatWeekRange } from "@/components/meals/week-date-utils"
 import {
   loadTemplate,
@@ -29,7 +32,9 @@ interface MealWeekViewProps {
 }
 
 // 作成の楽観行に使うローカル擬似 id の連番。createMeal が確定 id を返すか
-// Realtime refetch が来るまでの間だけ存在する (同一セッション内の一意性で十分)
+// Realtime refetch が来るまでの間だけ存在する (同一セッション内の一意性で十分)。
+// prefix は use-week-meals.ts の OPTIMISTIC_MEAL_ID_PREFIX と共有し、
+// refetch 失敗時の temp 行クリーンアップが同じ判定で行えるようにする
 let tempIdSeq = 0
 
 /** フォーム入力 (IngredientInput) を SELECT 結果と同じ行 shape へ変換する */
@@ -196,7 +201,7 @@ export function MealWeekView({
       })
     } else {
       // ── 作成: temp id で楽観挿入 → 成功時に確定 id へ差し替え
-      const tempId = `optimistic-${++tempIdSeq}`
+      const tempId = `${OPTIMISTIC_MEAL_ID_PREFIX}${++tempIdSeq}`
       upsertMealOptimistic({
         id: tempId,
         date: data.date,

@@ -510,7 +510,12 @@ describe("Realtime refetch との収束", () => {
     await waitFor(() => {
       expect(mockState.fromMock).toHaveBeenCalledWith("meals")
     })
-    expect(screen.getAllByText("唐揚げ")).toHaveLength(1)
+    // refetch の setMeals 反映を polling で待つ (同期 assert だと setMeals 適用前に
+    // 評価されてフレークしうる)。temp → 正規行への置換そのものは後段の
+    // updateMeal id assertion が決定的に pin する
+    await waitFor(() => {
+      expect(screen.getAllByText("唐揚げ")).toHaveLength(1)
+    })
 
     // 遅れて createMeal が解決しても id 差し替えは no-op (重複や復活は起きない)
     await act(async () => {
@@ -527,5 +532,53 @@ describe("Realtime refetch との収束", () => {
         expect.objectContaining({ id: "meal-srv" }),
       )
     })
+  })
+
+  it("refetch 失敗 (mealsError) 時は temp 楽観行のみ除去され、確定 id 行は残る", async () => {
+    // refetch がエラー (data: null) を返すと真値で上書き収束できないため、
+    // temp 行を残すと「temp id のまま編集 → updateMeal が存在しない id で飛んで
+    // 権限エラー」のゾンビ化が起きる。temp 行のみ除去し、確定行は表示維持する契約。
+    const confirmed = makeMeal({
+      id: "meal-1",
+      date: WEEK_START,
+      meal_type: "dinner",
+      title: "うどん",
+    })
+    const d = deferred<Awaited<ReturnType<typeof createMeal>>>()
+    createMealMock.mockImplementation(() => d.promise)
+
+    render(<MealWeekView {...defaultProps({ initialMeals: [confirmed] })} />)
+
+    tapEmptySlot("2026-04-15", "breakfast")
+    fireEvent.change(await screen.findByLabelText("メニュー名"), {
+      target: { value: "トースト" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "追加する" }))
+    expect(screen.getByText("トースト")).toBeInTheDocument()
+
+    // 次の refetch を失敗させる (Supabase error 時は data: null)
+    mockState.orderMock.mockImplementationOnce(() =>
+      Promise.resolve({
+        data: null,
+        error: { message: "boom", code: "XX000", details: "", hint: "" },
+      }),
+    )
+    await act(async () => {
+      emit(makePayload("INSERT", confirmed))
+    })
+
+    // temp 楽観行は除去される
+    await waitFor(() => {
+      expect(screen.queryByText("トースト")).not.toBeInTheDocument()
+    })
+    // 確定 id 行は消さない (真値が取れない時に既存表示を壊さない)
+    expect(screen.getByText("うどん")).toBeInTheDocument()
+
+    // 遅れて createMeal が成功しても、除去済み temp 行の id 差し替えは
+    // no-op で復活しない (次の成功 refetch が正規行を連れてくる)
+    await act(async () => {
+      d.resolve({ error: null, mealId: "meal-real" })
+    })
+    expect(screen.queryByText("トースト")).not.toBeInTheDocument()
   })
 })
