@@ -9,15 +9,18 @@ export type AuthContext = {
 }
 
 // React.cache() で同一リクエスト内の重複呼び出しをメモ化する。
-// page.tsx と内部で呼ばれる Server Function の両方から呼ばれても、
-// auth.getUser() と profiles クエリは1回のみ実行される。
+// (main)/layout.tsx・page.tsx・内部で呼ばれる Server Function のどこから
+// 呼ばれても、auth.getUser() と profiles クエリは1回のみ実行される。
+// reason は layout のリダイレクト先分岐用 (error 文字列比較を避ける)。
 export const getAuthContext = cache(
   async (): Promise<
-    { error: string; context: null } | { error: null; context: AuthContext }
+    | { error: string; reason: "unauthenticated" | "no-household"; context: null }
+    | { error: null; reason: null; context: AuthContext }
   > => {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return { error: "認証されていません", context: null }
+    if (!user)
+      return { error: "認証されていません", reason: "unauthenticated", context: null }
 
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
@@ -31,8 +34,9 @@ export const getAuthContext = cache(
       })
     }
 
-    if (!profile?.household_id) return { error: "世帯が設定されていません", context: null }
+    if (!profile?.household_id)
+      return { error: "世帯が設定されていません", reason: "no-household", context: null }
 
-    return { error: null, context: { supabase, userId: user.id, householdId: profile.household_id } }
+    return { error: null, reason: null, context: { supabase, userId: user.id, householdId: profile.household_id } }
   },
 )

@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation"
-import { createClient } from "@/lib/supabase/server"
-import { logSupabaseError } from "@/lib/supabase/log-error"
+import { getAuthContext } from "@/lib/supabase/auth-context"
 import { BottomNav } from "@/components/common/bottom-nav"
 import { CacheUserGuard } from "@/components/common/cache-user-guard"
 
@@ -9,37 +8,19 @@ export default async function MainLayout({
 }: {
   children: React.ReactNode
 }) {
-  const supabase = await createClient()
+  // getAuthContext は React.cache() 済み — 同一リクエスト内で page 側の呼び出し
+  // と dedupe され、auth.getUser() + profiles クエリは 1 回に畳まれる
+  // (従来は layout 独自に getUser + profiles を発行し、page と二重だった)
+  const { context, reason } = await getAuthContext()
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  if (!user) {
-    redirect("/login")
-  }
-
-  // 世帯が未設定なら /setup へ
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("household_id")
-    .eq("id", user.id)
-    .single()
-
-  if (profileError) {
-    logSupabaseError("main-layout", "profile lookup failed", profileError, {
-      userId: user.id,
-    })
-  }
-
-  if (!profile?.household_id) {
-    redirect("/setup")
+  if (!context) {
+    redirect(reason === "no-household" ? "/setup" : "/login")
   }
 
   return (
     <div className="min-h-dvh bg-background">
       {/* 別ユーザーログイン時に前ユーザーの世帯キャッシュ (SW) を破棄 */}
-      <CacheUserGuard userId={user.id} />
+      <CacheUserGuard userId={context.userId} />
       <main className="mx-auto max-w-lg pb-20">{children}</main>
       <BottomNav />
     </div>
