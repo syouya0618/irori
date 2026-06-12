@@ -85,6 +85,18 @@ typedef ShoppingMutationContext = ({String householdId, String userId});
 /// 成功 toast「{名前}を在庫に追加しました」を出す (`shopping-item.tsx:61-63`)。
 typedef ToggleItemResult = ({bool autoStocked, String? autoStockedName});
 
+/// [ShoppingRepository.searchSuggestions] の 1 件。web `getSuggestions` の
+/// 戻り shape `{ name, category, storeType }` (actions.ts:279-285) に対応。
+///
+/// category / store_type が NULL の履歴行は **null のまま透過**し、UI 側が
+/// 「非 null のみフォームへ反映」する (web `selectSuggestion` の falsy ガード
+/// `if (suggestion.category) setCategory(...)` と等価)。
+typedef PurchaseSuggestion = ({
+  String name,
+  ItemCategory? category,
+  StoreType? storeType,
+});
+
 /// `shopping_items` / `purchase_history` と、在庫自動登録
 /// ([autoAddToStock]) のための `households` / `stock_items`、献立からの
 /// 食材生成 ([generateFromMeals]) のための `meals` / `meal_ingredients` への
@@ -96,9 +108,6 @@ typedef ToggleItemResult = ({bool autoStocked, String? autoStockedName});
 /// select とし、共有 provider へ抽象化しない (Phase 2.5 計画 — 過剰抽象の
 /// 回避)。
 ///
-/// **Phase 2.5 送り (本リポジトリに含めない web 機能)**:
-/// - `getSuggestions` (購入履歴サジェスト — PR-D)
-///
 /// エラー方針 (CLAUDE.md / `BabyRepository` / `MealsRepository` と同形):
 /// - `PostgrestException` は plain object のため、code/message/details/hint を
 ///   構造化して `debugPrint` し、握り潰さず rethrow する。
@@ -106,7 +115,8 @@ typedef ToggleItemResult = ({bool autoStocked, String? autoStockedName});
 ///   `clearChecked` の履歴 insert 失敗 (web parity の続行)、
 ///   [autoAddToStock] 内の各失敗 (web parity の bool false 戻し)、
 ///   [_newIngredientsForWeek] の既存リスト取得失敗 (web parity の空 Set
-///   続行)、[previewMealIngredients] (web parity の count 0 縮退) のみ、
+///   続行)、[previewMealIngredients] (web parity の count 0 縮退)、
+///   [searchSuggestions] の検索失敗 (web parity の空 list 縮退) のみ、
 ///   構造化ログのうえ rethrow しない — 各メソッドの doc コメント参照。
 class ShoppingRepository {
   ShoppingRepository(this._client);
@@ -539,6 +549,86 @@ class ShoppingRepository {
     }
 
     return checkedItems.length;
+  }
+
+  /// 購入履歴を部分一致検索し、名前でユニーク化したサジェストを返す。
+  ///
+  /// web `getSuggestions` (actions.ts:260-286) + `searchPurchaseHistory`
+  /// (shopping-queries.ts:114-141) の移植:
+  /// - 空 query (trim 後) は **DB 非アクセスで早期 return []**
+  ///   (actions.ts:261-263 — 認証前の early return)。
+  /// - `ilike` パターンは `query.trim()` の `%` `_` `\` を `\` 前置で
+  ///   エスケープしてから `%...%` に包む (shopping-queries.ts:123
+  ///   `.ilike("item_name", `%${query.trim().replace(/[%_\\]/g, "\\$&")}%`)`
+  ///   と同一 regex 意味論)。
+  /// - `purchased_at` 降順 + `limit(20)` (shopping-queries.ts:124-125)。
+  /// - 名前の toLowerCase でクライアント側 dedupe — 降順ゆえ**最新の履歴が
+  ///   勝つ** (shopping-queries.ts:131-138)。
+  /// - category / store_type の **NULL 列は null のまま透過**し、非 null
+  ///   のみ tolerant `fromDbValue` で enum 化する ([PurchaseSuggestion] doc
+  ///   参照)。
+  /// - **検索失敗は構造化ログのみで [] に縮退** (actions.ts:275-277 の
+  ///   `if (error) return { suggestions: [] }` — サジェストは best-effort で
+  ///   入力 UI を止めない)。rethrow しない例外則はクラス doc 参照。
+  ///
+  /// **web parity の意図的な規格差 — レビューで「統一」しないこと**
+  /// (Phase 2.5 計画 risks 欄): 本検索の ilike は**エスケープする**側の
+  /// 規格。在庫→買い物リスト追加の重複チェック ilike (web
+  /// stock/actions.ts:129) は**生値のまま**が正 (% _ を含む名前で誤マッチ
+  /// する latent quirk ごと移植する方針 — PR-G)。直す場合は web と同時に
+  /// 別 issue で。
+  Future<List<PurchaseSuggestion>> searchSuggestions({
+    required String householdId,
+    required String query,
+  }) async {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return const [];
+
+    // % _ \ を \ 前置でエスケープ (web の `replace(/[%_\\]/g, "\\$&")`)。
+    final escaped = trimmed.replaceAllMapped(
+      RegExp(r'[%_\\]'),
+      (match) => '\\${match[0]}',
+    );
+
+    final PostgrestList rows;
+    try {
+      rows = await _client
+          .from('purchase_history')
+          .select('item_name, category, store_type')
+          .eq('household_id', householdId)
+          .ilike('item_name', '%$escaped%')
+          .order('purchased_at', ascending: false)
+          .limit(20)
+          .timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      // web parity: 検索失敗は空サジェスト (actions.ts:275-277)。
+      _logMutationError(
+        'searchSuggestions',
+        e,
+        st,
+        'householdId=$householdId',
+      );
+      return const [];
+    }
+
+    // 名前でユニーク化 — 最新の履歴を優先 (purchased_at 降順の先勝ち。
+    // web shopping-queries.ts:131-138 の Set filter と同形)。
+    final seen = <String>{};
+    return [
+      for (final row in rows)
+        if (seen.add((row['item_name'] as String).toLowerCase()))
+          (
+            name: row['item_name'] as String,
+            category: switch (row['category'] as String?) {
+              null => null,
+              final value => ItemCategory.fromDbValue(value),
+            },
+            storeType: switch (row['store_type'] as String?) {
+              null => null,
+              final value => StoreType.fromDbValue(value),
+            },
+          ),
+    ];
   }
 
   /// 今週の献立の食材を買い物リストへ一括追加し、追加件数を返す。
