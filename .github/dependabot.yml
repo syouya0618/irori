@@ -9,6 +9,12 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    ignore:
+      # @types/node は runtime (.nvmrc=24) と major を整合させる方針のため
+      # major bump の提案を止める (25 系提案で types だけ先行するのを防ぐ —
+      # 2026-06-13、dependabot #3 close の経緯)。runtime を上げる時に手動 bump。
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       # minor / patch をまとめて PR ノイズを削減。
       # major は grouped から外れ個別 PR となり、破壊的変更を精査できる。
