@@ -8,6 +8,8 @@ import '../../../core/theme/radii.dart';
 import '../../../core/utils/jst_date.dart';
 import '../../../widgets/category_icon.dart';
 import '../../../widgets/glass_card.dart';
+import '../data/consumption_rates_provider.dart';
+import '../data/low_stock_check_store.dart';
 import '../data/stock_items_notifier.dart';
 import '../data/stock_repository.dart';
 import '../domain/stock_item.dart';
@@ -36,9 +38,13 @@ const _amberBannerFg = Color(0xFFB45309); // amber-700
 ///   楽観更新で即時除外し、失敗時は invalidate でサーバ実体へ復元する。
 /// - レシピ提案は `recipeSuggestionsProvider` (在庫 realtime 変化に 1000ms
 ///   デバウンスで追従) — `StockSuggestionsSection` が消費する。
-///
-/// 消費レート残日数バッジ / 低在庫自動追加 (`checkAndAutoAddLowStock`) /
-/// 買い物リストへ追加は Phase 2.5 PR-G スコープ。
+/// - 残日数バッジは `consumptionRatesProvider` (PR-G)。loading / error 中は
+///   バッジ非表示に degrade する (web も rates 取得失敗時は `rates: {}` で
+///   バッジ無し表示 — 同じ縮退)。
+/// - 低在庫自動追加 (PR-G) は data 初回到達時 (`_StockBody.initState`) に
+///   `LowStockAutoAddRunner` 経由で 1 回だけ発火 (30 分スロットル付き)。
+///   web は mount ごと発火だが、Flutter のタブは IndexedStack で生存し続ける
+///   ため「初回 build のみ」(裁定済み — PR 本文参照)。
 class StockPage extends ConsumerWidget {
   const StockPage({super.key});
 
@@ -107,16 +113,70 @@ class StockPage extends ConsumerWidget {
 }
 
 /// data 分岐の本体。バナー + カテゴリ別グループ or 空状態。
-class _StockBody extends ConsumerWidget {
+///
+/// `ConsumerStatefulWidget` なのは低在庫自動追加の発火点 (initState) を
+/// 持つため。data 更新 (realtime 反映等) では同型 widget の再 build に
+/// なるため initState は走り直さない = 「data 初回到達時に 1 回だけ」。
+class _StockBody extends ConsumerStatefulWidget {
   const _StockBody({required this.items});
 
   final List<StockItem> items;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_StockBody> createState() => _StockBodyState();
+}
+
+class _StockBodyState extends ConsumerState<_StockBody> {
+  @override
+  void initState() {
+    super.initState();
+    // 低在庫自動チェック (web stock-list.tsx:117-133 の useEffect [] 相当)。
+    // initState 中は provider 変更や SnackBar が安全でないため frame 後に回す。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _runLowStockAutoAdd();
+    });
+  }
+
+  /// 低在庫の自動追加を 30 分スロットル付きで実行し、追加があれば toast。
+  ///
+  /// best-effort 機能のため、いかなる失敗 (未認証 / store 不調 等) も
+  /// ページ表示には影響させない — 構造化ログのみ (web も
+  /// `if (result.error) return` で無通知)。
+  Future<void> _runLowStockAutoAdd() async {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+
+    try {
+      final result = await ref.read(lowStockAutoAddRunnerProvider).runIfDue();
+      // null = スロットル内 skip。error 非 null は web 同様無通知
+      // (タイムスタンプ未記録で次回再試行 — runner doc 参照)。
+      if (!mounted || result == null || result.error != null) return;
+      if (result.addedItems.isEmpty) return;
+
+      // web stock-list.tsx:127-130 の toast.success(message, {description})。
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            '在庫が少ない${result.addedItems.length}件を買い物リストに追加しました\n'
+            '${result.addedItems.join('、')}',
+          ),
+        ),
+      );
+    } on Object catch (e, st) {
+      // 握り潰さない (CLAUDE.md)。repository / runner 側でも構造化ログ済み。
+      debugPrint('StockPage lowStockAutoAdd 失敗: $e\n$st');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final items = widget.items;
     final todayYmd = formatJstDate();
     final grouped = groupStockItems(items);
     final expiringCount = countExpiringStockItems(todayYmd, items);
+    // 残日数バッジ用の消費レート (web page.tsx は SSR で常時渡すが、
+    // Flutter は loading / error 中 null → バッジ非表示に degrade)。
+    final rates = ref.watch(consumptionRatesProvider).value;
 
     // 原典の空状態 (`grouped.length === 0`)。web はこの場合も提案 section を
     // 上に出す (stock-list.tsx:202-205 — section 自身が空コピーを表示する)。
@@ -213,9 +273,13 @@ class _StockBody extends ConsumerWidget {
                   StockItemTile(
                     item: categoryItems[i],
                     todayYmd: todayYmd,
+                    // web: `dailyRate={consumptionRates[item.category] ?? null}`
+                    dailyRate: rates?[categoryItems[i].category],
                     onEdit: (item) =>
                         showStockFormSheet(context, ref, existing: item),
                     onDelete: (item) => _deleteItem(context, ref, item),
+                    onAddToShopping: (item) =>
+                        _addToShoppingList(context, ref, item),
                   ),
                 ],
               ],
@@ -251,6 +315,48 @@ class _StockBody extends ConsumerWidget {
       debugPrint('StockPage deleteItem 失敗: $e\n$st');
       ref.invalidate(stockItemsNotifierProvider);
       messenger.showSnackBar(const SnackBar(content: Text('削除に失敗しました')));
+    }
+  }
+
+  /// 買い物リストへの手動追加。web `stock-item.tsx` `handleAddToShopping`:
+  /// - 成功: 「{name}を買い物リストに追加しました」(web :120)
+  /// - 重複: 「既に買い物リストにあります」(repository の型付き例外 →
+  ///   web は action の error 文字列)
+  /// - その他失敗: 「買い物リストへの追加に失敗しました」— web は fetch 失敗
+  ///   (「在庫アイテムが見つかりません」) と insert 失敗で文言が分かれるが、
+  ///   Flutter は generic catch で後者に縮退する (意図的差異 — PR 本文)。
+  ///
+  /// 一覧への反映は web の revalidatePath 相当が realtime reducer
+  /// (shopping タブ側) のため、ここでは何もしない。
+  Future<void> _addToShoppingList(
+    BuildContext context,
+    WidgetRef ref,
+    StockItem item,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+
+    try {
+      final ctx = await ref.read(stockMutationContextProvider.future);
+      await ref
+          .read(stockRepositoryProvider)
+          .addToShoppingList(
+            householdId: ctx.householdId,
+            userId: ctx.userId,
+            itemId: item.id,
+          );
+      messenger.showSnackBar(
+        SnackBar(content: Text('${item.name}を買い物リストに追加しました')),
+      );
+    } on DuplicateShoppingItemException {
+      messenger.showSnackBar(
+        const SnackBar(content: Text(DuplicateShoppingItemException.message)),
+      );
+    } on Object catch (e, st) {
+      // 握り潰さない (CLAUDE.md)。repository 側でも構造化ログ済み。
+      debugPrint('StockPage addToShoppingList 失敗: $e\n$st');
+      messenger.showSnackBar(
+        const SnackBar(content: Text('買い物リストへの追加に失敗しました')),
+      );
     }
   }
 }

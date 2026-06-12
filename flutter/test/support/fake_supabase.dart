@@ -183,6 +183,7 @@ class FakeFilterBuilder extends Fake
   // ─── P2.5-C shopping 用 (additive) ─────────────────────────
   // `ShoppingRepository.generateFromMeals` の
   // `meal_ingredients.inFilter('meal_id', mealIds)` 検証用。
+  // PR-G (`autoAddLowStockItems` の `.inFilter('log_type', ...)`) も共用する。
 
   /// `inFilter(column, values)` の呼び出し記録 (P2.5-C で追加)。
   final inFilters = <({String column, List<dynamic> values})>[];
@@ -210,6 +211,19 @@ class FakeFilterBuilder extends Fake
     Object? value,
   ) {
     notFilters.add((column: column, operator: operator, value: value));
+    return this;
+  }
+
+  // ─── PR-G stock⇆shopping 用 (additive) ─────────────────────
+  // `StockRepository.addToShoppingList` の `.ilike('name', 生値)` 検証用。
+
+  /// `ilike(column, pattern)` の呼び出し記録。pattern はエスケープ検証のため
+  /// 生のまま保持する (web stock/actions.ts の % _ 非エスケープ quirk)。
+  final ilikeFilters = <({String column, String pattern})>[];
+
+  @override
+  PostgrestFilterBuilder<PostgrestList> ilike(String column, String pattern) {
+    ilikeFilters.add((column: column, pattern: pattern));
     return this;
   }
 }
