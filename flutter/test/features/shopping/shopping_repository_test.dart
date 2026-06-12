@@ -132,6 +132,88 @@ class _ThrowingAutoStockRepository extends ShoppingRepository {
   }
 }
 
+/// meals / meal_ingredients / shopping_items の 3 テーブル fake 一式
+/// (PR P2.5-C `generateFromMeals` / `previewMealIngredients` 用 —
+/// 既存 [_repo] は変更せず、別 harness として additive に追加)。
+({
+  ShoppingRepository repo,
+  FakeSupabaseClient client,
+  FakeQueryBuilder meals,
+  FakeFilterBuilder mealsRead,
+  FakeQueryBuilder ingredients,
+  FakeFilterBuilder ingredientsRead,
+  FakeQueryBuilder items,
+  FakeFilterBuilder itemsRead,
+  FakeFilterBuilder itemsMutation,
+})
+_genRepo({
+  PostgrestList mealRows = const [],
+  Object? mealsReadError,
+  PostgrestList ingredientRows = const [],
+  Object? ingredientsReadError,
+  PostgrestList existingItemRows = const [],
+  Object? existingItemsReadError,
+  PostgrestMap? itemsMaybeSingleValue,
+  Object? itemsInsertError,
+}) {
+  final mealsRead = FakeFilterBuilder(
+    cannedValue: mealRows,
+    cannedError: mealsReadError,
+  );
+  final meals = FakeQueryBuilder(mealsRead);
+
+  final ingredientsRead = FakeFilterBuilder(
+    cannedValue: ingredientRows,
+    cannedError: ingredientsReadError,
+  );
+  final ingredients = FakeQueryBuilder(ingredientsRead);
+
+  // shopping_items は「既存照合 select (await 直)」と「sort_order lookup
+  // (maybeSingle)」が同一 read builder を共有し、insert は mutation builder。
+  final itemsRead = FakeFilterBuilder(
+    cannedValue: existingItemRows,
+    cannedError: existingItemsReadError,
+    maybeSingleValue: itemsMaybeSingleValue,
+  );
+  final itemsMutation = FakeFilterBuilder(
+    cannedValue: const [],
+    cannedError: itemsInsertError,
+  );
+  final items = FakeQueryBuilder(itemsRead, mutationFilter: itemsMutation);
+
+  final client = FakeSupabaseClient(
+    fromBuilders: {
+      'meals': meals,
+      'meal_ingredients': ingredients,
+      'shopping_items': items,
+    },
+  );
+  return (
+    repo: ShoppingRepository(client),
+    client: client,
+    meals: meals,
+    mealsRead: mealsRead,
+    ingredients: ingredients,
+    ingredientsRead: ingredientsRead,
+    items: items,
+    itemsRead: itemsRead,
+    itemsMutation: itemsMutation,
+  );
+}
+
+/// `meal_ingredients` の select 行 (`name, quantity, category, meal_id`)。
+PostgrestMap _ing(
+  String name, {
+  String? quantity,
+  String category = 'vegetable',
+  String mealId = 'm-1',
+}) => {
+  'name': name,
+  'quantity': quantity,
+  'category': category,
+  'meal_id': mealId,
+};
+
 /// fetch 系が返す生 row (全 13 列)。
 PostgrestMap _row(String id, {int sortOrder = 1}) => {
   'id': id,
@@ -716,4 +798,362 @@ void main() {
       expect(history.lastInsertValues, isNotNull);
     });
   });
+
+  group('ShoppingRepository.generateFromMeals '
+      '(web shopping-queries.ts:15-77 + actions.ts:177-236)', () {
+    // JST 2026-06-10 (水) 21:00。週は 2026-06-08 (月) 〜 2026-06-14 (日)。
+    final fixedNow = DateTime.utc(2026, 6, 10, 12);
+
+    Future<int> generate(ShoppingRepository repo, {DateTime? now}) {
+      return repo.generateFromMeals(
+        householdId: 'hh-1',
+        userId: 'user-1',
+        now: now ?? fixedNow,
+      );
+    }
+
+    test('(f) 週範囲は weekStartMonday(formatJstDate()) 起点の gte/lte、'
+        'meal_ingredients は meal_id の inFilter で取得する', () async {
+      final r = _genRepo(
+        mealRows: [
+          {'id': 'm-1'},
+          {'id': 'm-2'},
+        ],
+        ingredientRows: [_ing('トマト')],
+      );
+
+      await generate(r.repo);
+
+      // meals: select('id') + household / is_eating_out=false / date 範囲
+      // (web shopping-queries.ts:22-28)。
+      expect(r.meals.lastSelectColumns, 'id');
+      expect(r.mealsRead.eqFilters, [
+        (column: 'household_id', value: 'hh-1'),
+        (column: 'is_eating_out', value: false),
+      ]);
+      expect(r.mealsRead.gteFilters, [(column: 'date', value: '2026-06-08')]);
+      expect(r.mealsRead.lteFilters, [(column: 'date', value: '2026-06-14')]);
+
+      // meal_ingredients: 列は web :42 と同一 + inFilter(meal_id, mealIds)。
+      expect(
+        r.ingredients.lastSelectColumns,
+        'name, quantity, category, meal_id',
+      );
+      expect(r.ingredientsRead.inFilters, hasLength(1));
+      expect(r.ingredientsRead.inFilters.single.column, 'meal_id');
+      expect(r.ingredientsRead.inFilters.single.values, ['m-1', 'm-2']);
+    });
+
+    test('(f補) UTC 日曜夜 (= JST 月曜早朝) は JST 解釈で当週月曜が開始になる', () async {
+      final r = _genRepo(
+        mealRows: [
+          {'id': 'm-1'},
+        ],
+        ingredientRows: [_ing('トマト')],
+      );
+
+      // UTC 2026-06-07 (日) 20:00 = JST 2026-06-08 (月) 05:00。
+      // UTC 日付のまま解釈すると weekStartMonday('2026-06-07') = '2026-06-01'
+      // (前週) に化ける — JST 固定 (issue #23 / web PR #32 と同一意味論) の検証。
+      await generate(r.repo, now: DateTime.utc(2026, 6, 7, 20));
+
+      expect(r.mealsRead.gteFilters, [(column: 'date', value: '2026-06-08')]);
+      expect(r.mealsRead.lteFilters, [(column: 'date', value: '2026-06-14')]);
+    });
+
+    test('(a-1) 今週の献立 0 件は NoMealsThisWeekException で後続クエリに進まない', () async {
+      final r = _genRepo(mealRows: const []);
+
+      await expectLater(
+        generate(r.repo),
+        throwsA(isA<NoMealsThisWeekException>()),
+      );
+      // web actions.ts:184-186 と同一文言 (UI がそのまま表示する)。
+      expect(NoMealsThisWeekException.message, '今週の献立が登録されていません');
+      expect(r.client.fromTables, ['meals']);
+      expect(r.items.lastInsertValues, isNull);
+    });
+
+    test('(a-2) 食材 0 件は NoIngredientsThisWeekException で後続クエリに進まない', () async {
+      final r = _genRepo(
+        mealRows: [
+          {'id': 'm-1'},
+        ],
+        ingredientRows: const [],
+      );
+
+      await expectLater(
+        generate(r.repo),
+        throwsA(isA<NoIngredientsThisWeekException>()),
+      );
+      // web actions.ts:187-189 と同一文言。
+      expect(
+        NoIngredientsThisWeekException.message,
+        '今週の献立に食材が登録されていません',
+      );
+      expect(r.client.fromTables, ['meals', 'meal_ingredients']);
+      expect(r.items.lastInsertValues, isNull);
+    });
+
+    test('(a-3) 全食材が既存重複なら NoNewIngredientsException で '
+        'sort_order lookup / insert に進まない', () async {
+      final r = _genRepo(
+        mealRows: [
+          {'id': 'm-1'},
+        ],
+        ingredientRows: [_ing('トマト')],
+        existingItemRows: [
+          {'name': 'トマト'},
+        ],
+      );
+
+      await expectLater(
+        generate(r.repo),
+        throwsA(isA<NoNewIngredientsException>()),
+      );
+      // web actions.ts:196-198 と同一文言。判定は getNextSortOrder より前。
+      expect(NoNewIngredientsException.message, '追加できる新しい食材がありません');
+      expect(r.itemsRead.limitCalls, isEmpty);
+      expect(r.items.lastInsertValues, isNull);
+    });
+
+    test('(b) 既存リストとの重複は toLowerCase 完全一致で除外し、'
+        '照合はチェック済みも含む全件 (is_checked 不問)', () async {
+      final r = _genRepo(
+        mealRows: [
+          {'id': 'm-1'},
+        ],
+        ingredientRows: [_ing('Tomato'), _ing('ねぎ')],
+        // 大文字小文字違いの既存アイテム (チェック済みかは select されない =
+        // is_checked を問わず除外対象 — web shopping-queries.ts:54-57)。
+        existingItemRows: [
+          {'name': 'TOMATO'},
+        ],
+      );
+
+      final count = await generate(r.repo);
+
+      expect(count, 1);
+      // 照合クエリは household eq のみ — is_checked では絞らない
+      // (eqFilters は既存照合 + sort_order lookup の 2 回分)。
+      expect(r.itemsRead.eqFilters, [
+        (column: 'household_id', value: 'hh-1'),
+        (column: 'household_id', value: 'hh-1'),
+      ]);
+      expect(r.items.selectCalls, ['name', 'sort_order']);
+
+      final rows = (r.items.lastInsertValues as List?)!;
+      expect(rows, hasLength(1));
+      expect((rows.single as Map)['name'], 'ねぎ');
+    });
+
+    test('(c) 同名食材 (大文字小文字違い含む) は先勝ちで 1 行に集約され、'
+        '最初の quantity / meal_id が勝つ', () async {
+      final r = _genRepo(
+        mealRows: [
+          {'id': 'm-1'},
+          {'id': 'm-2'},
+        ],
+        ingredientRows: [
+          _ing('トマト', quantity: '2個', mealId: 'm-1'),
+          _ing('トマト', quantity: '5個', mealId: 'm-2'),
+          _ing('Apple', quantity: '1個', mealId: 'm-1'),
+          _ing('apple', quantity: '3個', mealId: 'm-2'),
+        ],
+      );
+
+      final count = await generate(r.repo);
+
+      expect(count, 2);
+      final rows = (r.items.lastInsertValues as List<dynamic>)
+          .cast<Map<dynamic, dynamic>>();
+      expect(rows, hasLength(2));
+      // web actions.ts:208-213 の `if (!uniqueMap.has(key)) set` — 先勝ち。
+      expect(rows[0]['name'], 'トマト');
+      expect(rows[0]['quantity'], '2個');
+      expect(rows[0]['meal_id'], 'm-1');
+      expect(rows[1]['name'], 'Apple');
+      expect(rows[1]['quantity'], '1個');
+      expect(rows[1]['meal_id'], 'm-1');
+    });
+
+    test('(d) insert 行 shape: store_type=supermarket 固定 / meal_id リンク / '
+        'sort_order 連番 / category 生値パススルー (web actions.ts:215-224)', () async {
+      final r = _genRepo(
+        mealRows: [
+          {'id': 'm-1'},
+        ],
+        ingredientRows: [
+          _ing('トマト', quantity: '2個', category: 'vegetable'),
+          _ing('豚肉', category: 'meat'),
+          // 未知 ENUM 値も enum 往復せず生の値のままパススルー
+          // (clearChecked の履歴 insert と同じ方針)。
+          _ing('謎の食材', category: 'mystery_meat'),
+        ],
+        itemsMaybeSingleValue: {'sort_order': 5},
+      );
+
+      final count = await generate(r.repo);
+
+      expect(count, 3);
+      expect(r.items.lastInsertValues, [
+        {
+          'household_id': 'hh-1',
+          'name': 'トマト',
+          'quantity': '2個',
+          'category': 'vegetable',
+          'store_type': 'supermarket',
+          'created_by': 'user-1',
+          'meal_id': 'm-1',
+          'sort_order': 6,
+        },
+        {
+          'household_id': 'hh-1',
+          'name': '豚肉',
+          'quantity': null,
+          'category': 'meat',
+          'store_type': 'supermarket',
+          'created_by': 'user-1',
+          'meal_id': 'm-1',
+          'sort_order': 7,
+        },
+        {
+          'household_id': 'hh-1',
+          'name': '謎の食材',
+          'quantity': null,
+          'category': 'mystery_meat',
+          'store_type': 'supermarket',
+          'created_by': 'user-1',
+          'meal_id': 'm-1',
+          'sort_order': 8,
+        },
+      ]);
+    });
+
+    test('(e) 既存リスト取得エラーはログのみで空 Set 続行し insert まで完走する '
+        '(web shopping-queries.ts:59-67)', () async {
+      final r = _genRepo(
+        mealRows: [
+          {'id': 'm-1'},
+        ],
+        ingredientRows: [_ing('トマト')],
+        existingItemsReadError: const PostgrestException(
+          message: 'existing boom',
+          code: '500',
+        ),
+      );
+
+      final count = await generate(r.repo);
+
+      // 取得失敗 → 重複除外なし (全食材が新規扱い) で insert 続行。
+      expect(count, 1);
+      final rows = (r.items.lastInsertValues as List?)!;
+      expect((rows.single as Map)['name'], 'トマト');
+    });
+
+    test('meals 取得失敗は rethrow される (web「献立の取得に失敗しました」分岐)', () async {
+      final r = _genRepo(
+        mealsReadError: const PostgrestException(
+          message: 'meals boom',
+          code: '500',
+        ),
+      );
+
+      await expectLater(generate(r.repo), throwsA(isA<PostgrestException>()));
+      expect(r.items.lastInsertValues, isNull);
+    });
+
+    test('insert 失敗は握り潰さず rethrow される (web「食材の追加に失敗しました」分岐)', () async {
+      final r = _genRepo(
+        mealRows: [
+          {'id': 'm-1'},
+        ],
+        ingredientRows: [_ing('トマト')],
+        itemsInsertError: const PostgrestException(
+          message: 'insert boom',
+          code: '500',
+        ),
+      );
+
+      await expectLater(generate(r.repo), throwsA(isA<PostgrestException>()));
+    });
+  });
+
+  group(
+    'ShoppingRepository.previewMealIngredients (web actions.ts:239-257)',
+    () {
+      final fixedNow = DateTime.utc(2026, 6, 10, 12);
+
+      test('新規食材のユニーク名 (toLowerCase) 数を返し、書き込みには進まない', () async {
+        final r = _genRepo(
+          mealRows: [
+            {'id': 'm-1'},
+          ],
+          ingredientRows: [
+            _ing('トマト'),
+            _ing('トマト', mealId: 'm-2'),
+            _ing('Apple'),
+            _ing('apple'),
+            _ing('ねぎ'),
+          ],
+          existingItemRows: [
+            {'name': 'ねぎ'},
+          ],
+        );
+
+        final count = await r.repo.previewMealIngredients(
+          'hh-1',
+          now: fixedNow,
+        );
+
+        // トマト + apple の 2 種 (ねぎは既存重複で除外)。
+        expect(count, 2);
+        expect(r.items.lastInsertValues, isNull);
+        // sort_order lookup にも進まない (read-only)。
+        expect(r.itemsRead.limitCalls, isEmpty);
+      });
+
+      test('今週の献立 0 件は throw せず count 0 (web: 全エラー → count 0)', () async {
+        final r = _genRepo(mealRows: const []);
+
+        expect(await r.repo.previewMealIngredients('hh-1', now: fixedNow), 0);
+      });
+
+      test('食材 0 件も throw せず count 0', () async {
+        final r = _genRepo(
+          mealRows: [
+            {'id': 'm-1'},
+          ],
+          ingredientRows: const [],
+        );
+
+        expect(await r.repo.previewMealIngredients('hh-1', now: fixedNow), 0);
+      });
+
+      test('全食材が既存重複なら count 0 (NoNewIngredientsException は投げない)', () async {
+        final r = _genRepo(
+          mealRows: [
+            {'id': 'm-1'},
+          ],
+          ingredientRows: [_ing('トマト')],
+          existingItemRows: [
+            {'name': 'トマト'},
+          ],
+        );
+
+        expect(await r.repo.previewMealIngredients('hh-1', now: fixedNow), 0);
+      });
+
+      test('取得エラーも throw せず count 0 に縮退する', () async {
+        final r = _genRepo(
+          mealsReadError: const PostgrestException(
+            message: 'meals boom',
+            code: '500',
+          ),
+        );
+
+        expect(await r.repo.previewMealIngredients('hh-1', now: fixedNow), 0);
+      });
+    },
+  );
 }

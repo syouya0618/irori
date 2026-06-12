@@ -179,6 +179,22 @@ class FakeFilterBuilder extends Fake
     limitCalls.add(count);
     return this;
   }
+
+  // ─── P2.5-C shopping 用 (additive) ─────────────────────────
+  // `ShoppingRepository.generateFromMeals` の
+  // `meal_ingredients.inFilter('meal_id', mealIds)` 検証用。
+
+  /// `inFilter(column, values)` の呼び出し記録 (P2.5-C で追加)。
+  final inFilters = <({String column, List<dynamic> values})>[];
+
+  @override
+  PostgrestFilterBuilder<PostgrestList> inFilter(
+    String column,
+    List<dynamic> values,
+  ) {
+    inFilters.add((column: column, values: values));
+    return this;
+  }
 }
 
 /// `from('table')` の結果 (`SupabaseQueryBuilder` 相当)。
@@ -197,9 +213,16 @@ class FakeQueryBuilder extends Fake implements SupabaseQueryBuilder {
   /// read 系 `select(...)` に渡された列文字列 (meals PR-F1 で追加 — additive)。
   String? lastSelectColumns;
 
+  /// read 系 `select(...)` の**全**呼び出し記録 (P2.5-C で追加 — additive)。
+  /// [lastSelectColumns] は最後の 1 件のみのため、同一テーブルへの複数 select
+  /// (generateFromMeals の既存照合 `'name'` → sort_order lookup `'sort_order'`)
+  /// の順序検証に使う。
+  final selectCalls = <String>[];
+
   @override
   PostgrestFilterBuilder<PostgrestList> select([String columns = '*']) {
     lastSelectColumns = columns;
+    selectCalls.add(columns);
     return _filter;
   }
 
