@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -5,9 +7,14 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../../core/domain/item_category.dart';
 import '../../../../core/domain/store_type.dart';
 import '../../../../core/theme/colors.dart';
+import '../../../../core/theme/radii.dart';
 import '../../../../widgets/category_icon.dart';
 import '../../../../widgets/glass_card.dart';
 import '../../data/shopping_repository.dart';
+
+/// 購入履歴サジェスト検索のデバウンス
+/// (web `add-item-form.tsx:56-58` の `setTimeout(..., 300)`)。
+const _kSuggestionDebounce = Duration(milliseconds: 300);
 
 /// アイテム追加フォーム。Next.js 原典 `add-item-form.tsx` の Flutter 移植。
 ///
@@ -20,9 +27,20 @@ import '../../data/shopping_repository.dart';
 ///   `inputRef.current?.focus()`。カテゴリ/購入先の選択は維持)。
 ///   一覧への反映は realtime INSERT (reducer) に任せる (web も同様)。
 /// - 失敗は SnackBar「アイテムの追加に失敗しました」(web `addItem` と同一文言)。
+/// - 名前入力には 300ms デバウンスの購入履歴サジェスト
+///   ([ShoppingRepository.searchSuggestions] — web `fetchSuggestions` +
+///   `getSuggestions` action)。行タップで name + 非 null の
+///   category/storeType を反映して閉じる ([_selectSuggestion])。
 ///
-/// 購入履歴サジェスト (`getSuggestions`) は Phase 2.5
-/// (`ShoppingRepository` クラス doc 参照) のため無し。
+/// **サジェストの意図的差異 (web `add-item-form.tsx` 比)**:
+/// - ↑↓/Enter のキーボードナビ (web :113-130) と外側クリック close
+///   (web :67-81) + 対のフォーカス復帰再表示 (web :144-146) はデスクトップ
+///   固有のため移植しない。close 経路が「選択 / 追加成功 / 入力クリア」に
+///   限られるため、web の `showSuggestions` 独立 state は持たず
+///   `_suggestions.isNotEmpty` で表示を導出する (挙動同値)。
+/// - ドロップダウンは overlay でなくインライン展開 ([_SuggestionList] doc)。
+/// - stale 応答は世代カウンタ [_suggestionGeneration] で破棄
+///   (web に無い改善 — Phase 2.5 計画で許可済み)。
 class AddItemForm extends ConsumerStatefulWidget {
   const AddItemForm({super.key});
 
@@ -42,12 +60,93 @@ class _AddItemFormState extends ConsumerState<AddItemForm> {
   bool _showOptions = false;
   bool _pending = false;
 
+  /// 購入履歴サジェスト (空 = 非表示。クラス doc の表示導出参照)。
+  List<PurchaseSuggestion> _suggestions = const [];
+
+  /// サジェスト検索のデバウンスタイマー (web `debounceRef`)。
+  Timer? _suggestionDebounce;
+
+  /// 進行中 fetch の世代。応答適用時に最新世代と一致しなければ破棄する
+  /// (連打時に古い応答が新しい入力のサジェストを潰さないための stale 防止)。
+  int _suggestionGeneration = 0;
+
   @override
   void dispose() {
+    _suggestionDebounce?.cancel();
     _nameController.dispose();
     _quantityController.dispose();
     _nameFocus.dispose();
     super.dispose();
+  }
+
+  /// 名前入力の変化から 300ms 後にサジェスト検索を発火する
+  /// (web `add-item-form.tsx:52-65` の useEffect デバウンス)。
+  void _scheduleSuggestionsFetch() {
+    _suggestionDebounce?.cancel();
+    _suggestionDebounce = Timer(_kSuggestionDebounce, () {
+      _fetchSuggestions(_nameController.text);
+    });
+  }
+
+  /// 入力 [query] で購入履歴サジェストを取得する (web `fetchSuggestions`)。
+  ///
+  /// - 空 query (trim 後) はサジェストを閉じるのみで検索しない
+  ///   (web :41-45 の早期 return — repository 側の早期 return と二重防御)。
+  /// - 取得失敗は debugPrint + 空サジェストに縮退し、SnackBar は出さない
+  ///   (web `getSuggestions` は全エラーを空に縮退する best-effort 仕様。
+  ///   repository 内のエラーは構造化ログ済みで、ここの catch は
+  ///   mutationContext 解決失敗 (未認証等) も含む防御線)。
+  Future<void> _fetchSuggestions(String query) async {
+    final generation = ++_suggestionGeneration;
+    if (query.trim().isEmpty) {
+      setState(() => _suggestions = const []);
+      return;
+    }
+
+    try {
+      final mutationContext = await ref.read(
+        shoppingMutationContextProvider.future,
+      );
+      final results = await ref
+          .read(shoppingRepositoryProvider)
+          .searchSuggestions(
+            householdId: mutationContext.householdId,
+            query: query,
+          );
+      if (!mounted || generation != _suggestionGeneration) return;
+      setState(() => _suggestions = results);
+    } on Object catch (e, st) {
+      debugPrint('AddItemForm サジェスト取得失敗: $e\n$st');
+      if (!mounted || generation != _suggestionGeneration) return;
+      setState(() => _suggestions = const []);
+    }
+  }
+
+  /// サジェスト行タップ (web `selectSuggestion`)。
+  ///
+  /// name は常に反映し、category / storeType は**非 null のみ**反映する
+  /// (web の falsy ガード `if (suggestion.category) setCategory(...)` —
+  /// NULL 履歴行で現在の選択を破壊しない)。反映後はサジェストを閉じ、
+  /// 入力へ再フォーカスする (web `inputRef.current?.focus()`)。
+  ///
+  /// 待機中のデバウンス cancel + 世代カウンタ進行で、選択直後に旧 fetch の
+  /// 応答が届いてもドロップダウンを再表示させない (web は name 変更の
+  /// useEffect で再検索 → 再表示されるが、本契約は「タップで閉じる」)。
+  void _selectSuggestion(PurchaseSuggestion suggestion) {
+    _suggestionDebounce?.cancel();
+    _suggestionGeneration++;
+    final category = suggestion.category;
+    final storeType = suggestion.storeType;
+    setState(() {
+      _nameController.text = suggestion.name;
+      _nameController.selection = TextSelection.collapsed(
+        offset: suggestion.name.length,
+      );
+      if (category != null) _category = category;
+      if (storeType != null) _storeType = storeType;
+      _suggestions = const [];
+    });
+    _nameFocus.requestFocus();
   }
 
   Future<void> _submit() async {
@@ -75,9 +174,15 @@ class _AddItemFormState extends ConsumerState<AddItemForm> {
           );
       if (!mounted) return;
       // 成功で入力クリア (カテゴリ/購入先の選択は維持 — web と同一)。
+      // サジェストも閉じる (web add-item-form.tsx:105-107)。controller の
+      // clear() は onChanged を発火しないため明示的に閉じ、待機中のデバウンス
+      // と進行中の fetch は cancel + 世代カウンタ進行で破棄する。
+      _suggestionDebounce?.cancel();
+      _suggestionGeneration++;
       setState(() {
         _nameController.clear();
         _quantityController.clear();
+        _suggestions = const [];
       });
       _nameFocus.requestFocus();
     } on Object catch (e, st) {
@@ -114,8 +219,12 @@ class _AddItemFormState extends ConsumerState<AddItemForm> {
                     border: OutlineInputBorder(),
                   ),
                   style: const TextStyle(fontSize: 16),
-                  // 追加ボタンの enabled/disabled を追従させる。
-                  onChanged: (_) => setState(() {}),
+                  // 追加ボタンの enabled/disabled 追従 + サジェスト検索の
+                  // デバウンス開始。
+                  onChanged: (_) {
+                    setState(() {});
+                    _scheduleSuggestionsFetch();
+                  },
                   onSubmitted: (_) => _submit(),
                   textInputAction: TextInputAction.done,
                 ),
@@ -146,6 +255,15 @@ class _AddItemFormState extends ConsumerState<AddItemForm> {
               ),
             ],
           ),
+          if (_suggestions.isNotEmpty) ...[
+            // web: mt-1 のドロップダウン (add-item-form.tsx:153-157)。
+            const SizedBox(height: 4),
+            _SuggestionList(
+              suggestions: _suggestions,
+              enabled: !_pending,
+              onSelect: _selectSuggestion,
+            ),
+          ],
           if (_showOptions) ...[
             const SizedBox(height: 12),
             Divider(
@@ -261,6 +379,71 @@ class _AddItemFormState extends ConsumerState<AddItemForm> {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// サジェストドロップダウン (web `add-item-form.tsx:153-175`)。
+///
+/// web は入力に absolute 重ね (z-50 の overlay) だが、Flutter 版はカード内の
+/// インライン展開にする (OverlayEntry の位置追従管理を持ち込まない意図的
+/// 差異 — モバイルでは下方向への押し出し表示が自然)。行の表示内容は web と
+/// 同一 (アイテム名のみ・1 行 truncate)。
+///
+/// [enabled] は送信中 (`_pending`) の選択を防ぐ防御 (web は入力 disabled の
+/// 間もサジェスト button 自体は活性のままだが、送信中のフォーム書き換えは
+/// 防ぐ方が安全)。
+class _SuggestionList extends StatelessWidget {
+  const _SuggestionList({
+    required this.suggestions,
+    required this.enabled,
+    required this.onSelect,
+  });
+
+  final List<PurchaseSuggestion> suggestions;
+  final bool enabled;
+  final ValueChanged<PurchaseSuggestion> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: IroriColors.surface,
+      clipBehavior: Clip.antiAlias,
+      // web: rounded-lg + ring-1 ring-foreground/10 + bg-popover。
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(IroriRadii.button),
+        side: const BorderSide(color: IroriColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final suggestion in suggestions)
+            InkWell(
+              // 名前は repository 側で toLowerCase dedupe 済みのため
+              // sibling key として一意 (web の key=`${name}-${idx}` 相当)。
+              key: ValueKey('suggestion-${suggestion.name}'),
+              onTap: enabled ? () => onSelect(suggestion) : null,
+              child: Container(
+                // 44px タッチターゲット (CLAUDE.md。web の py-2 より拡大)。
+                constraints: const BoxConstraints(minHeight: 44),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  suggestion.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: IroriColors.textPrimary,
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );

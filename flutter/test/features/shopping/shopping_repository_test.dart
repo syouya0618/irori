@@ -201,6 +201,31 @@ _genRepo({
   );
 }
 
+/// purchase_history 単独の fake 一式 (PR P2.5-D `searchSuggestions` 用 —
+/// 既存 [_repo] / [_genRepo] は変更せず、別 harness として additive に追加)。
+({
+  ShoppingRepository repo,
+  FakeSupabaseClient client,
+  FakeQueryBuilder history,
+  FakeFilterBuilder historyRead,
+})
+_suggestRepo({PostgrestList historyRows = const [], Object? historyReadError}) {
+  final historyRead = FakeFilterBuilder(
+    cannedValue: historyRows,
+    cannedError: historyReadError,
+  );
+  final history = FakeQueryBuilder(historyRead);
+  final client = FakeSupabaseClient(
+    fromBuilders: {'purchase_history': history},
+  );
+  return (
+    repo: ShoppingRepository(client),
+    client: client,
+    history: history,
+    historyRead: historyRead,
+  );
+}
+
 /// `meal_ingredients` の select 行 (`name, quantity, category, meal_id`)。
 PostgrestMap _ing(
   String name, {
@@ -1156,4 +1181,153 @@ void main() {
       });
     },
   );
+
+  group('ShoppingRepository.searchSuggestions '
+      '(web shopping-queries.ts:114-141 + actions.ts:260-286)', () {
+    test('(a) ilike パターンは trim 後の % _ \\ をエスケープして %...% に包む '
+        '(web shopping-queries.ts:123 と同一 regex 意味論)', () async {
+      final r = _suggestRepo();
+
+      await r.repo.searchSuggestions(
+        householdId: 'hh-1',
+        // 前後空白は trim され、% _ \ は \ 前置でエスケープされる。
+        query: r'  50%引き_テスト\  ',
+      );
+
+      // 列・household スコープは web searchPurchaseHistory と同一。
+      expect(r.history.lastSelectColumns, 'item_name, category, store_type');
+      expect(r.historyRead.eqFilters, [
+        (column: 'household_id', value: 'hh-1'),
+      ]);
+      // エスケープは**本検索の規格** — addToShoppingList 系の重複チェック
+      // ilike (web stock/actions.ts:128) は逆に生値のままが正で、別規格
+      // (Phase 2.5 計画 risks 欄 — 統一しない)。
+      expect(r.historyRead.ilikeFilters, [
+        (column: 'item_name', pattern: r'%50\%引き\_テスト\\%'),
+      ]);
+    });
+
+    test('(b) 同名 (toLowerCase) は dedupe され最新 (先頭) の行が勝つ', () async {
+      // fake の行順 = purchased_at 降順で DB が返す順 (新しい順)。
+      final r = _suggestRepo(
+        historyRows: const [
+          {
+            'item_name': 'みかん',
+            'category': 'fruit',
+            'store_type': 'supermarket',
+          },
+          {'item_name': 'Milk', 'category': 'dairy', 'store_type': 'drugstore'},
+          {'item_name': 'みかん', 'category': 'vegetable', 'store_type': 'online'},
+          {
+            'item_name': 'MILK',
+            'category': 'snack_food',
+            'store_type': 'online',
+          },
+        ],
+      );
+
+      final suggestions = await r.repo.searchSuggestions(
+        householdId: 'hh-1',
+        query: 'み',
+      );
+
+      // 大文字小文字違い (Milk/MILK) も同名扱いで、最初に現れた行 = 最新の
+      // category / store_type が残る (web shopping-queries.ts:131-138)。
+      expect(suggestions, [
+        (
+          name: 'みかん',
+          category: ItemCategory.fruit,
+          storeType: StoreType.supermarket,
+        ),
+        (
+          name: 'Milk',
+          category: ItemCategory.dairy,
+          storeType: StoreType.drugstore,
+        ),
+      ]);
+    });
+
+    test('(c) purchased_at 降順 + limit(20) で検索する '
+        '(web shopping-queries.ts:124-125)', () async {
+      final r = _suggestRepo(
+        historyRows: const [
+          {
+            'item_name': 'みかん',
+            'category': 'fruit',
+            'store_type': 'supermarket',
+          },
+        ],
+      );
+
+      await r.repo.searchSuggestions(householdId: 'hh-1', query: 'み');
+
+      expect(r.historyRead.orderCalls, [
+        (column: 'purchased_at', ascending: false),
+      ]);
+      expect(r.historyRead.limitCalls, [20]);
+    });
+
+    test('(d) 空 query (空白のみ含む) は DB 非アクセスで早期 return [] '
+        '(web actions.ts:261-263)', () async {
+      final r = _suggestRepo();
+
+      expect(
+        await r.repo.searchSuggestions(householdId: 'hh-1', query: ''),
+        isEmpty,
+      );
+      expect(
+        await r.repo.searchSuggestions(householdId: 'hh-1', query: '   '),
+        isEmpty,
+      );
+
+      // テーブルアクセス自体が発生しない (認証前 early return の parity)。
+      expect(r.client.fromTables, isEmpty);
+      expect(r.historyRead.ilikeFilters, isEmpty);
+    });
+
+    test('(e) category / store_type の NULL 列は null のまま透過し、'
+        '非 null の未知値のみ tolerant fallback する', () async {
+      final r = _suggestRepo(
+        historyRows: const [
+          {'item_name': '謎の品', 'category': null, 'store_type': null},
+          {
+            'item_name': '謎の品2',
+            'category': 'mystery_meat',
+            'store_type': 'mystery_store',
+          },
+        ],
+      );
+
+      final suggestions = await r.repo.searchSuggestions(
+        householdId: 'hh-1',
+        query: '謎',
+      );
+
+      expect(suggestions, [
+        // NULL は fromDbValue を通さず null のまま (UI 側が「非 null のみ
+        // フォームへ反映」— web selectSuggestion の falsy ガードと等価)。
+        (name: '謎の品', category: null, storeType: null),
+        // 非 null の未知値は tolerant fromDbValue の fallback。
+        (
+          name: '謎の品2',
+          category: ItemCategory.otherDaily,
+          storeType: StoreType.other,
+        ),
+      ]);
+    });
+
+    test('検索失敗は throw せず空 list に縮退する (web actions.ts:275-277)', () async {
+      final r = _suggestRepo(
+        historyReadError: const PostgrestException(
+          message: 'suggest boom',
+          code: '500',
+        ),
+      );
+
+      expect(
+        await r.repo.searchSuggestions(householdId: 'hh-1', query: 'み'),
+        isEmpty,
+      );
+    });
+  });
 }

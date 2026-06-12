@@ -212,6 +212,19 @@ class FakeFilterBuilder extends Fake
     notFilters.add((column: column, operator: operator, value: value));
     return this;
   }
+
+  // ─── PR-G stock⇆shopping 用 (additive) ─────────────────────
+  // `StockRepository.addToShoppingList` の `.ilike('name', 生値)` 検証用。
+
+  /// `ilike(column, pattern)` の呼び出し記録。pattern はエスケープ検証のため
+  /// 生のまま保持する (web stock/actions.ts の % _ 非エスケープ quirk)。
+  final ilikeFilters = <({String column, String pattern})>[];
+
+  @override
+  PostgrestFilterBuilder<PostgrestList> ilike(String column, String pattern) {
+    ilikeFilters.add((column: column, pattern: pattern));
+    return this;
+  }
 }
 
 /// `from('table')` の結果 (`SupabaseQueryBuilder` 相当)。
