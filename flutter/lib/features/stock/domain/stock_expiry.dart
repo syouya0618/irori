@@ -13,6 +13,17 @@ library;
 
 import '../../../core/utils/jst_date.dart';
 
+/// web `parseYmd` (`src/lib/utils/date-jst.ts`) と同一の厳密形式検証
+/// (Issue #38)。
+///
+/// `jst_date.dart` の `daysBetweenYmd` は桁数チェック + `int.parse` のため、
+/// `int.parse` が許容する前後空白 (`'9 '`)・符号 prefix (`'+123'`)・
+/// 16進 prefix (`'0x10'`) をすり抜けて数値を返してしまう。web は regex
+/// 不一致で null (= バッジなし) のため、`daysBetweenYmd` へ渡す前に同じ
+/// regex で弾く (`jst_date.dart` 本体は正規形保証済みの呼び出し元があるため
+/// 変えない)。
+final _ymdPattern = RegExp(r'^\d{4}-\d{2}-\d{2}$');
+
 /// 期限バッジの分類。web `getExpiryStatus` の分岐 1:1 + バッジなし ([none])。
 ///
 /// | 値 | web の分岐 | web のバッジ |
@@ -57,9 +68,10 @@ enum StockExpiryStatus {
 /// [expiresAtYmd] (YYYY-MM-DD) を [todayYmd] (YYYY-MM-DD) 基準で分類する。
 ///
 /// web `getExpiryStatus` と同じ tolerant 方針: `daysFromTodayJst` が
-/// パース失敗で null を返す経路 (= 原典の「バッジなし」) を、
-/// `daysBetweenYmd` の `ArgumentError` / `FormatException` を捕捉して
-/// [StockExpiryStatus.none] に対応させる。null / 空文字も [none]。
+/// パース失敗で null を返す経路 (= 原典の「バッジなし」) を、web `parseYmd`
+/// と同一の `_ymdPattern` 事前検証 (Issue #38) + `daysBetweenYmd` の
+/// `ArgumentError` / `FormatException` 捕捉で [StockExpiryStatus.none] に
+/// 対応させる。null / 空文字も [none]。
 ///
 /// [todayYmd] は実運用では `formatJstDate()` 由来の正規形だが、
 /// 不正でも throw せず [none] に倒す (原典 `daysBetweenYmd` は from/to の
@@ -68,15 +80,22 @@ StockExpiryStatus classifyExpiry(String todayYmd, String? expiresAtYmd) {
   if (expiresAtYmd == null || expiresAtYmd.isEmpty) {
     return StockExpiryStatus.none;
   }
+  // 原典 `parseYmd` の regex 検証 — from/to どちらの不一致も [none] に倒す
+  // (Issue #38。原典 `daysBetweenYmd` は from/to どちらの失敗も null)。
+  if (!_ymdPattern.hasMatch(todayYmd) || !_ymdPattern.hasMatch(expiresAtYmd)) {
+    return StockExpiryStatus.none;
+  }
 
   final int diffDays;
   try {
     diffDays = daysBetweenYmd(todayYmd, expiresAtYmd);
   } on ArgumentError {
     // "YYYY-MM-DD" の桁構成でない (jst_date の形式検証)。
+    // regex 事前検証後は理論上到達しないが、防御として残す。
     return StockExpiryStatus.none;
   } on FormatException {
     // 桁構成は合うが数値でない ("abcd-ef-gh" 等の int.parse 失敗)。
+    // 同上 — regex 事前検証後は到達しないが、防御として残す。
     return StockExpiryStatus.none;
   }
 
