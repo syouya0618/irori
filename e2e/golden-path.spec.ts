@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test"
 import { test, expect } from "./fixtures/test"
-import { loginViaMagicLink } from "./fixtures/auth"
+import { adminClient, loginViaMagicLink } from "./fixtures/auth"
 
 /**
  * ゴールデンパス E2E: 新規ユーザーの主要動線を 1 本で検証する。
@@ -48,6 +48,34 @@ async function reloadHydrated(page: Page): Promise<void> {
   const ws = page.waitForEvent("websocket", { timeout: 20_000 })
   await page.reload()
   await ws
+}
+
+/**
+ * 献立 server action の完了を DB 断面で待つ (service_role で RLS バイパス)。
+ *
+ * 楽観更新化 (PR #50) で献立保存の成功 toast は廃止された (楽観反映が成功
+ * フィードバック) ため、toast を action 完了の同期点に使えない。楽観反映の
+ * 直後に reload すると進行中の server action の fetch を中断しうるため、
+ * 「DB に行が現れた」ことを直接 poll してから reload する。
+ */
+async function waitForMealRow(userId: string, title: string): Promise<void> {
+  const admin = adminClient()
+  await expect(async () => {
+    const { data: profile } = await admin
+      .from("profiles")
+      .select("household_id")
+      .eq("id", userId)
+      .single()
+    if (!profile?.household_id) throw new Error("household not ready")
+    const { data: meals, error } = await admin
+      .from("meals")
+      .select("id")
+      .eq("household_id", profile.household_id)
+      .eq("title", title)
+    if (error) throw new Error(`meals lookup failed: ${error.message}`)
+    if (!meals || meals.length === 0)
+      throw new Error(`meal "${title}" not in DB yet`)
+  }).toPass({ timeout: 15_000 })
 }
 
 /**
@@ -101,7 +129,13 @@ test("golden path: login → 世帯作成 → 献立 → 買い物リスト → 
   await page.getByPlaceholder("食材名").fill("にんじん")
   // カテゴリは既定（その他食品 = 食品カテゴリ → 在庫自動追加の対象外）のまま
   await page.getByRole("button", { name: "追加する", exact: true }).click()
-  await expect(page.getByText("献立を追加しました")).toBeVisible()
+  // 楽観更新 (PR #50): 成功 toast は廃止 — 「シート即閉じ + 週ビュー即時反映」
+  // が成功フィードバック。まず楽観反映の即時性そのものを assert する
+  await expect(sheetTitle).toBeHidden()
+  await expect(todayRow.getByText("カレーライス")).toBeVisible()
+  // server action の完了は DB 断面で待つ (toast 待ちの代替。reload が
+  // 進行中の action を中断して SSR assert が落ちるレースを防ぐ)
+  await waitForMealRow(approvedUser.id, "カレーライス")
 
   // 一覧反映は Realtime 依存のため、reload して SSR 断面を assert する
   // （今日の行の中に表示されることまで検証して日付の正しさも固定する）

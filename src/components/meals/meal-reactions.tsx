@@ -1,6 +1,6 @@
 "use client"
 
-import { useOptimistic, useTransition } from "react"
+import { useRef, useTransition } from "react"
 import { cn } from "@/lib/utils"
 import { upsertReaction } from "@/app/(main)/meals/actions"
 import { toast } from "sonner"
@@ -15,6 +15,14 @@ interface MealReactionsProps {
   mealId: string
   currentUserId: string
   reactions: ReactionData[]
+  /**
+   * 自分のリアクションの楽観反映 (reaction === null は解除)。
+   * 親 (useWeekMeals の meals state) が反映先を持つ手動 state 方式
+   * (shopping-item.tsx と同パターン)。useOptimistic だと transition 完了時に
+   * base へ revert するが、meal_reactions は Realtime 購読に乗っておらず
+   * base が更新されないため、成功した自分の操作が見かけ上消えてしまう。
+   */
+  onOptimisticReaction: (mealId: string, reaction: MealReaction | null) => void
 }
 
 const REACTION_CONFIG: {
@@ -31,48 +39,43 @@ export function MealReactions({
   mealId,
   currentUserId,
   reactions,
+  onOptimisticReaction,
 }: MealReactionsProps) {
   const [isPending, startTransition] = useTransition()
-  const [optimisticReactions, setOptimisticReactions] = useOptimistic(
-    reactions,
-    (
-      current: ReactionData[],
-      action: { reaction: MealReaction; remove: boolean }
-    ) => {
-      if (action.remove) {
-        return current.filter((r) => r.userId !== currentUserId)
-      }
-      const existing = current.find((r) => r.userId === currentUserId)
-      if (existing) {
-        return current.map((r) =>
-          r.userId === currentUserId
-            ? { ...r, reaction: action.reaction }
-            : r
-        )
-      }
-      return [
-        ...current,
-        { userId: currentUserId, reaction: action.reaction },
-      ]
-    }
-  )
+  // isPending の render 反映は 1 frame 遅れるため、同一 tick 内の連打は
+  // ref で同期ガードする (二重 action は server の toggle 仕様と相互作用して
+  // 「付けたつもりが消える」状態崩れを起こす)
+  const inFlightRef = useRef(false)
 
-  const currentUserReaction = optimisticReactions.find(
+  const currentUserReaction = reactions.find(
     (r) => r.userId === currentUserId
   )
-  const partnerReaction = optimisticReactions.find(
-    (r) => r.userId !== currentUserId
-  )
+  const partnerReaction = reactions.find((r) => r.userId !== currentUserId)
 
   function handleReaction(reaction: MealReaction) {
-    const isRemoving = currentUserReaction?.reaction === reaction
+    if (inFlightRef.current) return
+    inFlightRef.current = true
+
+    // ロールバック用に直前値を snapshot
+    const previous = currentUserReaction?.reaction ?? null
+    // 同じ絵文字の再タップ = 解除 (server 側 upsertReaction の toggle 仕様と一致)
+    const next = previous === reaction ? null : reaction
+    onOptimisticReaction(mealId, next)
 
     startTransition(async () => {
-      setOptimisticReactions({ reaction, remove: isRemoving })
-
-      const result = await upsertReaction(mealId, reaction)
-      if (result.error) {
-        toast.error(result.error)
+      try {
+        const result = await upsertReaction(mealId, reaction)
+        if (result.error) {
+          // ロールバック
+          onOptimisticReaction(mealId, previous)
+          toast.error(result.error)
+        }
+      } catch (err) {
+        console.error("[meals] upsertReaction failed", { mealId, reaction, err })
+        onOptimisticReaction(mealId, previous)
+        toast.error("リアクションの保存に失敗しました。通信環境をご確認ください。")
+      } finally {
+        inFlightRef.current = false
       }
     })
   }

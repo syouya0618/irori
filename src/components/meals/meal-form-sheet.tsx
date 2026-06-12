@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition } from "react"
+import { useState, useRef, useTransition } from "react"
 import {
   Sheet,
   SheetContent,
@@ -14,17 +14,11 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import {
-  Loader2,
   BookMarked,
   BookOpen,
 } from "lucide-react"
 import { toast } from "sonner"
-import {
-  createMeal,
-  updateMeal,
-  deleteMeal,
-  saveAsTemplate,
-} from "@/app/(main)/meals/actions"
+import { saveAsTemplate } from "@/app/(main)/meals/actions"
 import { MealDeleteConfirm } from "@/components/meals/meal-delete-confirm"
 import { MealIngredientFields } from "@/components/meals/meal-ingredient-fields"
 import { TemplateSelector } from "@/components/meals/template-selector"
@@ -41,12 +35,29 @@ interface MealFormData {
   ingredients: IngredientInput[]
 }
 
+/** 保存ボタン押下時に親へ渡すバリデーション済みフォーム値 (id があれば更新) */
+export interface MealFormSubmitData {
+  id?: string
+  date: string
+  mealType: MealType
+  title: string
+  isEatingOut: boolean
+  ingredients: IngredientInput[]
+}
+
 interface MealFormSheetProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   initialData?: MealFormData
   defaultDate: string
   defaultMealType: MealType
+  /**
+   * 保存/削除は親 (MealWeekView) が楽観反映 → シート即閉じ → 裏で server action
+   * → 失敗時ロールバック + toast を担う。シートは検証済みの入力値を渡すだけで、
+   * action の完了を待たない。
+   */
+  onSubmitMeal: (data: MealFormSubmitData) => void
+  onDeleteMeal: (mealId: string) => void
 }
 
 export function MealFormSheet({
@@ -55,11 +66,18 @@ export function MealFormSheet({
   initialData,
   defaultDate,
   defaultMealType,
+  onSubmitMeal,
+  onDeleteMeal,
 }: MealFormSheetProps) {
   const isEditing = !!initialData?.id
+  // isPending はシート内で完結する saveAsTemplate のみが使う
   const [isPending, startTransition] = useTransition()
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showTemplateSelector, setShowTemplateSelector] = useState(false)
+  // 連打防御: 保存/削除は即シートが閉じるが、閉アニメーション中の再タップや
+  // Enter + クリックの二重発火で楽観行が二重挿入されぬよう 1 度だけ通す。
+  // シートは open のたびに key で remount されるため自然にリセットされる。
+  const submittedRef = useRef(false)
 
   // 親がkey={formKey}で毎回remountするため、propsから直接初期化
   const [title, setTitle] = useState(initialData?.title ?? "")
@@ -83,56 +101,31 @@ export function MealFormSheet({
       return
     }
 
+    if (submittedRef.current) return
+    submittedRef.current = true
+
     // Filter out empty ingredient rows
     const validIngredients = ingredients.filter(
       (ing) => ing.name.trim() !== ""
     )
 
-    startTransition(async () => {
-      if (isEditing && initialData?.id) {
-        const result = await updateMeal({
-          id: initialData.id,
-          date,
-          mealType,
-          title: trimmedTitle,
-          isEatingOut,
-          ingredients: validIngredients,
-        })
-        if (result.error) {
-          toast.error(result.error)
-          return
-        }
-        toast.success("献立を更新しました")
-      } else {
-        const result = await createMeal({
-          date,
-          mealType,
-          title: trimmedTitle,
-          isEatingOut,
-          ingredients: validIngredients,
-        })
-        if (result.error) {
-          toast.error(result.error)
-          return
-        }
-        toast.success("献立を追加しました")
-      }
-      onOpenChange(false)
+    onSubmitMeal({
+      id: initialData?.id,
+      date,
+      mealType,
+      title: trimmedTitle,
+      isEatingOut,
+      ingredients: validIngredients,
     })
   }
 
   function handleDelete() {
     if (!initialData?.id) return
 
-    startTransition(async () => {
-      const result = await deleteMeal(initialData.id!)
-      if (result.error) {
-        toast.error(result.error)
-        return
-      }
-      toast.success("献立を削除しました")
-      onOpenChange(false)
-    })
+    if (submittedRef.current) return
+    submittedRef.current = true
+
+    onDeleteMeal(initialData.id)
   }
 
   function handleSaveAsTemplate() {
@@ -288,22 +281,14 @@ export function MealFormSheet({
           </form>
 
           <SheetFooter>
+            {/* 保存は楽観反映で即シートが閉じるため pending スピナーは持たない */}
             <Button
               type="submit"
               onClick={handleSubmit}
               disabled={isPending || !title.trim()}
               className="min-h-11 w-full rounded-lg text-base font-semibold"
             >
-              {isPending ? (
-                <>
-                  <Loader2 className="animate-spin" />
-                  {isEditing ? "更新中..." : "追加中..."}
-                </>
-              ) : isEditing ? (
-                "更新する"
-              ) : (
-                "追加する"
-              )}
+              {isEditing ? "更新する" : "追加する"}
             </Button>
           </SheetFooter>
         </SheetContent>
