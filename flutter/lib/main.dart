@@ -29,7 +29,12 @@ Future<void> main() async {
   final anonKey = rawAnonKey.trim();
 
   if (url.isNotEmpty && anonKey.isNotEmpty) {
-    await Supabase.initialize(url: url, anonKey: anonKey);
+    // supabase_flutter 2.13.0 で `anonKey` が deprecated になり `publishableKey`
+    // へ rename された (CHANGELOG #1360)。内部では `publishableKey ?? anonKey`
+    // で合流するだけで値の形式検証はなく、legacy anon key (JWT) /
+    // sb_publishable_ キーのどちらもそのまま受ける。env 名 SUPABASE_ANON_KEY
+    // は CI / Vercel と連動しているため変更しない。
+    await Supabase.initialize(url: url, publishableKey: anonKey);
   } else if (kReleaseMode) {
     throw StateError(
       'SUPABASE_URL / SUPABASE_ANON_KEY が release build で必須です。'
