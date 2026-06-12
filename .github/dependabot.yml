@@ -40,6 +40,12 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    ignore:
+      # setup-cli@v2 は version input の pin が効かず latest CLI が入り
+      # e2e の supabase start が壊れる (2026-06-12 実測、e2e.yml 参照)。
+      # v1 に留めるため major bump の提案を止める。
+      - dependency-name: "supabase/setup-cli"
+        update-types: ["version-update:semver-major"]
     groups:
       github-actions:
         patterns:
