@@ -40,6 +40,19 @@ class DuplicateMealException implements Exception {
 /// meals mutation に必要な認証コンテキスト。
 typedef MealsMutationContext = ({String householdId, String userId});
 
+/// [MealsRepository.fetchTemplateReactions] が返す 1 行。
+///
+/// web `fetchRecipeSuggestions` の reactionRows 要素
+/// (`{ template_id: string | null, meal_reactions: [{reaction}] | null }`,
+/// `recipe-suggestion-queries.ts:54-57`) に相当する。`templateId` は
+/// `.not('template_id', 'is', null)` で DB 側除外済みだが、消費側
+/// (`recipeSuggestionsProvider`) が web :60 の `if (!meal.template_id)
+/// continue` と同じ null skip 防御を持てるよう nullable のまま返す。
+typedef TemplateReactionRow = ({
+  String? templateId,
+  List<MealReaction> reactions,
+});
+
 /// `meals` / `meal_ingredients` / `meal_reactions` へのアクセスを担う
 /// リポジトリ。Next.js 版 `meals/page.tsx` (read) + `actions.ts` (write) の
 /// セマンティクスを 1:1 で移植する。
@@ -549,6 +562,45 @@ class MealsRepository {
     }
   }
 
+  // ─── レシピ提案 (P2.5-F) ────────────────────────────────────
+
+  /// テンプレート起源の献立リアクションを取得する。
+  ///
+  /// web `fetchRecipeSuggestions` の reaction クエリ
+  /// (`recipe-suggestion-queries.ts:35-39`) と同一:
+  /// `meals` を household スコープ + `template_id IS NOT NULL` で絞り、
+  /// nested `meal_reactions(reaction)` を取る。reactionMap への集約
+  /// (template_id null skip 込み) は web 同様、消費側
+  /// (`recipeSuggestionsProvider`) の責務。
+  ///
+  /// 行の整形は web の無検証 cast (:54) より防御的 (1 行の異常で提案全体を
+  /// 落とさない — `mealTemplateIngredientsFromJson` と同じ方針):
+  /// - `meal_reactions` が null / 非配列 → 空リスト (web の `?? []` 相当)
+  /// - `reaction` が未知文字列 / 非 Map 要素 → その要素のみ skip
+  ///   (`calculateReactionScore` は good/bad 以外を無視するため挙動中立)
+  Future<List<TemplateReactionRow>> fetchTemplateReactions(
+    String householdId,
+  ) async {
+    try {
+      final rows = await _client
+          .from('meals')
+          // web の `template_id, meal_reactions ( reaction )` — PostgREST が
+          // 無視する装飾空白を正規化 (`_kWeekMealColumns` と同じ規約)。
+          .select('template_id, meal_reactions(reaction)')
+          .eq('household_id', householdId)
+          .not('template_id', 'is', null)
+          .timeout(_kQueryTimeout);
+      return rows.map(_templateReactionRowFromJson).toList();
+    } on PostgrestException catch (e) {
+      _logPostgrestError(
+        'fetchTemplateReactions',
+        e,
+        'householdId=$householdId',
+      );
+      rethrow;
+    }
+  }
+
   /// `meal_ingredients` への一括 insert 行を組み立てる。
   /// web と同じく `quantity` の空文字は null に正規化する
   /// (`quantity: ing.quantity || null`)。
@@ -674,5 +726,36 @@ String _reactionValue(MealReaction reaction) {
       return 'ok';
     case MealReaction.bad:
       return 'bad';
+  }
+}
+
+/// `fetchTemplateReactions` の 1 行を [TemplateReactionRow] へ整形する
+/// (防御方針はメソッド doc 参照)。
+TemplateReactionRow _templateReactionRowFromJson(Map<String, dynamic> row) {
+  final reactions = <MealReaction>[];
+  final rawReactions = row['meal_reactions'];
+  if (rawReactions is List) {
+    for (final entry in rawReactions) {
+      if (entry is! Map<String, dynamic>) continue;
+      final reaction = _reactionFromDbValue(entry['reaction']);
+      if (reaction != null) reactions.add(reaction);
+    }
+  }
+  return (templateId: row['template_id'] as String?, reactions: reactions);
+}
+
+/// Postgres ENUM `meal_reaction` 文字列 → [MealReaction]。
+/// 未知値は null を返し、呼び出し側がその要素のみ skip する
+/// (`@JsonValue` と同一文字列 — 変更時は enum 側と両方を直す)。
+MealReaction? _reactionFromDbValue(Object? value) {
+  switch (value) {
+    case 'good':
+      return MealReaction.good;
+    case 'ok':
+      return MealReaction.ok;
+    case 'bad':
+      return MealReaction.bad;
+    default:
+      return null;
   }
 }
