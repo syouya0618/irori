@@ -180,6 +180,22 @@ class FakeFilterBuilder extends Fake
     return this;
   }
 
+  // ─── Phase 2.6-1 baby report 用 (additive) ─────────────────
+  // `BabyRepository.fetchReportLogs` の `.lt('logged_at', ...)` 検証用。
+  //
+  // TODO(baby-report): `.or()` は未実装 — `fetchWeeklyLogs` (`weeklyOrFilter`)
+  // を fake_supabase 経由でテストすると noSuchMethod throw で落ちる。
+  // 必要になったら additive に追加すること (既存挙動の変更禁止 / review M2)。
+
+  /// `lt(column, value)` の呼び出し記録 (Phase 2.6-1 で追加)。
+  final ltFilters = <({String column, Object value})>[];
+
+  @override
+  PostgrestFilterBuilder<PostgrestList> lt(String column, Object value) {
+    ltFilters.add((column: column, value: value));
+    return this;
+  }
+
   // ─── P2.5-C shopping 用 (additive) ─────────────────────────
   // `ShoppingRepository.generateFromMeals` の
   // `meal_ingredients.inFilter('meal_id', mealIds)` 検証用。

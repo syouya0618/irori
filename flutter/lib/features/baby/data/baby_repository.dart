@@ -4,7 +4,9 @@ import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/supabase/supabase_providers.dart';
+import '../../../core/utils/jst_date.dart';
 import '../domain/baby_log.dart';
+import '../domain/baby_report_aggregation.dart';
 
 /// `formatJstDate` / `shiftYmd` は Phase 2 共有基盤 (F0) で
 /// `core/utils/jst_date.dart` へ移設した。既存の import 元
@@ -29,6 +31,13 @@ const maxBabyLogMemoLength = 1000;
 
 /// baby log mutation に必要な認証コンテキスト。
 typedef BabyMutationContext = ({String householdId, String userId});
+
+/// 育児レポートのヘッダに使う世帯 baby プロフィール。
+///
+/// 原典 `src/app/api/baby-report/route.ts:50` の SELECT 2 列
+/// (`baby_name, baby_birth_date`) に対応。`babyBirthDate` は Postgres `date`
+/// 列 → "YYYY-MM-DD" 文字列。null は「未設定」(縮退表示は呼び出し側の責務)。
+typedef BabyReportProfile = ({String? babyName, String? babyBirthDate});
 
 /// write 系 UI が使う最小コンテキスト。
 ///
@@ -419,6 +428,74 @@ class BabyRepository {
       return rows.map(BabyLog.fromJson).toList();
     } on PostgrestException catch (e) {
       _logPostgrestError('fetchWeeklyLogs', e, householdId);
+      rethrow;
+    }
+  }
+
+  /// 育児レポート用 SELECT 列 (9 列)。原典 `route.ts:55-57` と同一。
+  ///
+  /// `AggregationLogInput` が必要とする最小列のみ取り、3 ヶ月分
+  /// (上限 5000 行) の転送量を抑える。手組み文字列の typo 防止のため
+  /// `weeklyOrFilter` と同様 `@visibleForTesting` で公開しテストで固定する。
+  @visibleForTesting
+  static const babyReportColumns =
+      'log_type, logged_at, feeding_type, amount_ml, diaper_type, ended_at, '
+      'temperature, weight_g, height_cm';
+
+  /// 育児レポート対象期間の全ログを `logged_at` 昇順で取得する。
+  ///
+  /// 原典 `src/app/api/baby-report/route.ts:54-62` と同一のクエリ仕様:
+  /// - `household_id` filter
+  /// - JST 日界の半開区間
+  ///   `[{startDate}T00:00:00+09:00, {shiftYmd(endDate, 1)}T00:00:00+09:00)`
+  ///   — endDate **当日を含む** (上限は翌日 0:00 JST)
+  /// - `order('logged_at', ascending: true)` / `limit(5000)`
+  ///
+  /// [startDate] / [endDate] は "YYYY-MM-DD" (JST)。`babyReportDateRange`
+  /// (`baby_report_period.dart`) で得る。
+  Future<List<AggregationLogInput>> fetchReportLogs(
+    String householdId,
+    String startDate,
+    String endDate,
+  ) async {
+    try {
+      final rows = await _client
+          .from('baby_logs')
+          .select(babyReportColumns)
+          .eq('household_id', householdId)
+          .gte('logged_at', '${startDate}T00:00:00+09:00')
+          .lt('logged_at', '${shiftYmd(endDate, 1)}T00:00:00+09:00')
+          .order('logged_at', ascending: true)
+          .limit(5000)
+          .timeout(_kQueryTimeout);
+      return rows.map(AggregationLogInput.fromJson).toList();
+    } on PostgrestException catch (e) {
+      _logPostgrestError('fetchReportLogs', e, householdId);
+      rethrow;
+    }
+  }
+
+  /// 育児レポートのヘッダ用世帯プロフィールを取得する。
+  ///
+  /// 原典 `route.ts:48-52` と同一: `households` から
+  /// `baby_name, baby_birth_date` を `.single()` で取得。0 行 / 複数行は
+  /// `PostgrestException` (原典は 500 へ倒す `route.ts:65-67`)。
+  /// `|| "未設定"` / age 計算の縮退 (`route.ts:69-71`) は PDF 生成側
+  /// (Phase 2.6-2) の責務のため、ここでは null をそのまま返す。
+  Future<BabyReportProfile> fetchBabyReportProfile(String householdId) async {
+    try {
+      final row = await _client
+          .from('households')
+          .select('baby_name, baby_birth_date')
+          .eq('id', householdId)
+          .single()
+          .timeout(_kQueryTimeout);
+      return (
+        babyName: row['baby_name'] as String?,
+        babyBirthDate: row['baby_birth_date'] as String?,
+      );
+    } on PostgrestException catch (e) {
+      _logPostgrestError('fetchBabyReportProfile', e, householdId);
       rethrow;
     }
   }
