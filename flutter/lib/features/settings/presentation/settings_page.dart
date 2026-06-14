@@ -4,6 +4,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../core/supabase/supabase_providers.dart';
 import '../../../core/theme/colors.dart';
+import '../../../features/baby/presentation/export_card.dart';
 import '../../../widgets/glass_card.dart';
 import '../data/settings_provider.dart';
 import 'widgets/auto_stock_card.dart';
@@ -14,9 +15,10 @@ import 'widgets/profile_card.dart';
 /// 設定タブ。Next.js 原典 `settings-content.tsx` (+ `settings/page.tsx`) の
 /// Flutter 移植 **サブセット**。
 ///
-/// 移植カード (P2.5-H スコープ):
+/// 移植カード:
 /// プロフィール / 世帯表示 / 起動時のページ / 在庫自動追加 / 赤ちゃん情報 /
-/// サインアウト。Invite / Approval / Theme / Export カードは deferred
+/// 記録エクスポート (Phase 2.6-2 で追加) / サインアウト。
+/// Invite / Approval / Theme カードは引き続き deferred
 /// (p25plan の deferred 欄参照)。
 ///
 /// データ:
@@ -84,6 +86,10 @@ class _SettingsBody extends StatelessWidget {
           initialName: settings.babyName,
           initialBirthDate: settings.babyBirthDate,
         ),
+        const SizedBox(height: 16),
+        // web `settings-content.tsx:123-124`: 赤ちゃん情報の直後に配置
+        // (web の Theme/Invite/Approval カードは Flutter で deferred のため省略)。
+        const ExportCard(),
         const SizedBox(height: 16),
         // web: <Separator /> → ログアウト。
         const Divider(height: 1, color: IroriColors.border),
