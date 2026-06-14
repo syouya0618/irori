@@ -59,5 +59,10 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  # 既存 Liquid Glass design system のフォントは Noto Sans JP を想定。
-  # Phase 1 着手時に fonts assets を追加する (PDF 用 Noto Sans JP 埋め込みと共通化)。
+  # 育児レポート PDF (Phase 2.6-2) の日本語フォント埋め込み用。
+  # 原本は repo ルートの `fonts/NotoSansJP-Regular.ttf` (OFL ライセンス、
+  # `fonts/OFL.txt`)。`pdf` パッケージは Font.ttf に ByteData を渡すため、
+  # font 宣言 (Flutter テキスト描画用) ではなく **asset** として読み込む
+  # (`rootBundle.load` で取得 → `pw.Font.ttf`)。約 9.6MB。
+  assets:
+    - assets/fonts/NotoSansJP-Regular.ttf
