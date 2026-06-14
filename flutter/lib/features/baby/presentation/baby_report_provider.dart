@@ -61,16 +61,26 @@ Future<BabyReportResult> generateBabyReportForPeriod(
   final today = formatJstDate();
   final range = babyReportDateRange(period, today);
 
-  // 原典 `route.ts:46-63` の並列取得 (Promise.all)。型の異なる 2 future を
-  // 個別に await し合流させる (Future.wait の List<Object?> ダウンキャストを避ける)。
-  final profileFuture = repository.fetchBabyReportProfile(householdId);
-  final logsFuture = repository.fetchReportLogs(
-    householdId,
-    range.startDate,
-    range.endDate,
-  );
-  final profile = await profileFuture;
-  final logs = await logsFuture;
+  // 原典 `route.ts:46-63` の `Promise.all` 並列取得を `Future.wait` で再現する。
+  // 型の異なる 2 future を真に並列実行する。
+  //
+  // review H1: 個別 `await f1; await f2` の直列形は f1 が throw した瞬間に f2 が
+  // unawaited で宙吊りになり unhandled future 事故を起こす (web Promise.all と
+  // 挙動が乖離) ため、`Future.wait` にする。`Future.wait` (eagerError 既定
+  // false) は **全 future にエラーハンドラを即時登録** したうえで全完了を待ち、
+  // 最初に起きた error を **そのまま** (ラップせず) 投げ、残りの error は吸収する
+  // (SDK `future.dart` の handleError 実装で確認)。これは原典 `Promise.all` の
+  // 「最初の rejection を投げる / 他は unhandled にしない」と同一で、repository の
+  // `PostgrestException` 契約 (UI 文言マッピング前提) も保たれる。
+  //
+  // 戻り値は要素型が異なるため `List<Object?>` になる。順序は呼び出し順で確定する
+  // ので各要素を型付きで取り出す。
+  final results = await Future.wait<Object>([
+    repository.fetchBabyReportProfile(householdId),
+    repository.fetchReportLogs(householdId, range.startDate, range.endDate),
+  ]);
+  final profile = results[0] as BabyReportProfile;
+  final logs = results[1] as List<AggregationLogInput>;
 
   return generateBabyReportFromData(
     profile: profile,

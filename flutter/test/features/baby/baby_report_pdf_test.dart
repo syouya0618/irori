@@ -60,6 +60,20 @@ void main() {
         'baby-log_2025-12-01_2026-02-28.pdf',
       );
     });
+
+    // review M2: 旧 web export-card の固定名 (`a.download = "baby-log.pdf"`) に
+    // デグレしていないことを機械的に固定する。期間を含む動的名でなければ red。
+    test('旧固定名 baby-log.pdf へデグレしていない (期間を必ず含む)', () {
+      final name = babyReportFileName('2026-04-04', '2026-04-11');
+      expect(name, isNot('baby-log.pdf'));
+      expect(name, contains('2026-04-04'));
+      expect(name, contains('2026-04-11'));
+      // 開始日と終了日が同じでも (= 1 日範囲) 両方を綴り、固定名にならない。
+      expect(
+        babyReportFileName('2026-04-11', '2026-04-11'),
+        isNot('baby-log.pdf'),
+      );
+    });
   });
 
   group('buildBabyReportBytes (generateBabyReport コア)', () {

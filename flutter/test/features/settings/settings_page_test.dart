@@ -139,18 +139,23 @@ ProviderContainer _containerOf(WidgetTester tester) =>
     ProviderScope.containerOf(tester.element(find.byType(SettingsPage)));
 
 void main() {
-  testWidgets('設定タイトル・5 カード・世帯名/役割・email を表示する', (tester) async {
+  testWidgets('設定タイトル・各カード・世帯名/役割・email を表示する', (tester) async {
     _useTallViewport(tester);
     await tester.pumpWidget(_harness(repo: _FakeSettingsRepository()));
     await tester.pumpAndSettle();
 
     expect(find.text('設定'), findsOneWidget);
-    // カードタイトル (web settings-content.tsx のサブセット 5 枚 + 世帯表示)。
+    // カードタイトル (web settings-content.tsx のサブセット + 世帯表示)。
     expect(find.text('プロフィール'), findsOneWidget);
     expect(find.text('世帯'), findsOneWidget);
     expect(find.text('起動時のページ'), findsOneWidget);
     expect(find.text('在庫自動追加'), findsOneWidget);
     expect(find.text('赤ちゃん情報'), findsOneWidget);
+    // review M1: 記録エクスポートカードが設定画面に配線されている
+    // (Phase 2.6-2 / export_card.dart の CardTitle 文言)。ExportCard は onExport
+    // 注入で実印刷を回避でき、build 時は provider を読まないため実 Supabase に
+    // 触れない (タップせず見出し存在のみ確認)。
+    expect(find.text('記録エクスポート'), findsOneWidget);
     expect(find.text('ログアウト'), findsOneWidget);
     // 世帯名 + 役割ラベル (web roleLabels: owner → オーナー)。
     expect(find.text('いろり家'), findsOneWidget);
