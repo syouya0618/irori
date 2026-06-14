@@ -411,6 +411,11 @@ const Duration _kJstOffset = Duration(hours: 9);
 /// presentation 層 `baby_display_utils.dart` の同名関数 (DateTime 引数) と
 /// 重複するが、domain → presentation の逆依存を避ける duplication
 /// (`baby_weekly_summary.dart` の既存パターン)。
+///
+/// web `JST_TIME_FORMATTER` (`Intl.DateTimeFormat "ja-JP"`, hour/minute
+/// 2-digit) は Node v24.13.0 実測で `resolvedOptions().hourCycle == "h23"` —
+/// 01:00Z→"10:00" / 15:05Z→"00:05" / 03:00Z→"12:00" (正午も 24h 表記)。
+/// Dart の `DateFormat('HH:mm')` と完全一致 (2026-06-13 実測 / review M1)。
 String _formatTimeJst(String iso) {
   final jst = DateTime.parse(iso).toUtc().add(_kJstOffset);
   return DateFormat('HH:mm').format(jst);

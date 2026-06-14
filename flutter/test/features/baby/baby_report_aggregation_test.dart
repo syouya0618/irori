@@ -177,6 +177,38 @@ void main() {
       expect(result[0].avgBottleMl, isNull);
     });
 
+    test('Dart 追加 (review H1): avgBottleMl の正の .5 は +∞ 方向へ繰り上がる', () {
+      // bottleCount=2 / totalBottleMl=1 → 0.5 → JS `Math.round(0.5) === 1`。
+      // amount 0 のミルクが「合計に入らず分母に入る」quirk を使い、丸め境界
+      // そのものを集計経路経由で機械固定する。
+      //
+      // なお浮動小数点罠 0.49999999999999994 (`x + 0.5` 加算だと 1.0 へ
+      // 繰り上がる最大の <0.5 double = (2^53-1)/2^54) は、`_jsMathRound` への
+      // 入力が常に整数比 — avgBottleMl は分母 bottleCount ≤ 5000 (limit)、
+      // `_minutesBetween` は整数 ms / 60000 — であり、この dyadic rational へ
+      // 量子化されるには 2^27 オーダー以上の分母を要するため、**集計経路では
+      // 構成不能** (floor 差分比較の実装は防御として罠を回避するが、到達経路が
+      // 無いことをここに記録する / review H1。経路が生まれたら直接固定すること)。
+      final logs = [
+        _mkLog(
+          BabyLogType.feeding,
+          2,
+          feedingType: FeedingType.bottle,
+          amountMl: 1,
+        ),
+        _mkLog(
+          BabyLogType.feeding,
+          3,
+          feedingType: FeedingType.bottle,
+          amountMl: 0,
+        ),
+      ];
+      final result = aggregateFeedings(logs, _start, _end);
+      expect(result[0].bottleCount, 2);
+      expect(result[0].totalBottleMl, 1);
+      expect(result[0].avgBottleMl, 1); // Math.round(0.5) === 1 (+∞ 方向)
+    });
+
     test('Dart 追加: JST 下限境界 — startDate 00:00 JST ちょうどは含み、直前は除外', () {
       const logs = [
         // 2026-04-03T15:00Z = 2026-04-04 00:00 JST → 含む
@@ -288,6 +320,26 @@ void main() {
         final result = aggregateSleep(logs, _start, _end);
         expect(result, hasLength(1));
         expect(result[0].totalMinutes, -1);
+        expect(result[0].sessionCount, 1);
+      },
+    );
+
+    test(
+      'Dart 追加 (review H1): -0.5 分は 0 へ丸める (JS Math.round(-0.5) === -0)',
+      () {
+        // -30 秒 = -0.5 分 → JS は half を +∞ 方向へ丸め -0 (数値としては 0)。
+        // Dart naive `(-0.5).round() == -1` (half away from zero) との差を
+        // 集計経路経由で機械固定する — `_jsMathRound` の負ゼロ付近境界。
+        const logs = [
+          AggregationLogInput(
+            logType: BabyLogType.sleep,
+            loggedAt: '2026-04-11T03:00:00.000Z',
+            endedAt: '2026-04-11T02:59:30.000Z',
+          ),
+        ];
+        final result = aggregateSleep(logs, _start, _end);
+        expect(result, hasLength(1));
+        expect(result[0].totalMinutes, 0);
         expect(result[0].sessionCount, 1);
       },
     );
