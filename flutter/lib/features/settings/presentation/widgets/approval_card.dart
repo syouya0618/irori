@@ -97,9 +97,15 @@ class _ApprovalCardBody extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           // web: CardContent の flex flex-col gap-3。
+          // key: ValueKey(id) 必須 — _PendingUserRow は承認中フラグ (_approving) を
+          // 持つ StatefulWidget。get_pending_approvals は ORDER BY 無し (migration
+          // 20260408000002) ゆえ承認後 refetch で行順が変わりうる。key が無いと
+          // Flutter は State を「位置」で reconcile し、承認中スピナーが別ユーザーへ
+          // 化ける。web approval-card.tsx:37 の key={pendingUser.id} と
+          // shopping_category_group.dart の ValueKey(id) と同じ流儀。
           for (var i = 0; i < users.length; i++) ...[
             if (i > 0) const SizedBox(height: 12),
-            _PendingUserRow(user: users[i]),
+            _PendingUserRow(key: ValueKey(users[i].id), user: users[i]),
           ],
         ],
       ),
@@ -110,7 +116,7 @@ class _ApprovalCardBody extends StatelessWidget {
 /// 承認待ちユーザー 1 行 (web `PendingUserRow`)。承認ボタンの保存中状態を
 /// 行ごとに持つため [ConsumerStatefulWidget]。
 class _PendingUserRow extends ConsumerStatefulWidget {
-  const _PendingUserRow({required this.user});
+  const _PendingUserRow({super.key, required this.user});
 
   final PendingUser user;
 
@@ -132,9 +138,14 @@ class _PendingUserRowState extends ConsumerState<_PendingUserRow> {
 
     try {
       await ref.read(settingsRepositoryProvider).approveUser(user.id);
+      // await 後・ref 使用前に mounted を確認する (Riverpod 公式 FAQ の正準パターン:
+      // await → mounted 確認 → ref 使用)。await 中に widget が破棄された後の ref 使用は
+      // unsafe ゆえ先にゲートする。in-flight 中に unmount された場合 invalidate を skip
+      // するが、AppShell の設定タブ再表示で settingsProvider が再評価され
+      // pendingApprovalsProvider が追随する安全網がある。
+      if (!mounted) return;
       // web: router.refresh() で承認待ち一覧を再取得 → provider invalidate で対応。
       ref.invalidate(pendingApprovalsProvider);
-      if (!mounted) return;
       // web: toast.success(`${user.email} を承認しました`)。
       messenger.showSnackBar(
         SnackBar(content: Text('${user.email} を承認しました')),
