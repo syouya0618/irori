@@ -114,6 +114,11 @@ Widget _harness({
       settingsMutationContextProvider.overrideWith(
         (ref) async => (householdId: 'hh-1', userId: 'user-1'),
       ),
+      // 承認待ちは既定で空 (owner でもカード非表示)。承認カードの描画/承認操作は
+      // approval_card_test.dart で個別に検証する。ここで override しないと owner
+      // 既定の本テストが _FakeSettingsRepository の未実装 fetchPendingApprovals を
+      // 踏む。
+      pendingApprovalsProvider.overrideWith((ref) async => const []),
     ],
     child: const MaterialApp(home: SettingsPage()),
   );

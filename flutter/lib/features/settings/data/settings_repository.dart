@@ -79,6 +79,37 @@ class HouseholdSettings {
   final String? babyBirthDate;
 }
 
+/// 承認待ちユーザー 1 件 (web `approval-card.tsx` の `PendingUser` 型に対応)。
+///
+/// `get_pending_approvals` RPC (RETURNS TABLE id/display_name/email/created_at)
+/// の 1 行。display_name / email は DB NOT NULL だが外部 API 由来ゆえ null を
+/// '' へ防御する (web は `display_name || email` で表示するため空文字でも安全)。
+@immutable
+class PendingUser {
+  const PendingUser({
+    required this.id,
+    required this.displayName,
+    required this.email,
+    required this.createdAt,
+  });
+
+  factory PendingUser.fromRow(Map<String, dynamic> row) {
+    return PendingUser(
+      id: (row['id'] as String?) ?? '',
+      displayName: (row['display_name'] as String?) ?? '',
+      email: (row['email'] as String?) ?? '',
+      createdAt: (row['created_at'] as String?) ?? '',
+    );
+  }
+
+  final String id;
+  final String displayName;
+  final String email;
+
+  /// TIMESTAMPTZ ISO 文字列 (現状 UI では未表示だが web 型と対称に保持)。
+  final String createdAt;
+}
+
 /// settings mutation に必要な認証コンテキスト
 /// (`stockMutationContextProvider` と同形)。
 typedef SettingsMutationContext = ({String householdId, String userId});
@@ -343,6 +374,58 @@ class SettingsRepository {
         st,
         'householdId=$householdId',
       );
+      rethrow;
+    }
+  }
+
+  /// 承認待ちユーザー一覧を取得する (web `settings/page.tsx` の owner-gated
+  /// `get_pending_approvals` 呼び出しの移植)。
+  ///
+  /// RPC は SECURITY DEFINER で owner 以外には空を返す (migration
+  /// 20260408000002) ため、ここでは role チェックを行わない (呼び出し側
+  /// provider が owner 限定で評価する)。結果は web の `data ?? []` と同じく
+  /// List 以外を空へ縮退する。
+  Future<List<PendingUser>> fetchPendingApprovals() async {
+    try {
+      final result = await _client
+          .rpc<dynamic>('get_pending_approvals')
+          .timeout(_kQueryTimeout);
+      final rows = result is List ? result : const <dynamic>[];
+      return rows
+          .whereType<Map<String, dynamic>>()
+          .map(PendingUser.fromRow)
+          .toList();
+    } on Object catch (e, st) {
+      _logError('fetchPendingApprovals', e, st, '');
+      rethrow;
+    }
+  }
+
+  /// 承認待ちユーザーを承認する (web `approveUser` action の移植)。
+  ///
+  /// RPC `approve_user` は owner 以外で 'Only owners can approve users' を
+  /// RAISE する。web `approveUser` は `error.message.includes("Only owners")`
+  /// を「承認権限がありません」へ写すため、同判定で [ArgumentError] (UI が
+  /// `e.message` を snackbar 表示する user-facing message の carrier — 本 repo の
+  /// validation エラーと同じ流儀) に変換する。それ以外の DB エラー
+  /// ('User not found or already approved' 等) は rethrow し、UI 層が汎用文言
+  /// 「承認に失敗しました」へ丸める (web parity)。
+  Future<void> approveUser(String targetUserId) async {
+    try {
+      await _client
+          .rpc<dynamic>(
+            'approve_user',
+            params: {'target_user_id': targetUserId},
+          )
+          .timeout(_kQueryTimeout);
+    } on PostgrestException catch (e, st) {
+      _logError('approveUser', e, st, 'targetUserId=$targetUserId');
+      if (e.message.contains('Only owners')) {
+        throw ArgumentError('承認権限がありません');
+      }
+      rethrow;
+    } on Object catch (e, st) {
+      _logError('approveUser', e, st, 'targetUserId=$targetUserId');
       rethrow;
     }
   }

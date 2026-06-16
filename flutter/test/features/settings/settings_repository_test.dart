@@ -500,4 +500,116 @@ void main() {
       );
     });
   });
+
+  group('SettingsRepository approvals (承認管理)', () {
+    // fetchPendingApprovals / approveUser は RPC ベース。FakeRpcBuilder で
+    // get_pending_approvals (RETURNS TABLE) / approve_user (RETURNS VOID) を模す。
+    ({SettingsRepository repo, FakeSupabaseClient client}) makeRepo({
+      Object? pendingValue,
+      Object? pendingError,
+      Object? approveError,
+    }) {
+      final client = FakeSupabaseClient(
+        rpcBuilders: {
+          'get_pending_approvals': FakeRpcBuilder(
+            cannedValue: pendingValue,
+            cannedError: pendingError,
+          ),
+          'approve_user': FakeRpcBuilder(cannedError: approveError),
+        },
+      );
+      return (repo: SettingsRepository(client), client: client);
+    }
+
+    test(
+      'fetchPendingApprovals は get_pending_approvals を呼び行を PendingUser へ写す',
+      () async {
+        final r = makeRepo(
+          pendingValue: const [
+            {
+              'id': 'u-1',
+              'display_name': '花子',
+              'email': 'hanako@example.com',
+              'created_at': '2026-06-01T00:00:00.000Z',
+            },
+            {
+              'id': 'u-2',
+              'display_name': null,
+              'email': 'taro@example.com',
+              'created_at': '2026-06-02T00:00:00.000Z',
+            },
+          ],
+        );
+
+        final users = await r.repo.fetchPendingApprovals();
+
+        expect(r.client.lastRpcFn, 'get_pending_approvals');
+        expect(users, hasLength(2));
+        expect(users[0].id, 'u-1');
+        expect(users[0].displayName, '花子');
+        expect(users[0].email, 'hanako@example.com');
+        expect(users[0].createdAt, '2026-06-01T00:00:00.000Z');
+        // display_name null は '' へ防御 (外部 API 由来の null)。
+        expect(users[1].displayName, '');
+      },
+    );
+
+    test('fetchPendingApprovals は List 以外の結果を空リストへ縮退する', () async {
+      final r = makeRepo(pendingValue: null);
+      expect(await r.repo.fetchPendingApprovals(), isEmpty);
+    });
+
+    test(
+      'fetchPendingApprovals は PostgrestException を握り潰さず rethrow する',
+      () async {
+        final r = makeRepo(
+          pendingError: const PostgrestException(message: 'boom'),
+        );
+        await expectLater(
+          r.repo.fetchPendingApprovals(),
+          throwsA(isA<PostgrestException>()),
+        );
+      },
+    );
+
+    test('approveUser は approve_user(target_user_id) を呼ぶ', () async {
+      final r = makeRepo();
+      await r.repo.approveUser('u-1');
+      expect(r.client.lastRpcFn, 'approve_user');
+      expect(r.client.lastRpcParams, {'target_user_id': 'u-1'});
+    });
+
+    test('approveUser は "Only owners" を「承認権限がありません」へ写す (web parity)', () async {
+      final r = makeRepo(
+        approveError: const PostgrestException(
+          message: 'Only owners can approve users',
+        ),
+      );
+      await expectLater(
+        r.repo.approveUser('u-1'),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            '承認権限がありません',
+          ),
+        ),
+      );
+    });
+
+    test(
+      'approveUser はその他の PostgrestException を rethrow する (UI が汎用文言へ)',
+      () async {
+        final r = makeRepo(
+          approveError: const PostgrestException(
+            message: 'User not found or already approved',
+          ),
+        );
+        await expectLater(
+          r.repo.approveUser('u-1'),
+          throwsA(isA<PostgrestException>()),
+        );
+      },
+    );
+  });
 }
