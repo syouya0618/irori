@@ -15,7 +15,7 @@ dependencies:
   intl: ^0.20.2
 
   # Supabase: Auth / DB / Realtime / Storage
-  supabase_flutter: ^2.14.2
+  supabase_flutter: ^2.15.0
 
   # State 管理 / Routing
   # riverpod 3.x は API 変更あり (StreamNotifier → AsyncNotifier 推奨等)
@@ -24,8 +24,8 @@ dependencies:
   go_router: ^17.3.0
 
   # PDF (baby-report はクライアントサイド生成 — Section 4 / 7.2.3 参照)
-  pdf: ^3.12.0
-  printing: ^5.14.3
+  pdf: ^3.13.0
+  printing: ^5.15.0
 
   # Charts (baby 7 日サマリー Bar Chart, trend Line Chart)
   fl_chart: ^1.2.0
