@@ -67,3 +67,19 @@ final settingsProvider = FutureProvider<SettingsData>((ref) async {
 
   return (settings: settings, email: user.email ?? '');
 });
+
+/// 承認待ちユーザー一覧 (owner のみ)。
+///
+/// web `settings/page.tsx` は `profile.role === "owner"` の時だけ
+/// `get_pending_approvals` を呼ぶ。Flutter も [settingsProvider] の role を見て
+/// owner のときのみ fetch し、それ以外は空リストを返す (非 owner で RPC を
+/// 叩かない web 挙動の忠実移植 + 防御)。
+///
+/// [settingsProvider] を watch するため、設定タブ再表示時の `AppShell`
+/// invalidate に追随して再評価される。承認操作後は本 provider を invalidate
+/// して最新化する (web の `router.refresh()` 相当)。
+final pendingApprovalsProvider = FutureProvider<List<PendingUser>>((ref) async {
+  final data = await ref.watch(settingsProvider.future);
+  if (data.settings.role != 'owner') return const [];
+  return ref.read(settingsRepositoryProvider).fetchPendingApprovals();
+});

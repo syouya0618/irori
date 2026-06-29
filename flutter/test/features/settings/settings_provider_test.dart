@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:irori/core/supabase/supabase_providers.dart';
 import 'package:irori/features/settings/data/settings_provider.dart';
+import 'package:irori/features/settings/data/settings_repository.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../support/fake_supabase.dart';
@@ -51,7 +52,103 @@ ProviderContainer _container({User? currentUser, FakeGoTrueClient? auth}) {
   );
 }
 
+/// pendingApprovalsProvider のゲート判別用 spy。
+/// role を返す fetchSettings (settingsProvider 経由で参照される) と、
+/// 呼出有無を数える fetchPendingApprovals の両方を制御する。
+class _SpySettingsRepository extends Fake implements SettingsRepository {
+  _SpySettingsRepository({required this.role, required this._pending});
+
+  final String role;
+  final List<PendingUser> _pending;
+  int fetchCount = 0;
+
+  @override
+  Future<HouseholdSettings> fetchSettings({required String userId}) async {
+    return HouseholdSettings(
+      displayName: '太郎',
+      role: role,
+      defaultPage: 'stock',
+      householdId: 'hh-1',
+      householdName: 'いろり家',
+      autoStockCategories: const ['baby'],
+      babyName: null,
+      babyBirthDate: null,
+    );
+  }
+
+  @override
+  Future<List<PendingUser>> fetchPendingApprovals() async {
+    fetchCount++;
+    return _pending;
+  }
+}
+
+PendingUser _pendingUser() => const PendingUser(
+  id: 'u-1',
+  displayName: '花子',
+  email: 'h@example.com',
+  createdAt: '2026-06-01T00:00:00.000Z',
+);
+
+/// pendingApprovalsProvider 用コンテナ。role は spy.fetchSettings 経由で与え、
+/// settingsRepositoryProvider を spy に差し替える (fetchSettings/fetchPendingApprovals
+/// とも spy が担うため fake client の from は不要)。
+ProviderContainer _approvalsContainer(_SpySettingsRepository spy) {
+  final client = FakeSupabaseClient(
+    auth: FakeGoTrueClient(
+      cannedCurrentUser: _user(email: 'taro@example.com'),
+    ),
+  );
+  return ProviderContainer(
+    overrides: [
+      supabaseClientProvider.overrideWithValue(client),
+      authStateChangeProvider.overrideWith(
+        (ref) => const Stream<AuthState>.empty(),
+      ),
+      settingsRepositoryProvider.overrideWithValue(spy),
+    ],
+  );
+}
+
 void main() {
+  group('pendingApprovalsProvider (owner ゲート)', () {
+    test('owner は fetchPendingApprovals の結果をそのまま返す', () async {
+      final spy = _SpySettingsRepository(
+        role: 'owner',
+        pending: [_pendingUser()],
+      );
+      final container = _approvalsContainer(spy);
+      addTearDown(container.dispose);
+
+      final result = await container.read(pendingApprovalsProvider.future);
+
+      expect(result, hasLength(1));
+      expect(result.single.id, 'u-1');
+      expect(spy.fetchCount, 1);
+    });
+
+    test('非 owner (member) は RPC を叩かず空リストを返す', () async {
+      // web settings/page.tsx:52 の `if (profile.role === "owner")` 相当。
+      // gate を削除すると spy が呼ばれ fetchCount==1 / 結果非空になり両 assert が
+      // RED になる (isEmpty 単独より not-called の方が gate 回帰への判別力が高い)。
+      final spy = _SpySettingsRepository(
+        role: 'member',
+        pending: [_pendingUser()],
+      );
+      final container = _approvalsContainer(spy);
+      addTearDown(container.dispose);
+
+      final result = await container.read(pendingApprovalsProvider.future);
+
+      expect(result, isEmpty);
+      expect(
+        spy.fetchCount,
+        0,
+        reason: '非 owner では fetchPendingApprovals を呼ばない',
+      );
+    });
+  });
+
   group('settingsProvider', () {
     test('バンドル + email を返し、DefaultPageCache を温める', () async {
       final container = _container(

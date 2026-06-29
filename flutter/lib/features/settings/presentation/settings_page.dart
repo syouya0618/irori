@@ -7,6 +7,7 @@ import '../../../core/theme/colors.dart';
 import '../../../features/baby/presentation/export_card.dart';
 import '../../../widgets/glass_card.dart';
 import '../data/settings_provider.dart';
+import 'widgets/approval_card.dart';
 import 'widgets/auto_stock_card.dart';
 import 'widgets/baby_profile_card.dart';
 import 'widgets/default_page_card.dart';
@@ -17,9 +18,8 @@ import 'widgets/profile_card.dart';
 ///
 /// 移植カード:
 /// プロフィール / 世帯表示 / 起動時のページ / 在庫自動追加 / 赤ちゃん情報 /
-/// 記録エクスポート (Phase 2.6-2 で追加) / サインアウト。
-/// Invite / Approval / Theme カードは引き続き deferred
-/// (p25plan の deferred 欄参照)。
+/// 記録エクスポート (Phase 2.6-2 で追加) / 承認待ち (owner のみ) / サインアウト。
+/// Invite / Theme カードは引き続き deferred (p25plan の deferred 欄参照)。
 ///
 /// データ:
 /// - profiles / households は **Realtime publication 非対象**のため、
@@ -90,6 +90,12 @@ class _SettingsBody extends StatelessWidget {
         // web `settings-content.tsx:123-124`: 赤ちゃん情報の直後に配置
         // (web の Theme/Invite/Approval カードは Flutter で deferred のため省略)。
         const ExportCard(),
+        // web `settings-content.tsx:126-135`: ExportCard の後に Theme / Invite /
+        // Approval。Theme / Invite は引き続き deferred ゆえ Approval のみ移植する。
+        // owner のときだけ mount し (web の `profile.role === "owner"` ゲート)、
+        // 承認待ち 0 件 / 取得中 / 失敗時はカード自身が何も描画しない (上 spacing も
+        // カード側が持つため、ここに固定 SizedBox は置かない)。
+        if (settings.role == 'owner') const ApprovalCard(),
         const SizedBox(height: 16),
         // web: <Separator /> → ログアウト。
         const Divider(height: 1, color: IroriColors.border),
