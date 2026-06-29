@@ -91,41 +91,32 @@ export async function updateMeal(input: UpdateMealInput) {
     return { error: "この献立を編集する権限がありません。" }
   }
 
-  const { error: updateError } = await supabase
-    .from("meals")
-    .update({
-      date: input.date,
-      meal_type: input.mealType,
-      title: input.title,
-      is_eating_out: input.isEatingOut,
-    })
-    .eq("id", input.id)
+  // 献立更新 + 食材の全入替を単一トランザクション RPC に畳む (issue #49)。
+  // meals.update を先に走らせると、それが発火する Realtime (meals テーブルのみ購読)
+  // の refetch が meal_ingredients の delete↔insert 窓に割り込み、空 ingredients の
+  // 中間状態を配ってしまう。さらに delete 成功→insert 失敗で食材が無音欠損する。
+  // RPC でトランザクション化し、中間状態の不可視化と失敗時の全ロールバックで根治する。
+  const { error: rpcError } = await supabase.rpc("update_meal_with_ingredients", {
+    p_meal_id: input.id,
+    p_date: input.date,
+    p_meal_type: input.mealType,
+    p_title: input.title,
+    p_is_eating_out: input.isEatingOut,
+    p_ingredients: input.ingredients.map((ing) => ({
+      name: ing.name,
+      quantity: ing.quantity || null,
+      category: ing.category,
+    })) as unknown as import("@/lib/types/database").Json,
+  })
 
-  if (updateError) {
-    if (updateError.code === "23505") {
+  if (rpcError) {
+    if (rpcError.code === "23505") {
       return { error: "この日時のメニューは既に登録されています。" }
     }
+    logSupabaseError("meals", "updateMeal rpc failed", rpcError, {
+      mealId: input.id,
+    })
     return { error: "献立の更新に失敗しました。" }
-  }
-
-  // Delete existing ingredients, re-insert
-  await supabase.from("meal_ingredients").delete().eq("meal_id", input.id)
-
-  if (input.ingredients.length > 0) {
-    const { error: ingredientError } = await supabase
-      .from("meal_ingredients")
-      .insert(
-        input.ingredients.map((ing) => ({
-          meal_id: input.id,
-          name: ing.name,
-          quantity: ing.quantity || null,
-          category: ing.category,
-        }))
-      )
-
-    if (ingredientError) {
-      return { error: "食材の更新に失敗しました。" }
-    }
   }
 
   revalidatePath("/meals")

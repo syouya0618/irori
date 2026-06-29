@@ -453,6 +453,17 @@ export interface Database {
         Args: { p_name: string }
         Returns: string
       }
+      update_meal_with_ingredients: {
+        Args: {
+          p_meal_id: string
+          p_date: string
+          p_meal_type: MealType
+          p_title: string
+          p_is_eating_out: boolean
+          p_ingredients: Json
+        }
+        Returns: void
+      }
     }
     Enums: {
       meal_type: MealType
