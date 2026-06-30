@@ -257,6 +257,8 @@ class _BabyLogFormSheetState extends ConsumerState<BabyLogFormSheet> {
       );
       final repo = ref.read(babyRepositoryProvider);
       await action(mutationContext, repo);
+      // await 後の ref 使用前に mounted を確認 (Riverpod 正準, approval_card と同流儀)。
+      if (!mounted) return;
       ref.invalidate(babyLogsNotifierProvider);
       // 週間チャートも create/update/delete を反映 (取りこぼし防止: 必ず
       // babyLogsNotifierProvider の invalidate と同じ場所に並べる)。
@@ -264,7 +266,6 @@ class _BabyLogFormSheetState extends ConsumerState<BabyLogFormSheet> {
       if (refreshLastSleep) {
         ref.invalidate(lastSleepEndedAtProvider);
       }
-      if (!mounted) return;
       navigator.pop();
       messenger.showSnackBar(SnackBar(content: Text(successMessage)));
     } on Object catch (e) {

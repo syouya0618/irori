@@ -339,11 +339,14 @@ class _MealFormSheetState extends ConsumerState<MealFormSheet> {
       );
       final repo = ref.read(mealsRepositoryProvider);
       await action(mutationContext, repo);
+      // await 後の ref 使用前に mounted を確認 (Riverpod 正準, approval_card と同流儀)。
+      // in-flight 中に unmount された場合 invalidate は skip するが、F1 realtime
+      // refetch とタブ再表示が安全網となる。
+      if (!mounted) return;
       // 一覧反映は F1 の realtime refetch でも届くが、自分の操作の体感速度の
       // ため明示的に refetch を蹴る (notifier に公開 refetch API は無いため
       // invalidate — baby form sheet と同じ流儀)。
       ref.invalidate(mealsWeekNotifierProvider);
-      if (!mounted) return;
       navigator.pop();
       messenger.showSnackBar(SnackBar(content: Text(successMessage)));
     } on DuplicateMealException {

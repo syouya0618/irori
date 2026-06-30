@@ -180,10 +180,11 @@ class _BabyFeedingTimerSheetState extends ConsumerState<BabyFeedingTimerSheet> {
             durationMin: duration,
           );
       await ref.read(feedingTimerStoreProvider).clear();
+      // await 後の ref 使用前に mounted を確認 (Riverpod 正準, approval_card と同流儀)。
+      if (!mounted) return;
       // 自分の write を today timeline と週間チャートへ反映。
       ref.invalidate(babyLogsNotifierProvider);
       ref.invalidate(babyWeeklySummaryProvider);
-      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('授乳を記録しました（$duration分）')),
       );
