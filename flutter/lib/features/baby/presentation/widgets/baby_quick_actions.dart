@@ -65,6 +65,8 @@ class _BabyQuickActionsState extends ConsumerState<BabyQuickActions> {
       );
       await action(mutationContext);
       // await 後の ref 使用前に mounted を確認 (Riverpod 正準, approval_card と同流儀)。
+      // unmount 後の ref.invalidate は no-op でなく StateError を throw する
+      // (riverpod consumer の _assertNotDisposed)。ゆえにこのゲートは必須・削除厳禁。
       if (!mounted) return;
       ref.invalidate(babyLogsNotifierProvider);
       // 週間チャートも自分の write を反映 (取りこぼし防止: babyLogsNotifierProvider
