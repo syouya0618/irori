@@ -313,6 +313,11 @@ class _StockBodyState extends ConsumerState<_StockBody> {
     } on Object catch (e, st) {
       // 握り潰さない (CLAUDE.md)。repository 側でも構造化ログ済み。
       debugPrint('StockPage deleteItem 失敗: $e\n$st');
+      // await 後・ref 使用前に mounted を確認 (Riverpod 正準, 4 sheet と同流儀)。
+      // unmount 後の ref.invalidate は no-op でなく StateError を throw し、
+      // fire-and-forget な _deleteItem から未処理例外として escape するため必須。
+      // messenger は :304 で事前捕捉済ゆえゲート後でも安全。
+      if (!mounted) return;
       ref.invalidate(stockItemsNotifierProvider);
       messenger.showSnackBar(const SnackBar(content: Text('削除に失敗しました')));
     }
