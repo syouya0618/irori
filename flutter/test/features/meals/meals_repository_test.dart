@@ -50,6 +50,7 @@ _repo({
   Object? templatesReadSingleError,
   PostgrestMap? templatesSingleValue,
   Object? templatesSingleError,
+  Object? updateMealRpcError,
 }) {
   final mealsRead = FakeFilterBuilder(
     cannedValue: mealsRows,
@@ -115,6 +116,13 @@ _repo({
       'meal_ingredients': ingredients,
       'meal_reactions': reactions,
       'meal_templates': templates,
+    },
+    rpcBuilders: {
+      // updateMeal の単一トランザクション RPC (issue #73)。RETURNS void の
+      // ため成功時は canned null を返す。
+      'update_meal_with_ingredients': FakeRpcBuilder(
+        cannedError: updateMealRpcError,
+      ),
     },
   );
   return (
@@ -323,9 +331,9 @@ void main() {
 
   group('MealsRepository.updateMeal', () {
     test(
-      'household スコープ + 行数検証つき update → ingredients delete → reinsert',
+      'ownership 事前確認 → 単一トランザクション RPC (個別 update/delete/insert を発行しない)',
       () async {
-        final r = _repo(mealsSingleValue: {'id': 'meal-1'});
+        final r = _repo(mealsReadSingleValue: {'id': 'meal-1'});
 
         await r.repo.updateMeal(
           householdId: 'hh-1',
@@ -337,36 +345,63 @@ void main() {
           ingredients: _ingredients,
         );
 
-        // web の順序: meals update → ingredients delete → reinsert。
-        expect(r.client.fromTables, [
-          'meals',
-          'meal_ingredients',
-          'meal_ingredients',
-        ]);
-        expect(r.meals.lastUpdateValues, {
-          'date': '2026-06-09',
-          'meal_type': 'breakfast',
-          'title': 'トースト',
-          'is_eating_out': true,
-        });
-        // household スコープ + .select('id').single() の行数検証
-        // (CLAUDE.md「.update() は 0 行更新でも error: null」)。
-        expect(r.mealsMutation.eqFilters, [
+        // from() は ownership lookup の meals 1 回のみ。meal_ingredients への
+        // 個別 delete/insert は発行しない (中間状態の根絶 — web test と同形)。
+        expect(r.client.fromTables, ['meals']);
+        // ownership lookup は household スコープ + single
+        // (web の app 層 ownership check を query 化 — saveAsTemplate と同形)。
+        expect(r.meals.lastSelectColumns, 'id');
+        expect(r.mealsRead.eqFilters, [
           (column: 'id', value: 'meal-1'),
           (column: 'household_id', value: 'hh-1'),
         ]);
-        expect(r.mealsMutation.selectedColumns, 'id');
-        expect(r.ingredients.deleteCallCount, 1);
-        expect(r.ingredientsMutation.eqFilters, [
-          (column: 'meal_id', value: 'meal-1'),
-        ]);
-        expect(r.ingredients.lastInsertValues, hasLength(2));
+        // RPC を正しい引数で 1 発呼ぶ (web actions.ts:99-110 と同一 payload /
+        // migration 20260615000001 のパラメータ名)。
+        expect(r.client.lastRpcFn, 'update_meal_with_ingredients');
+        expect(r.client.lastRpcParams, {
+          'p_meal_id': 'meal-1',
+          'p_date': '2026-06-09',
+          'p_meal_type': 'breakfast',
+          'p_title': 'トースト',
+          'p_is_eating_out': true,
+          'p_ingredients': [
+            {'name': 'にんじん', 'quantity': '2本', 'category': 'vegetable'},
+            // 空文字 quantity は null に正規化 (web: `ing.quantity || null`)。
+            {'name': '豚肉', 'quantity': null, 'category': 'meat'},
+          ],
+        });
+        // 旧 3 クエリ実装への回帰検知。
+        expect(r.meals.lastUpdateValues, isNull);
+        expect(r.ingredients.deleteCallCount, 0);
+        expect(r.ingredients.lastInsertValues, isNull);
       },
     );
 
-    test('23505 は DuplicateMealException に変換され ingredients は触らない', () async {
+    test('ingredients が空でも p_ingredients は空配列で RPC に渡る', () async {
+      // RPC 側が `jsonb_array_length(p_ingredients) > 0` で分岐するため、
+      // web と同じく空配列も常に渡す (delete のみ実行され食材が全消去される)。
+      final r = _repo(mealsReadSingleValue: {'id': 'meal-1'});
+
+      await r.repo.updateMeal(
+        householdId: 'hh-1',
+        mealId: 'meal-1',
+        date: '2026-06-09',
+        mealType: MealType.lunch,
+        title: 'うどん',
+        isEatingOut: false,
+      );
+
+      expect(r.client.lastRpcFn, 'update_meal_with_ingredients');
+      expect(
+        r.client.lastRpcParams!['p_ingredients'],
+        isEmpty,
+      );
+    });
+
+    test('RPC の 23505 は DuplicateMealException に変換される', () async {
       final r = _repo(
-        mealsSingleError: const PostgrestException(
+        mealsReadSingleValue: {'id': 'meal-1'},
+        updateMealRpcError: const PostgrestException(
           message: 'duplicate key value violates unique constraint',
           code: '23505',
         ),
@@ -384,16 +419,44 @@ void main() {
         ),
         throwsA(isA<DuplicateMealException>()),
       );
-      expect(r.ingredients.deleteCallCount, 0);
-      expect(r.ingredients.lastInsertValues, isNull);
+      expect(r.client.lastRpcFn, 'update_meal_with_ingredients');
     });
 
     test(
-      '対象 0 行 (他世帯/既削除) の PGRST116 は rethrow され ingredients は触らない',
+      'RPC の一般 PostgrestException は rethrow される (UI 層で AsyncError 化)',
+      () async {
+        // 失敗時は RPC 内で全ロールバックされるため、部分適用状態は残らない。
+        final r = _repo(
+          mealsReadSingleValue: {'id': 'meal-1'},
+          updateMealRpcError: const PostgrestException(
+            message: 'boom',
+            code: '500',
+          ),
+        );
+
+        await expectLater(
+          r.repo.updateMeal(
+            householdId: 'hh-1',
+            mealId: 'meal-1',
+            date: '2026-06-09',
+            mealType: MealType.breakfast,
+            title: 'トースト',
+            isEatingOut: false,
+            ingredients: _ingredients,
+          ),
+          throwsA(
+            isA<PostgrestException>().having((e) => e.code, 'code', '500'),
+          ),
+        );
+      },
+    );
+
+    test(
+      '対象 0 行 (他世帯/既削除) の PGRST116 は rethrow され RPC を呼ばない',
       () async {
         // web の ownership check (「この献立を編集する権限がありません。」) 相当。
         final r = _repo(
-          mealsSingleError: const PostgrestException(
+          mealsReadSingleError: const PostgrestException(
             message: 'JSON object requested, multiple (or no) rows returned',
             code: 'PGRST116',
           ),
@@ -412,6 +475,7 @@ void main() {
             isA<PostgrestException>().having((e) => e.code, 'code', 'PGRST116'),
           ),
         );
+        expect(r.client.lastRpcFn, isNull);
         expect(r.ingredients.deleteCallCount, 0);
       },
     );

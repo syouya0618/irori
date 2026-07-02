@@ -4,6 +4,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../core/supabase/supabase_providers.dart';
 import '../../../core/theme/colors.dart';
+import '../../../features/auth/data/approval_provider.dart';
 import '../../../features/baby/presentation/export_card.dart';
 import '../../../widgets/glass_card.dart';
 import '../data/settings_provider.dart';
@@ -206,6 +207,7 @@ class _SignOutButtonState extends ConsumerState<_SignOutButton> {
     final messenger = ScaffoldMessenger.of(context);
     // ref は await 後に widget が破棄されると使えないため、先に解決しておく。
     final cache = ref.read(defaultPageCacheProvider);
+    final approvalCache = ref.read(approvalCacheProvider);
     final auth = ref.read(supabaseClientProvider).auth;
     setState(() => _pending = true);
 
@@ -214,6 +216,10 @@ class _SignOutButtonState extends ConsumerState<_SignOutButton> {
       // 同じ理由 — 後続処理の実行保証がないため)。失敗しても次回 fetch で
       // 再度温まるだけで安全側。
       cache.value = null;
+      // 承認ゲートの同期キャッシュも破棄する (Issue #74)。userId キー付きゆえ
+      // 漏れても別ユーザーには効かないが、前ユーザーの承認状態をメモリに
+      // 残さない defense-in-depth (DefaultPageCache と同じ理由)。
+      approvalCache.clear();
       // CLAUDE.md「外部 API 呼び出しにはタイムアウト設定必須」
       // (login_page の signInWithOtp と同じ 10s)。
       await auth.signOut().timeout(const Duration(seconds: 10));
