@@ -24,6 +24,7 @@ import 'package:irori/features/meals/presentation/meals_page.dart';
 import 'package:irori/features/settings/data/settings_provider.dart';
 import 'package:irori/features/settings/data/settings_repository.dart';
 import 'package:irori/features/settings/presentation/settings_page.dart';
+import 'package:irori/features/setup/presentation/setup_page.dart';
 import 'package:irori/features/shopping/data/household_members_provider.dart';
 import 'package:irori/features/shopping/data/shopping_items_notifier.dart';
 import 'package:irori/features/shopping/data/shopping_repository.dart';
@@ -717,6 +718,73 @@ void main() {
       expect(find.byType(PendingApprovalPage), findsOneWidget);
       expect(find.byType(LoginPage), findsNothing);
     });
+  });
+
+  group('/setup 世帯作成フロー (Issue #75)', () {
+    testWidgets('認証済み + 承認済みは /setup に到達できる', (tester) async {
+      final container = _authedShellContainer();
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const _RouterHarness(),
+        ),
+      );
+
+      container.read(appRouterProvider).go('/setup');
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      // SetupPage の内部 fetch (fake 未設定) は form 表示へ縮退するが、
+      // 焦点は「redirect / ゲートに弾かれず setup に到達できる」こと。
+      expect(find.byType(SetupPage), findsOneWidget);
+      expect(find.text('世帯をつくる'), findsOneWidget);
+    });
+
+    testWidgets('未認証の /setup は /login へ redirect される (保護 route)', (
+      tester,
+    ) async {
+      final container = _unauthedContainer();
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const _RouterHarness(),
+        ),
+      );
+
+      container.read(appRouterProvider).go('/setup');
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(LoginPage), findsOneWidget);
+      expect(find.byType(SetupPage), findsNothing);
+    });
+
+    testWidgets(
+      '未承認 (承認未確認) の /setup は /pending-approval へ誘導される '
+      '(承認ゲートが setup より先 — web proxy と同じ順序)',
+      (tester) async {
+        final container = _authedShellContainer(approved: false);
+        addTearDown(container.dispose);
+
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: const _RouterHarness(),
+          ),
+        );
+
+        container.read(appRouterProvider).go('/setup');
+        await tester.pump();
+        await tester.pumpAndSettle();
+
+        expect(find.byType(PendingApprovalPage), findsOneWidget);
+        expect(find.byType(SetupPage), findsNothing);
+      },
+    );
   });
 
   group('resolveLoginLandingPath (P2.5-H)', () {

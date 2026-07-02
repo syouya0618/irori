@@ -105,6 +105,7 @@ Widget _harness({
   required _FakeSettingsRepository repo,
   FutureOr<SettingsData> Function(Ref ref)? data,
   FakeGoTrueClient? auth,
+  void Function(String destination)? onNavigateToSetup,
 }) {
   final client = FakeSupabaseClient(auth: auth ?? FakeGoTrueClient());
   return ProviderScope(
@@ -121,7 +122,9 @@ Widget _harness({
       // 踏む。
       pendingApprovalsProvider.overrideWith((ref) async => const []),
     ],
-    child: const MaterialApp(home: SettingsPage()),
+    child: MaterialApp(
+      home: SettingsPage(onNavigateToSetup: onNavigateToSetup),
+    ),
   );
 }
 
@@ -637,6 +640,29 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(fetchCount, 2);
+    });
+
+    testWidgets('世帯未参加 (HouseholdRequiredError) は /setup へ誘導する', (
+      tester,
+    ) async {
+      // Issue #75: 従来は StateError の行き止まり (エラーカード) だった。
+      // web settings/page.tsx:34-36 の redirect("/setup") と同じく誘導する。
+      String? dest;
+      await tester.pumpWidget(
+        _harness(
+          repo: _FakeSettingsRepository(),
+          data: (ref) async => throw HouseholdRequiredError(),
+          onNavigateToSetup: (d) => dest = d,
+        ),
+      );
+      // 誘導中はスピナーが回り続けるため pumpAndSettle は使わない。
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(dest, '/setup');
+      // 行き止まりのエラー表示は出さない (web は redirect で何も描画しない)。
+      expect(find.text('設定の読み込みに失敗しました。'), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
     });
   });
 }
