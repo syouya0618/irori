@@ -6,8 +6,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:irori/app/router.dart';
 import 'package:irori/core/supabase/auth_notifier.dart';
 import 'package:irori/core/supabase/supabase_providers.dart';
+import 'package:irori/features/auth/data/approval_provider.dart';
 import 'package:irori/features/auth/presentation/auth_callback_page.dart';
+import 'package:irori/features/auth/presentation/invite_page.dart';
 import 'package:irori/features/auth/presentation/login_page.dart';
+import 'package:irori/features/auth/presentation/pending_approval_page.dart';
 import 'package:irori/features/baby/data/baby_logs_notifier.dart';
 import 'package:irori/features/baby/data/baby_weekly_summary_provider.dart';
 import 'package:irori/features/baby/data/last_sleep_provider.dart';
@@ -578,6 +581,144 @@ void main() {
     );
   });
 
+  group('承認ゲート (Issue #74, fail-closed)', () {
+    testWidgets(
+      '認証済みでも承認未確認 (cache cold) なら保護ルートは /pending-approval へ誘導される',
+      (tester) async {
+        final container = _authedShellContainer(approved: false);
+        addTearDown(container.dispose);
+
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: const _RouterHarness(),
+          ),
+        );
+
+        container.read(appRouterProvider).go('/meals');
+        await tester.pump();
+        await tester.pumpAndSettle();
+
+        expect(find.byType(PendingApprovalPage), findsOneWidget);
+        expect(find.byType(MealsPage), findsNothing);
+        // 未承認確定後は承認待ちカード (日本語 UI) が表示される。
+        expect(find.text('承認待ち'), findsOneWidget);
+      },
+    );
+
+    testWidgets('誘導時に元の目的地が from クエリで PendingApprovalPage へ渡る', (
+      tester,
+    ) async {
+      final container = _authedShellContainer(approved: false);
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const _RouterHarness(),
+        ),
+      );
+
+      container.read(appRouterProvider).go('/shopping');
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      final page = tester.widget<PendingApprovalPage>(
+        find.byType(PendingApprovalPage),
+      );
+      expect(page.from, '/shopping');
+    });
+
+    testWidgets(
+      '承認済み (cache 温) が /pending-approval へ行くと landing へ redirect される',
+      (
+        tester,
+      ) async {
+        final container = _authedShellContainer();
+        addTearDown(container.dispose);
+
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: const _RouterHarness(),
+          ),
+        );
+
+        container.read(appRouterProvider).go('/pending-approval');
+        await tester.pump();
+        await tester.pumpAndSettle();
+
+        expect(find.byType(BabyDashboardPage), findsOneWidget);
+        expect(find.byType(PendingApprovalPage), findsNothing);
+      },
+    );
+
+    testWidgets('未認証の /pending-approval は /login へ redirect される (web parity)', (
+      tester,
+    ) async {
+      final container = _unauthedContainer();
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const _RouterHarness(),
+        ),
+      );
+
+      container.read(appRouterProvider).go('/pending-approval');
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(LoginPage), findsOneWidget);
+      expect(find.byType(PendingApprovalPage), findsNothing);
+    });
+
+    testWidgets('未承認でも /invite/:token には到達できる (web parity: 承認導線のため除外)', (
+      tester,
+    ) async {
+      final container = _authedShellContainer(approved: false);
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const _RouterHarness(),
+        ),
+      );
+
+      container.read(appRouterProvider).go('/invite/tok-1');
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      // InvitePage の内部 fetch (fake 未設定) は notFound へ縮退するが、
+      // 焦点は「ゲートに弾かれず invite に到達できる」こと。
+      expect(find.byType(InvitePage), findsOneWidget);
+      expect(find.byType(PendingApprovalPage), findsNothing);
+    });
+
+    testWidgets('未承認の認証済み /login は /pending-approval へ誘導される (web parity)', (
+      tester,
+    ) async {
+      final container = _authedShellContainer(approved: false);
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const _RouterHarness(),
+        ),
+      );
+
+      container.read(appRouterProvider).go('/login');
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(PendingApprovalPage), findsOneWidget);
+      expect(find.byType(LoginPage), findsNothing);
+    });
+  });
+
   group('resolveLoginLandingPath (P2.5-H)', () {
     test('whitelist 内のキャッシュ値は /<page> を返す', () {
       expect(resolveLoginLandingPath('meals'), '/meals');
@@ -661,11 +802,19 @@ SettingsData _settingsData() => (
 ///
 /// [settingsFetch] は設定タブの refetch 回数検証用の差し替え口
 /// (P2.5-H 追加 — 既存呼び出しは引数なしで挙動不変)。
+///
+/// [approved] は承認ゲート (Issue #74) の状態。既定 true = 承認キャッシュを
+/// 温めた「承認済みユーザー」(既存テストの前提)。false は cold キャッシュ
+/// (= fail-closed で /pending-approval へ誘導される未確認ユーザー)。
 ProviderContainer _authedShellContainer({
   FutureOr<SettingsData> Function(Ref ref)? settingsFetch,
+  bool approved = true,
 }) {
-  return ProviderContainer(
+  final container = ProviderContainer(
     overrides: [
+      // 承認ゲートの fetch 側 (Issue #74)。誘導先の PendingApprovalPage が
+      // watch するため決定的な値で差し替える (cache と整合させる)。
+      approvalStatusProvider.overrideWith((ref) async => approved),
       originProvider.overrideWithValue('https://test.example'),
       supabaseClientProvider.overrideWithValue(FakeSupabaseClient()),
       authNotifierProvider.overrideWith((ref) {
@@ -709,6 +858,15 @@ ProviderContainer _authedShellContainer({
       babyWeeklySummaryProvider.overrideWith((ref) async => const []),
     ],
   );
+  if (approved) {
+    // Issue #74: 既存の「認証済み」テストは承認済みユーザーの既存フローを表す。
+    // ゲートの同期キャッシュを温める (cold のままだと fail-closed で
+    // /pending-approval へ誘導され、到達性テストの前提が崩れる)。
+    container
+        .read(approvalCacheProvider)
+        .set(userId: 'user-1', isApproved: true);
+  }
+  return container;
 }
 
 /// `appRouterProvider` を `MaterialApp.router` に流すテスト用ハーネス。

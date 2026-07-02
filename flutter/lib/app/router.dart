@@ -3,9 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/supabase/auth_notifier.dart';
+import '../features/auth/data/approval_provider.dart';
 import '../features/auth/presentation/auth_callback_page.dart';
 import '../features/auth/presentation/invite_page.dart';
 import '../features/auth/presentation/login_page.dart';
+import '../features/auth/presentation/pending_approval_page.dart';
 import '../features/baby/presentation/baby_dashboard_page.dart';
 import '../features/meals/presentation/meals_page.dart';
 import '../features/settings/data/settings_provider.dart';
@@ -81,6 +83,14 @@ String resolveLoginLandingPath(String? cachedDefaultPage) {
 /// - 他の保護 page (`/meals` / `/baby` 等) も未認証なら `/login` へ
 /// - 認証済みで `/login` にいるなら `/baby` へ
 ///
+/// 承認ゲート (Issue #74 / web `src/proxy.ts:57-93` の移植):
+/// 認証済みでも `profiles.is_approved` が確認できるまで保護ルートへ通さない
+/// **fail-closed** 設計。redirect は同期評価のため DB は引かず、
+/// `ApprovalCache` (userId キー付き同期キャッシュ) を参照する — 未取得 (null)
+/// は「未承認」扱いで `/pending-approval` へ誘導し、同ページの
+/// `approvalStatusProvider` fetch が確認を担う。web の毎リクエスト検証との
+/// 差分 (承認取り消しの検知遅延等) は `ApprovalCache` の doc 参照。
+///
 /// シェル構成 (F2 / F4 / F6 / P2.5-H): `/meals` / `/shopping` / `/stock` /
 /// `/baby` / `/settings` は `StatefulShellRoute.indexedStack` のブランチに
 /// 置き、`AppShell` (BottomNav) で包む。redirect は `state.matchedLocation`
@@ -110,9 +120,48 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         return '/login?returnTo=${Uri.encodeQueryComponent(full)}';
       }
       if (!loggedIn && !isPublic) {
+        // /pending-approval も未認証なら /login へ (web parity: public 扱いしない)。
         return '/login';
       }
-      if (loggedIn && loc == '/login') {
+      if (!loggedIn) {
+        return null;
+      }
+
+      // ── 承認ゲート (Issue #74 / web src/proxy.ts:57-93) ──
+      // fail-closed: キャッシュ未取得 (null) も「未承認」として扱い、確認が
+      // 取れるまで保護ルートへ通さない (ApprovalCache の doc 参照)。
+      final isPendingRoute = loc == '/pending-approval';
+      final isApproved =
+          ref
+              .read(approvalCacheProvider)
+              .isApprovedFor(authNotifier.user!.id) ??
+          false;
+
+      if (!isApproved) {
+        // web は /pending-approval・/invite/* 以外すべて誘導する (invite は
+        // accept_invitation が is_approved=true を設定する承認導線のため除外)。
+        // Flutter 固有の追加除外は 2 つ:
+        // - '/' — 公開 welcome ページ (web に相当 route なし。個人データなし)
+        // - '/auth/callback' — exchangeCodeForSession 進行中のページ。ここで
+        //   弾くと returnTo チェーンが切れる。callback 後の遷移先で本ゲートが
+        //   再評価されるため fail-closed は保たれる。
+        final isExempt =
+            isPendingRoute ||
+            loc.startsWith('/invite/') ||
+            loc == '/' ||
+            loc == '/auth/callback';
+        if (!isExempt) {
+          // 元の目的地を from に載せる (cold start では承認済みユーザーも一度
+          // /pending-approval で確認を経由するため、確認後に戻れるように)。
+          return '/pending-approval'
+              '?from=${Uri.encodeQueryComponent(state.uri.toString())}';
+        }
+        return null;
+      }
+
+      // 承認済み: /login・/pending-approval に居るなら landing へ
+      // (web proxy.ts:84-92 の「approved は public/pending → /」に対応)。
+      if (loc == '/login' || isPendingRoute) {
         // default_page の best-effort 適用 (P2.5-H)。同期キャッシュのみ参照
         // (resolveLoginLandingPath の doc 参照)。redirect は同期評価のため
         // ref.read で即値を取る (watch にすると GoRouter 再構築の恐れ)。
@@ -149,6 +198,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           return AuthCallbackPage(
             code: state.uri.queryParameters['code'],
             returnTo: state.uri.queryParameters['returnTo'],
+          );
+        },
+      ),
+      GoRoute(
+        path: '/pending-approval',
+        builder: (context, state) {
+          // 承認ゲートが誘導時に載せた元の目的地 (承認確認後の戻り先)。
+          return PendingApprovalPage(
+            from: state.uri.queryParameters['from'],
           );
         },
       ),
