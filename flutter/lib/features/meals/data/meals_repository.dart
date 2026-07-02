@@ -150,15 +150,20 @@ class MealsRepository {
 
   /// 献立を更新する。
   ///
-  /// web `updateMeal` は「ownership 事前 select → 素の update → ingredients
-  /// delete → reinsert」だが、Flutter 版は household スコープ付き update +
-  /// `.select('id').single()` の行数検証 1 回に畳む
-  /// (`BabyRepository._updateLog` と同形 / CLAUDE.md「`.update()` は 0 行更新
-  /// でも error: null」)。対象 0 行 (他世帯 or 既削除) は PGRST116 で throw
-  /// され、web の「この献立を編集する権限がありません。」分岐に相当する。
-  /// 23505 は [DuplicateMealException] に変換 (web と同一分岐)。
+  /// web `updateMeal` (PR #61 で RPC 化・actions.ts:77-121) と同形の 2 段:
+  /// 1. ownership 事前確認 — web は `select("household_id")` 後に app 層で
+  ///    照合するが、Flutter は household スコープ + `.single()` に畳む
+  ///    ([saveAsTemplate] の lookup と同形 / RLS と二重の防御)。対象 0 行
+  ///    (他世帯 or 既削除) は PGRST116 で throw され、web の
+  ///    「この献立を編集する権限がありません。」分岐に相当する。
+  /// 2. 献立更新 + 食材の全入替を単一トランザクション RPC
+  ///    `update_meal_with_ingredients` (migration 20260615000001) に畳む
+  ///    (issue #49/#73 の根治)。旧実装の「update → delete → insert」3 クエリ
+  ///    非トランザクションは、delete 成功→insert 失敗で食材が無音欠損し、
+  ///    中間状態が Realtime で配偶者端末に配信されていた。RPC は
+  ///    SECURITY INVOKER + RLS のため世帯スコープは DB 層でも担保される。
   ///
-  /// ingredients は web の順序どおり「全削除 → 再 insert」。
+  /// 23505 は [DuplicateMealException] に変換 (web と同一分岐)。
   Future<void> updateMeal({
     required String householdId,
     required String mealId,
@@ -171,57 +176,41 @@ class MealsRepository {
     try {
       await _client
           .from('meals')
-          .update({
-            'date': date,
-            'meal_type': _mealTypeValue(mealType),
-            'title': title,
-            'is_eating_out': isEatingOut,
-          })
+          .select('id')
           .eq('id', mealId)
           .eq('household_id', householdId)
-          .select('id')
           .single()
           .timeout(_kQueryTimeout);
     } on Object catch (e, st) {
-      _logMutationError('updateMeal', e, st, 'householdId=$householdId');
-      _throwIfDuplicate(e);
-      rethrow;
-    }
-
-    // web の順序: 既存 ingredients を全削除してから再 insert。
-    // (削除失敗は throw で伝播する — 握り潰さない。web の `await` 放置と違い
-    //  Dart は error が例外になるため自然に検出される。)
-    try {
-      await _client
-          .from('meal_ingredients')
-          .delete()
-          .eq('meal_id', mealId)
-          .timeout(_kQueryTimeout);
-    } on Object catch (e, st) {
       _logMutationError(
-        'updateMeal/deleteIngredients',
+        'updateMeal/ownership',
         e,
         st,
-        'mealId=$mealId',
+        'householdId=$householdId mealId=$mealId',
       );
       rethrow;
     }
 
-    if (ingredients.isNotEmpty) {
-      try {
-        await _client
-            .from('meal_ingredients')
-            .insert(_ingredientRows(mealId, ingredients))
-            .timeout(_kQueryTimeout);
-      } on Object catch (e, st) {
-        _logMutationError(
-          'updateMeal/insertIngredients',
-          e,
-          st,
-          'mealId=$mealId',
-        );
-        rethrow;
-      }
+    try {
+      await _client
+          .rpc<dynamic>(
+            'update_meal_with_ingredients',
+            params: {
+              'p_meal_id': mealId,
+              'p_date': date,
+              'p_meal_type': _mealTypeValue(mealType),
+              'p_title': title,
+              'p_is_eating_out': isEatingOut,
+              // web と同じく空配列も常に渡す (RPC 側が
+              // `jsonb_array_length(p_ingredients) > 0` で分岐する)。
+              'p_ingredients': _rpcIngredientRows(ingredients),
+            },
+          )
+          .timeout(_kQueryTimeout);
+    } on Object catch (e, st) {
+      _logMutationError('updateMeal/rpc', e, st, 'mealId=$mealId');
+      _throwIfDuplicate(e);
+      rethrow;
     }
   }
 
@@ -612,6 +601,23 @@ class MealsRepository {
       for (final ing in ingredients)
         {
           'meal_id': mealId,
+          'name': ing.name,
+          'quantity': _nullableQuantity(ing.quantity),
+          'category': ing.category.dbValue,
+        },
+    ];
+  }
+
+  /// RPC `update_meal_with_ingredients` の `p_ingredients` (JSONB 配列) を
+  /// 組み立てる。web の payload (actions.ts:105-109 —
+  /// `{ name, quantity: ing.quantity || null, category }`) と同形。
+  /// `meal_id` は RPC 側が `p_meal_id` から補うため含めない。
+  List<Map<String, dynamic>> _rpcIngredientRows(
+    List<MealIngredient> ingredients,
+  ) {
+    return [
+      for (final ing in ingredients)
+        {
           'name': ing.name,
           'quantity': _nullableQuantity(ing.quantity),
           'category': ing.category.dbValue,
