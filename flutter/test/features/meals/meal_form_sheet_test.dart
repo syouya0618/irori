@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:irori/core/domain/item_category.dart';
 import 'package:irori/features/meals/data/meals_repository.dart';
+import 'package:irori/features/meals/data/meals_week_notifier.dart';
 import 'package:irori/features/meals/domain/meal.dart';
 import 'package:irori/features/meals/domain/meal_template.dart';
 import 'package:irori/features/meals/presentation/widgets/meal_form_sheet.dart';
@@ -11,6 +14,11 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 class _Repo extends Fake implements MealsRepository {
   /// 非 null なら create/update/delete がこの例外で失敗する。
   Object? error;
+
+  /// 非 null なら create/update/delete が gate 完了まで解決しない
+  /// (楽観更新の「repository 解決前」断面を検証するため —
+  /// web meal-optimistic.test.tsx の deferred promise 相当)。
+  Completer<void>? gate;
 
   /// 非 null なら saveAsTemplate がこの例外で失敗する。
   Object? saveTemplateError;
@@ -87,6 +95,7 @@ class _Repo extends Fake implements MealsRepository {
     required bool isEatingOut,
     List<MealIngredient> ingredients = const [],
   }) async {
+    if (gate != null) await gate!.future;
     if (error != null) throw error!;
     created = (
       householdId: householdId,
@@ -110,6 +119,7 @@ class _Repo extends Fake implements MealsRepository {
     required bool isEatingOut,
     List<MealIngredient> ingredients = const [],
   }) async {
+    if (gate != null) await gate!.future;
     if (error != null) throw error!;
     updated = (
       householdId: householdId,
@@ -127,6 +137,7 @@ class _Repo extends Fake implements MealsRepository {
     required String householdId,
     required String mealId,
   }) async {
+    if (gate != null) await gate!.future;
     if (error != null) throw error!;
     deleted = (householdId: householdId, mealId: mealId);
   }
@@ -149,15 +160,31 @@ Meal _existingMeal() {
   );
 }
 
+/// 固定リストで初期化される週 notifier (meals_page_test と同じ流儀)。
+/// 楽観更新ミューテータは実装 (MealsWeekNotifier) をそのまま継承するため、
+/// sheet からの upsert/remove/replaceId が実ロジックで state に反映される。
+class _FakeWeekNotifier extends MealsWeekNotifier {
+  _FakeWeekNotifier(this._meals);
+
+  final List<Meal> _meals;
+
+  @override
+  Future<List<Meal>> build() async => _meals;
+}
+
 Widget _wrap({
   required _Repo repo,
   Meal? existing,
   String date = '2026-06-10',
   MealType mealType = MealType.dinner,
+  List<Meal> weekMeals = const [],
 }) {
   return ProviderScope(
     overrides: [
       mealsRepositoryProvider.overrideWithValue(repo),
+      mealsWeekNotifierProvider.overrideWith(
+        () => _FakeWeekNotifier(weekMeals),
+      ),
       mealsMutationContextProvider.overrideWith(
         (ref) async => (householdId: 'hh-1', userId: 'user-1'),
       ),
@@ -165,22 +192,36 @@ Widget _wrap({
     child: MaterialApp(
       home: Scaffold(
         body: Consumer(
-          builder: (context, ref, _) => FilledButton(
-            onPressed: () {
-              showMealFormSheet(
-                context,
-                ref,
-                date: date,
-                mealType: mealType,
-                existing: existing,
-              );
-            },
-            child: const Text('open'),
-          ),
+          builder: (context, ref, _) {
+            // 実アプリでは MealsPage が常時 watch して state を確定させている
+            // (楽観ミューテータは state 未確定なら no-op のため、同じ前提を
+            // 再現する)。
+            ref.watch(mealsWeekNotifierProvider);
+            return FilledButton(
+              onPressed: () {
+                showMealFormSheet(
+                  context,
+                  ref,
+                  date: date,
+                  mealType: mealType,
+                  existing: existing,
+                );
+              },
+              child: const Text('open'),
+            );
+          },
         ),
       ),
     ),
   );
+}
+
+/// 週 notifier の現在 state (楽観反映後の一覧) を読む。
+List<Meal> _weekState(WidgetTester tester) {
+  final container = ProviderScope.containerOf(
+    tester.element(find.text('open')),
+  );
+  return container.read(mealsWeekNotifierProvider).value!;
 }
 
 void main() {
@@ -219,7 +260,10 @@ void main() {
       expect(repo.created!.mealType, MealType.dinner);
       expect(repo.created!.householdId, 'hh-1');
       expect(repo.created!.userId, 'user-1');
-      expect(find.text('献立を追加しました'), findsOneWidget);
+      // シートは即閉じる (成功 SnackBar は web PR #50 で廃止 — 楽観反映が
+      // 成功フィードバック)。
+      expect(find.text('追加する'), findsNothing);
+      expect(find.text('献立を追加しました'), findsNothing);
     });
 
     testWidgets('食材行を追加・削除できる', (tester) async {
@@ -287,7 +331,7 @@ void main() {
       );
     });
 
-    testWidgets('重複 (DuplicateMealException) は専用文言で sheet を閉じない', (
+    testWidgets('重複 (DuplicateMealException) は専用文言でロールバックする (シートは再オープンしない)', (
       tester,
     ) async {
       final repo = _Repo()..error = const DuplicateMealException();
@@ -306,8 +350,10 @@ void main() {
 
       expect(repo.created, isNull);
       expect(find.text('この日時のメニューは既に登録されています。'), findsOneWidget);
-      // sheet は開いたまま (再編集できる)。
-      expect(find.text('追加する'), findsOneWidget);
+      // シートは即閉じたまま (web: エラー時も再オープンしない契約)。
+      expect(find.text('追加する'), findsNothing);
+      // temp 楽観行はロールバックで除去される。
+      expect(_weekState(tester), isEmpty);
     });
   });
 
@@ -340,7 +386,9 @@ void main() {
         repo.updated!.ingredients.single.category,
         ItemCategory.vegetable,
       );
-      expect(find.text('献立を更新しました'), findsOneWidget);
+      // シートは即閉じる (成功 SnackBar は web PR #50 で廃止)。
+      expect(find.text('更新する'), findsNothing);
+      expect(find.text('献立を更新しました'), findsNothing);
     });
 
     testWidgets('削除は確認ステップを挟んでから実行される', (tester) async {
@@ -362,7 +410,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(repo.deleted, (householdId: 'hh-1', mealId: 'meal-1'));
-      expect(find.text('献立を削除しました'), findsOneWidget);
+      // シートは即閉じる (成功 SnackBar は web PR #50 で廃止)。
+      expect(find.text('この献立を削除'), findsNothing);
+      expect(find.text('献立を削除しました'), findsNothing);
     });
 
     testWidgets('削除確認はキャンセルで戻れる', (tester) async {
@@ -381,6 +431,137 @@ void main() {
       expect(find.text('本当に削除しますか？'), findsNothing);
       expect(find.text('この献立を削除'), findsOneWidget);
       expect(repo.deleted, isNull);
+    });
+  });
+
+  group('MealFormSheet 楽観更新 (web meal-optimistic.test.tsx の CRUD ケース移植)', () {
+    testWidgets('保存でシートが即閉じ、createMeal 解決前に temp 楽観行が入り、成功で確定 id へ差し替わる', (
+      tester,
+    ) async {
+      final repo = _Repo()..gate = Completer<void>();
+      await tester.pumpWidget(_wrap(repo: repo));
+
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextField, '例: カレーライス'),
+        'トースト',
+      );
+      await tester.pump();
+      await tester.tap(find.text('追加する'));
+      await tester.pumpAndSettle();
+
+      // createMeal 未解決の時点でシートは閉じ、temp 楽観行が state に出る。
+      expect(find.text('追加する'), findsNothing);
+      expect(repo.created, isNull);
+      var meals = _weekState(tester);
+      expect(meals.single.id, startsWith(optimisticMealIdPrefix));
+      expect(meals.single.title, 'トースト');
+      expect(meals.single.date, '2026-06-10');
+
+      repo.gate!.complete();
+      await tester.pumpAndSettle();
+
+      // 成功で temp id がサーバー確定 id へ差し替わる (refetch 到着前に
+      // カードを編集/リアクションしても正しい id で mutation が飛ぶ)。
+      expect(repo.created, isNotNull);
+      meals = _weekState(tester);
+      expect(meals.single.id, 'meal-new');
+      expect(meals.single.title, 'トースト');
+    });
+
+    testWidgets('createMeal 失敗で temp 楽観行が除去され SnackBar が出る (シートは閉じたまま)', (
+      tester,
+    ) async {
+      final repo = _Repo()..error = StateError('boom');
+      await tester.pumpWidget(_wrap(repo: repo));
+
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextField, '例: カレーライス'),
+        'トースト',
+      );
+      await tester.pump();
+      await tester.tap(find.text('追加する'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('追加する'), findsNothing);
+      expect(find.text('献立の作成に失敗しました。もう一度お試しください。'), findsOneWidget);
+      // temp 楽観行はロールバックで除去される。
+      expect(_weekState(tester), isEmpty);
+    });
+
+    testWidgets(
+      '更新は解決前に楽観置換 (reactions/template_id は既存値を維持) され、失敗で旧値へロールバックする',
+      (
+        tester,
+      ) async {
+        final existing = _existingMeal().copyWith(
+          templateId: 'tpl-1',
+          reactions: const [
+            MealReactionEntry(userId: 'user-2', reaction: MealReaction.good),
+          ],
+        );
+        final repo = _Repo()
+          ..gate = Completer<void>()
+          ..error = StateError('boom');
+        await tester.pumpWidget(
+          _wrap(repo: repo, existing: existing, weekMeals: [existing]),
+        );
+
+        await tester.tap(find.text('open'));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.widgetWithText(TextField, '肉じゃが'), 'シチュー');
+        await tester.pump();
+        await tester.tap(find.text('更新する'));
+        await tester.pumpAndSettle();
+
+        // updateMeal 未解決の時点で楽観置換 (reactions / template_id は維持)。
+        expect(find.text('更新する'), findsNothing);
+        var meals = _weekState(tester);
+        expect(meals.single.title, 'シチュー');
+        expect(meals.single.templateId, 'tpl-1');
+        expect(meals.single.reactions, existing.reactions);
+
+        repo.gate!.complete();
+        await tester.pumpAndSettle();
+
+        // 失敗 → snapshot へロールバック + SnackBar。
+        meals = _weekState(tester);
+        expect(meals.single.title, '肉じゃが');
+        expect(find.text('献立の更新に失敗しました。'), findsOneWidget);
+      },
+    );
+
+    testWidgets('削除は解決前に即時除去され、失敗で復元 + SnackBar が出る', (tester) async {
+      final existing = _existingMeal();
+      final repo = _Repo()
+        ..gate = Completer<void>()
+        ..error = StateError('boom');
+      await tester.pumpWidget(
+        _wrap(repo: repo, existing: existing, weekMeals: [existing]),
+      );
+
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('この献立を削除'));
+      await tester.tap(find.text('この献立を削除'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('削除する'));
+      await tester.tap(find.text('削除する'));
+      await tester.pumpAndSettle();
+
+      // deleteMeal 未解決の時点で即時除去 + シート即閉じ。
+      expect(find.text('この献立を削除'), findsNothing);
+      expect(_weekState(tester), isEmpty);
+
+      repo.gate!.complete();
+      await tester.pumpAndSettle();
+
+      // 失敗 → snapshot を復元 + SnackBar。
+      expect(_weekState(tester).single.id, 'meal-1');
+      expect(find.text('献立の削除に失敗しました。'), findsOneWidget);
     });
   });
 

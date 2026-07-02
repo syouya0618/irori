@@ -9,6 +9,14 @@ import '../domain/meal.dart';
 import 'meals_repository.dart';
 import 'selected_week_start_provider.dart';
 
+/// 作成の楽観行に使うローカル擬似 id の prefix。
+///
+/// `meal_form_sheet.dart` の temp id 生成と、refetch 失敗時の temp 行
+/// クリーンアップ ([MealsWeekNotifier._refetch]) が同じ判定を共有するため、
+/// ここで一元定義する (web `use-week-meals.ts` の `OPTIMISTIC_MEAL_ID_PREFIX`
+/// と同値)。
+const String optimisticMealIdPrefix = 'optimistic-';
+
 /// 表示中の週 (`selectedWeekStartProvider`) の献立を保持し、Supabase Realtime
 /// で reactive 更新する `AsyncNotifier` (`BabyLogsNotifier` と同系の作り)。
 ///
@@ -179,9 +187,72 @@ class MealsWeekNotifier extends AsyncNotifier<List<Meal>> {
       }
       state = AsyncData(meals);
     } catch (e, st) {
-      // 握り潰さない (CLAUDE.md): 経路識別つきでログし、state は現状維持。
+      // 握り潰さない (CLAUDE.md): 経路識別つきでログし、確定行は現状維持
+      // (background refresh の失敗で週ビュー全体を落とさない)。
       debugPrint('MealsWeekNotifier refetch 失敗: $e\n$st');
+      // web parity (PR #50 review H1): 真値で置換できなかった場合は temp
+      // 楽観行のみ除去する。残すと「作成が確定したか分からない行」が編集
+      // 可能なまま残留し、temp id (optimistic-*) のまま updateMeal が飛んで
+      // 権限エラーになる。確定 id 行は消さない (真値が取れない時に既存表示を
+      // 壊さない)。
+      if (_disposed || generation != _generation) return;
+      final current = state.value;
+      if (current == null) return;
+      final kept = [
+        for (final m in current)
+          if (!m.id.startsWith(optimisticMealIdPrefix)) m,
+      ];
+      if (kept.length != current.length) {
+        state = AsyncData(kept);
+      }
     }
+  }
+
+  // ── 楽観更新ミューテータ (web `use-week-meals.ts` の移植) ──────────
+  // いずれも Realtime refetch (`_refetch`) が state を丸ごと真値で置換する
+  // ため、楽観行はサーバー確定値で自然収束する。state 未確定 (初回 fetch
+  // 完了前) は no-op — その window では UI に行が表示されておらず操作も
+  // 発生しない (`StockItemsNotifier.removeItemOptimistic` と同じガード)。
+
+  /// 楽観 upsert: 同 id の行があれば置換、なければ末尾に追加する。
+  /// 作成 (temp id 行の挿入)・更新 (該当行の置換)・ロールバック (snapshot
+  /// 復元) を兼ねる (web `upsertMealOptimistic`)。
+  void upsertMealOptimistic(Meal meal) {
+    final current = state.value;
+    if (current == null) return;
+    state = AsyncData(
+      current.any((m) => m.id == meal.id)
+          ? [
+              for (final m in current)
+                if (m.id == meal.id) meal else m,
+            ]
+          : [...current, meal],
+    );
+  }
+
+  /// 楽観 remove: 削除の即時反映、および作成失敗時の temp 行ロールバックに
+  /// 使う (web `removeMealOptimistic`)。
+  void removeMealOptimistic(String mealId) {
+    final current = state.value;
+    if (current == null) return;
+    state = AsyncData([
+      for (final m in current)
+        if (m.id != mealId) m,
+    ]);
+  }
+
+  /// createMeal 成功時に temp id をサーバー発行 id へ差し替える
+  /// (web `replaceMealIdOptimistic`)。temp id のまま残すと、refetch 到着前に
+  /// カードを編集/リアクションした際に存在しない id で mutation が飛んで
+  /// しまう。refetch が先に走って temp 行が既に正規行へ置換されている場合は
+  /// no-op。
+  void replaceMealIdOptimistic(String tempId, String realId) {
+    final current = state.value;
+    if (current == null) return;
+    state = AsyncData([
+      for (final m in current)
+        if (m.id == tempId) m.copyWith(id: realId) else m,
+    ]);
   }
 
   /// テスト専用: realtime payload を `_onRealtimePayload` に直接流す seam

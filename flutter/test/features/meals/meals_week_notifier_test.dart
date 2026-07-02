@@ -241,6 +241,151 @@ void main() {
     });
   });
 
+  group('MealsWeekNotifier 楽観更新ミューテータ (web use-week-meals.ts の移植)', () {
+    /// 初期 fetch を完了させ、(notifier, 現在 state を読む closure) を返す。
+    Future<({MealsWeekNotifier notifier, List<Meal> Function() readMeals})>
+    init(ProviderContainer container) async {
+      container.listen(
+        mealsWeekNotifierProvider,
+        (_, _) {},
+        fireImmediately: true,
+      );
+      final notifier = container.read(mealsWeekNotifierProvider.notifier);
+      await _pumpUntil(
+        () => container.read(mealsWeekNotifierProvider).hasValue,
+      );
+      return (
+        notifier: notifier,
+        readMeals: () => container.read(mealsWeekNotifierProvider).value!,
+      );
+    }
+
+    test('upsertMealOptimistic: 同 id は置換、無ければ末尾に追加する', () async {
+      final repo = _FakeMealsRepository(meals: [_meal('a')]);
+      final container = _makeContainer(repo: repo, householdId: 'hh-1');
+      addTearDown(container.dispose);
+      final h = await init(container);
+
+      // 追加 (作成の temp id 行の挿入)。
+      h.notifier.upsertMealOptimistic(_meal('optimistic-1'));
+      expect(h.readMeals().map((m) => m.id), ['a', 'optimistic-1']);
+
+      // 置換 (更新の楽観反映 / ロールバックの snapshot 復元)。
+      h.notifier.upsertMealOptimistic(_meal('a').copyWith(title: '置換後'));
+      expect(h.readMeals().map((m) => m.id), ['a', 'optimistic-1']);
+      expect(h.readMeals().first.title, '置換後');
+    });
+
+    test('removeMealOptimistic: 該当 id を除去する', () async {
+      final repo = _FakeMealsRepository(meals: [_meal('a'), _meal('b')]);
+      final container = _makeContainer(repo: repo, householdId: 'hh-1');
+      addTearDown(container.dispose);
+      final h = await init(container);
+
+      h.notifier.removeMealOptimistic('a');
+      expect(h.readMeals().map((m) => m.id), ['b']);
+    });
+
+    test(
+      'replaceMealIdOptimistic: temp id を確定 id へ差し替え、temp 不在なら no-op',
+      () async {
+        final repo = _FakeMealsRepository(meals: [_meal('a')]);
+        final container = _makeContainer(repo: repo, householdId: 'hh-1');
+        addTearDown(container.dispose);
+        final h = await init(container);
+
+        h.notifier.upsertMealOptimistic(_meal('optimistic-1'));
+        h.notifier.replaceMealIdOptimistic('optimistic-1', 'meal-real');
+        expect(h.readMeals().map((m) => m.id), ['a', 'meal-real']);
+        // id 以外は温存される。
+        expect(h.readMeals().last.title, '献立optimistic-1');
+
+        // 既に差し替え済み (refetch 先行相当) なら no-op。
+        h.notifier.replaceMealIdOptimistic('optimistic-1', 'meal-other');
+        expect(h.readMeals().map((m) => m.id), ['a', 'meal-real']);
+      },
+    );
+
+    test('state 未確定 (初期 fetch 完了前) のミューテータは no-op', () async {
+      final repo = _FakeMealsRepository(gated: true);
+      final container = _makeContainer(repo: repo, householdId: 'hh-1');
+      addTearDown(container.dispose);
+
+      container.listen(
+        mealsWeekNotifierProvider,
+        (_, _) {},
+        fireImmediately: true,
+      );
+      final notifier = container.read(mealsWeekNotifierProvider.notifier);
+      await _pumpUntil(() => repo.gates.length == 1);
+
+      // loading 中 (value 無し) は何も反映しない (stock と同じガード)。
+      notifier.upsertMealOptimistic(_meal('optimistic-1'));
+      notifier.removeMealOptimistic('a');
+      notifier.replaceMealIdOptimistic('optimistic-1', 'x');
+      expect(container.read(mealsWeekNotifierProvider).hasValue, isFalse);
+
+      repo.gates[0].complete([_meal('a')]);
+      await _pumpUntil(
+        () => container.read(mealsWeekNotifierProvider).hasValue,
+      );
+      expect(
+        container.read(mealsWeekNotifierProvider).value!.map((m) => m.id),
+        ['a'],
+      );
+    });
+
+    test(
+      'temp 行は refetch の丸ごと置換で正規行へ収束し、遅れた id 差し替えは no-op (Realtime echo と二重表示しない)',
+      () async {
+        final repo = _FakeMealsRepository(meals: [_meal('a')]);
+        final container = _makeContainer(repo: repo, householdId: 'hh-1');
+        addTearDown(container.dispose);
+        final h = await init(container);
+
+        // 作成の楽観行 (createMeal は未解決の想定)。
+        h.notifier.upsertMealOptimistic(_meal('optimistic-1'));
+        expect(h.readMeals().map((m) => m.id), ['a', 'optimistic-1']);
+
+        // サーバー側 INSERT の Realtime echo → refetch が配列を丸ごと真値で
+        // 置換する (temp 行は消え、正規行と重複しない)。
+        repo.meals = [_meal('a'), _meal('meal-srv')];
+        h.notifier.debugHandlePayload(_payload());
+        await _pumpUntil(
+          () => h.readMeals().any((m) => m.id == 'meal-srv'),
+        );
+        expect(h.readMeals().map((m) => m.id), ['a', 'meal-srv']);
+
+        // 遅れて createMeal が解決しても id 差し替えは no-op (重複や復活は
+        // 起きない — web meal-optimistic.test.tsx「収束」ケースと同形)。
+        h.notifier.replaceMealIdOptimistic('optimistic-1', 'meal-srv');
+        expect(h.readMeals().map((m) => m.id), ['a', 'meal-srv']);
+      },
+    );
+
+    test('refetch 失敗時は temp 楽観行のみ除去され、確定 id 行は残る (web PR #50 H1)', () async {
+      final repo = _FakeMealsRepository(meals: [_meal('a')]);
+      final container = _makeContainer(repo: repo, householdId: 'hh-1');
+      addTearDown(container.dispose);
+      final h = await init(container);
+
+      h.notifier.upsertMealOptimistic(_meal('optimistic-1'));
+
+      // 次の refetch を失敗させる。temp 行を残すと「temp id のまま編集 →
+      // 存在しない id で updateMeal が飛んで権限エラー」のゾンビ化が起きる。
+      repo.error = const PostgrestException(message: 'boom', code: '500');
+      h.notifier.debugHandlePayload(_payload());
+
+      await _pumpUntil(() => repo.fetchCount >= 2);
+      await _pumpUntil(() => h.readMeals().length == 1);
+
+      final state = container.read(mealsWeekNotifierProvider);
+      expect(state.hasError, isFalse);
+      // 確定 id 行は消さない (真値が取れない時に既存表示を壊さない)。
+      expect(state.value!.map((m) => m.id), ['a']);
+    });
+  });
+
   group('MealsWeekNotifier 週切替と世代カウンタ', () {
     test('週切替で build が再実行され新しい週で refetch される', () async {
       final repo = _FakeMealsRepository(meals: [_meal('a')]);
