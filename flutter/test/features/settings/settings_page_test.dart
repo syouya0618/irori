@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:irori/core/supabase/supabase_providers.dart';
 import 'package:irori/core/theme/colors.dart';
+import 'package:irori/features/auth/data/approval_provider.dart';
 import 'package:irori/features/settings/data/settings_provider.dart';
 import 'package:irori/features/settings/data/settings_repository.dart';
 import 'package:irori/features/settings/presentation/settings_page.dart';
@@ -542,12 +543,23 @@ void main() {
 
       // 端末共用時に他ユーザーの値で redirect しないことの検証用に温めておく。
       _containerOf(tester).read(defaultPageCacheProvider).value = 'stock';
+      // 承認ゲートの同期キャッシュも同様 (Issue #74)。
+      _containerOf(
+        tester,
+      ).read(approvalCacheProvider).set(userId: 'user-1', isApproved: true);
 
       await tester.tap(find.text('ログアウト'));
       await tester.pumpAndSettle();
 
       expect(auth.signOutCallCount, 1);
       expect(_containerOf(tester).read(defaultPageCacheProvider).value, isNull);
+      expect(
+        _containerOf(
+          tester,
+        ).read(approvalCacheProvider).isApprovedFor('user-1'),
+        isNull,
+        reason: 'サインアウトで承認キャッシュも破棄する (Issue #74)',
+      );
     });
 
     testWidgets('signOut が 10 秒応答しない場合は timeout で表面化する', (tester) async {
