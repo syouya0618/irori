@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/supabase/auth_notifier.dart';
+import '../core/utils/app_origin.dart';
 import '../features/auth/presentation/auth_callback_page.dart';
 import '../features/auth/presentation/invite_page.dart';
 import '../features/auth/presentation/login_page.dart';
@@ -16,22 +17,10 @@ import '../features/stock/presentation/stock_page.dart';
 import '../features/welcome/welcome_page.dart';
 import 'app_shell.dart';
 
-/// Web origin (Magic Link callback URL 組み立て用)。
-///
-/// 本番 Web では `Uri.base.origin` (例: `https://irori-flutter.vercel.app`)。
-/// flutter-test VM では `Uri.base` が `file:` scheme になり `Uri.origin` が
-/// `StateError` を投げるため、**テストでは必ず override する**
-/// (例: `originProvider.overrideWithValue('https://test.example')`)。
-final originProvider = Provider<String>((ref) {
-  final base = Uri.base;
-  // 本番 Web は http(s) で origin が取れる。flutter-test VM は `file:` scheme で
-  // `Uri.origin` が StateError を投げるため空文字を fallback とする
-  // (テストでは originProvider を override して固定 origin を使う想定)。
-  if (base.isScheme('http') || base.isScheme('https')) {
-    return base.origin;
-  }
-  return '';
-});
+// originProvider は issue #76 (InviteCard) で core/utils/app_origin.dart へ
+// 移動した (feature 層からの参照で feature→app の循環 import を避けるため)。
+// 既存参照 (router_wiring_test 等) の互換のためここから再 export する。
+export '../core/utils/app_origin.dart' show originProvider;
 
 /// Magic Link callback URL を組み立てる。
 ///

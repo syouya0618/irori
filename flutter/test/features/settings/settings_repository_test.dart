@@ -501,6 +501,82 @@ void main() {
     });
   });
 
+  group('SettingsRepository.createInvitation', () {
+    // 招待は invitations への直接 insert (web generateInvite と同じ — RPC でない)。
+    ({
+      SettingsRepository repo,
+      FakeSupabaseClient client,
+      FakeQueryBuilder invitations,
+      FakeFilterBuilder mutation,
+    })
+    makeRepo({Map<String, dynamic>? tokenRow, Object? insertError}) {
+      final mutation = FakeFilterBuilder(
+        cannedValue: const [],
+        singleValue: tokenRow ?? const {'token': 'tok-64hex'},
+        singleError: insertError,
+      );
+      final invitations = FakeQueryBuilder(mutation, mutationFilter: mutation);
+      final client = FakeSupabaseClient(
+        fromBuilders: {'invitations': invitations},
+      );
+      return (
+        repo: SettingsRepository(client),
+        client: client,
+        invitations: invitations,
+        mutation: mutation,
+      );
+    }
+
+    test('web と同じ payload で insert し select(token).single() で受け取る', () async {
+      final r = makeRepo();
+
+      final token = await r.repo.createInvitation(
+        householdId: 'hh-1',
+        userId: 'user-1',
+      );
+
+      expect(r.client.fromTables, ['invitations']);
+      // web `settings/actions.ts:36-44` と同一 payload
+      // (token / status / expires_at は DB DEFAULT に委ねる)。
+      expect(r.invitations.lastInsertValues, {
+        'household_id': 'hh-1',
+        'invited_by': 'user-1',
+        'role': 'member',
+      });
+      // `.select('token').single()` — token 受領 + insert 1 行の行数検証を兼ねる。
+      expect(r.mutation.selectedColumns, 'token');
+      // 受け側 get_invitation_by_token は token 生値で照合するため加工しない。
+      expect(token, 'tok-64hex');
+    });
+
+    test('token 欠損 (null / 空) は StateError で表面化する (URL を壊さない)', () async {
+      for (final row in [
+        const <String, dynamic>{'token': null},
+        const <String, dynamic>{'token': ''},
+        const <String, dynamic>{},
+      ]) {
+        final r = makeRepo(tokenRow: row);
+        await expectLater(
+          r.repo.createInvitation(householdId: 'hh-1', userId: 'user-1'),
+          throwsA(isA<StateError>()),
+        );
+      }
+    });
+
+    test('PostgrestException は握り潰されず rethrow される (UI が汎用文言へ)', () async {
+      final r = makeRepo(
+        insertError: const PostgrestException(message: 'boom', code: '42501'),
+      );
+
+      await expectLater(
+        r.repo.createInvitation(householdId: 'hh-1', userId: 'user-1'),
+        throwsA(
+          isA<PostgrestException>().having((e) => e.code, 'code', '42501'),
+        ),
+      );
+    });
+  });
+
   group('SettingsRepository approvals (承認管理)', () {
     // fetchPendingApprovals / approveUser は RPC ベース。FakeRpcBuilder で
     // get_pending_approvals (RETURNS TABLE) / approve_user (RETURNS VOID) を模す。

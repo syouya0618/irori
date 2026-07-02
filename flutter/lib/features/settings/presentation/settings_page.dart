@@ -11,6 +11,7 @@ import 'widgets/approval_card.dart';
 import 'widgets/auto_stock_card.dart';
 import 'widgets/baby_profile_card.dart';
 import 'widgets/default_page_card.dart';
+import 'widgets/invite_card.dart';
 import 'widgets/profile_card.dart';
 
 /// 設定タブ。Next.js 原典 `settings-content.tsx` (+ `settings/page.tsx`) の
@@ -18,8 +19,9 @@ import 'widgets/profile_card.dart';
 ///
 /// 移植カード:
 /// プロフィール / 世帯表示 / 起動時のページ / 在庫自動追加 / 赤ちゃん情報 /
-/// 記録エクスポート (Phase 2.6-2 で追加) / 承認待ち (owner のみ) / サインアウト。
-/// Invite / Theme カードは引き続き deferred (p25plan の deferred 欄参照)。
+/// 記録エクスポート (Phase 2.6-2 で追加) / メンバー招待 (owner のみ /
+/// issue #76) / 承認待ち (owner のみ) / サインアウト。
+/// Theme カードは引き続き deferred (p25plan の deferred 欄参照)。
 ///
 /// データ:
 /// - profiles / households は **Realtime publication 非対象**のため、
@@ -91,10 +93,17 @@ class _SettingsBody extends StatelessWidget {
         // (web の Theme/Invite/Approval カードは Flutter で deferred のため省略)。
         const ExportCard(),
         // web `settings-content.tsx:126-135`: ExportCard の後に Theme / Invite /
-        // Approval。Theme / Invite は引き続き deferred ゆえ Approval のみ移植する。
-        // owner のときだけ mount し (web の `profile.role === "owner"` ゲート)、
-        // 承認待ち 0 件 / 取得中 / 失敗時はカード自身が何も描画しない (上 spacing も
-        // カード側が持つため、ここに固定 SizedBox は置かない)。
+        // Approval。Theme は引き続き deferred。
+        // InviteCard は web では全 role 表示だが、issue #76 の裁定で owner のみ
+        // mount する (ApprovalCard と同じゲート流儀 — 意図的差異)。
+        if (settings.role == 'owner') ...[
+          const SizedBox(height: 16),
+          const InviteCard(),
+        ],
+        // ApprovalCard も owner のときだけ mount (web の
+        // `profile.role === "owner"` ゲート)。承認待ち 0 件 / 取得中 / 失敗時は
+        // カード自身が何も描画しない (上 spacing もカード側が持つため、ここに
+        // 固定 SizedBox は置かない)。
         if (settings.role == 'owner') const ApprovalCard(),
         const SizedBox(height: 16),
         // web: <Separator /> → ログアウト。
