@@ -9,6 +9,7 @@ import '../../data/baby_logs_notifier.dart';
 import '../../data/baby_repository.dart';
 import '../../data/baby_weekly_summary_provider.dart';
 import '../../data/feeding_timer_store.dart';
+import '../../data/wake_lock_service.dart';
 import '../../domain/baby_log.dart';
 
 /// 授乳タイマーを modal bottom sheet で開く。原典 `feeding-timer.tsx` の
@@ -49,6 +50,9 @@ enum _FeedingTimerResult { recorded, cancelled }
 /// - 1s ごとに `setState` で再描画 (`Timer.periodic`、`dispose` で cancel)。
 /// - 停止で `BabyRepository.recordFeeding(durationMin:)` を呼び、保存をクリアして
 ///   閉じる。`babyLogsNotifierProvider` / `babyWeeklySummaryProvider` を invalidate。
+/// - タイマー動作中は画面 WakeLock を enable (原典 `useWakeLock(open && !!startedAt)`)。
+///   復元経路でも enable し、停止/キャンセル/dispose で必ず disable する。
+///   取得失敗 (省電力モード等) でもタイマー自体は継続する best-effort 設計。
 class BabyFeedingTimerSheet extends ConsumerStatefulWidget {
   const BabyFeedingTimerSheet({
     required this.initialType,
@@ -82,19 +86,52 @@ class _BabyFeedingTimerSheetState extends ConsumerState<BabyFeedingTimerSheet> {
   Timer? _ticker;
   bool _saving = false;
 
+  /// dispose 中は `ref.read` できないため initState で捕捉しておく
+  /// (provider は const サービスを返すだけなので捕捉は安全)。
+  late final WakeLockService _wakeLock;
+
   DateTime _now() => (widget.clock ?? DateTime.now)();
 
   @override
   void initState() {
     super.initState();
     _type = widget.initialType;
+    _wakeLock = ref.read(wakeLockServiceProvider);
     _restoreOrStart();
   }
 
   @override
   void dispose() {
     _ticker?.cancel();
+    // シート破棄で必ず解放 (スワイプ dismiss を含む全ての閉じ方の最終防衛線)。
+    unawaited(_disableWakeLock());
     super.dispose();
+  }
+
+  /// 画面 WakeLock を enable する。原典 `useWakeLock` の `acquire()` 相当。
+  ///
+  /// best-effort: 取得失敗 (省電力モード・権限拒否等) でもタイマー機能自体は
+  /// 継続する。失敗は握り潰さずログする。
+  Future<void> _enableWakeLock() async {
+    try {
+      await _wakeLock.enable();
+      // 取得完了前に dispose されていたら即解放 (原典 `cancelled` フラグ相当の
+      // リーク防止)。dispose 側の disable と重なっても冪等なので安全。
+      if (!mounted) {
+        await _wakeLock.disable();
+      }
+    } on Object catch (e) {
+      debugPrint('WakeLock enable 失敗 (タイマーは継続): $e');
+    }
+  }
+
+  /// 画面 WakeLock を disable する。失敗してもクラッシュさせずログのみ。
+  Future<void> _disableWakeLock() async {
+    try {
+      await _wakeLock.disable();
+    } on Object catch (e) {
+      debugPrint('WakeLock disable 失敗: $e');
+    }
   }
 
   /// 保存があれば復元、無ければ新規開始。原典の open effect 相当。
@@ -128,6 +165,8 @@ class _BabyFeedingTimerSheetState extends ConsumerState<BabyFeedingTimerSheet> {
 
     setState(() {});
     _startTicker();
+    // 新規開始・復元のどちらでもタイマーが動き出したら画面消灯を防ぐ (#77)。
+    unawaited(_enableWakeLock());
   }
 
   void _startTicker() {
@@ -190,6 +229,9 @@ class _BabyFeedingTimerSheetState extends ConsumerState<BabyFeedingTimerSheet> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('授乳を記録しました（$duration分）')),
       );
+      // タイマー停止 = 点灯維持の理由が消えた時点で解放 (原典は
+      // `setStartedAt(null)` で `useWakeLock(false)` になるのと同義)。
+      unawaited(_disableWakeLock());
       _close(_FeedingTimerResult.recorded);
     } on Object catch (e) {
       if (!mounted) return;
@@ -204,6 +246,7 @@ class _BabyFeedingTimerSheetState extends ConsumerState<BabyFeedingTimerSheet> {
     if (_saving) return;
     await ref.read(feedingTimerStoreProvider).clear();
     if (!mounted) return;
+    unawaited(_disableWakeLock());
     _close(_FeedingTimerResult.cancelled);
   }
 
