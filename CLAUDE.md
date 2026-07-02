@@ -78,10 +78,4 @@ src/
 
 ### Next.js / Supabase 共通
 
-- **`"use server"` ファイルからの非関数 export でビルド破壊**: 定数・型は共有モジュールに配置
-- **React 19 `<form action={fn}>` は auto-reset**: `onReset={(e) => e.preventDefault()}` で無効化
-- **`overflow-hidden` は `position: sticky` を破壊**: `overflow-clip` を使用
-- **`.update()` は 0 行更新でも `error: null`**: `.select("id").single()` で行数検証
-- **Server Action 副次 DB 操作のエラー握り潰し禁止**: 各クエリの `.error` を個別検証
-- **react-hook-form `watch()` + React Compiler 非互換**: `useWatch()` or `getValues()` に移行
-- **`router.back()` は履歴なしで無動作**: 明示的な遷移先を指定
+Next.js/Supabase 汎用の罠は `~/.claude/rules/nextjs-supabase.md`（user-level rules）に一元化。該当ファイル編集時に自動適用される。
