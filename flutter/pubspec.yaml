@@ -41,6 +41,11 @@ dependencies:
   # 既に transitive 解決済み (supabase_flutter 経由) の版を direct に昇格。
   shared_preferences: ^2.5.5
 
+  # 授乳タイマー実行中の画面消灯防止 (原典 use-wake-lock.ts の
+  # Screen Wake Lock API 相当)。platform API 必須のため既存手段では代替不可。
+  # Flutter Favorite の定番パッケージ (#77)。
+  wakelock_plus: ^1.6.1
+
   cupertino_icons: ^1.0.9
 
 dev_dependencies:
