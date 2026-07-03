@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -22,7 +24,7 @@ import 'template_selector_dialog.dart';
 /// → `formInitialData` 経路に相当し、[existing] とは併用しない)。
 /// シグネチャは `showBabyFeedingTimer(context, ref, ...)` と統一
 /// ([ref] は close 後の provider 操作を足す際の拡張点。現在は sheet 内部の
-/// 自前 ref が invalidate まで担う)。
+/// 自前 ref が pop 前に必要な参照を捕捉して楽観更新まで担う)。
 Future<void> showMealFormSheet(
   BuildContext context,
   WidgetRef ref, {
@@ -57,11 +59,20 @@ Future<void> showMealFormSheet(
 /// - 「テンプレート保存」(編集時のみ — 原典 `isEditing &&`) — 表示中の
 ///   既存献立を `saveAsTemplate` し、sheet は閉じない。
 ///
+/// ## 保存 / 削除は楽観更新 (web PR #50 `meal-week-view.tsx` の移植)
+///
+/// `mealsWeekNotifierProvider` へ即時反映してシートを即閉じ、repository
+/// 呼び出しは裏で走らせる。失敗時のみロールバック + SnackBar (シートは
+/// 閉じたまま再オープンしない — web と同じ契約)。作成は temp id
+/// ([optimisticMealIdPrefix] + 連番) の楽観行を挿入し、createMeal 成功時に
+/// 確定 id へ差し替える (Realtime refetch 先行時は no-op)。成功時は meals の
+/// Realtime refetch が state を丸ごと真値で置換して収束する。
+/// 成功 SnackBar は web PR #50 で廃止 (楽観反映が成功フィードバック)。
+///
 /// 文言は原典 toast / ラベルと同一:
-/// - 成功: 「献立を追加しました」「献立を更新しました」「献立を削除しました」
-///   「テンプレートとして保存しました」
 /// - 重複 (23505): 「この日時のメニューは既に登録されています。」
 ///   ([DuplicateMealException.message])
+/// - テンプレート保存成功: 「テンプレートとして保存しました」
 /// - テンプレート保存失敗: 「テンプレートの保存に失敗しました。」(actions.ts の
 ///   汎用文言。web の権限分岐文言は repository が PGRST116 throw に畳むため
 ///   出し分けない — `MealsRepository.saveAsTemplate` doc 参照)
@@ -90,6 +101,13 @@ class MealFormSheet extends ConsumerStatefulWidget {
   @override
   ConsumerState<MealFormSheet> createState() => _MealFormSheetState();
 }
+
+/// 作成の楽観行に使うローカル擬似 id の連番。createMeal が確定 id を返すか
+/// Realtime refetch が来るまでの間だけ存在する (同一セッション内の一意性で
+/// 十分 — web `meal-week-view.tsx` の `tempIdSeq` と同じモジュールスコープ)。
+/// prefix は `meals_week_notifier.dart` の [optimisticMealIdPrefix] と共有し、
+/// refetch 失敗時の temp 行クリーンアップが同じ判定で行えるようにする。
+int _optimisticMealIdSeq = 0;
 
 /// 食材 1 行分のフォーム状態 (controller は本 State が破棄する)。
 class _IngredientEntry {
@@ -205,52 +223,205 @@ class _MealFormSheetState extends ConsumerState<MealFormSheet> {
     ];
   }
 
-  Future<void> _save() async {
+  void _save() {
     final title = _titleController.text.trim();
     if (title.isEmpty || _pending) return; // ボタン disabled の防御線
+    // 二重発火ラッチ (web PR #50 の submittedRef 相当): pop 後の
+    // 閉アニメーション中に再タップされても 2 回目の mutation を飛ばさない。
+    // シートは戻らないため解除はしない。
+    setState(() => _pending = true);
 
     final ingredients = _validIngredients();
-    await _run(
-      action: (ctx, repo) async {
-        if (_isEditing) {
-          await repo.updateMeal(
-            householdId: ctx.householdId,
-            mealId: widget.existing!.id,
-            date: _date,
-            mealType: _mealType,
-            title: title,
-            isEatingOut: _isEatingOut,
-            ingredients: ingredients,
-          );
-        } else {
-          await repo.createMeal(
+    if (_isEditing) {
+      _submitUpdate(title: title, ingredients: ingredients);
+    } else {
+      _submitCreate(title: title, ingredients: ingredients);
+    }
+  }
+
+  /// 作成: temp id の楽観行を挿入してシートを即閉じ、裏で createMeal を
+  /// 走らせる (web `handleSubmitMeal` の作成分岐)。成功時は temp id を
+  /// サーバー確定 id へ差し替え (refetch 先行時は no-op)、失敗時は temp 行を
+  /// 除去 + SnackBar。
+  void _submitCreate({
+    required String title,
+    required List<MealIngredient> ingredients,
+  }) {
+    // pop 後は State が dispose され ref / context に触れない (unmount 後の
+    // ref 使用は StateError — Riverpod 正準)。必要な参照は全て pop 前に
+    // 同期で捕捉し、裏の処理は捕捉済みオブジェクトのみで完結させる。
+    final notifier = ref.read(mealsWeekNotifierProvider.notifier);
+    final repo = ref.read(mealsRepositoryProvider);
+    final contextFuture = ref.read(mealsMutationContextProvider.future);
+    final messenger = ScaffoldMessenger.of(context);
+    final date = _date;
+    final mealType = _mealType;
+    final isEatingOut = _isEatingOut;
+
+    final tempId = '$optimisticMealIdPrefix${++_optimisticMealIdSeq}';
+    notifier.upsertMealOptimistic(
+      Meal(
+        id: tempId,
+        date: date,
+        mealType: mealType,
+        title: title,
+        isEatingOut: isEatingOut,
+        ingredients: _toOptimisticIngredients(ingredients),
+      ),
+    );
+    Navigator.of(context).pop();
+
+    unawaited(
+      _runInBackground(
+        messenger: messenger,
+        action: () async {
+          final ctx = await contextFuture;
+          final mealId = await repo.createMeal(
             householdId: ctx.householdId,
             userId: ctx.userId,
-            date: _date,
-            mealType: _mealType,
+            date: date,
+            mealType: mealType,
             title: title,
-            isEatingOut: _isEatingOut,
+            isEatingOut: isEatingOut,
             ingredients: ingredients,
           );
-        }
-      },
-      successMessage: _isEditing ? '献立を更新しました' : '献立を追加しました',
-      // 原典 actions.ts の汎用エラー文言と同一。
-      errorMessage: _isEditing ? '献立の更新に失敗しました。' : '献立の作成に失敗しました。もう一度お試しください。',
+          // refetch 到着前にカードを編集/リアクションしても正しい id で
+          // mutation が飛ぶよう確定 id へ差し替える (refetch 先行時は no-op)。
+          notifier.replaceMealIdOptimistic(tempId, mealId);
+        },
+        rollback: () => notifier.removeMealOptimistic(tempId),
+        // 原典 actions.ts の汎用エラー文言と同一。
+        errorMessage: '献立の作成に失敗しました。もう一度お試しください。',
+      ),
     );
   }
 
-  Future<void> _delete() async {
-    final existing = widget.existing;
-    if (existing == null) return;
-    await _run(
-      action: (ctx, repo) => repo.deleteMeal(
-        householdId: ctx.householdId,
-        mealId: existing.id,
+  /// 更新: 該当 meal を楽観置換してシートを即閉じ、裏で updateMeal を
+  /// 走らせる (web `handleSubmitMeal` の更新分岐 — reactions / template_id は
+  /// 既存値を維持)。失敗時は snapshot へロールバック + SnackBar。
+  void _submitUpdate({
+    required String title,
+    required List<MealIngredient> ingredients,
+  }) {
+    final mealId = widget.existing!.id;
+    final notifier = ref.read(mealsWeekNotifierProvider.notifier);
+    final repo = ref.read(mealsRepositoryProvider);
+    final contextFuture = ref.read(mealsMutationContextProvider.future);
+    final messenger = ScaffoldMessenger.of(context);
+    final date = _date;
+    final mealType = _mealType;
+    final isEatingOut = _isEatingOut;
+
+    // snapshot は widget.existing でなく現在 state から取る (web
+    // `meals.find(...)` と同じ — sheet open 中に refetch で内容が進んでいた
+    // 場合、古い snapshot で巻き戻さない)。
+    final previous = ref
+        .read(mealsWeekNotifierProvider)
+        .value
+        ?.where((m) => m.id == mealId)
+        .firstOrNull;
+
+    notifier.upsertMealOptimistic(
+      Meal(
+        id: mealId,
+        date: date,
+        mealType: mealType,
+        title: title,
+        isEatingOut: isEatingOut,
+        templateId: previous?.templateId,
+        reactions: previous?.reactions ?? const [],
+        ingredients: _toOptimisticIngredients(ingredients),
       ),
-      successMessage: '献立を削除しました',
-      errorMessage: '献立の削除に失敗しました。',
     );
+    Navigator.of(context).pop();
+
+    unawaited(
+      _runInBackground(
+        messenger: messenger,
+        action: () async {
+          final ctx = await contextFuture;
+          await repo.updateMeal(
+            householdId: ctx.householdId,
+            mealId: mealId,
+            date: date,
+            mealType: mealType,
+            title: title,
+            isEatingOut: isEatingOut,
+            ingredients: ingredients,
+          );
+        },
+        rollback: () {
+          // snapshot があれば復元。refetch 等で既に消えていた場合は
+          // 楽観行ごと除去 (web rollback と同一分岐)。
+          if (previous != null) {
+            notifier.upsertMealOptimistic(previous);
+          } else {
+            notifier.removeMealOptimistic(mealId);
+          }
+        },
+        errorMessage: '献立の更新に失敗しました。',
+      ),
+    );
+  }
+
+  /// 削除: 楽観除去してシートを即閉じ、裏で deleteMeal を走らせる
+  /// (web `handleDeleteMeal`)。失敗時は snapshot を復元 + SnackBar。
+  void _delete() {
+    final existing = widget.existing;
+    if (existing == null || _pending) return;
+    // 二重発火ラッチ (_save と同じ)。
+    setState(() => _pending = true);
+
+    final notifier = ref.read(mealsWeekNotifierProvider.notifier);
+    final repo = ref.read(mealsRepositoryProvider);
+    final contextFuture = ref.read(mealsMutationContextProvider.future);
+    final messenger = ScaffoldMessenger.of(context);
+
+    final previous = ref
+        .read(mealsWeekNotifierProvider)
+        .value
+        ?.where((m) => m.id == existing.id)
+        .firstOrNull;
+
+    notifier.removeMealOptimistic(existing.id);
+    Navigator.of(context).pop();
+
+    unawaited(
+      _runInBackground(
+        messenger: messenger,
+        action: () async {
+          final ctx = await contextFuture;
+          await repo.deleteMeal(
+            householdId: ctx.householdId,
+            mealId: existing.id,
+          );
+        },
+        rollback: () {
+          // snapshot があれば復元 (web: `if (previous) upsert(previous)`)。
+          if (previous != null) notifier.upsertMealOptimistic(previous);
+        },
+        errorMessage: '献立の削除に失敗しました。',
+      ),
+    );
+  }
+
+  /// フォーム入力を週 select の行 shape へ変換する (web
+  /// `toOptimisticIngredients` — `quantity: ing.quantity || null`)。
+  /// repository へは raw 値を渡し ('' → null 正規化は repository の責務)、
+  /// 楽観行は refetch で届くサーバー行と同じ null 正規化済みの形にする。
+  List<MealIngredient> _toOptimisticIngredients(
+    List<MealIngredient> ingredients,
+  ) {
+    return [
+      for (final ing in ingredients)
+        MealIngredient(
+          name: ing.name,
+          quantity: (ing.quantity == null || ing.quantity!.isEmpty)
+              ? null
+              : ing.quantity,
+          category: ing.category,
+        ),
+    ];
   }
 
   /// 「テンプレートから作成」: 選択ダイアログを開き、選択された prefill で
@@ -281,9 +452,9 @@ class _MealFormSheetState extends ConsumerState<MealFormSheet> {
 
   /// 「テンプレート保存」(編集時のみ): 既存献立をテンプレート化する。
   /// 原典 handleSaveAsTemplate と同じく **sheet は閉じない** ため、
-  /// [_run] (成功時 pop) は使わない。一覧の template_id リンク反映は
-  /// meals の realtime UPDATE → 週 notifier の refetch で届く
-  /// (web の revalidatePath("/meals") 相当)。
+  /// 楽観更新オーケストレーション (pop + 裏実行) は使わない。一覧の
+  /// template_id リンク反映は meals の realtime UPDATE → 週 notifier の
+  /// refetch で届く (web の revalidatePath("/meals") 相当)。
   Future<void> _saveAsTemplate() async {
     final existing = widget.existing;
     if (existing == null || _pending) return;
@@ -318,51 +489,35 @@ class _MealFormSheetState extends ConsumerState<MealFormSheet> {
     }
   }
 
-  Future<void> _run({
-    required Future<void> Function(
-      MealsMutationContext context,
-      MealsRepository repo,
-    )
-    action,
-    required String successMessage,
+  /// pop 後に裏で走る repository 呼び出し (web `startTransition(async ...)`
+  /// 相当)。呼び出し時点で State は dispose されうる前提のため static にして
+  /// ref / context / setState / mounted へ触れないことをコンパイル時に強制
+  /// する ([messenger] / notifier は pop 前に捕捉済みのオブジェクト参照で、
+  /// State の生存に依存しない)。
+  ///
+  /// 失敗時のみ [rollback] + SnackBar (シートは閉じたまま — web と同じ契約)。
+  /// 成功時は meals の Realtime refetch が state を丸ごと真値で置換して収束
+  /// するため、ここでは何もしない (成功 SnackBar も web PR #50 で廃止 —
+  /// 楽観反映が成功フィードバック)。
+  static Future<void> _runInBackground({
+    required ScaffoldMessengerState messenger,
+    required Future<void> Function() action,
+    required void Function() rollback,
     required String errorMessage,
   }) async {
-    if (_pending) return;
-    setState(() => _pending = true);
-
-    final messenger = ScaffoldMessenger.of(context);
-    final navigator = Navigator.of(context);
-
     try {
-      final mutationContext = await ref.read(
-        mealsMutationContextProvider.future,
-      );
-      final repo = ref.read(mealsRepositoryProvider);
-      await action(mutationContext, repo);
-      // await 後の ref 使用前に mounted を確認 (Riverpod 正準, approval_card と同流儀)。
-      // unmount 後の ref.invalidate は no-op でなく StateError を throw する
-      // (riverpod consumer の _assertNotDisposed)。ゆえにこのゲートは必須・削除厳禁。
-      // unmount 時は invalidate ごと早期 return で skip し、F1 realtime と再表示が安全網。
-      if (!mounted) return;
-      // 一覧反映は F1 の realtime refetch でも届くが、自分の操作の体感速度の
-      // ため明示的に refetch を蹴る (notifier に公開 refetch API は無いため
-      // invalidate — baby form sheet と同じ流儀)。
-      ref.invalidate(mealsWeekNotifierProvider);
-      navigator.pop();
-      messenger.showSnackBar(SnackBar(content: Text(successMessage)));
+      await action();
     } on DuplicateMealException {
       // UNIQUE(household, date, meal_type) 違反は専用文言 (原典と同一)。
-      if (!mounted) return;
+      rollback();
       messenger.showSnackBar(
         const SnackBar(content: Text(DuplicateMealException.message)),
       );
     } on Object catch (e, st) {
       // 握り潰さない (CLAUDE.md)。repository 側でも構造化ログ済み。
       debugPrint('MealFormSheet mutation 失敗: $e\n$st');
-      if (!mounted) return;
+      rollback();
       messenger.showSnackBar(SnackBar(content: Text(errorMessage)));
-    } finally {
-      if (mounted) setState(() => _pending = false);
     }
   }
 

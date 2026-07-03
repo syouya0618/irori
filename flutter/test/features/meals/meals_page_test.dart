@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -65,9 +67,30 @@ class _FixedWeekStartNotifier extends SelectedWeekStartNotifier {
   String build() => _w;
 }
 
+/// createMeal が gate 完了まで解決しない repository fake
+/// (楽観更新の「解決前」断面を UI 断面で検証するため)。
+class _GatedRepo extends Fake implements MealsRepository {
+  final gate = Completer<void>();
+
+  @override
+  Future<String> createMeal({
+    required String householdId,
+    required String userId,
+    required String date,
+    required MealType mealType,
+    required String title,
+    required bool isEatingOut,
+    List<MealIngredient> ingredients = const [],
+  }) async {
+    await gate.future;
+    return 'meal-real';
+  }
+}
+
 Widget _harness({
   required MealsWeekNotifier Function() notifier,
   String? weekStart,
+  MealsRepository? repo,
 }) {
   return ProviderScope(
     overrides: [
@@ -76,6 +99,7 @@ Widget _harness({
         selectedWeekStartProvider.overrideWith(
           () => _FixedWeekStartNotifier(weekStart),
         ),
+      if (repo != null) mealsRepositoryProvider.overrideWithValue(repo),
       mealsMutationContextProvider.overrideWith(
         (ref) async => (householdId: 'hh-1', userId: 'user-1'),
       ),
@@ -192,6 +216,41 @@ void main() {
     expect(find.text('献立を編集'), findsOneWidget);
     // タイトル初期値が sheet 側の TextField にも現れる (画面に計 2 箇所)。
     expect(find.text('肉じゃが'), findsNWidgets(2));
+  });
+
+  testWidgets('保存でシートが即閉じ、createMeal 解決前に楽観行がカードとして出る (issue #78)', (
+    tester,
+  ) async {
+    final repo = _GatedRepo();
+    await tester.pumpWidget(
+      _harness(
+        notifier: () => _FakeWeekNotifier(const []),
+        weekStart: '2026-06-08',
+        repo: repo,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(EmptyMealSlot).first);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, '例: カレーライス'),
+      'カレーライス',
+    );
+    await tester.pump();
+    await tester.tap(find.text('追加する'));
+    await tester.pumpAndSettle();
+
+    // createMeal 未解決の時点でシートが閉じ、週ビューに楽観行カードが出る
+    // (web meal-optimistic.test.tsx「保存でシートが即閉じ…」の UI 断面)。
+    expect(find.byType(MealFormSheet), findsNothing);
+    expect(find.byType(MealCard), findsOneWidget);
+    expect(find.text('カレーライス'), findsOneWidget);
+
+    // 解決後もカードは 1 枚のまま (temp id → 確定 id の差し替えは表示不変)。
+    repo.gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('カレーライス'), findsOneWidget);
   });
 
   testWidgets('今週が空のときは空状態メッセージを表示する', (tester) async {
