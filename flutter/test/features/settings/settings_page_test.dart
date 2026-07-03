@@ -535,6 +535,40 @@ void main() {
     });
   });
 
+  // issue #76: InviteCard は owner のみ mount する (ApprovalCard と同じゲート
+  // 流儀 — web は全 role 表示だが issue 裁定の意図的差異)。カード内部の
+  // 生成/コピー挙動は invite_card_test.dart で個別に検証する。
+  group('メンバー招待カード (owner ゲート)', () {
+    testWidgets('owner にはメンバー招待カードを表示する', (tester) async {
+      _useTallViewport(tester);
+      await tester.pumpWidget(_harness(repo: _FakeSettingsRepository()));
+      await tester.pumpAndSettle();
+
+      expect(find.text('メンバー招待'), findsOneWidget);
+      expect(find.text('招待リンクを生成'), findsOneWidget);
+    });
+
+    testWidgets('非 owner (member / viewer) には表示しない', (tester) async {
+      _useTallViewport(tester);
+      for (final role in ['member', 'viewer']) {
+        await tester.pumpWidget(
+          _harness(
+            repo: _FakeSettingsRepository(),
+            data: (ref) async => _data(settings: _settings(role: role)),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text('メンバー招待'),
+          findsNothing,
+          reason: 'role=$role にメンバー招待カードは出ない',
+        );
+        expect(find.text('招待リンクを生成'), findsNothing);
+      }
+    });
+  });
+
   group('サインアウト', () {
     testWidgets('ログアウトで signOut が呼ばれ、default_page キャッシュを破棄する', (tester) async {
       _useTallViewport(tester);

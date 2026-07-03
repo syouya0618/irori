@@ -400,6 +400,54 @@ class SettingsRepository {
     }
   }
 
+  /// 招待リンクを発行し、招待トークンを返す (web `generateInvite` action の移植)。
+  ///
+  /// web `settings/actions.ts:31-54` と同じく `invitations` へ直接 insert する
+  /// (RPC ではない)。token は DB DEFAULT
+  /// `encode(gen_random_bytes(32), 'hex')` (initial_schema:91) が生成し、
+  /// `.select('token').single()` で受け取る (insert 1 行の行数検証を兼ねる)。
+  /// 受け側 `get_invitation_by_token(invite_token)` (invite_page) はこの
+  /// token 生値で照合するため、加工せずそのまま返す。
+  ///
+  /// - payload は web と同一 (`household_id` / `invited_by` / `role: 'member'`。
+  ///   status / expires_at は DB DEFAULT: pending / now()+7日)。
+  /// - token 欠損 (外部 API 由来の null / 空) は URL を壊すため `StateError`
+  ///   (CLAUDE.md「外部APIレスポンスの値は使用前に必ず検証」)。
+  /// - token は secret ゆえログへ含めない (invite_page と同じ流儀 —
+  ///   [_logError] の context は householdId / userId のみ)。
+  Future<String> createInvitation({
+    required String householdId,
+    required String userId,
+  }) async {
+    try {
+      final row = await _client
+          .from('invitations')
+          .insert({
+            'household_id': householdId,
+            'invited_by': userId,
+            'role': 'member',
+          })
+          .select('token')
+          .single()
+          .timeout(_kQueryTimeout);
+      final token = row['token'] as String?;
+      if (token == null || token.isEmpty) {
+        throw StateError(
+          'SettingsRepository.createInvitation: insert 応答に token が無い',
+        );
+      }
+      return token;
+    } on Object catch (e, st) {
+      _logError(
+        'createInvitation',
+        e,
+        st,
+        'householdId=$householdId userId=$userId',
+      );
+      rethrow;
+    }
+  }
+
   /// 承認待ちユーザー一覧を取得する (web `settings/page.tsx` の owner-gated
   /// `get_pending_approvals` 呼び出しの移植)。
   ///
