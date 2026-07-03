@@ -135,6 +135,28 @@ final settingsMutationContextProvider = FutureProvider<SettingsMutationContext>(
   },
 );
 
+/// 世帯未参加 (profiles.household_id が null) を表す型付きエラー (Issue #75)。
+///
+/// web `settings/page.tsx:34-36` は同状態で `/setup` へ redirect する。
+/// Flutter は本エラーを型で識別し、`SettingsPage` が `/setup` へ誘導する
+/// (従来は `StateError` の行き止まり)。汎用のエラー表示 (再試行カード) と
+/// 区別するため専用型にする。
+///
+/// `Exception` ではなく **`Error` を継承する** (従来の `StateError` と同じ側):
+/// Riverpod 3 の `ProviderContainer.defaultRetry` は失敗した provider を
+/// 自動リトライするが、`Error` (と ProviderException) は「リトライ無意味」
+/// として除外される (riverpod-3.3.2 `provider_container.dart` の
+/// `defaultRetry` 実装で確認)。世帯未参加は DB の決定的状態でありリトライで
+/// 解消しないため、`Exception` にすると 200ms〜の指数バックオフで profiles
+/// fetch が最大 10 回無駄撃ちされ、`settingsProvider.future` も retry 完了
+/// まで解決しない。
+class HouseholdRequiredError extends Error {
+  HouseholdRequiredError();
+
+  @override
+  String toString() => 'HouseholdRequiredError: 世帯未参加 (setup 未完了) の設定要求';
+}
+
 /// `profiles` / `households` の設定列へのアクセスを担うリポジトリ。
 ///
 /// Next.js 原典:
@@ -168,9 +190,10 @@ class SettingsRepository {
   ///   `id, display_name, avatar_url, household_id, role, default_page` から
   ///   Flutter サブセットで未使用の `id` / `avatar_url` を除いたもの
   ///   (意図的差異 — id は eq キーで既知、avatar 表示は移植対象外)。
-  /// - `household_id` が null (世帯未参加) は `StateError`。web は `/setup` へ
-  ///   redirect するが、Flutter に setup 画面は未移植のため明示的に失敗させる
-  ///   (握り潰さない — 呼び出し側の error view が拾う)。
+  /// - `household_id` が null (世帯未参加) は [HouseholdRequiredError]。
+  ///   web は `/setup` へ redirect する経路 (`settings/page.tsx:34-36`) —
+  ///   Flutter は `SettingsPage` が本エラーを検知して `/setup` へ誘導する
+  ///   (Issue #75。握り潰さない — 型で識別可能な明示的失敗)。
   /// - households 取得失敗は web 同様 **縮退** する (log した上で
   ///   householdName=null / 既定カテゴリ / baby null で描画を続ける —
   ///   `settings/page.tsx` が `logSupabaseError` 後に household=null のまま
@@ -191,10 +214,9 @@ class SettingsRepository {
 
     final householdId = profile['household_id'] as String?;
     if (householdId == null) {
-      throw StateError(
-        'SettingsRepository.fetchSettings: 世帯未参加ユーザーの設定を要求した '
-        '(web は /setup へ redirect する経路 — Flutter は setup 未移植)',
-      );
+      // 呼び出し側 (SettingsPage) が /setup へ誘導する (Issue #75 /
+      // web settings/page.tsx:34-36 の redirect("/setup") 対応)。
+      throw HouseholdRequiredError();
     }
 
     Map<String, dynamic>? household;

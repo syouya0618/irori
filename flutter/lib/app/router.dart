@@ -13,6 +13,7 @@ import '../features/meals/presentation/meals_page.dart';
 import '../features/settings/data/settings_provider.dart';
 import '../features/settings/data/settings_repository.dart';
 import '../features/settings/presentation/settings_page.dart';
+import '../features/setup/presentation/setup_page.dart';
 import '../features/shopping/presentation/shopping_page.dart';
 import '../features/stock/presentation/stock_page.dart';
 import '../features/welcome/welcome_page.dart';
@@ -90,6 +91,14 @@ String resolveLoginLandingPath(String? cachedDefaultPage) {
 /// は「未承認」扱いで `/pending-approval` へ誘導し、同ページの
 /// `approvalStatusProvider` fetch が確認を担う。web の毎リクエスト検証との
 /// 差分 (承認取り消しの検知遅延等) は `ApprovalCache` の doc 参照。
+///
+/// 世帯作成 `/setup` (Issue #75 / web `src/app/setup/page.tsx`):
+/// 保護 route (未認証 → `/login`) かつ承認ゲート対象 (未承認 →
+/// `/pending-approval` — web proxy が /setup も毎リクエスト検証するのと同じ
+/// 順序)。redirect 側の分岐追加は不要で、承認済み・世帯未参加の誘導は
+/// SettingsPage (`HouseholdRequiredError` → /setup)、所属済みユーザーの
+/// `/setup` 退避 (→ /meals) は SetupPage 自身の既存所属チェックが担う
+/// (web page.tsx:29-31 対応)。
 ///
 /// シェル構成 (F2 / F4 / F6 / P2.5-H): `/meals` / `/shopping` / `/stock` /
 /// `/baby` / `/settings` は `StatefulShellRoute.indexedStack` のブランチに
@@ -217,6 +226,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           // 未認証は上の redirect が /login へ弾くため、ここでは認証済み。
           final userId = authNotifier.user!.id;
           return InvitePage(token: token, userId: userId);
+        },
+      ),
+      GoRoute(
+        path: '/setup',
+        builder: (context, state) {
+          // 未認証は redirect が /login へ弾き、未承認は承認ゲートが
+          // /pending-approval へ誘導するため、ここでは認証済み + 承認済み。
+          final userId = authNotifier.user!.id;
+          return SetupPage(userId: userId);
         },
       ),
       // 認証後のメイン画面群。IndexedStack でブランチごとの Navigator /

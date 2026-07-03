@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../core/supabase/supabase_providers.dart';
@@ -8,6 +9,7 @@ import '../../../features/auth/data/approval_provider.dart';
 import '../../../features/baby/presentation/export_card.dart';
 import '../../../widgets/glass_card.dart';
 import '../data/settings_provider.dart';
+import '../data/settings_repository.dart';
 import 'widgets/approval_card.dart';
 import 'widgets/auto_stock_card.dart';
 import 'widgets/baby_profile_card.dart';
@@ -34,7 +36,12 @@ import 'widgets/profile_card.dart';
 /// handleSignOut) は PWA 固有機構のため移植しない (意図的差異)。遷移は
 /// `authNotifier` (`refreshListenable`) → router redirect が自動処理する。
 class SettingsPage extends ConsumerWidget {
-  const SettingsPage({super.key});
+  const SettingsPage({this.onNavigateToSetup, super.key});
+
+  /// 世帯未参加時の誘導先を受け取るコールバック (テスト注入用)。
+  /// null なら `context.go('/setup')` (`PendingApprovalPage.onNavigate` と
+  /// 同じ流儀)。
+  final void Function(String destination)? onNavigateToSetup;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -48,12 +55,19 @@ class SettingsPage extends ConsumerWidget {
           skipLoadingOnReload: true,
           data: (data) => _SettingsBody(data: data),
           loading: () => const Center(child: CircularProgressIndicator()),
-          error: (error, _) => Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: _ErrorView(error: error),
-            ),
-          ),
+          error: (error, _) {
+            // 世帯未参加は行き止まりにせず /setup へ誘導する (Issue #75 /
+            // web settings/page.tsx:34-36 の redirect("/setup") 対応)。
+            if (error is HouseholdRequiredError) {
+              return _SetupRedirect(onNavigate: onNavigateToSetup);
+            }
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: _ErrorView(error: error),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -242,6 +256,43 @@ class _SignOutButtonState extends ConsumerState<_SignOutButton> {
         minimumSize: const Size(44, 44),
       ),
     );
+  }
+}
+
+/// 世帯未参加時の `/setup` 誘導 (Issue #75 / web `settings/page.tsx:34-36` の
+/// `redirect("/setup")` 対応)。
+///
+/// build 中の navigation を避けるため initState の post-frame で 1 回だけ
+/// 遷移する (`PendingApprovalPage` の自動遷移と同じ流儀)。誘導中はスピナー
+/// のみ表示する (web は server redirect ゆえ何も描画しない)。
+class _SetupRedirect extends StatefulWidget {
+  const _SetupRedirect({this.onNavigate});
+
+  /// 遷移先を受け取るコールバック (テスト注入用)。null なら `context.go`。
+  final void Function(String destination)? onNavigate;
+
+  @override
+  State<_SetupRedirect> createState() => _SetupRedirectState();
+}
+
+class _SetupRedirectState extends State<_SetupRedirect> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final onNavigate = widget.onNavigate;
+      if (onNavigate != null) {
+        onNavigate('/setup');
+      } else {
+        context.go('/setup');
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(child: CircularProgressIndicator());
   }
 }
 

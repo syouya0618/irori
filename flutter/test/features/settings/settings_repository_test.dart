@@ -196,23 +196,30 @@ void main() {
       expect(settings.babyBirthDate, '2026-01-15');
     });
 
-    test('household_id が null (世帯未参加) なら StateError を投げる', () async {
-      final r = _repo(
-        profileRow: const {
-          'display_name': '太郎',
-          'role': 'member',
-          'default_page': null,
-          'household_id': null,
-        },
-      );
+    test(
+      'household_id が null (世帯未参加) なら HouseholdRequiredError を投げる',
+      () async {
+        final r = _repo(
+          profileRow: const {
+            'display_name': '太郎',
+            'role': 'member',
+            'default_page': null,
+            'household_id': null,
+          },
+        );
 
-      await expectLater(
-        r.repo.fetchSettings(userId: 'user-1'),
-        throwsA(isA<StateError>()),
-      );
-      // households へは到達しない。
-      expect(r.client.fromTables, ['profiles']);
-    });
+        // Issue #75: 型で識別可能なエラーにし、SettingsPage が /setup へ誘導する
+        // (web settings/page.tsx:34-36 の redirect("/setup") 対応)。
+        // Error 継承 (非 Exception) の理由は HouseholdRequiredError の doc 参照
+        // (Riverpod 3 defaultRetry の自動リトライ対象から外す)。
+        await expectLater(
+          r.repo.fetchSettings(userId: 'user-1'),
+          throwsA(isA<HouseholdRequiredError>()),
+        );
+        // households へは到達しない。
+        expect(r.client.fromTables, ['profiles']);
+      },
+    );
 
     test('households 取得失敗は web 同様に縮退する (世帯名 null + 既定カテゴリ)', () async {
       // web `settings/page.tsx` は household エラーを log した上で
