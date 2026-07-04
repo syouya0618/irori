@@ -19,10 +19,11 @@ export const FEEDING_DURATION_MAX = 180
  * 経過分を [FEEDING_DURATION_MIN, FEEDING_DURATION_MAX] にクランプする。
  *
  * NaN / ±Infinity の防御は defense-in-depth（現状の唯一の呼出元は有限値を渡すが、
- * simplify 等で削るな）。Math.min/Math.max は NaN を伝播し、durationMin:NaN は
- * Server Action の wire で null に coerce され、DB CHECK の `IS NULL` 分岐を
- * すり抜けて「duration の無い授乳行」を誤記録する（sagyo_hyojun PR #8 learning）。
- * ゆえに非有限値は最保守の下限へ倒す（低値が最大値に化ける事故を避けるため床側）。
+ * simplify 等で削るな）。Math.min/Math.max は NaN を伝播させるため、非有限な
+ * durationMin がそのまま Server Action の wire に乗ると、DB CHECK を誤って
+ * すり抜け（`IS NULL` 分岐で「duration の無い授乳行」を誤記録）たり、記録失敗させたり
+ * しうる（sagyo_hyojun PR #8 learning）。ゆえに非有限値は最保守の下限へ倒す
+ *（低値が最大値に化ける事故を避けるため床側）。
  */
 export function clampFeedingDuration(elapsedMinutes: number): number {
   if (!Number.isFinite(elapsedMinutes)) return FEEDING_DURATION_MIN
