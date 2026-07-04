@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Loader2, Square } from "lucide-react"
 import { toast } from "sonner"
 import { recordFeeding } from "@/app/(main)/baby/actions"
+import { clampFeedingDuration } from "@/lib/domain"
 import { useWakeLock } from "@/lib/hooks/use-wake-lock"
 import { useNow } from "@/lib/hooks/use-now"
 import { segmentCn } from "@/lib/utils/segment-cn"
@@ -112,7 +113,7 @@ export function FeedingTimer({
     isSavingRef.current = true
     setIsSaving(true)
 
-    const duration = Math.max(1, elapsedMinutes)
+    const duration = clampFeedingDuration(elapsedMinutes)
     const result = await recordFeeding({
       feedingType,
       durationMin: duration,

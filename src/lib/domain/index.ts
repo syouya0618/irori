@@ -43,3 +43,8 @@ export {
   type BabyWeeklySummaryDay,
 } from "./baby-weekly-summary"
 export { parseStockFormData, type ParsedStockFields } from "./stock-form"
+export {
+  clampFeedingDuration,
+  FEEDING_DURATION_MIN,
+  FEEDING_DURATION_MAX,
+} from "./feeding"
