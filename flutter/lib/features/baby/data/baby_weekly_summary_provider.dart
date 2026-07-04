@@ -172,13 +172,14 @@ class BabyWeeklySummaryNotifier
 
   /// Realtime payload は「週内の何かが変わった」シグナルとして扱い、payload の
   /// 中身は使わず週窓を refetch する (weekly は payload から reduce 不能)。
-  void _onRealtimePayload(PostgresChangePayload payload) => refetch();
+  void _onRealtimePayload(PostgresChangePayload payload) => _refetchOrQueue();
 
-  /// 週窓を再取得して state を置き換える (live payload 経路 / own-write 即時反映)。
+  /// 週窓を再取得して state を置き換える (realtime payload 経路の内部処理)。
+  /// own-write の即時反映は own-write サイトの `ref.invalidate` → build() 再実行が担う。
   ///
   /// 初期 fetch 完了前は並走 refetch させず「完了後に 1 回 fetch し直す」フラグのみ
   /// 立てる (build() の while が消費する)。dispose 後は捨てる。
-  void refetch() {
+  void _refetchOrQueue() {
     if (_disposed) return;
     if (!_initialized) {
       _refetchQueuedDuringInit = true;
