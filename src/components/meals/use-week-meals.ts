@@ -174,9 +174,10 @@ export function useWeekMeals({
    * 自分のリアクションを楽観反映する (reaction === null は解除)。
    * meal_reactions も Realtime 購読済み (下の useEffect の 2 つ目の .on) だが、
    * 付与/変更 (INSERT/UPDATE) は refetch で収束する一方、解除 (DELETE) は
-   * replica identity が PK のみで payload.old に meal_id が乗らず RLS
-   * (meal_reactions_select の meals join) を評価できないため配信されない。
-   * ゆえに自分の解除はこの楽観反映が最終状態になる。
+   * realtime で配信されない: RLS は DELETE 文に適用されず、かつ RLS 有効テーブルでは
+   * replica identity を full にしても postgres_changes の old record は PK のみで
+   * meal_id が乗らない (Supabase docs: realtime/postgres-changes)。ゆえに
+   * REPLICA IDENTITY FULL でも解決せず、自分の解除はこの楽観反映が最終状態になる。
    * 失敗時は呼び出し側が直前値で再度呼んでロールバックする。
    */
   function applyReactionOptimistic(
