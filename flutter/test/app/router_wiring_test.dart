@@ -16,6 +16,7 @@ import 'package:irori/features/baby/data/baby_weekly_summary_provider.dart';
 import 'package:irori/features/baby/data/last_sleep_provider.dart';
 import 'package:irori/features/baby/data/now_ticker_provider.dart';
 import 'package:irori/features/baby/domain/baby_log.dart';
+import 'package:irori/features/baby/domain/baby_weekly_summary.dart';
 import 'package:irori/features/baby/presentation/baby_dashboard_page.dart';
 import 'package:irori/features/meals/data/meals_repository.dart';
 import 'package:irori/features/meals/data/meals_week_notifier.dart';
@@ -835,6 +836,13 @@ class _EmptyLogsNotifier extends BabyLogsNotifier {
   Future<List<BabyLog>> build() async => const [];
 }
 
+/// 空の週間サマリーを返す AsyncNotifier (シェル配線テスト用 — Realtime 化に伴い
+/// FutureProvider override から notifier override へ移行)。
+class _EmptyWeeklyNotifier extends BabyWeeklySummaryNotifier {
+  @override
+  Future<List<BabyWeeklySummaryDay>> build() async => const [];
+}
+
 /// 空の買い物リストを返す AsyncNotifier (シェル配線テスト用 — F4 追加)。
 class _EmptyShoppingItemsNotifier extends ShoppingItemsNotifier {
   @override
@@ -923,7 +931,7 @@ ProviderContainer _authedShellContainer({
         (ref) => Stream.value(DateTime.utc(2026, 1, 1, 12)),
       ),
       lastSleepEndedAtProvider.overrideWith((ref) async => null),
-      babyWeeklySummaryProvider.overrideWith((ref) async => const []),
+      babyWeeklySummaryProvider.overrideWith(_EmptyWeeklyNotifier.new),
     ],
   );
   if (approved) {
