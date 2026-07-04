@@ -143,16 +143,47 @@ int countExpiringStockItems(String todayYmd, List<StockItem> items) {
       .length;
 }
 
+/// カタカナ (U+30A1 ァ–U+30F6 ヶ) をひらがな (U+3041 ぁ–U+3096 ゖ) へ写像した
+/// **照合キー**を返す (web `localeCompare(_, "ja")` 近似のため)。表示には使わない。
+///
+/// **写像範囲を U+30A1–U+30F6 に限定すること**: カタカナブロック全体を一律
+/// -0x60 すると長音符 U+30FC (ー) が U+309C (゜) へ化け、「バター」「ヨーグルト」
+/// 「ソーセージ」等の照合が悪化する。U+30F7 以降 (ヷ ヸ ヹ ヺ ・ ー ヽ ヾ) は
+/// 畳まず素通しする。
+///
+/// ゜化け回帰をテストから直接検証するため [visibleForTesting]
+/// (同一ファイル内の [_compareStockName] とテストからのみ参照)。
+@visibleForTesting
+String hiraganaSortKey(String s) => String.fromCharCodes([
+  for (final c in s.codeUnits) (c >= 0x30A1 && c <= 0x30F6) ? c - 0x60 : c,
+]);
+
+/// stock グループ内の name 照合 (web `localeCompare(a, b, "ja")` 近似)。
+///
+/// カタカナをひらがなへ畳んだ [hiraganaSortKey] 同士をコードユニット比較する
+/// ため、ひらがな/カタカナ混在でも概ね五十音順に並ぶ (素の `String.compareTo`
+/// は UTF-16 コードユニット順 = 全ひらがな < 全カタカナ で web と乖離した)。
+///
+/// 畳み込みは あ/ア を同値化するため、キーが等しいときは元文字列の
+/// [String.compareTo] にフォールバックして決定化する — `List.sort` は非安定で
+/// タイが非決定になるため必須。tertiary の「ひらがな < カタカナ」も近似する。
+int _compareStockName(String a, String b) {
+  final byKey = hiraganaSortKey(a).compareTo(hiraganaSortKey(b));
+  if (byKey != 0) return byKey;
+  return a.compareTo(b);
+}
+
 /// カテゴリ別グルーピング。web `stock-list.tsx` の `grouped` (useMemo) と
 /// 同一セマンティクス:
 /// - グループ順は `categoryDisplayOrder` (= [ItemCategory.displayOrder])
 /// - 空グループは出さない
 /// - グループ内は name 昇順
 ///
-/// 意図的差異: web は `localeCompare(a, b, "ja")` (ICU 照合) だが、Dart 標準には
-/// ロケール照合がないためコードユニット順 (`String.compareTo`) で近似する。
-/// 同一スクリプト (ひらがな同士・カタカナ同士) では概ね五十音順に一致するが、
-/// ひらがな/カタカナ混在時は順序が web とずれうる (fetch 自体は DB 照合順)。
+/// name 昇順は web の `localeCompare(a, b, "ja")` (ICU 照合) を Dart 標準のみで
+/// 近似する ([_compareStockName]): カタカナをひらがなへ畳んでからコードユニット
+/// 比較し、ひらがな/カタカナ混在でも五十音順に並べる。長音符等の一部記号や
+/// 漢字読みは ICU 照合と厳密一致しないが、fetch 自体は DB 照合順のため
+/// 実害は限定的。
 List<(ItemCategory, List<StockItem>)> groupStockItems(List<StockItem> items) {
   final groups = <ItemCategory, List<StockItem>>{};
   for (final item in items) {
@@ -161,6 +192,9 @@ List<(ItemCategory, List<StockItem>)> groupStockItems(List<StockItem> items) {
   return [
     for (final category in ItemCategory.displayOrder)
       if (groups[category] != null && groups[category]!.isNotEmpty)
-        (category, groups[category]!..sort((a, b) => a.name.compareTo(b.name))),
+        (
+          category,
+          groups[category]!..sort((a, b) => _compareStockName(a.name, b.name)),
+        ),
   ];
 }
