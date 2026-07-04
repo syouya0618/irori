@@ -342,6 +342,11 @@ class _StockBodyState extends ConsumerState<_StockBody> {
 
     try {
       final ctx = await ref.read(stockMutationContextProvider.future);
+      // await 後・ref 使用前に mounted を確認 (_deleteItem :320 と同流儀)。
+      // unmount 後の ref.read は破棄済み ProviderContainer への操作となり
+      // StateError を throw し得るため、dispose 済みなら以降を打ち切る。
+      // messenger は :341 で事前捕捉済ゆえゲート後の使用は無い。
+      if (!mounted) return;
       await ref
           .read(stockRepositoryProvider)
           .addToShoppingList(
@@ -349,6 +354,8 @@ class _StockBodyState extends ConsumerState<_StockBody> {
             userId: ctx.userId,
             itemId: item.id,
           );
+      // await 後に破棄されていれば別画面への誤配 snackbar を抑止。
+      if (!mounted) return;
       messenger.showSnackBar(
         SnackBar(content: Text('${item.name}を買い物リストに追加しました')),
       );
