@@ -85,6 +85,20 @@ class _FakeWeeklyNotifier extends BabyWeeklySummaryNotifier {
   Future<List<BabyWeeklySummaryDay>> build() async => _days;
 }
 
+/// build の結果を呼び出しごとに差し替えられる週間サマリー AsyncNotifier。
+/// 「初回 error → 再試行後 data」の回復を検証するために使う。
+///
+/// 注意: 失敗は **`Error` サブタイプ (`StateError`)** で投げる。Riverpod の
+/// 自動 retry は Exception を有界に再試行するが Error 型は対象外
+/// (recipe_suggestions_provider の doc 参照)。Exception だと自動 retry が回復値を
+/// 勝手に消費してしまい「再試行ボタンが唯一の回復経路である」検証が壊れる。
+class _ConditionalWeeklyNotifier extends BabyWeeklySummaryNotifier {
+  _ConditionalWeeklyNotifier(this._onBuild);
+  final FutureOr<List<BabyWeeklySummaryDay>> Function() _onBuild;
+  @override
+  Future<List<BabyWeeklySummaryDay>> build() async => _onBuild();
+}
+
 /// in-memory な授乳タイマーストア (本物の SharedPreferences プラグインを避ける)。
 class _FakeTimerStore implements FeedingTimerStore {
   FeedingTimerState? state;
@@ -357,6 +371,65 @@ void main() {
     expect(find.byType(BabyWeeklySummary), findsOneWidget);
     expect(find.text('週間サマリー'), findsOneWidget);
   });
+
+  testWidgets(
+    '週間サマリー error 分岐は再試行ボタンを出し、tap で再取得して回復する',
+    (tester) async {
+      final weekly = <BabyWeeklySummaryDay>[
+        for (var i = 5; i <= 11; i++)
+          (
+            date: '2026-01-${i.toString().padLeft(2, '0')}',
+            feedingCount: i == 10 ? 3 : 0,
+            diaperCount: 0,
+            sleepMinutes: 0,
+          ),
+      ];
+      // 初回 build は Error で失敗させ (自動 retry 抑止)、以降は data を返す。
+      // `attempt` はテストスコープに保持され、invalidate による再生成
+      // (override factory の再呼び出し) を跨いで増え続ける。
+      var attempt = 0;
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            babyLogsNotifierProvider.overrideWith(
+              () => _FakeLogsNotifier(const []),
+            ),
+            selectedBabyDateProvider.overrideWith(
+              () => _FixedDateNotifier(formatJstDate()),
+            ),
+            nowTickerProvider.overrideWith(
+              (ref) => Stream.value(DateTime.utc(2026, 1, 1, 12)),
+            ),
+            lastSleepEndedAtProvider.overrideWith((ref) async => null),
+            babyWeeklySummaryProvider.overrideWith(
+              () => _ConditionalWeeklyNotifier(() {
+                if (attempt++ == 0) {
+                  throw StateError('weekly boom');
+                }
+                return weekly;
+              }),
+            ),
+            feedingTimerStoreProvider.overrideWithValue(_FakeTimerStore()),
+          ],
+          child: const MaterialApp(home: BabyDashboardPage()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 初回 (error): 告知 + 再試行ボタンが出て、チャートは未表示。
+      expect(find.text('週間サマリーを読み込めませんでした'), findsOneWidget);
+      expect(find.widgetWithText(TextButton, '再試行'), findsOneWidget);
+      expect(find.byType(BabyWeeklySummary), findsNothing);
+
+      // 再試行 tap → invalidate → build 再実行で data 到着 → チャート表示。
+      await tester.tap(find.text('再試行'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('週間サマリーを読み込めませんでした'), findsNothing);
+      expect(find.byType(BabyWeeklySummary), findsOneWidget);
+    },
+  );
 
   testWidgets('左授乳のタップで授乳タイマーが開く (onStartTimer 配線)', (tester) async {
     await tester.pumpWidget(
