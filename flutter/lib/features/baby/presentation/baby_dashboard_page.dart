@@ -27,7 +27,9 @@ import 'widgets/baby_weekly_summary.dart';
 /// データ:
 /// - `babyLogsNotifierProvider` を `.when(data/loading/error)` で消費
 ///   (`.future` は await しない — doc コメント参照)。
-/// - 週間サマリーは `babyWeeklySummaryProvider` (FutureProvider) を `.when` で消費。
+/// - 週間サマリーは `babyWeeklySummaryProvider` (AsyncNotifier) を `.when` で消費。
+///   自前で cross-client Realtime を購読して週内全日の変化に追従するため、
+///   ダッシュボード側で今日ログ変化に piggyback した invalidate は不要。
 /// - data 時に `deriveBabySummary` でサマリー導出。
 /// - `lastSleepEndedAt` は **derived 優先**、無ければ `lastSleepEndedAtProvider`
 ///   をフォールバック (原典 `derivedLastSleepEndedAt ?? lastSleepEndedAt`)。
@@ -39,15 +41,11 @@ class BabyDashboardPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final logsAsync = ref.watch(babyLogsNotifierProvider);
 
-    // 週間チャートは自前の cross-client realtime を張らない代わりに、
-    // **realtime 反映される今日ログ** (`babyLogsNotifierProvider`) の変化に追従して
-    // 再取得する。これで配偶者の今日の書き込みもタイムライン経由でチャートへ
-    // 反映され、「今日タイムラインには出るが週間バーは古い」整合崩れを防ぐ
-    // (週全日の cross-client realtime は follow-up)。own write も含め二重
-    // invalidate になるが Riverpod が rebuild を coalesce するため実害なし。
-    ref.listen(babyLogsNotifierProvider, (_, _) {
-      ref.invalidate(babyWeeklySummaryProvider);
-    });
+    // 週間チャート (`babyWeeklySummaryProvider`) は自前で cross-client Realtime を
+    // 購読し週内全日の変化に追従するため、ここで今日ログ変化に piggyback した
+    // invalidate は張らない (旧実装は今日ログ変化への piggyback のみで、選択日
+    // 以外への cross-client INSERT/UPDATE が反映されない不整合があった)。own-write の
+    // 即時反映は各 write サイトが `babyWeeklySummaryProvider` を invalidate して行う。
 
     return Scaffold(
       appBar: AppBar(title: const Text('育児ログ')),
@@ -98,7 +96,7 @@ class _DashboardBody extends ConsumerWidget {
     final effectiveLastSleepEndedAt =
         summary.derivedLastSleepEndedAt ?? fallbackLastSleep;
 
-    // 週間サマリー (直近7日)。FutureProvider を `.when` で消費。
+    // 週間サマリー (直近7日)。自前 Realtime 購読の AsyncNotifier を `.when` で消費。
     // loading は無描画 (data 到着でカードが現れる)、error は muted な一行で告知
     // (今日のタイムライン読み込みは独立しており、週間チャート失敗で page を壊さない)。
     final weeklyAsync = ref.watch(babyWeeklySummaryProvider);

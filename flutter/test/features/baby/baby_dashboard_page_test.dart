@@ -75,6 +75,16 @@ class _FixedDateNotifier extends SelectedBabyDateNotifier {
   String build() => _d;
 }
 
+/// 固定の週間サマリーを返す AsyncNotifier (Realtime 購読を張らない)。
+/// `babyWeeklySummaryProvider` の AsyncNotifier 化に伴い、`overrideWith` は
+/// notifier factory を要求する。
+class _FakeWeeklyNotifier extends BabyWeeklySummaryNotifier {
+  _FakeWeeklyNotifier(this._days);
+  final List<BabyWeeklySummaryDay> _days;
+  @override
+  Future<List<BabyWeeklySummaryDay>> build() async => _days;
+}
+
 /// in-memory な授乳タイマーストア (本物の SharedPreferences プラグインを避ける)。
 class _FakeTimerStore implements FeedingTimerStore {
   FeedingTimerState? state;
@@ -106,7 +116,7 @@ Widget _harness({
       lastSleepEndedAtProvider.overrideWith((ref) async => lastSleepFallback),
       // 週間サマリーを決定的に (既定は空 = カード非表示)。
       babyWeeklySummaryProvider.overrideWith(
-        (ref) async => weeklyDays ?? const [],
+        () => _FakeWeeklyNotifier(weeklyDays ?? const []),
       ),
       // 授乳タイマー起動時の永続化を in-memory fake に (プラグイン未初期化回避)。
       feedingTimerStoreProvider.overrideWithValue(_FakeTimerStore()),
@@ -301,7 +311,9 @@ void main() {
             ),
             nowTickerProvider.overrideWith((ref) => controller.stream),
             lastSleepEndedAtProvider.overrideWith((ref) async => null),
-            babyWeeklySummaryProvider.overrideWith((ref) async => const []),
+            babyWeeklySummaryProvider.overrideWith(
+              () => _FakeWeeklyNotifier(const []),
+            ),
             feedingTimerStoreProvider.overrideWithValue(_FakeTimerStore()),
           ],
           child: const MaterialApp(home: BabyDashboardPage()),
