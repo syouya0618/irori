@@ -18,9 +18,13 @@ interface MealReactionsProps {
   /**
    * 自分のリアクションの楽観反映 (reaction === null は解除)。
    * 親 (useWeekMeals の meals state) が反映先を持つ手動 state 方式
-   * (shopping-item.tsx と同パターン)。useOptimistic だと transition 完了時に
-   * base へ revert するが、meal_reactions は Realtime 購読に乗っておらず
-   * base が更新されないため、成功した自分の操作が見かけ上消えてしまう。
+   * (shopping-item.tsx と同パターン)。meal_reactions は Realtime 購読済みだが、
+   * 自分の解除 (toggle-off=DELETE) は realtime で配信されない: RLS は DELETE 文に
+   * 適用されず、RLS 有効テーブルでは replica identity full でも old record は PK のみで
+   * meal_id が乗らない (Supabase docs)。REPLICA IDENTITY FULL でも解決しない。
+   * useOptimistic だと transition 完了時に base へ revert するが、DELETE では
+   * base(refetch) が更新されず成功した解除が見かけ上元に戻ってしまう。
+   * ゆえに手動 state 方式を維持する。
    */
   onOptimisticReaction: (mealId: string, reaction: MealReaction | null) => void
 }

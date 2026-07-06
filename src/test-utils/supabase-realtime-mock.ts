@@ -278,8 +278,26 @@ export function buildRefetchSupabaseMock<TRow>(
         ) => typeof channel
         subscribe: () => typeof channel
       } = {
-        on: (_event, _filter, cb) => {
-          state.listeners.push(cb)
+        on: (_event, filter, cb) => {
+          // 実 postgres_changes は table 単位で配信される。同一 channel に複数
+          // table の .on を chain した場合 (meals + meal_reactions)、meals の
+          // payload が meal_reactions の callback を発火してはならない。emit は
+          // 全 listener を無差別に呼ぶため、購読 table と payload.table が食い違う
+          // 時に callback を握り潰す wrapper で per-table 配信を再現する。
+          // どちらかの table が欠ける場合は旧挙動 (常に発火) に degrade する。
+          const subscribedTable = (filter as { table?: string } | undefined)
+            ?.table
+          state.listeners.push((payload) => {
+            const payloadTable = (payload as { table?: string } | null)?.table
+            if (
+              subscribedTable != null &&
+              payloadTable != null &&
+              payloadTable !== subscribedTable
+            ) {
+              return
+            }
+            cb(payload)
+          })
           return channel
         },
         subscribe: () => channel,

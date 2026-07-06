@@ -172,8 +172,12 @@ export function useWeekMeals({
 
   /**
    * 自分のリアクションを楽観反映する (reaction === null は解除)。
-   * meal_reactions は Realtime 購読に乗っていない (channel は meals テーブルのみ)
-   * ため、この反映が次の meals refetch まで最終状態になる。
+   * meal_reactions も Realtime 購読済み (下の useEffect の 2 つ目の .on) だが、
+   * 付与/変更 (INSERT/UPDATE) は refetch で収束する一方、解除 (DELETE) は
+   * realtime で配信されない: RLS は DELETE 文に適用されず、かつ RLS 有効テーブルでは
+   * replica identity を full にしても postgres_changes の old record は PK のみで
+   * meal_id が乗らない (Supabase docs: realtime/postgres-changes)。ゆえに
+   * REPLICA IDENTITY FULL でも解決せず、自分の解除はこの楽観反映が最終状態になる。
    * 失敗時は呼び出し側が直前値で再度呼んでロールバックする。
    */
   function applyReactionOptimistic(
@@ -210,6 +214,22 @@ export function useWeekMeals({
           schema: "public",
           table: "meals",
           filter: `household_id=eq.${householdId}`,
+        },
+        () => {
+          fetchMeals(weekStartRef.current)
+        }
+      )
+      // meal_reactions は別テーブルゆえ meals の購読では発火しない。同一 channel に
+      // 2 つ目の .on を chain して meal_reactions の変更でも refetch する
+      // (Flutter meals_week_notifier.dart:138-145 と同一設計)。
+      // filter は付けない: meal_reactions に household_id 列が無く meal_id/user_id のみ。
+      // 世帯分離は RLS(meal_reactions_select) が Realtime 配信前に SELECT 評価して担保する。
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "meal_reactions",
         },
         () => {
           fetchMeals(weekStartRef.current)

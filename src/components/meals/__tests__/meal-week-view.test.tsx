@@ -146,6 +146,17 @@ function makeMeal(
 
 const makePayload = makePayloadFor<MealRow>("meals")
 
+// meal_reactions テーブルの payload maker。Realtime callback は payload を見ずに
+// fetchMeals を走らせるだけなので row 形状は refetch 挙動に影響しないが、実 shape
+// (id/meal_id/user_id/reaction) に揃えておく。
+type ReactionRow = {
+  id: string
+  meal_id: string
+  user_id: string
+  reaction: MealReaction
+}
+const makeReactionPayload = makePayloadFor<ReactionRow>("meal_reactions")
+
 function defaultProps(
   overrides: Partial<Parameters<typeof MealWeekView>[0]> = {},
 ): Parameters<typeof MealWeekView>[0] {
@@ -321,6 +332,66 @@ describe("MealWeekView / Realtime → refetch 反映", () => {
 
     // 新週の DOM にも追加 meal が反映される
     expect(await screen.findByText("肉じゃが")).toBeInTheDocument()
+  })
+
+  it("meal_reactions の購読が張られ、reaction イベントで fetchMeals(refetch) が走る", async () => {
+    const meal = makeMeal({
+      id: "meal-r",
+      date: WEEK_START,
+      meal_type: "dinner",
+      title: "肉じゃが",
+      meal_reactions: [],
+    })
+
+    render(<MealWeekView {...defaultProps({ initialMeals: [meal] })} />)
+
+    // 同一 channel に meals と meal_reactions の 2 本の .on が chain されたことを
+    // 購読数で pin する（本 PR 前は 1、後は 2）。
+    // mock は per-table 配信を再現する（buildRefetchSupabaseMock の on wrapper）ため、
+    // 下の meal_reactions payload emit は meal_reactions listener だけを発火させる。
+    // 2 つ目の .on を消すと購読数=1 かつ payload が誰にも届かず本テストは落ちる。
+    // ※ 相手の付与/変更/取り消しの実挙動（特に DELETE 未配信）は 2 アカウント
+    //   実ブラウザで手動検証する。
+    expect(mockState.listeners.length).toBe(2)
+
+    // 初期は自分(u1)のリアクション無し → "おいしい" は非アクティブ
+    expect(
+      screen.getByRole("button", { name: "おいしい" }),
+    ).toHaveAttribute("aria-pressed", "false")
+
+    // reaction が付いた状態を次回 refetch で返す（付与=INSERT は RLS 評価可で配信される）
+    setMockMeals([
+      { ...meal, meal_reactions: [{ user_id: "u1", reaction: "good" }] },
+    ])
+
+    const fromCallsBefore = mockState.fromMock.mock.calls.length
+
+    await act(async () => {
+      emitPayload(
+        mockState,
+        makeReactionPayload("INSERT", {
+          id: "r1",
+          meal_id: meal.id,
+          user_id: "u1",
+          reaction: "good",
+        }),
+      )
+    })
+
+    // meal_reactions payload で fetchMeals(refetch) が走った
+    await waitFor(() => {
+      expect(mockState.fromMock.mock.calls.length).toBeGreaterThan(
+        fromCallsBefore,
+      )
+    })
+    expect(mockState.fromMock).toHaveBeenCalledWith("meals")
+
+    // refetch 結果（reaction 付与）が DOM に反映される
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "おいしい" }),
+      ).toHaveAttribute("aria-pressed", "true")
+    })
   })
 
   it("unmount で supabase.removeChannel が呼ばれる", () => {
