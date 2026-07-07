@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { logSupabaseError } from "@/lib/supabase/log-error"
+import { logRealtimeStatus, logRealtimeEvent } from "@/lib/supabase/realtime-log"
 import { addDays, formatDateKey } from "@/lib/utils/date"
 import { todayJstString, weekStartMonday } from "@/lib/utils/date-jst"
 import type { MealType, MealReaction } from "@/lib/types/database"
@@ -205,8 +206,9 @@ export function useWeekMeals({
   useEffect(() => {
     const supabase = createClient()
 
+    const channelName = `meals-${householdId}`
     const channel = supabase
-      .channel(`meals-${householdId}`)
+      .channel(channelName)
       .on(
         "postgres_changes",
         {
@@ -215,7 +217,8 @@ export function useWeekMeals({
           table: "meals",
           filter: `household_id=eq.${householdId}`,
         },
-        () => {
+        (payload) => {
+          logRealtimeEvent(channelName, payload)
           fetchMeals(weekStartRef.current)
         }
       )
@@ -231,11 +234,14 @@ export function useWeekMeals({
           schema: "public",
           table: "meal_reactions",
         },
-        () => {
+        (payload) => {
+          logRealtimeEvent(channelName, payload)
           fetchMeals(weekStartRef.current)
         }
       )
-      .subscribe()
+      .subscribe((status, err) => {
+        logRealtimeStatus(channelName, status, err)
+      })
 
     return () => {
       supabase.removeChannel(channel)

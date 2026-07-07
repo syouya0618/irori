@@ -24,6 +24,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
+import { logRealtimeStatus, logRealtimeEvent } from "@/lib/supabase/realtime-log"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import {
@@ -119,6 +120,7 @@ export function ShoppingList({
           filter: `household_id=eq.${householdId}`,
         },
         (payload) => {
+          logRealtimeEvent("shopping", payload)
           if (payload.eventType === "INSERT") {
             const newItem = payload.new as ShoppingItemData
             setItems((prev) => {
@@ -137,7 +139,9 @@ export function ShoppingList({
           }
         }
       )
-      .subscribe()
+      .subscribe((status, err) => {
+        logRealtimeStatus("shopping", status, err)
+      })
 
     return () => {
       supabase.removeChannel(channel)
