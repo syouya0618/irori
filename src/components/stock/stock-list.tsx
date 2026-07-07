@@ -22,6 +22,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
+import { logRealtimeStatus, logRealtimeEvent } from "@/lib/supabase/realtime-log"
 import { Button } from "@/components/ui/button"
 import { checkAndAutoAddLowStock } from "@/app/(main)/stock/actions"
 import { StockItem, type StockItemData } from "./stock-item"
@@ -89,6 +90,7 @@ export function StockList({
           filter: `household_id=eq.${householdId}`,
         },
         (payload) => {
+          logRealtimeEvent("stock", payload)
           if (payload.eventType === "INSERT") {
             const newItem = payload.new as StockItemData
             setItems((prev) => {
@@ -106,7 +108,9 @@ export function StockList({
           }
         }
       )
-      .subscribe()
+      .subscribe((status, err) => {
+        logRealtimeStatus("stock", status, err)
+      })
 
     return () => {
       supabase.removeChannel(channel)

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { logRealtimeStatus, logRealtimeEvent } from "@/lib/supabase/realtime-log"
 import { BabyDateNav } from "./baby-date-nav"
 import { BabySummaryBar } from "./baby-summary-bar"
 import { BabyQuickActions } from "./baby-quick-actions"
@@ -92,6 +93,7 @@ export function BabyDashboard({
           filter: `household_id=eq.${householdId}`,
         },
         (payload) => {
+          logRealtimeEvent("baby_logs", payload)
           if (payload.eventType === "INSERT") {
             const newLog = payload.new as BabyLogData
             if (isRelevantToCurrentWeek(newLog)) {
@@ -141,7 +143,9 @@ export function BabyDashboard({
           }
         },
       )
-      .subscribe()
+      .subscribe((status, err) => {
+        logRealtimeStatus("baby_logs", status, err)
+      })
 
     return () => {
       supabase.removeChannel(channel)
