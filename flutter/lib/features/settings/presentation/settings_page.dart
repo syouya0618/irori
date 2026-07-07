@@ -153,7 +153,7 @@ class _HouseholdCard extends StatelessWidget {
                 size: 18,
                 color: context.colors.textPrimary,
               ),
-              SizedBox(width: 8),
+              const SizedBox(width: 8),
               Text(
                 '世帯',
                 style: TextStyle(

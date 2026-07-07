@@ -98,7 +98,7 @@ class _ExportCardState extends ConsumerState<ExportCard> {
                 size: 18,
                 color: context.colors.textPrimary,
               ),
-              SizedBox(width: 8),
+              const SizedBox(width: 8),
               Text(
                 '記録エクスポート',
                 style: TextStyle(

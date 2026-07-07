@@ -137,7 +137,7 @@ class _InviteCardState extends ConsumerState<InviteCard> {
                 size: 18,
                 color: context.colors.textPrimary,
               ),
-              SizedBox(width: 8),
+              const SizedBox(width: 8),
               Text(
                 'メンバー招待',
                 style: TextStyle(

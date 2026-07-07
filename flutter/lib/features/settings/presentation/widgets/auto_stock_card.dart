@@ -130,7 +130,7 @@ class _AutoStockCategoriesCardState
                 size: 18,
                 color: context.colors.textPrimary,
               ),
-              SizedBox(width: 8),
+              const SizedBox(width: 8),
               Text(
                 '在庫自動追加',
                 style: TextStyle(

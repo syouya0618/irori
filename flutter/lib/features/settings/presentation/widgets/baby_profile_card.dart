@@ -163,7 +163,7 @@ class _BabyProfileCardState extends ConsumerState<BabyProfileCard> {
                 size: 18,
                 color: context.colors.textPrimary,
               ),
-              SizedBox(width: 8),
+              const SizedBox(width: 8),
               Text(
                 '赤ちゃん情報',
                 style: TextStyle(

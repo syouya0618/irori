@@ -113,7 +113,7 @@ class _DefaultPageCardState extends ConsumerState<DefaultPageCard> {
                 size: 18,
                 color: context.colors.textPrimary,
               ),
-              SizedBox(width: 8),
+              const SizedBox(width: 8),
               Text(
                 '起動時のページ',
                 style: TextStyle(
