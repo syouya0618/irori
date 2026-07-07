@@ -2,6 +2,7 @@ import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { SetupForm } from "./setup-form"
+import { JoinByInviteForm } from "./join-by-invite-form"
 
 export default async function SetupPage() {
   const supabase = await createClient()
@@ -43,6 +44,14 @@ export default async function SetupPage() {
         </div>
 
         <SetupForm />
+
+        <div className="my-6 flex items-center gap-3">
+          <div className="h-px flex-1 bg-border" />
+          <span className="text-xs text-muted-foreground">または</span>
+          <div className="h-px flex-1 bg-border" />
+        </div>
+
+        <JoinByInviteForm />
       </div>
     </div>
   )
