@@ -318,7 +318,7 @@ class _BabyFeedingTimerSheetState extends ConsumerState<BabyFeedingTimerSheet> {
                   fontSize: 48,
                   fontWeight: FontWeight.bold,
                   color: context.colors.textPrimary,
-                  fontFeatures: [FontFeature.tabularFigures()],
+                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
               const SizedBox(height: 24),

@@ -119,7 +119,7 @@ class _ProfileCardState extends ConsumerState<ProfileCard> {
                 size: 18,
                 color: context.colors.textPrimary,
               ),
-              SizedBox(width: 8),
+              const SizedBox(width: 8),
               Text(
                 'プロフィール',
                 style: TextStyle(
