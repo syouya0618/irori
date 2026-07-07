@@ -15,7 +15,7 @@ dependencies:
   intl: ^0.20.2
 
   # Supabase: Auth / DB / Realtime / Storage
-  supabase_flutter: ^2.15.2
+  supabase_flutter: ^2.16.0
 
   # State 管理 / Routing
   # riverpod 3.x は API 変更あり (StreamNotifier → AsyncNotifier 推奨等)
