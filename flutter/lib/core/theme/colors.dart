@@ -48,3 +48,121 @@ class IroriColors {
   static const Color warning = Color(0xFFEAB308); // yellow-500
   static const Color error = Color(0xFFDC2626); // red-600
 }
+
+/// テーマ (light / dark) で反転する **中立色** を運ぶ [ThemeExtension]。
+///
+/// 背景 / テキスト / 境界などの neutral は light と dark で反転させる必要が
+/// あるため、`IroriColors` の静的 const を直接参照する代わりに本 extension を
+/// 経由する (`context.colors.textPrimary` など)。warm orange の primary や
+/// status 色 (error/warning/success) は両モードでアクセントとして読めるため
+/// 引き続き `IroriColors` の静的 const を直接使う (反転不要)。
+///
+/// light 値は既存の `IroriColors` 定数を単一の真実源として再利用する。
+/// dark 値は warm-dark (stone) 系で、Liquid Glass の温かみを保ちつつ
+/// dark surface 上で WCAG AA (4.5:1) を満たすよう選定:
+/// - textPrimary #F5F5F4 on surface #292524 ≈ 13.6:1
+/// - textMuted   #A8A29E on surface #292524 ≈ 5.9:1
+@immutable
+class IroriColorsExt extends ThemeExtension<IroriColorsExt> {
+  const IroriColorsExt({
+    required this.textPrimary,
+    required this.textMuted,
+    required this.surface,
+    required this.surfaceGlass,
+    required this.border,
+    required this.muted,
+    required this.scaffoldBackground,
+  });
+
+  /// slate-900 相当 (light) / stone-100 相当 (dark)。本文の既定色。
+  final Color textPrimary;
+
+  /// slate-600 相当 (light) / stone-400 相当 (dark)。muted テキスト。
+  final Color textMuted;
+
+  /// カード等の不透明 surface (white / stone-800)。
+  final Color surface;
+
+  /// Glass card 用の半透明 surface (white 50% / stone-800 80%)。
+  final Color surfaceGlass;
+
+  /// 境界線 (gray-200 / stone-700)。
+  final Color border;
+
+  /// muted 背景 (warm light gray / stone-800)。alpha 付きで薄背景に使う。
+  final Color muted;
+
+  /// Scaffold の背景 (orange-50 / stone-900)。warm な地色。
+  final Color scaffoldBackground;
+
+  /// light テーマの neutral (既存 `IroriColors` 定数を再利用)。
+  static const IroriColorsExt light = IroriColorsExt(
+    textPrimary: IroriColors.textPrimary,
+    textMuted: IroriColors.textMuted,
+    surface: IroriColors.surface,
+    surfaceGlass: IroriColors.surfaceGlass,
+    border: IroriColors.border,
+    muted: IroriColors.muted,
+    scaffoldBackground: Color(0xFFFFF7ED), // orange-50 (warm 背景)
+  );
+
+  /// dark テーマの neutral (warm-dark / stone 系)。
+  static const IroriColorsExt dark = IroriColorsExt(
+    textPrimary: Color(0xFFF5F5F4), // stone-100
+    textMuted: Color(0xFFA8A29E), // stone-400
+    surface: Color(0xFF292524), // stone-800
+    surfaceGlass: Color(0xCC292524), // stone-800 @ 80%
+    border: Color(0xFF44403C), // stone-700
+    muted: Color(0xFF292524), // stone-800
+    scaffoldBackground: Color(0xFF1C1917), // stone-900
+  );
+
+  @override
+  IroriColorsExt copyWith({
+    Color? textPrimary,
+    Color? textMuted,
+    Color? surface,
+    Color? surfaceGlass,
+    Color? border,
+    Color? muted,
+    Color? scaffoldBackground,
+  }) {
+    return IroriColorsExt(
+      textPrimary: textPrimary ?? this.textPrimary,
+      textMuted: textMuted ?? this.textMuted,
+      surface: surface ?? this.surface,
+      surfaceGlass: surfaceGlass ?? this.surfaceGlass,
+      border: border ?? this.border,
+      muted: muted ?? this.muted,
+      scaffoldBackground: scaffoldBackground ?? this.scaffoldBackground,
+    );
+  }
+
+  @override
+  IroriColorsExt lerp(IroriColorsExt? other, double t) {
+    if (other == null) return this;
+    return IroriColorsExt(
+      textPrimary: Color.lerp(textPrimary, other.textPrimary, t)!,
+      textMuted: Color.lerp(textMuted, other.textMuted, t)!,
+      surface: Color.lerp(surface, other.surface, t)!,
+      surfaceGlass: Color.lerp(surfaceGlass, other.surfaceGlass, t)!,
+      border: Color.lerp(border, other.border, t)!,
+      muted: Color.lerp(muted, other.muted, t)!,
+      scaffoldBackground: Color.lerp(
+        scaffoldBackground,
+        other.scaffoldBackground,
+        t,
+      )!,
+    );
+  }
+}
+
+/// `context.colors.textPrimary` で現在テーマの neutral を引くための getter。
+///
+/// テストは theme 無しの素の `MaterialApp` で pump するため extension が
+/// 未装着になりうる。その場合は [IroriColorsExt.light] にフォールバックし、
+/// 従来 (light) 挙動を保つ (握り潰しではなく既定値。本番は必ず装着される)。
+extension IroriColorsContext on BuildContext {
+  IroriColorsExt get colors =>
+      Theme.of(this).extension<IroriColorsExt>() ?? IroriColorsExt.light;
+}

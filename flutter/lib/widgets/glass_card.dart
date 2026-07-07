@@ -13,7 +13,7 @@ import '../core/theme/shadows.dart';
 /// - `BackdropFilter` + `ImageFilter.blur(sigmaX: 10, sigmaY: 10)` で背景ぼかし
 /// - 50% opacity の白で glass 質感、light mode で 4.5:1 contrast を保つ
 /// - `IroriShadows.card` で柔らかい影
-/// - `IroriColors.border` で light mode 可視性を担保
+/// - `context.colors.border` で light mode 可視性を担保
 ///
 /// 注意 (設計書 Section 7.1.2):
 /// 子要素に重ねて `GlassCard` を使うと frame budget 圧迫リスク。
@@ -36,9 +36,9 @@ class GlassCard extends StatelessWidget {
         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
         child: DecoratedBox(
           decoration: BoxDecoration(
-            color: IroriColors.surfaceGlass,
+            color: context.colors.surfaceGlass,
             borderRadius: BorderRadius.circular(IroriRadii.card),
-            border: Border.all(color: IroriColors.border),
+            border: Border.all(color: context.colors.border),
             boxShadow: IroriShadows.card,
           ),
           child: Padding(padding: padding, child: child),

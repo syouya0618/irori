@@ -16,15 +16,15 @@ import 'widgets/baby_profile_card.dart';
 import 'widgets/default_page_card.dart';
 import 'widgets/invite_card.dart';
 import 'widgets/profile_card.dart';
+import 'widgets/theme_mode_card.dart';
 
 /// 設定タブ。Next.js 原典 `settings-content.tsx` (+ `settings/page.tsx`) の
 /// Flutter 移植 **サブセット**。
 ///
 /// 移植カード:
 /// プロフィール / 世帯表示 / 起動時のページ / 在庫自動追加 / 赤ちゃん情報 /
-/// 記録エクスポート (Phase 2.6-2 で追加) / メンバー招待 (owner のみ /
-/// issue #76) / 承認待ち (owner のみ) / サインアウト。
-/// Theme カードは引き続き deferred (p25plan の deferred 欄参照)。
+/// 記録エクスポート (Phase 2.6-2 で追加) / テーマ切替 (light/dark/system) /
+/// メンバー招待 (owner のみ / issue #76) / 承認待ち (owner のみ) / サインアウト。
 ///
 /// データ:
 /// - profiles / households は **Realtime publication 非対象**のため、
@@ -104,11 +104,12 @@ class _SettingsBody extends StatelessWidget {
           initialBirthDate: settings.babyBirthDate,
         ),
         const SizedBox(height: 16),
-        // web `settings-content.tsx:123-124`: 赤ちゃん情報の直後に配置
-        // (web の Theme/Invite/Approval カードは Flutter で deferred のため省略)。
+        // web `settings-content.tsx:123-124`: 赤ちゃん情報の直後に配置。
         const ExportCard(),
         // web `settings-content.tsx:126-135`: ExportCard の後に Theme / Invite /
-        // Approval。Theme は引き続き deferred。
+        // Approval。
+        const SizedBox(height: 16),
+        const ThemeModeCard(),
         // InviteCard は web では全 role 表示だが、issue #76 の裁定で owner のみ
         // mount する (ApprovalCard と同じゲート流儀 — 意図的差異)。
         if (settings.role == 'owner') ...[
@@ -122,7 +123,7 @@ class _SettingsBody extends StatelessWidget {
         if (settings.role == 'owner') const ApprovalCard(),
         const SizedBox(height: 16),
         // web: <Separator /> → ログアウト。
-        const Divider(height: 1, color: IroriColors.border),
+        Divider(height: 1, color: context.colors.border),
         const SizedBox(height: 16),
         const _SignOutButton(),
       ],
@@ -144,17 +145,21 @@ class _HouseholdCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
               // web: <Home size={18} /> 世帯
-              Icon(LucideIcons.home, size: 18, color: IroriColors.textPrimary),
+              Icon(
+                LucideIcons.home,
+                size: 18,
+                color: context.colors.textPrimary,
+              ),
               SizedBox(width: 8),
               Text(
                 '世帯',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: IroriColors.textPrimary,
+                  color: context.colors.textPrimary,
                 ),
               ),
             ],
@@ -165,18 +170,18 @@ class _HouseholdCard extends StatelessWidget {
             (householdName == null || householdName.isEmpty)
                 ? '世帯名未設定'
                 : householdName,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              color: IroriColors.textPrimary,
+              color: context.colors.textPrimary,
             ),
           ),
           const SizedBox(height: 2),
           Text(
             'あなたの役割: ${_roleLabel(role)}',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
-              color: IroriColors.textMuted,
+              color: context.colors.textMuted,
             ),
           ),
         ],

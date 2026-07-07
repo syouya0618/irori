@@ -205,8 +205,8 @@ class _ShoppingItemTileState extends ConsumerState<ShoppingItemTile> {
                             fontSize: 14,
                             fontWeight: FontWeight.w500,
                             color: checked
-                                ? IroriColors.textMuted
-                                : IroriColors.textPrimary,
+                                ? context.colors.textMuted
+                                : context.colors.textPrimary,
                             decoration: checked
                                 ? TextDecoration.lineThrough
                                 : null,
@@ -219,7 +219,7 @@ class _ShoppingItemTileState extends ConsumerState<ShoppingItemTile> {
                           item.quantity!,
                           style: TextStyle(
                             fontSize: 12,
-                            color: IroriColors.textMuted,
+                            color: context.colors.textMuted,
                             decoration: checked
                                 ? TextDecoration.lineThrough
                                 : null,
@@ -231,9 +231,9 @@ class _ShoppingItemTileState extends ConsumerState<ShoppingItemTile> {
                   if (checked && widget.checkedByName != null)
                     Text(
                       widget.checkedByName!,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 10,
-                        color: IroriColors.textMuted,
+                        color: context.colors.textMuted,
                       ),
                     ),
                 ],
@@ -265,8 +265,8 @@ class _ShoppingItemTileState extends ConsumerState<ShoppingItemTile> {
                   : '${item.name}を削除',
               onPressed: _pending ? null : _handleDelete,
               color: _confirmDelete
-                  ? IroriColors.surface
-                  : IroriColors.textMuted,
+                  ? context.colors.surface
+                  : context.colors.textMuted,
               style: _confirmDelete
                   ? IconButton.styleFrom(backgroundColor: IroriColors.error)
                   : null,

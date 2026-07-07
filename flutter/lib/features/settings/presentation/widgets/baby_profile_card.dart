@@ -156,27 +156,31 @@ class _BabyProfileCardState extends ConsumerState<BabyProfileCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(LucideIcons.baby, size: 18, color: IroriColors.textPrimary),
+              Icon(
+                LucideIcons.baby,
+                size: 18,
+                color: context.colors.textPrimary,
+              ),
               SizedBox(width: 8),
               Text(
                 '赤ちゃん情報',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: IroriColors.textPrimary,
+                  color: context.colors.textPrimary,
                 ),
               ),
             ],
           ),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             '名前',
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              color: IroriColors.textPrimary,
+              color: context.colors.textPrimary,
             ),
           ),
           const SizedBox(height: 8),
@@ -196,12 +200,12 @@ class _BabyProfileCardState extends ConsumerState<BabyProfileCard> {
             ),
           ),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             '生年月日',
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              color: IroriColors.textPrimary,
+              color: context.colors.textPrimary,
             ),
           ),
           const SizedBox(height: 8),
@@ -218,8 +222,8 @@ class _BabyProfileCardState extends ConsumerState<BabyProfileCard> {
                   style: OutlinedButton.styleFrom(
                     minimumSize: const Size(44, 44),
                     foregroundColor: birthDate == null
-                        ? IroriColors.textMuted
-                        : IroriColors.textPrimary,
+                        ? context.colors.textMuted
+                        : context.colors.textPrimary,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(IroriRadii.button),
                     ),
@@ -233,7 +237,7 @@ class _BabyProfileCardState extends ConsumerState<BabyProfileCard> {
                   onPressed: _pending
                       ? null
                       : () => setState(() => _birthDate = null),
-                  color: IroriColors.textMuted,
+                  color: context.colors.textMuted,
                   // 44x44 の最小タッチ領域 (CLAUDE.md)。
                   constraints: const BoxConstraints(
                     minWidth: 44,

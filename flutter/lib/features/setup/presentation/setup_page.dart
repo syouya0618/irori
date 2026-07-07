@@ -197,21 +197,21 @@ class _SetupPageState extends ConsumerState<SetupPage> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         // web: h1 text-2xl font-bold「世帯をつくる」。
-                        const Text(
+                        Text(
                           '世帯をつくる',
                           style: TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.w700,
-                            color: IroriColors.textPrimary,
+                            color: context.colors.textPrimary,
                           ),
                         ),
                         const SizedBox(height: 4),
                         // web: p text-sm muted「まずは世帯名を決めましょう」。
-                        const Text(
+                        Text(
                           'まずは世帯名を決めましょう',
                           style: TextStyle(
                             fontSize: 14,
-                            color: IroriColors.textMuted,
+                            color: context.colors.textMuted,
                           ),
                         ),
                         const SizedBox(height: 32),

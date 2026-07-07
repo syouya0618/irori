@@ -116,12 +116,12 @@ class _WeekBody extends ConsumerWidget {
         const SizedBox(height: 12),
         // 原典: ロード中でなく今週で 1 件も無いときだけ空状態を出す。
         if (meals.isEmpty && currentWeek) ...[
-          const GlassCard(
+          GlassCard(
             padding: EdgeInsets.all(24),
             child: Text(
               '今週の献立はまだありません。タップして追加しましょう！',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: IroriColors.textMuted),
+              style: TextStyle(fontSize: 13, color: context.colors.textMuted),
             ),
           ),
           const SizedBox(height: 8),

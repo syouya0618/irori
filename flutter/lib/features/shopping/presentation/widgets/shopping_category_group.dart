@@ -40,15 +40,15 @@ class ShoppingCategoryGroup extends StatelessWidget {
               Icon(
                 categoryIcon(category),
                 size: 14,
-                color: IroriColors.textMuted,
+                color: context.colors.textMuted,
               ),
               const SizedBox(width: 8),
               Text(
                 category.label,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: IroriColors.textMuted,
+                  color: context.colors.textMuted,
                 ),
               ),
             ],
@@ -84,7 +84,7 @@ class ShoppingTileList extends StatelessWidget {
             Divider(
               height: 1,
               thickness: 1,
-              color: IroriColors.border.withValues(alpha: 0.3),
+              color: context.colors.border.withValues(alpha: 0.3),
             ),
           ShoppingItemTile(
             // 並べ替え/グループ移動時にもタイルの楽観 state が item id に

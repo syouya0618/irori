@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app/router.dart';
 import 'core/theme/app_theme.dart';
+import 'features/settings/data/theme_mode_provider.dart';
 
 /// irori entry point.
 ///
@@ -51,10 +52,13 @@ class IroriApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(appRouterProvider);
+    final themeMode = ref.watch(themeModeProvider);
 
     return MaterialApp.router(
       title: 'irori',
-      theme: iroriTheme,
+      theme: iroriLightTheme,
+      darkTheme: iroriDarkTheme,
+      themeMode: themeMode,
       routerConfig: router,
       debugShowCheckedModeBanner: false,
     );

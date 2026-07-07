@@ -67,10 +67,10 @@ class StockPage extends ConsumerWidget {
               const SizedBox(width: 8),
               Text(
                 '$count件',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.normal,
-                  color: IroriColors.textMuted,
+                  color: context.colors.textMuted,
                 ),
               ),
             ],
@@ -191,16 +191,19 @@ class _StockBodyState extends ConsumerState<_StockBody> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(
+                Icon(
                   LucideIcons.package,
                   size: 48,
                   // 原典 `text-muted-foreground/30`。
-                  color: Color(0x4D475569),
+                  color: context.colors.textMuted.withValues(alpha: 0.3),
                 ),
                 const SizedBox(height: 12),
-                const Text(
+                Text(
                   '在庫が登録されていません',
-                  style: TextStyle(fontSize: 14, color: IroriColors.textMuted),
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: context.colors.textMuted,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
@@ -268,7 +271,7 @@ class _StockBodyState extends ConsumerState<_StockBody> {
                     Divider(
                       height: 1,
                       thickness: 1,
-                      color: IroriColors.border.withValues(alpha: 0.3),
+                      color: context.colors.border.withValues(alpha: 0.3),
                     ),
                   StockItemTile(
                     item: categoryItems[i],
@@ -386,22 +389,26 @@ class _CategoryHeader extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(4, 12, 4, 4),
       child: Row(
         children: [
-          Icon(categoryIcon(category), size: 14, color: IroriColors.textMuted),
+          Icon(
+            categoryIcon(category),
+            size: 14,
+            color: context.colors.textMuted,
+          ),
           const SizedBox(width: 8),
           Text(
             category.label,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
-              color: IroriColors.textMuted,
+              color: context.colors.textMuted,
             ),
           ),
           const SizedBox(width: 8),
           Text(
             '$count',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
-              color: IroriColors.textMuted,
+              color: context.colors.textMuted,
             ),
           ),
         ],

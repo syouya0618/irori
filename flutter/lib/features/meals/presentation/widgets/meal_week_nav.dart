@@ -41,10 +41,10 @@ class MealWeekNav extends ConsumerWidget {
               ),
               Text(
                 formatWeekRange(weekStart),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: IroriColors.textPrimary,
+                  color: context.colors.textPrimary,
                 ),
               ),
               _NavIconButton(
@@ -59,7 +59,7 @@ class MealWeekNav extends ConsumerWidget {
               onPressed: notifier.goToCurrentWeek,
               style: TextButton.styleFrom(
                 minimumSize: const Size(44, 44),
-                foregroundColor: IroriColors.textMuted,
+                foregroundColor: context.colors.textMuted,
               ),
               child: const Text('今週', style: TextStyle(fontSize: 12)),
             ),
@@ -87,7 +87,7 @@ class _NavIconButton extends StatelessWidget {
       icon: Icon(icon, size: 18),
       tooltip: tooltip,
       onPressed: onPressed,
-      color: IroriColors.textPrimary,
+      color: context.colors.textPrimary,
       // 44x44 の最小タッチ領域を保証 (CLAUDE.md / 原典 `min-h-11 min-w-11`)。
       constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
       padding: EdgeInsets.zero,

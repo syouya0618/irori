@@ -89,7 +89,7 @@ class SuggestionPill extends StatelessWidget {
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(999),
-        border: dashedBorder ? Border.all(color: IroriColors.border) : null,
+        border: dashedBorder ? Border.all(color: context.colors.border) : null,
       ),
       child: Text(
         text,
@@ -244,7 +244,7 @@ class _StockSuggestionsSectionState
                 onPressed: () => setState(() => _showAll = !_showAll),
                 style: TextButton.styleFrom(
                   minimumSize: const Size.fromHeight(44),
-                  foregroundColor: IroriColors.textPrimary,
+                  foregroundColor: context.colors.textPrimary,
                 ),
                 child: Text(
                   _showAll
@@ -288,7 +288,7 @@ class _SectionHeader extends StatelessWidget {
               Icon(
                 isExpanded ? LucideIcons.chevronDown : LucideIcons.chevronRight,
                 size: 16,
-                color: IroriColors.textMuted,
+                color: context.colors.textMuted,
               ),
               const SizedBox(width: 8),
               const Icon(
@@ -305,19 +305,19 @@ class _SectionHeader extends StatelessWidget {
                 const SizedBox(width: 8),
                 Text(
                   '$count件',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
-                    color: IroriColors.textMuted,
+                    color: context.colors.textMuted,
                   ),
                 ),
               ],
               if (isRefreshing) ...[
                 const Spacer(),
-                const SizedBox.square(
+                SizedBox.square(
                   dimension: 14,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: IroriColors.textMuted,
+                    color: context.colors.textMuted,
                   ),
                 ),
               ],
@@ -339,7 +339,7 @@ class _EmptySuggestions extends StatelessWidget {
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         // 原典 `bg-muted/30`。
-        color: IroriColors.muted.withValues(alpha: 0.3),
+        color: context.colors.muted.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(IroriRadii.card),
       ),
       child: Column(
@@ -347,12 +347,12 @@ class _EmptySuggestions extends StatelessWidget {
           Icon(
             LucideIcons.lightbulb,
             size: 32,
-            color: IroriColors.textMuted.withValues(alpha: 0.4),
+            color: context.colors.textMuted.withValues(alpha: 0.4),
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             'おすすめ献立がまだありません',
-            style: TextStyle(fontSize: 14, color: IroriColors.textMuted),
+            style: TextStyle(fontSize: 14, color: context.colors.textMuted),
           ),
           const SizedBox(height: 4),
           Text(
@@ -360,7 +360,7 @@ class _EmptySuggestions extends StatelessWidget {
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 12,
-              color: IroriColors.textMuted.withValues(alpha: 0.7),
+              color: context.colors.textMuted.withValues(alpha: 0.7),
             ),
           ),
         ],
@@ -381,17 +381,17 @@ class _CompactErrorRow extends StatelessWidget {
       children: [
         const Icon(Icons.error_outline, size: 16, color: IroriColors.error),
         const SizedBox(width: 8),
-        const Expanded(
+        Expanded(
           child: Text(
             'レシピ提案の取得に失敗しました',
-            style: TextStyle(fontSize: 12, color: IroriColors.textMuted),
+            style: TextStyle(fontSize: 12, color: context.colors.textMuted),
           ),
         ),
         TextButton(
           onPressed: onRetry,
           style: TextButton.styleFrom(
             minimumSize: const Size(44, 44),
-            foregroundColor: IroriColors.textPrimary,
+            foregroundColor: context.colors.textPrimary,
           ),
           child: const Text('再試行'),
         ),
@@ -460,18 +460,18 @@ class _SuggestionCard extends StatelessWidget {
               runSpacing: 4,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                const Text(
+                Text(
                   '不足:',
                   style: TextStyle(
                     fontSize: 12,
-                    color: IroriColors.textMuted,
+                    color: context.colors.textMuted,
                   ),
                 ),
                 for (final ing in suggestion.missingIngredients)
                   SuggestionPill(
                     text: ing.name,
                     background: null,
-                    foreground: IroriColors.textMuted,
+                    foreground: context.colors.textMuted,
                     dashedBorder: true,
                   ),
               ],
@@ -484,7 +484,7 @@ class _SuggestionCard extends StatelessWidget {
             label: const Text('献立に追加'),
             style: OutlinedButton.styleFrom(
               minimumSize: const Size.fromHeight(44),
-              foregroundColor: IroriColors.textPrimary,
+              foregroundColor: context.colors.textPrimary,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(IroriRadii.button),
               ),

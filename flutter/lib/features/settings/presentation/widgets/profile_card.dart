@@ -112,16 +112,20 @@ class _ProfileCardState extends ConsumerState<ProfileCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(LucideIcons.user, size: 18, color: IroriColors.textPrimary),
+              Icon(
+                LucideIcons.user,
+                size: 18,
+                color: context.colors.textPrimary,
+              ),
               SizedBox(width: 8),
               Text(
                 'プロフィール',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: IroriColors.textPrimary,
+                  color: context.colors.textPrimary,
                 ),
               ),
             ],
@@ -151,19 +155,19 @@ class _ProfileCardState extends ConsumerState<ProfileCard> {
                     Text(
                       // 原典: `profile.displayName || "未設定"`。
                       widget.displayName.isEmpty ? '未設定' : widget.displayName,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
-                        color: IroriColors.textPrimary,
+                        color: context.colors.textPrimary,
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
                     Text(
                       widget.email,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
-                        color: IroriColors.textMuted,
+                        color: context.colors.textMuted,
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -173,14 +177,14 @@ class _ProfileCardState extends ConsumerState<ProfileCard> {
             ],
           ),
           const SizedBox(height: 16),
-          const Divider(height: 1, color: IroriColors.border),
+          Divider(height: 1, color: context.colors.border),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             '表示名',
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              color: IroriColors.textPrimary,
+              color: context.colors.textPrimary,
             ),
           ),
           const SizedBox(height: 8),

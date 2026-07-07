@@ -32,7 +32,7 @@ class BabyDateNav extends ConsumerWidget {
           formatBabyDateLabel(selectedDate, todayYmd: today),
           style: Theme.of(context).textTheme.titleLarge?.copyWith(
             fontWeight: FontWeight.bold,
-            color: IroriColors.textPrimary,
+            color: context.colors.textPrimary,
           ),
         ),
         Row(
@@ -48,7 +48,7 @@ class BabyDateNav extends ConsumerWidget {
                 onPressed: notifier.goToToday,
                 style: TextButton.styleFrom(
                   minimumSize: const Size(44, 44),
-                  foregroundColor: IroriColors.textMuted,
+                  foregroundColor: context.colors.textMuted,
                 ),
                 child: const Text('今日', style: TextStyle(fontSize: 12)),
               ),
@@ -83,7 +83,7 @@ class _NavIconButton extends StatelessWidget {
       icon: Icon(icon, size: 18),
       tooltip: tooltip,
       onPressed: onPressed,
-      color: IroriColors.textPrimary,
+      color: context.colors.textPrimary,
       // 44x44 の最小タッチ領域を保証 (CLAUDE.md)。
       constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
       padding: EdgeInsets.zero,

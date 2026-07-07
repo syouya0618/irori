@@ -3,6 +3,8 @@ import 'dart:math' as math;
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../core/theme/colors.dart';
+
 /// 棒グラフ 1 本分のデータ。原典 `charts/bar-chart.tsx` の `BarChartDatum`。
 typedef BabyBarChartDatum = ({String label, double value});
 
@@ -100,9 +102,9 @@ class BabyBarChart extends StatelessWidget {
                       padding: const EdgeInsets.only(top: 4),
                       child: Text(
                         data[i].label,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 10,
-                          color: Color(0xFF475569), // muted
+                          color: context.colors.textMuted, // muted
                         ),
                       ),
                     );

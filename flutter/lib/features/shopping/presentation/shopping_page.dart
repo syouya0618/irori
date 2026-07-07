@@ -59,9 +59,9 @@ class ShoppingPage extends ConsumerWidget {
               child: Center(
                 child: Text(
                   countLabel,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
-                    color: IroriColors.textMuted,
+                    color: context.colors.textMuted,
                   ),
                 ),
               ),
@@ -143,26 +143,29 @@ class _ShoppingBody extends ConsumerWidget {
           const StoreFilterTabs(),
           if (unchecked.isEmpty && checked.isEmpty)
             // 原典 `min-h-[30dvh]` の中央寄せ空状態。
-            const SizedBox(
+            SizedBox(
               height: 240,
               child: Center(
                 child: Text(
                   'アイテムがありません',
-                  style: TextStyle(fontSize: 13, color: IroriColors.textMuted),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: context.colors.textMuted,
+                  ),
                 ),
               ),
             )
           else ...[
             if (unchecked.isEmpty)
               // 全件チェック済み (原典 `min-h-20`)。
-              const SizedBox(
+              SizedBox(
                 height: 80,
                 child: Center(
                   child: Text(
                     '全てチェック済みです',
                     style: TextStyle(
                       fontSize: 13,
-                      color: IroriColors.textMuted,
+                      color: context.colors.textMuted,
                     ),
                   ),
                 ),
@@ -192,7 +195,7 @@ class _ShoppingBody extends ConsumerWidget {
                   label: const Text('献立から追加'),
                   style: OutlinedButton.styleFrom(
                     minimumSize: const Size.fromHeight(44),
-                    foregroundColor: IroriColors.textPrimary,
+                    foregroundColor: context.colors.textPrimary,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(IroriRadii.button),
                     ),
@@ -215,7 +218,7 @@ class _ShoppingBody extends ConsumerWidget {
                   label: const Text('チェック済みを削除'),
                   style: OutlinedButton.styleFrom(
                     minimumSize: const Size.fromHeight(44),
-                    foregroundColor: IroriColors.textPrimary,
+                    foregroundColor: context.colors.textPrimary,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(IroriRadii.button),
                     ),
@@ -262,7 +265,7 @@ class _CheckedSectionState extends State<_CheckedSection> {
           style: TextButton.styleFrom(
             minimumSize: const Size.fromHeight(44),
             alignment: Alignment.centerLeft,
-            foregroundColor: IroriColors.textMuted,
+            foregroundColor: context.colors.textMuted,
             textStyle: const TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w500,

@@ -106,12 +106,12 @@ class _DefaultPageCardState extends ConsumerState<DefaultPageCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
               Icon(
                 LucideIcons.layoutDashboard,
                 size: 18,
-                color: IroriColors.textPrimary,
+                color: context.colors.textPrimary,
               ),
               SizedBox(width: 8),
               Text(
@@ -119,7 +119,7 @@ class _DefaultPageCardState extends ConsumerState<DefaultPageCard> {
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: IroriColors.textPrimary,
+                  color: context.colors.textPrimary,
                 ),
               ),
             ],
@@ -129,7 +129,7 @@ class _DefaultPageCardState extends ConsumerState<DefaultPageCard> {
           Container(
             padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
-              color: IroriColors.muted.withValues(alpha: 0.5),
+              color: context.colors.muted.withValues(alpha: 0.5),
               borderRadius: BorderRadius.circular(IroriRadii.button),
             ),
             child: Row(
@@ -184,7 +184,7 @@ class _SegmentButton extends StatelessWidget {
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w500,
-            color: active ? Colors.white : IroriColors.textMuted,
+            color: active ? Colors.white : context.colors.textMuted,
           ),
         ),
       ),

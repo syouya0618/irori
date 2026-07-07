@@ -396,8 +396,8 @@ class _StockFormSheetState extends ConsumerState<StockFormSheet> {
                               minimumSize: const Size.fromHeight(44),
                               alignment: Alignment.centerLeft,
                               foregroundColor: _expiresAt == null
-                                  ? IroriColors.textMuted
-                                  : IroriColors.textPrimary,
+                                  ? context.colors.textMuted
+                                  : context.colors.textPrimary,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(
                                   IroriRadii.button,
@@ -414,7 +414,7 @@ class _StockFormSheetState extends ConsumerState<StockFormSheet> {
                                 : () => setState(() => _expiresAt = null),
                             icon: const Icon(LucideIcons.x, size: 16),
                             tooltip: '賞味期限をクリア',
-                            color: IroriColors.textMuted,
+                            color: context.colors.textMuted,
                             constraints: const BoxConstraints(
                               minWidth: 44,
                               minHeight: 44,

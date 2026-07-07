@@ -47,7 +47,7 @@ class StoreFilterTabs extends ConsumerWidget {
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
         // shadcn TabsList の `bg-muted` 相当。
-        color: IroriColors.muted,
+        color: context.colors.muted,
         borderRadius: BorderRadius.circular(IroriRadii.button),
       ),
       child: SingleChildScrollView(
@@ -96,11 +96,11 @@ class _StoreTab extends StatelessWidget {
           minimumSize: const Size(44, 44),
           padding: const EdgeInsets.symmetric(horizontal: 12),
           backgroundColor: isSelected
-              ? IroriColors.surface
+              ? context.colors.surface
               : Colors.transparent,
           foregroundColor: isSelected
-              ? IroriColors.textPrimary
-              : IroriColors.textMuted,
+              ? context.colors.textPrimary
+              : context.colors.textMuted,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(IroriRadii.button - 2),
           ),

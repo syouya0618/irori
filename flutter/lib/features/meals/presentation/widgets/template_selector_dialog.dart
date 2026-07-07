@@ -226,7 +226,7 @@ class _TemplateSelectorDialogState extends ConsumerState<TemplateSelectorDialog>
           onPressed: _pending ? null : () => Navigator.of(context).pop(),
           style: TextButton.styleFrom(
             minimumSize: const Size(44, 44),
-            foregroundColor: IroriColors.textPrimary,
+            foregroundColor: context.colors.textPrimary,
           ),
           child: const Text('キャンセル'),
         ),
@@ -260,7 +260,7 @@ class _TemplateList extends StatelessWidget {
             Icon(
               LucideIcons.bookOpen,
               size: 32,
-              color: IroriColors.textMuted.withValues(alpha: 0.4),
+              color: context.colors.textMuted.withValues(alpha: 0.4),
             ),
             const SizedBox(height: 8),
             Text(
@@ -273,7 +273,7 @@ class _TemplateList extends StatelessWidget {
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 fontSize: 11,
-                color: IroriColors.textMuted.withValues(alpha: 0.7),
+                color: context.colors.textMuted.withValues(alpha: 0.7),
               ),
             ),
           ],
@@ -304,16 +304,16 @@ class _TemplateList extends StatelessWidget {
               // 原典 getIngredientCount は非配列を 0 と数える — Dart は
               // 防御パース済みモデルの length がそれと等価。
               '食材 ${template.ingredients.length}品',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12,
-                color: IroriColors.textMuted,
+                color: context.colors.textMuted,
               ),
             ),
             trailing: IconButton(
               icon: const Icon(LucideIcons.trash2, size: 16),
               tooltip: 'テンプレートを削除',
               onPressed: enabled ? () => onDelete(template) : null,
-              color: IroriColors.textMuted,
+              color: context.colors.textMuted,
               // 44x44 の最小タッチ領域 (CLAUDE.md)。
               constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
             ),
@@ -397,7 +397,7 @@ class _SuggestionsTab extends ConsumerWidget {
                 Icon(
                   LucideIcons.lightbulb,
                   size: 32,
-                  color: IroriColors.textMuted.withValues(alpha: 0.4),
+                  color: context.colors.textMuted.withValues(alpha: 0.4),
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -410,7 +410,7 @@ class _SuggestionsTab extends ConsumerWidget {
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     fontSize: 11,
-                    color: IroriColors.textMuted.withValues(alpha: 0.7),
+                    color: context.colors.textMuted.withValues(alpha: 0.7),
                   ),
                 ),
               ],

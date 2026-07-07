@@ -229,10 +229,10 @@ class _ReactionButton extends StatelessWidget {
                     const SizedBox(width: 2),
                     Text(
                       '$count',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.w600,
-                        color: IroriColors.textMuted,
+                        color: context.colors.textMuted,
                       ),
                     ),
                   ],
