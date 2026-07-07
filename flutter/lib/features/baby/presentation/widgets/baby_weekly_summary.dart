@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../../core/theme/colors.dart';
 import '../../../../core/theme/radii.dart';
 import '../../../../core/theme/shadows.dart';
 import '../../domain/baby_weekly_summary.dart';
@@ -62,22 +63,22 @@ class BabyWeeklySummary extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 4),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
           child: Text(
             '週間サマリー',
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
               letterSpacing: 0.8,
-              color: Color(0xFF475569),
+              color: context.colors.textMuted,
             ),
           ),
         ),
         const SizedBox(height: 8),
         DecoratedBox(
           decoration: BoxDecoration(
-            color: const Color(0x80FFFFFF), // glass surface (timeline と同流儀)
+            color: context.colors.surfaceGlass, // glass surface (timeline と同流儀)
             borderRadius: BorderRadius.circular(IroriRadii.card),
             boxShadow: IroriShadows.card,
           ),
@@ -198,17 +199,17 @@ class _StatHeader extends StatelessWidget {
             children: [
               Text(
                 label,
-                style: const TextStyle(fontSize: 10, color: Color(0xFF475569)),
+                style: TextStyle(fontSize: 10, color: context.colors.textMuted),
               ),
               Text(
                 value,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF0F172A),
-                  fontFeatures: [FontFeature.tabularFigures()],
+                  color: context.colors.textPrimary,
+                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
             ],
@@ -244,18 +245,18 @@ class _MetricBlock extends StatelessWidget {
             children: [
               Text(
                 label,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
-                  color: Color(0xFF0F172A),
+                  color: context.colors.textPrimary,
                 ),
               ),
               Text(
                 total,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
-                  color: Color(0xFF475569),
-                  fontFeatures: [FontFeature.tabularFigures()],
+                  color: context.colors.textMuted,
+                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
             ],

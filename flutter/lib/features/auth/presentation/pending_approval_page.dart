@@ -197,19 +197,19 @@ class _PendingCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             '承認待ち',
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w600,
-              color: IroriColors.textPrimary,
+              color: context.colors.textPrimary,
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             '管理者の承認をお待ちください。承認されると自動的にアプリをご利用いただけます。',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 14, color: IroriColors.textMuted),
+            style: TextStyle(fontSize: 14, color: context.colors.textMuted),
           ),
           const SizedBox(height: 24),
           SizedBox(
@@ -245,7 +245,7 @@ class _PendingCard extends StatelessWidget {
               label: const Text('ログアウト'),
               style: TextButton.styleFrom(
                 // web: variant ghost + text-muted-foreground。
-                foregroundColor: IroriColors.textMuted,
+                foregroundColor: context.colors.textMuted,
                 minimumSize: const Size.fromHeight(44),
               ),
             ),

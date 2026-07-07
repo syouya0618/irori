@@ -123,12 +123,12 @@ class _AutoStockCategoriesCardState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
               Icon(
                 LucideIcons.package,
                 size: 18,
-                color: IroriColors.textPrimary,
+                color: context.colors.textPrimary,
               ),
               SizedBox(width: 8),
               Text(
@@ -136,16 +136,16 @@ class _AutoStockCategoriesCardState
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: IroriColors.textPrimary,
+                  color: context.colors.textPrimary,
                 ),
               ),
             ],
           ),
           const SizedBox(height: 12),
-          const Text(
+          Text(
             '買い物リストでチェックした時に、以下のカテゴリは在庫に自動追加されます。'
             '残日数の自動計算は育児ログ連動のベビー用品のみ対応しています。',
-            style: TextStyle(fontSize: 12, color: IroriColors.textMuted),
+            style: TextStyle(fontSize: 12, color: context.colors.textMuted),
           ),
           const SizedBox(height: 12),
           // 原典: `grid grid-cols-2 gap-2` (4 値固定の 2x2)。
@@ -178,7 +178,7 @@ class _AutoStockCategoriesCardState
           // 原典: ON = bg-primary/10 + ring-primary/20、OFF = bg-muted/50。
           color: active
               ? IroriColors.primary.withValues(alpha: 0.1)
-              : IroriColors.muted.withValues(alpha: 0.5),
+              : context.colors.muted.withValues(alpha: 0.5),
           borderRadius: BorderRadius.circular(IroriRadii.button),
           border: active
               ? Border.all(color: IroriColors.primary.withValues(alpha: 0.2))
@@ -189,7 +189,7 @@ class _AutoStockCategoriesCardState
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w500,
-            color: active ? IroriColors.primary : IroriColors.textMuted,
+            color: active ? IroriColors.primary : context.colors.textMuted,
           ),
         ),
       ),

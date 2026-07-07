@@ -48,7 +48,7 @@ class MealDaySection extends StatelessWidget {
     // それ以外 = `bg-muted/30`。blur は重ねない (meal_card.dart の注記参照)。
     final decoration = isToday
         ? BoxDecoration(
-            color: IroriColors.surfaceGlass,
+            color: context.colors.surfaceGlass,
             borderRadius: BorderRadius.circular(IroriRadii.card),
             border: Border.all(
               color: IroriColors.primary.withValues(alpha: 0.2),
@@ -56,7 +56,7 @@ class MealDaySection extends StatelessWidget {
             boxShadow: IroriShadows.card,
           )
         : BoxDecoration(
-            color: IroriColors.muted.withValues(alpha: 0.3),
+            color: context.colors.muted.withValues(alpha: 0.3),
             borderRadius: BorderRadius.circular(IroriRadii.card),
           );
 
@@ -76,7 +76,7 @@ class MealDaySection extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                     color: isToday
                         ? IroriColors.primary
-                        : IroriColors.textPrimary,
+                        : context.colors.textPrimary,
                   ),
                 ),
                 if (isToday) ...[
@@ -90,13 +90,13 @@ class MealDaySection extends StatelessWidget {
                       color: IroriColors.primary,
                       borderRadius: BorderRadius.circular(IroriRadii.pill),
                     ),
-                    child: const Text(
+                    child: Text(
                       '今日',
                       style: TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.w500,
                         // 原典 `text-primary-foreground` (白)。
-                        color: IroriColors.surface,
+                        color: context.colors.surface,
                       ),
                     ),
                   ),
@@ -109,7 +109,7 @@ class MealDaySection extends StatelessWidget {
               children: [
                 for (var i = 0; i < weekViewMealTypes.length; i++) ...[
                   if (i > 0) const SizedBox(width: 8),
-                  Expanded(child: _buildSlot(weekViewMealTypes[i])),
+                  Expanded(child: _buildSlot(context, weekViewMealTypes[i])),
                 ],
               ],
             ),
@@ -119,7 +119,7 @@ class MealDaySection extends StatelessWidget {
     );
   }
 
-  Widget _buildSlot(MealType type) {
+  Widget _buildSlot(BuildContext context, MealType type) {
     final meal = mealsByType[type];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -127,10 +127,10 @@ class MealDaySection extends StatelessWidget {
         Text(
           mealTypeShortLabel(type),
           textAlign: TextAlign.center,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 10,
             fontWeight: FontWeight.w500,
-            color: IroriColors.textMuted,
+            color: context.colors.textMuted,
           ),
         ),
         const SizedBox(height: 4),

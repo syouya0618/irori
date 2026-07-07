@@ -97,7 +97,7 @@ class _ClearCheckedDialogState extends ConsumerState<ClearCheckedDialog> {
           onPressed: _pending ? null : () => Navigator.of(context).pop(),
           style: TextButton.styleFrom(
             minimumSize: const Size(44, 44),
-            foregroundColor: IroriColors.textPrimary,
+            foregroundColor: context.colors.textPrimary,
           ),
           child: const Text('キャンセル'),
         ),
@@ -107,7 +107,7 @@ class _ClearCheckedDialogState extends ConsumerState<ClearCheckedDialog> {
           style: FilledButton.styleFrom(
             minimumSize: const Size(44, 44),
             backgroundColor: IroriColors.error,
-            foregroundColor: IroriColors.surface,
+            foregroundColor: context.colors.surface,
           ),
           icon: _pending
               ? const SizedBox.square(

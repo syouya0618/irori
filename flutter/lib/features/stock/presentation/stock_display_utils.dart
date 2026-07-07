@@ -64,7 +64,15 @@ typedef StockExpiryBadge = ({
 /// | within3Days | あとN日 | bg-amber-100 text-amber-700 |
 /// | within7Days | M/D | bg-yellow-50 text-yellow-700 |
 /// | normal | M/D | text-muted-foreground (背景なし) |
-StockExpiryBadge? stockExpiryBadge(String todayYmd, String? expiresAtYmd) {
+/// [mutedForeground] は「normal」(期限内 / 背景なし) の文字色。純関数のため
+/// context を取れず、呼び出し側 (widget) が `context.colors.textMuted` を渡して
+/// dark でも反転させる。既定は light の [IroriColors.textMuted] (テストや
+/// context 非依存の直接呼び出し互換)。
+StockExpiryBadge? stockExpiryBadge(
+  String todayYmd,
+  String? expiresAtYmd, {
+  Color mutedForeground = IroriColors.textMuted,
+}) {
   final status = classifyExpiry(todayYmd, expiresAtYmd);
   switch (status) {
     case StockExpiryStatus.none:
@@ -91,7 +99,7 @@ StockExpiryBadge? stockExpiryBadge(String todayYmd, String? expiresAtYmd) {
       return (
         label: _monthDayLabel(expiresAtYmd!),
         background: null,
-        foreground: IroriColors.textMuted,
+        foreground: mutedForeground,
       );
   }
 }

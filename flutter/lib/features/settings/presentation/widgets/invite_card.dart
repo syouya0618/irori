@@ -129,26 +129,30 @@ class _InviteCardState extends ConsumerState<InviteCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
               // web: <Link2 size={18} /> メンバー招待。
-              Icon(LucideIcons.link2, size: 18, color: IroriColors.textPrimary),
+              Icon(
+                LucideIcons.link2,
+                size: 18,
+                color: context.colors.textPrimary,
+              ),
               SizedBox(width: 8),
               Text(
                 'メンバー招待',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: IroriColors.textPrimary,
+                  color: context.colors.textPrimary,
                 ),
               ),
             ],
           ),
           const SizedBox(height: 16),
           // web: text-sm text-muted-foreground。
-          const Text(
+          Text(
             '招待リンクを共有して、家族をこの世帯に招待できます。リンクは7日間有効です。',
-            style: TextStyle(fontSize: 14, color: IroriColors.textMuted),
+            style: TextStyle(fontSize: 14, color: context.colors.textMuted),
           ),
           const SizedBox(height: 16),
           if (_inviteUrl != null)
@@ -172,9 +176,9 @@ class _InviteCardState extends ConsumerState<InviteCard> {
               child: TextField(
                 controller: _urlController,
                 readOnly: true,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
-                  color: IroriColors.textPrimary,
+                  color: context.colors.textPrimary,
                 ),
                 decoration: InputDecoration(
                   isDense: true,
@@ -196,12 +200,12 @@ class _InviteCardState extends ConsumerState<InviteCard> {
               icon: Icon(
                 _copied ? LucideIcons.check : LucideIcons.clipboardCopy,
                 size: 16,
-                color: IroriColors.textPrimary,
+                color: context.colors.textPrimary,
               ),
               // 44px タッチターゲット (CLAUDE.md)。
               constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
               style: IconButton.styleFrom(
-                side: const BorderSide(color: IroriColors.border),
+                side: BorderSide(color: context.colors.border),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(IroriRadii.button),
                 ),
@@ -214,7 +218,7 @@ class _InviteCardState extends ConsumerState<InviteCard> {
         TextButton(
           onPressed: _generating ? null : _generate,
           style: TextButton.styleFrom(
-            foregroundColor: IroriColors.textPrimary,
+            foregroundColor: context.colors.textPrimary,
             // 44px タッチターゲット (CLAUDE.md — web の sm より Flutter 規約優先)。
             minimumSize: const Size(44, 44),
           ),
@@ -239,8 +243,8 @@ class _InviteCardState extends ConsumerState<InviteCard> {
             : const Icon(LucideIcons.link2, size: 16),
         label: const Text('招待リンクを生成'),
         style: OutlinedButton.styleFrom(
-          foregroundColor: IroriColors.textPrimary,
-          side: const BorderSide(color: IroriColors.border),
+          foregroundColor: context.colors.textPrimary,
+          side: BorderSide(color: context.colors.border),
           // 44px タッチターゲット (CLAUDE.md / web size lg)。
           minimumSize: const Size.fromHeight(44),
           shape: RoundedRectangleBorder(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../../core/theme/colors.dart';
 import '../../../../core/theme/radii.dart';
 import '../../../../core/theme/shadows.dart';
 import '../../domain/baby_log.dart';
@@ -122,7 +123,7 @@ class _SummaryCell extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0x80FFFFFF), // glass surface (bg-white/50 相当)
+        color: context.colors.surfaceGlass, // glass surface (bg-white/50 相当)
         borderRadius: BorderRadius.circular(IroriRadii.card),
         boxShadow: IroriShadows.card,
       ),
@@ -140,7 +141,7 @@ class _SummaryCell extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               label,
-              style: const TextStyle(fontSize: 10, color: Color(0xFF475569)),
+              style: TextStyle(fontSize: 10, color: context.colors.textMuted),
             ),
             const SizedBox(height: 2),
             Text(

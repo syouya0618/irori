@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/theme/colors.dart';
 import '../../../widgets/glass_card.dart';
 import '../data/baby_logs_notifier.dart';
 import '../data/baby_repository.dart';
@@ -136,11 +137,11 @@ class _DashboardBody extends ConsumerWidget {
                   child: BabyWeeklySummary(days: days),
                 ),
           loading: () => const SizedBox.shrink(),
-          error: (error, _) => const Padding(
-            padding: EdgeInsets.only(bottom: 16, left: 4),
+          error: (error, _) => Padding(
+            padding: const EdgeInsets.only(bottom: 16, left: 4),
             child: Text(
               '週間サマリーを読み込めませんでした',
-              style: TextStyle(fontSize: 12, color: Color(0xFF475569)),
+              style: TextStyle(fontSize: 12, color: context.colors.textMuted),
             ),
           ),
         ),

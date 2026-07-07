@@ -569,7 +569,7 @@ class _MealFormSheetState extends ConsumerState<MealFormSheet> {
                           label: const Text('テンプレートから作成'),
                           style: OutlinedButton.styleFrom(
                             minimumSize: const Size(44, 44),
-                            foregroundColor: IroriColors.textPrimary,
+                            foregroundColor: context.colors.textPrimary,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(
                                 IroriRadii.button,
@@ -584,7 +584,7 @@ class _MealFormSheetState extends ConsumerState<MealFormSheet> {
                             label: const Text('テンプレート保存'),
                             style: OutlinedButton.styleFrom(
                               minimumSize: const Size(44, 44),
-                              foregroundColor: IroriColors.textPrimary,
+                              foregroundColor: context.colors.textPrimary,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(
                                   IroriRadii.button,
@@ -633,7 +633,7 @@ class _MealFormSheetState extends ConsumerState<MealFormSheet> {
                       style: OutlinedButton.styleFrom(
                         minimumSize: const Size.fromHeight(44),
                         alignment: Alignment.centerLeft,
-                        foregroundColor: IroriColors.textPrimary,
+                        foregroundColor: context.colors.textPrimary,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(
                             IroriRadii.button,
@@ -649,7 +649,7 @@ class _MealFormSheetState extends ConsumerState<MealFormSheet> {
                         vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: IroriColors.muted.withValues(alpha: 0.5),
+                        color: context.colors.muted.withValues(alpha: 0.5),
                         borderRadius: BorderRadius.circular(IroriRadii.button),
                       ),
                       child: Row(
@@ -694,9 +694,9 @@ class _MealFormSheetState extends ConsumerState<MealFormSheet> {
                         label: const Text('食材を追加'),
                         style: OutlinedButton.styleFrom(
                           minimumSize: const Size.fromHeight(48),
-                          foregroundColor: IroriColors.textMuted,
+                          foregroundColor: context.colors.textMuted,
                           side: BorderSide(
-                            color: IroriColors.border.withValues(alpha: 0.6),
+                            color: context.colors.border.withValues(alpha: 0.6),
                           ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(

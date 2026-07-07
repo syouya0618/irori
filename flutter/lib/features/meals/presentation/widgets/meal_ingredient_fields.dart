@@ -50,7 +50,7 @@ class MealIngredientFields extends StatelessWidget {
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         // 原典 `bg-muted/30 rounded-lg`。
-        color: IroriColors.muted.withValues(alpha: 0.3),
+        color: context.colors.muted.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(IroriRadii.button),
       ),
       child: Row(
@@ -109,7 +109,7 @@ class MealIngredientFields extends StatelessWidget {
                                   Icon(
                                     categoryIcon(c),
                                     size: 14,
-                                    color: IroriColors.textMuted,
+                                    color: context.colors.textMuted,
                                   ),
                                   const SizedBox(width: 4),
                                   Flexible(
@@ -140,7 +140,7 @@ class MealIngredientFields extends StatelessWidget {
             icon: const Icon(LucideIcons.trash2, size: 16),
             tooltip: '食材を削除',
             onPressed: enabled ? onRemove : null,
-            color: IroriColors.textMuted,
+            color: context.colors.textMuted,
             // 44x44 の最小タッチ領域 (CLAUDE.md)。
             constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
             padding: EdgeInsets.zero,

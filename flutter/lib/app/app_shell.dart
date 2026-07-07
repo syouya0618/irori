@@ -37,7 +37,7 @@ class AppShell extends ConsumerWidget {
     return Scaffold(
       body: shell,
       bottomNavigationBar: NavigationBar(
-        backgroundColor: IroriColors.surface,
+        backgroundColor: context.colors.surface,
         surfaceTintColor: Colors.transparent,
         selectedIndex: shell.currentIndex,
         // 同一タブ再タップはブランチ初期 location へ戻す (go_router 公式の

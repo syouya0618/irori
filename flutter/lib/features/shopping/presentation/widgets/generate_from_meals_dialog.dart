@@ -155,7 +155,7 @@ class _GenerateFromMealsDialogState
           onPressed: _pending ? null : () => Navigator.of(context).pop(),
           style: TextButton.styleFrom(
             minimumSize: const Size(44, 44),
-            foregroundColor: IroriColors.textPrimary,
+            foregroundColor: context.colors.textPrimary,
           ),
           child: const Text('キャンセル'),
         ),

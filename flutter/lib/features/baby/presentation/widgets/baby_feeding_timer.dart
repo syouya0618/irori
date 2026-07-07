@@ -272,18 +272,18 @@ class _BabyFeedingTimerSheetState extends ConsumerState<BabyFeedingTimerSheet> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
+              Text(
                 '授乳タイマー',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
-                  color: IroriColors.textPrimary,
+                  color: context.colors.textPrimary,
                 ),
               ),
               const SizedBox(height: 4),
-              const Text(
+              Text(
                 '停止すると授乳時間が記録されます',
-                style: TextStyle(fontSize: 13, color: IroriColors.textMuted),
+                style: TextStyle(fontSize: 13, color: context.colors.textMuted),
               ),
               const SizedBox(height: 24),
               // 左右切替。
@@ -314,10 +314,10 @@ class _BabyFeedingTimerSheetState extends ConsumerState<BabyFeedingTimerSheet> {
               // 経過時間 (MM:SS)。
               Text(
                 _formatTimer(_elapsed),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 48,
                   fontWeight: FontWeight.bold,
-                  color: IroriColors.textPrimary,
+                  color: context.colors.textPrimary,
                   fontFeatures: [FontFeature.tabularFigures()],
                 ),
               ),
@@ -370,9 +370,12 @@ class _BabyFeedingTimerSheetState extends ConsumerState<BabyFeedingTimerSheet> {
               const SizedBox(height: 8),
               TextButton(
                 onPressed: _saving ? null : _handleCancel,
-                child: const Text(
+                child: Text(
                   'キャンセル（記録しない）',
-                  style: TextStyle(fontSize: 13, color: IroriColors.textMuted),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: context.colors.textMuted,
+                  ),
                 ),
               ),
             ],
@@ -398,7 +401,7 @@ class _SegmentButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: selected ? IroriColors.primary : const Color(0xFFF3F4F6),
+      color: selected ? IroriColors.primary : context.colors.muted,
       borderRadius: BorderRadius.circular(IroriRadii.button),
       child: InkWell(
         onTap: onTap,
@@ -411,7 +414,7 @@ class _SegmentButton extends StatelessWidget {
             style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w600,
-              color: selected ? Colors.white : const Color(0xFF4B5563),
+              color: selected ? Colors.white : context.colors.textMuted,
             ),
           ),
         ),

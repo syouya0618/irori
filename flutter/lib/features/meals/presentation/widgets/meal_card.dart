@@ -36,9 +36,9 @@ class MealCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: IroriColors.surfaceGlass,
+        color: context.colors.surfaceGlass,
         borderRadius: BorderRadius.circular(IroriRadii.card),
-        border: Border.all(color: IroriColors.border),
+        border: Border.all(color: context.colors.border),
         boxShadow: IroriShadows.card,
       ),
       child: InkWell(
@@ -61,10 +61,10 @@ class MealCard extends StatelessWidget {
                         meal.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w500,
-                          color: IroriColors.textPrimary,
+                          color: context.colors.textPrimary,
                         ),
                       ),
                     ),
@@ -83,9 +83,9 @@ class MealCard extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     '食材${meal.ingredients.length}品',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 10,
-                      color: IroriColors.textMuted,
+                      color: context.colors.textMuted,
                     ),
                   ),
                 ],
@@ -128,13 +128,13 @@ class EmptyMealSlot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final mutedLabel = IroriColors.textMuted.withValues(alpha: 0.6);
+    final mutedLabel = context.colors.textMuted.withValues(alpha: 0.6);
 
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(IroriRadii.card),
         border: Border.all(
-          color: IroriColors.border.withValues(alpha: 0.6),
+          color: context.colors.border.withValues(alpha: 0.6),
         ),
       ),
       child: InkWell(

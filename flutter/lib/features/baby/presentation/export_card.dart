@@ -91,12 +91,12 @@ class _ExportCardState extends ConsumerState<ExportCard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 原典 CardTitle: FileDown + "記録エクスポート" (`export-card.tsx:47-50`)。
-          const Row(
+          Row(
             children: [
               Icon(
                 LucideIcons.fileDown,
                 size: 18,
-                color: IroriColors.textPrimary,
+                color: context.colors.textPrimary,
               ),
               SizedBox(width: 8),
               Text(
@@ -104,16 +104,16 @@ class _ExportCardState extends ConsumerState<ExportCard> {
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: IroriColors.textPrimary,
+                  color: context.colors.textPrimary,
                 ),
               ),
             ],
           ),
           const SizedBox(height: 16),
           // 原典 説明文 (`:53-55`)。
-          const Text(
+          Text(
             '小児科受診用のPDFレポートを生成します。',
-            style: TextStyle(fontSize: 12, color: IroriColors.textMuted),
+            style: TextStyle(fontSize: 12, color: context.colors.textMuted),
           ),
           const SizedBox(height: 16),
           // 原典 期間セグメント (`:56-67`)。既存 baby/meal フォームと同じ

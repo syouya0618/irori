@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../../core/theme/colors.dart';
 import '../../domain/baby_log.dart';
 import '../baby_display_utils.dart';
 
@@ -104,10 +105,10 @@ class BabyTimelineItem extends StatelessWidget {
                   children: [
                     Text(
                       getLogSummary(log),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
-                        color: Color(0xFF0F172A),
+                        color: context.colors.textPrimary,
                       ),
                     ),
                     if (hasMemo)
@@ -115,9 +116,9 @@ class BabyTimelineItem extends StatelessWidget {
                         memo,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
-                          color: Color(0xFF475569),
+                          color: context.colors.textMuted,
                         ),
                       ),
                   ],
@@ -129,19 +130,19 @@ class BabyTimelineItem extends StatelessWidget {
                 children: [
                   Text(
                     formatTimeJst(log.loggedAt),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
                       // 原典 `font-mono` の意図 = 時刻の数字幅を揃える。
                       // font 非依存で効く tabular figures を使う (advisor 指摘)。
-                      fontFeatures: [FontFeature.tabularFigures()],
-                      color: Color(0xFF475569),
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                      color: context.colors.textMuted,
                     ),
                   ),
                   const SizedBox(width: 4),
-                  const Icon(
+                  Icon(
                     LucideIcons.chevronsRight,
                     size: 12,
-                    color: Color(0xFF475569),
+                    color: context.colors.textMuted,
                   ),
                 ],
               ),

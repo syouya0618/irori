@@ -102,7 +102,11 @@ class _StockItemTileState extends State<StockItemTile> {
     final quantityLabel = (unit == null || unit.isEmpty)
         ? formatStockQuantity(item.quantity)
         : '${formatStockQuantity(item.quantity)} $unit';
-    final badge = stockExpiryBadge(widget.todayYmd, item.expiresAt);
+    final badge = stockExpiryBadge(
+      widget.todayYmd,
+      item.expiresAt,
+      mutedForeground: context.colors.textMuted,
+    );
     final remainingBadge = stockRemainingDaysBadge(
       item.quantity,
       widget.dailyRate,
@@ -128,19 +132,19 @@ class _StockItemTileState extends State<StockItemTile> {
                               item.name,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w500,
-                                color: IroriColors.textPrimary,
+                                color: context.colors.textPrimary,
                               ),
                             ),
                           ),
                           const SizedBox(width: 8),
                           Text(
                             quantityLabel,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12,
-                              color: IroriColors.textMuted,
+                              color: context.colors.textMuted,
                             ),
                           ),
                         ],
@@ -175,7 +179,7 @@ class _StockItemTileState extends State<StockItemTile> {
               // web の aria-label と同文言。
               tooltip: '${item.name}を買い物リストに追加',
               style: IconButton.styleFrom(
-                foregroundColor: IroriColors.textMuted,
+                foregroundColor: context.colors.textMuted,
               ),
               // 44x44 の最小タッチ領域 (CLAUDE.md)。
               constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
@@ -191,7 +195,9 @@ class _StockItemTileState extends State<StockItemTile> {
                     backgroundColor: IroriColors.error,
                     foregroundColor: Colors.white,
                   )
-                : IconButton.styleFrom(foregroundColor: IroriColors.textMuted),
+                : IconButton.styleFrom(
+                    foregroundColor: context.colors.textMuted,
+                  ),
             // 44x44 の最小タッチ領域 (CLAUDE.md)。
             constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
             padding: EdgeInsets.zero,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../../core/theme/colors.dart';
 import '../../../../core/theme/radii.dart';
 import '../../../../core/theme/shadows.dart';
 import '../../domain/baby_log.dart';
@@ -33,22 +34,22 @@ class BabyTimeline extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 4),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
           child: Text(
             'タイムライン',
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
               letterSpacing: 0.8,
-              color: Color(0xFF475569),
+              color: context.colors.textMuted,
             ),
           ),
         ),
         const SizedBox(height: 4),
         DecoratedBox(
           decoration: BoxDecoration(
-            color: const Color(0x80FFFFFF), // glass surface
+            color: context.colors.surfaceGlass, // glass surface
             borderRadius: BorderRadius.circular(IroriRadii.card),
             boxShadow: IroriShadows.card,
           ),
@@ -78,16 +79,20 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 48),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 48),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(LucideIcons.baby, size: 48, color: Color(0x4D475569)),
-          SizedBox(height: 12),
+          Icon(
+            LucideIcons.baby,
+            size: 48,
+            color: context.colors.textMuted.withValues(alpha: 0.3),
+          ),
+          const SizedBox(height: 12),
           Text(
             'まだ記録がありません',
-            style: TextStyle(fontSize: 14, color: Color(0xFF475569)),
+            style: TextStyle(fontSize: 14, color: context.colors.textMuted),
           ),
         ],
       ),

@@ -249,7 +249,7 @@ class _AddItemFormState extends ConsumerState<AddItemForm> {
                 ),
                 tooltip: _showOptions ? 'オプションを閉じる' : 'オプションを開く',
                 onPressed: () => setState(() => _showOptions = !_showOptions),
-                color: IroriColors.textMuted,
+                color: context.colors.textMuted,
                 constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
                 padding: EdgeInsets.zero,
               ),
@@ -269,7 +269,7 @@ class _AddItemFormState extends ConsumerState<AddItemForm> {
             Divider(
               height: 1,
               thickness: 1,
-              color: IroriColors.border.withValues(alpha: 0.5),
+              color: context.colors.border.withValues(alpha: 0.5),
             ),
             const SizedBox(height: 12),
             Row(
@@ -300,7 +300,7 @@ class _AddItemFormState extends ConsumerState<AddItemForm> {
                                 Icon(
                                   categoryIcon(c),
                                   size: 14,
-                                  color: IroriColors.textMuted,
+                                  color: context.colors.textMuted,
                                 ),
                                 const SizedBox(width: 4),
                                 Flexible(
@@ -409,12 +409,12 @@ class _SuggestionList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: IroriColors.surface,
+      color: context.colors.surface,
       clipBehavior: Clip.antiAlias,
       // web: rounded-lg + ring-1 ring-foreground/10 + bg-popover。
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(IroriRadii.button),
-        side: const BorderSide(color: IroriColors.border),
+        side: BorderSide(color: context.colors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -437,9 +437,9 @@ class _SuggestionList extends StatelessWidget {
                   suggestion.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
-                    color: IroriColors.textPrimary,
+                    color: context.colors.textPrimary,
                   ),
                 ),
               ),
@@ -464,7 +464,7 @@ class _LabeledField extends StatelessWidget {
       children: [
         Text(
           label,
-          style: const TextStyle(fontSize: 12, color: IroriColors.textMuted),
+          style: TextStyle(fontSize: 12, color: context.colors.textMuted),
         ),
         const SizedBox(width: 6),
         Expanded(child: child),

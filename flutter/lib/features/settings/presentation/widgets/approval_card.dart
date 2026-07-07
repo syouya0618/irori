@@ -61,18 +61,18 @@ class _ApprovalCardBody extends StatelessWidget {
           Row(
             children: [
               // web: <ShieldCheck size={18} /> 承認待ち。
-              const Icon(
+              Icon(
                 LucideIcons.shieldCheck,
                 size: 18,
-                color: IroriColors.textPrimary,
+                color: context.colors.textPrimary,
               ),
               const SizedBox(width: 8),
-              const Text(
+              Text(
                 '承認待ち',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: IroriColors.textPrimary,
+                  color: context.colors.textPrimary,
                 ),
               ),
               const Spacer(),
@@ -184,15 +184,15 @@ class _PendingUserRowState extends ConsumerState<_PendingUserRow> {
         Container(
           width: 36,
           height: 36,
-          decoration: const BoxDecoration(
-            color: IroriColors.muted,
+          decoration: BoxDecoration(
+            color: context.colors.muted,
             shape: BoxShape.circle,
           ),
           alignment: Alignment.center,
-          child: const Icon(
+          child: Icon(
             LucideIcons.userPlus,
             size: 16,
-            color: IroriColors.textMuted,
+            color: context.colors.textMuted,
           ),
         ),
         const SizedBox(width: 12),
@@ -204,10 +204,10 @@ class _PendingUserRowState extends ConsumerState<_PendingUserRow> {
                 primaryText,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color: IroriColors.textPrimary,
+                  color: context.colors.textPrimary,
                 ),
               ),
               if (user.displayName.isNotEmpty)
@@ -215,9 +215,9 @@ class _PendingUserRowState extends ConsumerState<_PendingUserRow> {
                   user.email,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
-                    color: IroriColors.textMuted,
+                    color: context.colors.textMuted,
                   ),
                 ),
             ],
@@ -232,13 +232,13 @@ class _PendingUserRowState extends ConsumerState<_PendingUserRow> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
           ),
           child: _approving
-              ? const SizedBox(
+              ? SizedBox(
                   width: 14,
                   height: 14,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
                     valueColor: AlwaysStoppedAnimation<Color>(
-                      IroriColors.surface,
+                      context.colors.surface,
                     ),
                   ),
                 )
