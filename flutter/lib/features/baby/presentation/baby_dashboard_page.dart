@@ -98,8 +98,10 @@ class _DashboardBody extends ConsumerWidget {
         summary.derivedLastSleepEndedAt ?? fallbackLastSleep;
 
     // 週間サマリー (直近7日)。自前 Realtime 購読の AsyncNotifier を `.when` で消費。
-    // loading は無描画 (data 到着でカードが現れる)、error は muted な一行で告知
-    // (今日のタイムライン読み込みは独立しており、週間チャート失敗で page を壊さない)。
+    // loading は無描画 (data 到着でカードが現れる)、error は muted な一行 + 再試行
+    // ボタンで告知する (今日のタイムライン読み込みは独立しており、週間チャート失敗で
+    // page を壊さない)。再試行は provider を invalidate して build() を再実行し、
+    // 週窓を丸ごと refetch + resubscribe する (meals `_ErrorView` と同じ流儀)。
     final weeklyAsync = ref.watch(babyWeeklySummaryProvider);
 
     return ListView(
@@ -137,12 +139,8 @@ class _DashboardBody extends ConsumerWidget {
                   child: BabyWeeklySummary(days: days),
                 ),
           loading: () => const SizedBox.shrink(),
-          error: (error, _) => Padding(
-            padding: const EdgeInsets.only(bottom: 16, left: 4),
-            child: Text(
-              '週間サマリーを読み込めませんでした',
-              style: TextStyle(fontSize: 12, color: context.colors.textMuted),
-            ),
+          error: (error, _) => _WeeklySummaryErrorRow(
+            onRetry: () => ref.invalidate(babyWeeklySummaryProvider),
           ),
         ),
         BabyTimeline(
@@ -152,6 +150,44 @@ class _DashboardBody extends ConsumerWidget {
           },
         ),
       ],
+    );
+  }
+}
+
+/// 週間サマリー error 分岐 (compact)。今日のタイムライン読み込みは独立しており、
+/// 週間チャート失敗で page 全体を壊さないため、muted な一行 + 再試行ボタンで告知する
+/// (stock `_CompactErrorRow` と同形)。再試行は `babyWeeklySummaryProvider` を
+/// invalidate して build() を再実行し、週窓を丸ごと refetch + resubscribe する
+/// (meals `_ErrorView` と同じ流儀)。
+class _WeeklySummaryErrorRow extends StatelessWidget {
+  const _WeeklySummaryErrorRow({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16, left: 4),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline, size: 16, color: IroriColors.error),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '週間サマリーを読み込めませんでした',
+              style: TextStyle(fontSize: 12, color: context.colors.textMuted),
+            ),
+          ),
+          TextButton(
+            onPressed: onRetry,
+            style: TextButton.styleFrom(
+              minimumSize: const Size(44, 44),
+              foregroundColor: context.colors.textPrimary,
+            ),
+            child: const Text('再試行'),
+          ),
+        ],
+      ),
     );
   }
 }
