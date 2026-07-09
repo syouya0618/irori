@@ -40,6 +40,8 @@ vi.mock("sonner", async () => {
 
 import { CalendarView } from "../calendar-view"
 import type { CalendarEventRecord } from "../use-month-events"
+import { createCalendarEvent } from "@/app/(main)/calendar/actions"
+import { toast } from "sonner"
 
 function ev(o: Partial<CalendarEventRecord> & { id: string }): CalendarEventRecord {
   return {
@@ -99,5 +101,30 @@ describe("CalendarView", () => {
     expect(screen.getByRole("button", { name: "閉じる" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "更新" })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "削除" })).not.toBeInTheDocument()
+  })
+
+  it("時刻付き予定で開始時刻を空にして保存してもクラッシュせず toast で弾く", () => {
+    render(<CalendarView {...base} initialEvents={[]} />)
+    fireEvent.click(screen.getByRole("button", { name: "予定を追加" }))
+    fireEvent.change(screen.getByLabelText("タイトル"), {
+      target: { value: "会議" },
+    })
+    // 終日を外して時刻フィールドを出す
+    fireEvent.click(screen.getByRole("checkbox"))
+    // 既定 09:00 を空にする(date/time input は required 無しでクリア可能)
+    const startTime = document.getElementById("cal-start-time") as HTMLInputElement
+    fireEvent.change(startTime, { target: { value: "" } })
+    // 追加(修正前は jstWallClockToIso の RangeError で無反応・保存も toast もなし)
+    fireEvent.click(screen.getByRole("button", { name: "追加", exact: true }))
+    expect(toast.error).toHaveBeenCalledWith("開始時刻を入力してください")
+    expect(createCalendarEvent).not.toHaveBeenCalled()
+  })
+
+  it("月送りで選択日がその月へ寄り、アジェンダが範囲外日を誤表示しない", () => {
+    render(<CalendarView {...base} initialEvents={[]} />)
+    fireEvent.click(screen.getByRole("button", { name: "次の月" }))
+    expect(screen.getByText("2026年8月")).toBeInTheDocument()
+    // アジェンダの対象日が 8月1日 に寄る(今日=7月のままにしない)
+    expect(screen.getByText(/8月1日 の予定/)).toBeInTheDocument()
   })
 })

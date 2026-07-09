@@ -91,6 +91,17 @@ export function CalendarView({
       toast.error("タイトルを入力してください")
       return
     }
+    // 日付/時刻が空だと toRecord の jstWallClockToIso が RangeError を投げ、
+    // event handler の未捕捉例外で保存も toast も出ない無反応状態になる。
+    // date/time input は required 無しでクリア可能なため、ここで明示的に弾く。
+    if (!v.startDate || !v.endDate) {
+      toast.error("日付を入力してください")
+      return
+    }
+    if (!v.isAllDay && !v.startTime) {
+      toast.error("開始時刻を入力してください")
+      return
+    }
     const editingSnapshot = editing
     if (editingSnapshot) {
       // 編集: 楽観置換 → 失敗で復元

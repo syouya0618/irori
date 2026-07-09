@@ -93,10 +93,12 @@ export function useMonthEvents({
     [householdId],
   )
 
-  // 月変更で refetch
+  // 月変更で refetch。選択日もその月の 1 日へ寄せる(表示月とアジェンダの
+  // 対象日が乖離し、範囲外の日を「予定はありません」と誤表示するのを防ぐ)。
   const goToMonth = useCallback(
     (next: string) => {
       setMonthFirst(next)
+      setSelectedDate(monthFirstOf(next))
       void refetch(next)
     },
     [refetch],
@@ -109,11 +111,13 @@ export function useMonthEvents({
     () => goToMonth(shiftMonth(monthFirstRef.current, 1)),
     [goToMonth],
   )
+  // 今日へ: goToMonth と違い選択日は「今日」にする(月の 1 日でなく)。
   const goToday = useCallback(() => {
     const m = currentMonthFirstJst()
+    setMonthFirst(m)
     setSelectedDate(todayJstString())
-    goToMonth(m)
-  }, [goToMonth])
+    void refetch(m)
+  }, [refetch])
 
   // ---- 楽観更新ヘルパ ----
   const upsertOptimistic = useCallback((row: CalendarEventRecord) => {
