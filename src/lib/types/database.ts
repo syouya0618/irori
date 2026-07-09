@@ -41,6 +41,7 @@ export type BabyLogType =
   | "memo"
 export type FeedingType = "breast_left" | "breast_right" | "bottle" | "solid"
 export type DiaperType = "pee" | "poop" | "both"
+export type CalendarEventSource = "native" | "google"
 
 export interface Database {
   public: {
@@ -411,6 +412,55 @@ export interface Database {
           height_cm?: number | null
           duration_min?: number | null
           memo?: string | null
+        }
+        Relationships: []
+      }
+      calendar_events: {
+        Row: {
+          id: string
+          household_id: string
+          title: string
+          memo: string | null
+          is_all_day: boolean
+          start_date: string // YYYY-MM-DD (JST)
+          end_date: string // YYYY-MM-DD (JST, inclusive)
+          start_at: string | null // ISO 8601 (timed only)
+          end_at: string | null
+          source: CalendarEventSource
+          google_event_id: string | null
+          google_calendar_id: string | null
+          etag: string | null
+          ical_uid: string | null
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          household_id: string
+          title: string
+          memo?: string | null
+          is_all_day?: boolean
+          start_date: string
+          end_date: string
+          start_at?: string | null
+          end_at?: string | null
+          source?: CalendarEventSource
+          google_event_id?: string | null
+          google_calendar_id?: string | null
+          etag?: string | null
+          ical_uid?: string | null
+          created_by?: string | null
+        }
+        Update: {
+          title?: string
+          memo?: string | null
+          is_all_day?: boolean
+          start_date?: string
+          end_date?: string
+          start_at?: string | null
+          end_at?: string | null
+          // source / google_* は native 行の編集で触らない(型上も出さない)
         }
         Relationships: []
       }
