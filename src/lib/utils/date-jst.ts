@@ -134,3 +134,13 @@ export function formatTimeJst(iso: string): string {
 export function toJstDateString(iso: string): string {
   return JST_FORMATTER.format(new Date(iso))
 }
+
+/**
+ * JST の壁時計("YYYY-MM-DD" + "HH:MM")を UTC の ISO 8601 文字列へ変換する。
+ * 明示オフセット +09:00 で構築するため TZ 非依存(date-only パースの UTC 罠を回避)。
+ * JST は DST が無く常に +09:00 のため安全。
+ * 不変条件: toJstDateString(jstWallClockToIso(d, t)) === d。
+ */
+export function jstWallClockToIso(dateYmd: string, timeHm: string): string {
+  return new Date(`${dateYmd}T${timeHm}:00+09:00`).toISOString()
+}
