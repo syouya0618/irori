@@ -188,9 +188,9 @@ export function StockFormSheet({
             </div>
           </div>
 
-          {/* 賞味期限 */}
+          {/* 賞味期限（任意） */}
           <div className="flex flex-col gap-2">
-            <Label htmlFor="stock-expires">賞味期限</Label>
+            <Label htmlFor="stock-expires">賞味期限（任意）</Label>
             <Input
               id="stock-expires"
               type="date"
@@ -198,6 +198,9 @@ export function StockFormSheet({
               onChange={(e) => setExpiresAt(e.target.value)}
               className="h-11"
             />
+            <p className="text-xs text-muted-foreground">
+              冷蔵庫の食材など、期限がなければ空欄のままで大丈夫です。
+            </p>
           </div>
         </div>
 

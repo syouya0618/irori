@@ -81,3 +81,25 @@ describe("StockFormSheet の Select trigger 表示 (issue #24)", () => {
     expect(screen.getByText("魚介")).toBeInTheDocument()
   })
 })
+
+describe("StockFormSheet: 賞味期限は任意（冷蔵庫の商品は記載不要）", () => {
+  it("賞味期限が任意であることを UI で明示する", () => {
+    render(
+      <StockFormSheet open={true} onOpenChange={vi.fn()} editingItem={null} />,
+    )
+    // 「任意」の明示 + 空欄でよい旨のヒント（ヒント固有の文言で一意に検証）
+    expect(screen.getByText(/任意/)).toBeInTheDocument()
+    expect(screen.getByText(/空欄のまま/)).toBeInTheDocument()
+  })
+
+  it("賞味期限の日付入力は required 属性を持たない（空欄で保存できる回帰ガード）", () => {
+    render(
+      <StockFormSheet open={true} onOpenChange={vi.fn()} editingItem={null} />,
+    )
+    const dateInput = document.getElementById(
+      "stock-expires",
+    ) as HTMLInputElement | null
+    expect(dateInput).not.toBeNull()
+    expect(dateInput).not.toBeRequired()
+  })
+})
