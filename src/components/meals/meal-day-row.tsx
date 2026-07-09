@@ -2,12 +2,12 @@
 
 import { MealCard, EmptyMealSlot } from "@/components/meals/meal-card"
 import { formatDayHeader, isToday } from "@/components/meals/week-date-utils"
-import { MEAL_TYPE_SHORT_LABELS } from "@/lib/utils/meal-types"
+import {
+  MEAL_TYPE_SHORT_LABELS,
+  WEEK_VIEW_MEAL_TYPES,
+} from "@/lib/utils/meal-types"
 import type { MealWithDetails } from "@/components/meals/use-week-meals"
 import type { MealType, MealReaction } from "@/lib/types/database"
-
-// 週ビューは snack を除く3食のみ表示する
-const WEEK_VIEW_MEAL_TYPES: MealType[] = ["breakfast", "lunch", "dinner"]
 
 interface MealDayRowProps {
   day: Date
