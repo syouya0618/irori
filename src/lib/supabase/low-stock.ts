@@ -37,7 +37,10 @@ export async function autoAddLowStockItems(
         .select("log_type, logged_at, amount_ml")
         .eq("household_id", householdId)
         .in("log_type", ["diaper", "feeding"])
-        .gte("logged_at", `${weekAgo}T00:00:00`)
+        // JST 深夜 0 時。オフセットを省くと Postgres がセッション TZ(UTC)で解釈し
+        // 週窓が 9 時間ずれる(深夜の授乳・おむつ記録が漏れる)。他の日付境界と同じく
+        // +09:00 を明示する。
+        .gte("logged_at", `${weekAgo}T00:00:00+09:00`)
         .limit(500),
       supabase
         .from("stock_items")

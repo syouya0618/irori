@@ -202,7 +202,8 @@ export async function getConsumptionRates(): Promise<{
     .select("log_type, logged_at, amount_ml")
     .eq("household_id", householdId)
     .in("log_type", ["diaper", "feeding"])
-    .gte("logged_at", `${weekAgo}T00:00:00`)
+    // JST 深夜 0 時。オフセットを省くと週窓が 9 時間ずれる(low-stock.ts と同根)。
+    .gte("logged_at", `${weekAgo}T00:00:00+09:00`)
     .order("logged_at", { ascending: false })
 
   if (error) {
