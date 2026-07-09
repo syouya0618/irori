@@ -2,8 +2,7 @@ import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { CalendarView } from "@/components/calendar/calendar-view"
 import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
-import { gridRangeOf } from "@/components/calendar/use-month-events"
-import { currentMonthFirstJst } from "@/lib/domain/calendar-grid"
+import { currentMonthFirstJst, gridRangeOf } from "@/lib/domain/calendar-grid"
 
 export default async function CalendarPage() {
   const { context } = await getAuthContext()

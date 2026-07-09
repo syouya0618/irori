@@ -11,9 +11,10 @@ import {
   buildMonthGrid,
   bucketEventsByDate,
   eventsForDate,
+  gridRangeOf,
   type CalendarEventLite,
 } from "@/lib/domain/calendar-grid"
-import { todayJstString, weekStartMonday, shiftYmd } from "@/lib/utils/date-jst"
+import { todayJstString } from "@/lib/utils/date-jst"
 import type { CalendarEventSource } from "@/lib/types/database"
 
 /** 作成の楽観行に使うローカル擬似 id の prefix。 */
@@ -28,12 +29,6 @@ export interface CalendarEventRecord extends CalendarEventLite {
 
 const EVENT_COLUMNS =
   "id, title, memo, is_all_day, start_date, end_date, start_at, end_at, source"
-
-/** monthFirst からグリッド範囲 [gridStart, gridEnd(42日目)] を求める。 */
-export function gridRangeOf(monthFirst: string): { gridStart: string; gridEnd: string } {
-  const gridStart = weekStartMonday(monthFirstOf(monthFirst)) ?? monthFirstOf(monthFirst)
-  return { gridStart, gridEnd: shiftYmd(gridStart, 41) }
-}
 
 interface UseMonthEventsArgs {
   initialEvents: CalendarEventRecord[]

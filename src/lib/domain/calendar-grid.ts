@@ -28,6 +28,16 @@ export function currentMonthFirstJst(now: Date = new Date()): string {
   return monthFirstOf(todayJstString(now))
 }
 
+/** monthFirst からグリッド範囲 [gridStart, gridEnd(42日目)] を求める。 */
+export function gridRangeOf(monthFirst: string): {
+  gridStart: string
+  gridEnd: string
+} {
+  const first = monthFirstOf(monthFirst)
+  const gridStart = weekStartMonday(first) ?? first
+  return { gridStart, gridEnd: shiftYmd(gridStart, 41) }
+}
+
 /** 月を delta ヶ月シフト(年跨ぎ対応・TZ 非依存の整数演算) */
 export function shiftMonth(monthFirstYmd: string, delta: number): string {
   const [y, m] = monthFirstYmd.split("-").map(Number)
