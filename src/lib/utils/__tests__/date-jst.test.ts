@@ -5,6 +5,8 @@ import {
   daysFromTodayJst,
   weekStartMonday,
   currentWeekRangeJst,
+  jstWallClockToIso,
+  toJstDateString,
 } from "../date-jst"
 
 describe("todayJstString", () => {
@@ -139,5 +141,24 @@ describe("daysFromTodayJst", () => {
     const now = new Date("2026-04-08T15:30:00Z")
     expect(daysFromTodayJst("2026-04-09", now)).toBe(0)
     expect(daysFromTodayJst("2026-04-10", now)).toBe(1)
+  })
+})
+
+describe("jstWallClockToIso", () => {
+  it("JST 壁時計を UTC ISO へ(+09:00 明示)", () => {
+    // JST 20:00 = UTC 11:00
+    expect(jstWallClockToIso("2026-07-09", "20:00")).toBe(
+      "2026-07-09T11:00:00.000Z",
+    )
+  })
+
+  it("不変条件: toJstDateString(jstWallClockToIso(d,t)) === d(境界含む)", () => {
+    for (const [d, t] of [
+      ["2026-07-09", "00:30"], // UTC は前日 15:30 でも JST は 07-09
+      ["2026-07-09", "23:30"],
+      ["2026-12-31", "23:59"],
+    ] as const) {
+      expect(toJstDateString(jstWallClockToIso(d, t))).toBe(d)
+    }
   })
 })
