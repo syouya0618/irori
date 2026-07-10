@@ -15,6 +15,22 @@ interface E2eFixtures {
 }
 
 export const test = base.extend<E2eFixtures>({
+  // 初回ユーザー向けの使い方ツアー(OnboardingTour)は認証後の初回ロードで
+  // 自動的に bottom Sheet を開き、その backdrop が全操作を遮る。E2E は各動線を
+  // 検証したいのでツアーは対象外 — 既読フラグを事前投入して自動表示を抑止する。
+  // キーは src/lib/hooks/use-onboarding-tour.ts の TOUR_SEEN_KEY と一致させる。
+  // ツアー自体の挙動は jsdom テストが担保する。
+  page: async ({ page }, use) => {
+    await page.addInitScript(() => {
+      try {
+        localStorage.setItem("irori:tour-seen:v1", "1")
+      } catch {
+        /* localStorage 不可環境でも E2E を止めない */
+      }
+    })
+    await use(page)
+  },
+
   email: async ({}, use, testInfo) => {
     await use(uniqueEmail(testInfo.workerIndex))
   },
