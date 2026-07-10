@@ -28,6 +28,16 @@ export function currentMonthFirstJst(now: Date = new Date()): string {
   return monthFirstOf(todayJstString(now))
 }
 
+/** monthFirst からグリッド範囲 [gridStart, gridEnd(42日目)] を求める。 */
+export function gridRangeOf(monthFirst: string): {
+  gridStart: string
+  gridEnd: string
+} {
+  const first = monthFirstOf(monthFirst)
+  const gridStart = weekStartMonday(first) ?? first
+  return { gridStart, gridEnd: shiftYmd(gridStart, 41) }
+}
+
 /** 月を delta ヶ月シフト(年跨ぎ対応・TZ 非依存の整数演算) */
 export function shiftMonth(monthFirstYmd: string, delta: number): string {
   const [y, m] = monthFirstYmd.split("-").map(Number)
@@ -87,21 +97,21 @@ export function sortDayEvents(
   return a.title.localeCompare(b.title, "ja")
 }
 
-/** 指定日に重なるイベントを整列して返す */
-export function eventsForDate(
-  events: readonly CalendarEventLite[],
+/** 指定日に重なるイベントを整列して返す(richer な型を保つジェネリック) */
+export function eventsForDate<T extends CalendarEventLite>(
+  events: readonly T[],
   dateYmd: string,
-): CalendarEventLite[] {
+): T[] {
   return events.filter((e) => eventOverlapsDate(e, dateYmd)).sort(sortDayEvents)
 }
 
 /** グリッド範囲 [gridStart, gridEnd] の各日 → イベント配列 の Map */
-export function bucketEventsByDate(
-  events: readonly CalendarEventLite[],
+export function bucketEventsByDate<T extends CalendarEventLite>(
+  events: readonly T[],
   gridStart: string,
   gridEnd: string,
-): Map<string, CalendarEventLite[]> {
-  const map = new Map<string, CalendarEventLite[]>()
+): Map<string, T[]> {
+  const map = new Map<string, T[]>()
   for (let date = gridStart; date <= gridEnd; date = shiftYmd(date, 1)) {
     map.set(date, eventsForDate(events, date))
   }
