@@ -115,7 +115,8 @@ describe("CalendarView", () => {
     const startTime = document.getElementById("cal-start-time") as HTMLInputElement
     fireEvent.change(startTime, { target: { value: "" } })
     // 追加(修正前は jstWallClockToIso の RangeError で無反応・保存も toast もなし)
-    fireEvent.click(screen.getByRole("button", { name: "追加", exact: true }))
+    // testing-library の name 文字列は既定で完全一致のため FAB「予定を追加」とは衝突しない
+    fireEvent.click(screen.getByRole("button", { name: "追加" }))
     expect(toast.error).toHaveBeenCalledWith("開始時刻を入力してください")
     expect(createCalendarEvent).not.toHaveBeenCalled()
   })
