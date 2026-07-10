@@ -114,13 +114,27 @@ export function FeedingTimer({
     setIsSaving(true)
 
     const duration = clampFeedingDuration(elapsedMinutes)
-    const result = await recordFeeding({
-      feedingType,
-      durationMin: duration,
-    })
-
-    isSavingRef.current = false
-    setIsSaving(false)
+    let result: Awaited<ReturnType<typeof recordFeeding>>
+    try {
+      result = await recordFeeding({
+        feedingType,
+        durationMin: duration,
+      })
+    } catch (err) {
+      // recordFeeding は通信断で reject しうる。握り潰さず記録し、再試行を促す。
+      console.error("[feeding-timer] recordFeeding が例外を投げました", {
+        message: err instanceof Error ? err.message : String(err),
+        feedingType,
+        durationMin: duration,
+      })
+      toast.error("授乳の記録に失敗しました。通信状況を確認してもう一度お試しください。")
+      return
+    } finally {
+      // throw / 正常のいずれの経路でも必ず解除する（永久 disabled の防止）。
+      // recordFeeding は redirect しないため finally で戻して問題ない。
+      isSavingRef.current = false
+      setIsSaving(false)
+    }
 
     if (result.error) {
       toast.error(result.error)

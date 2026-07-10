@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { unstable_rethrow } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -23,12 +24,24 @@ export function SetupForm() {
 
     setIsLoading(true)
 
-    // 成功時: server action 内で redirect() が throw され、ここには戻らない
-    // 失敗時: { error: string } が返る
-    const result = await createHousehold(trimmedName)
+    try {
+      // 成功時: server action 内で redirect() が throw され、ここには戻らない
+      // 失敗時: { error: string } が返る
+      const result = await createHousehold(trimmedName)
 
-    if (result?.error) {
-      toast.error(result.error)
+      if (result?.error) {
+        toast.error(result.error)
+        setIsLoading(false)
+      }
+    } catch (err) {
+      // catch 先頭で必ず: redirect() の内部エラーはフレームワークへ再送出する。
+      // 通常エラー（通信断など）はここを素通りし、下で握らずに拾う。
+      unstable_rethrow(err)
+      console.error("[setup] createHousehold が例外を投げました", {
+        message: err instanceof Error ? err.message : String(err),
+      })
+      toast.error("世帯の作成に失敗しました。通信状況を確認してください。")
+      // finally ではなくここで戻す（redirect 成功時はスピナーを残す）
       setIsLoading(false)
     }
   }

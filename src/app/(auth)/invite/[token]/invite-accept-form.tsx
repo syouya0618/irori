@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { unstable_rethrow } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { toast } from "sonner"
 import { Loader2, Users } from "lucide-react"
@@ -29,12 +30,22 @@ export function InviteAcceptForm({
   async function handleAccept() {
     setIsLoading(true)
 
-    // 成功時: server action 内で redirect() が throw され、ここには戻らない
-    // 失敗時: { error: string } が返る
-    const result = await acceptInvitation(invitationId)
+    try {
+      // 成功時: server action 内で redirect() が throw され、ここには戻らない
+      // 失敗時: { error: string } が返る
+      const result = await acceptInvitation(invitationId)
 
-    if (result?.error) {
-      toast.error(result.error)
+      if (result?.error) {
+        toast.error(result.error)
+        setIsLoading(false)
+      }
+    } catch (err) {
+      // catch 先頭で必ず: redirect() の内部エラーはフレームワークへ再送出する。
+      unstable_rethrow(err)
+      console.error("[invite] acceptInvitation が例外を投げました", {
+        message: err instanceof Error ? err.message : String(err),
+      })
+      toast.error("参加に失敗しました。通信状況を確認してください。")
       setIsLoading(false)
     }
   }
