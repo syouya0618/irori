@@ -27,6 +27,7 @@ import { AutoStockCategoriesCard } from "@/components/settings/auto-stock-card"
 import { BabyProfileCard } from "@/components/settings/baby-profile-card"
 import { ExportCard } from "@/components/settings/export-card"
 import { ThemeCard } from "@/components/settings/theme-card"
+import { HelpCard } from "@/components/settings/help-card"
 import type { HouseholdRole } from "@/lib/types/database"
 
 interface SettingsContentProps {
@@ -125,6 +126,9 @@ export function SettingsContent({
 
       {/* テーマ */}
       <ThemeCard />
+
+      {/* 使い方ツアー再表示 */}
+      <HelpCard />
 
       {/* 招待 */}
       <InviteCard />

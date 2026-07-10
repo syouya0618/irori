@@ -2,6 +2,7 @@ import { redirect } from "next/navigation"
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { BottomNav } from "@/components/common/bottom-nav"
 import { CacheUserGuard } from "@/components/common/cache-user-guard"
+import { OnboardingTour } from "@/components/common/onboarding-tour"
 
 export default async function MainLayout({
   children,
@@ -23,6 +24,8 @@ export default async function MainLayout({
       <CacheUserGuard userId={context.userId} />
       <main className="mx-auto max-w-lg pb-20">{children}</main>
       <BottomNav />
+      {/* 初回ユーザーに使い方ツアーを表示（既読は localStorage 判定・自己 gating） */}
+      <OnboardingTour />
     </div>
   )
 }
