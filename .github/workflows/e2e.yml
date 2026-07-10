@@ -44,6 +44,13 @@ jobs:
         # (-x の有効値は `supabase start --help` 参照。analytics = Logflare)
         run: supabase start -x studio,imgproxy,edge-runtime,vector,analytics
 
+      - name: Run pgTAP database tests (RLS/CHECK 回帰)
+        # supabase start がマイグレーション適用済みの DB に対し supabase/tests/*.sql を
+        # pgTAP で実行する(pgtap 拡張は supabase test db が自動投入)。E2E はブラウザ経路で
+        # RLS を"間接的に"通すだけなので、純ポリシー(authenticated への直 DML)の回帰は
+        # ここで直接検証する。build 前に置き、DB 分離の破れを早期に赤で止める。
+        run: supabase test db
+
       - name: Generate .env.e2e
         run: ./scripts/e2e-env.sh
 
