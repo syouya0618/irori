@@ -9,18 +9,18 @@ import {
 
 import { ReceiptEntrySheet } from "../receipt-entry-sheet"
 import { addReceiptItemsToStock } from "@/app/(main)/stock/actions"
-import { scanReceiptWithTesseract } from "@/lib/ocr/scan-receipt"
+import { scanReceipt } from "@/lib/ocr/scan-receipt"
 
 vi.mock("@/app/(main)/stock/actions", () => ({
   addReceiptItemsToStock: vi.fn(),
 }))
-// 実 WASM OCR は browser 専用ゆえ、client 配線の検証のため provider をモックする
+// 実 OCR（WASM / クラウド）は browser/server 専用ゆえ、client 配線の検証のためモックする
 vi.mock("@/lib/ocr/scan-receipt", () => ({
-  scanReceiptWithTesseract: vi.fn(),
+  scanReceipt: vi.fn(),
 }))
 
 const mockedAdd = vi.mocked(addReceiptItemsToStock)
-const mockedScan = vi.mocked(scanReceiptWithTesseract)
+const mockedScan = vi.mocked(scanReceipt)
 
 beforeEach(() => {
   mockedAdd.mockReset()

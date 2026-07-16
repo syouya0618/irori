@@ -24,7 +24,8 @@ import { addReceiptItemsToStock } from "@/app/(main)/stock/actions"
 import { allCategories } from "@/lib/utils/categories"
 import { guessItemCategory } from "@/lib/domain/item-category-guess"
 import { scannedItemsToDrafts, type ReceiptDraftItem } from "@/lib/domain/receipt"
-import { scanReceiptWithTesseract } from "@/lib/ocr/scan-receipt"
+import { scanReceipt } from "@/lib/ocr/scan-receipt"
+import { useOcrProvider } from "@/lib/hooks/use-ocr-provider"
 import type { ItemCategory } from "@/lib/types/database"
 
 interface DraftRow {
@@ -56,6 +57,7 @@ export function ReceiptEntrySheet({ open, onOpenChange }: ReceiptEntrySheetProps
   const [scanning, setScanning] = useState(false)
   const [scanProgress, setScanProgress] = useState(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [ocrProvider] = useOcrProvider()
 
   // open が閉→開に変わったら入力をリセット
   const [prevOpen, setPrevOpen] = useState(open)
@@ -69,9 +71,11 @@ export function ReceiptEntrySheet({ open, onOpenChange }: ReceiptEntrySheetProps
   }
 
   const handleScanFile = (file: File) => {
+    // manual の時は OCR ボタンを出さないが、防御的にガード
+    const provider = ocrProvider === "manual" ? "tesseract" : ocrProvider
     setScanning(true)
     setScanProgress(0)
-    scanReceiptWithTesseract(file, (p) => {
+    scanReceipt(file, provider, (p) => {
       if (p.status === "recognizing text") {
         setScanProgress(Math.round(p.progress * 100))
       }
@@ -182,7 +186,7 @@ export function ReceiptEntrySheet({ open, onOpenChange }: ReceiptEntrySheetProps
           </SheetDescription>
         </SheetHeader>
 
-        {/* 端末内 OCR で写真から読み取る（外部送信なし） */}
+        {/* OCR で写真から読み取る（方式は設定で切替。manual の時は非表示） */}
         <input
           ref={fileInputRef}
           type="file"
@@ -195,25 +199,29 @@ export function ReceiptEntrySheet({ open, onOpenChange }: ReceiptEntrySheetProps
             e.target.value = "" // 同じ写真を再選択できるようクリア
           }}
         />
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={scanning || isPending}
-          className="mt-3 w-full cursor-pointer"
-        >
-          {scanning ? (
-            <>
-              <Loader2 size={16} className="animate-spin" />
-              読み取り中… {scanProgress > 0 ? `${scanProgress}%` : ""}
-            </>
-          ) : (
-            <>
-              <Camera size={16} />
-              レシートを撮影して読み取る（端末内・送信なし）
-            </>
-          )}
-        </Button>
+        {ocrProvider !== "manual" && (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={scanning || isPending}
+            className="mt-3 w-full cursor-pointer"
+          >
+            {scanning ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                読み取り中… {scanProgress > 0 ? `${scanProgress}%` : ""}
+              </>
+            ) : (
+              <>
+                <Camera size={16} />
+                {ocrProvider === "google-vision"
+                  ? "レシートを撮影して読み取る（クラウド）"
+                  : "レシートを撮影して読み取る（端末内・送信なし）"}
+              </>
+            )}
+          </Button>
+        )}
 
         <div className="flex flex-col gap-2 py-4">
           {rows.map((row, index) => (

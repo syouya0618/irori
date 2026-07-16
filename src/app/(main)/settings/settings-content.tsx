@@ -24,6 +24,7 @@ import { InviteCard } from "@/components/settings/invite-card"
 import { ApprovalCard, type PendingUser } from "@/components/settings/approval-card"
 import { DefaultPageCard } from "@/components/settings/default-page-card"
 import { AutoStockCategoriesCard } from "@/components/settings/auto-stock-card"
+import { OcrProviderCard } from "@/components/settings/ocr-provider-card"
 import { BabyProfileCard } from "@/components/settings/baby-profile-card"
 import { ExportCard } from "@/components/settings/export-card"
 import { ThemeCard } from "@/components/settings/theme-card"
@@ -117,6 +118,9 @@ export function SettingsContent({
 
       {/* 在庫自動追加 */}
       <AutoStockCategoriesCard initialCategories={autoStockCategories} />
+
+      {/* レシート読み取り方式 */}
+      <OcrProviderCard />
 
       {/* 赤ちゃん情報 */}
       <BabyProfileCard initialProfile={babyProfile} />
