@@ -21,6 +21,7 @@ export default async function BabyPage() {
     { data: lastSleepData, error: lastSleepError },
     { data: weeklyLogs, error: weeklyLogsError },
     { data: household, error: householdError },
+    { data: growthLogs, error: growthLogsError },
   ] = await Promise.all([
       supabase
         .from("baby_logs")
@@ -56,6 +57,15 @@ export default async function BabyPage() {
         .select("baby_name, baby_birth_date")
         .eq("id", householdId)
         .maybeSingle(),
+      // 成長曲線用: 成長ログを古い順に全件（低頻度データ・1000 未満想定、順序を昇順で決定化）
+      supabase
+        .from("baby_logs")
+        .select(
+          "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, memo, created_at",
+        )
+        .eq("household_id", householdId)
+        .eq("log_type", "growth")
+        .order("logged_at", { ascending: true }),
     ])
 
   if (logsError) {
@@ -82,10 +92,17 @@ export default async function BabyPage() {
     })
   }
 
+  if (growthLogsError) {
+    logSupabaseError("baby", "growth logs lookup failed", growthLogsError, {
+      householdId,
+    })
+  }
+
   return (
     <BabyDashboard
       initialLogs={logs ?? []}
       initialWeeklyLogs={weeklyLogs ?? []}
+      initialGrowthLogs={growthLogs ?? []}
       householdId={householdId}
       userId={userId}
       initialDate={todayJst}

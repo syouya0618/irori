@@ -229,6 +229,37 @@ export function calculateAge(birthDate: string, referenceDate: string): string {
   return `${years}歳${remainMonths}ヶ月`
 }
 
+export interface GrowthPoint {
+  date: string
+  value: number
+}
+
+export interface GrowthSeries {
+  /** 体重 (g) の時系列（logged_at 昇順） */
+  weight: GrowthPoint[]
+  /** 身長 (cm) の時系列（logged_at 昇順） */
+  height: GrowthPoint[]
+}
+
+/**
+ * 成長曲線用に、体重(g)と身長(cm)を独立した時系列に分離する。
+ * 体重のみ・身長のみのログはそれぞれの系列にのみ入る。
+ */
+export function buildGrowthSeries(
+  logs: AggregationLogInput[],
+  startDate: string,
+  endDate: string,
+): GrowthSeries {
+  const records = extractGrowth(logs, startDate, endDate)
+  const weight: GrowthPoint[] = []
+  const height: GrowthPoint[] = []
+  for (const r of records) {
+    if (r.weightG != null) weight.push({ date: r.date, value: r.weightG })
+    if (r.heightCm != null) height.push({ date: r.date, value: r.heightCm })
+  }
+  return { weight, height }
+}
+
 export interface TodayCounts {
   feedingCount: number
   diaperCount: number

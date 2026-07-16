@@ -8,6 +8,7 @@ import {
   calculateAge,
   getBabyAge,
   summarizeTodayCounts,
+  buildGrowthSeries,
   type AggregationLogInput,
 } from "../baby-log-aggregation"
 import type { BabyLogType } from "@/lib/types/database"
@@ -360,5 +361,47 @@ describe("summarizeTodayCounts", () => {
       sleepCount: 0,
       totalSleepMinutes: 0,
     })
+  })
+})
+
+// ─── buildGrowthSeries（成長曲線）────────────────────────
+
+describe("buildGrowthSeries", () => {
+  it("空ログ → 空系列", () => {
+    expect(buildGrowthSeries([], START, END)).toEqual({ weight: [], height: [] })
+  })
+
+  it("体重と身長を別系列に分離し、logged_at 昇順で並べる", () => {
+    const logs = [
+      mkLog("growth", 1, { weight_g: 5200, height_cm: 58.0 }),
+      mkLog("growth", 48, { weight_g: 5000, height_cm: null }),
+    ]
+    const series = buildGrowthSeries(logs, START, END)
+    // 古い順（48h前 → 1h前）
+    expect(series.weight).toEqual([
+      { date: "2026-04-09", value: 5000 },
+      { date: "2026-04-11", value: 5200 },
+    ])
+    expect(series.height).toEqual([{ date: "2026-04-11", value: 58.0 }])
+  })
+
+  it("体重のみ / 身長のみのログはそれぞれの系列にだけ入る", () => {
+    const logs = [
+      mkLog("growth", 2, { weight_g: 6000 }),
+      mkLog("growth", 1, { height_cm: 62.5 }),
+    ]
+    const series = buildGrowthSeries(logs, START, END)
+    expect(series.weight).toEqual([{ date: "2026-04-11", value: 6000 }])
+    expect(series.height).toEqual([{ date: "2026-04-11", value: 62.5 }])
+  })
+
+  it("growth 以外のログ種別は無視する", () => {
+    const logs = [
+      mkLog("feeding", 1, { feeding_type: "bottle", amount_ml: 100 }),
+      mkLog("growth", 1, { weight_g: 5500 }),
+    ]
+    const series = buildGrowthSeries(logs, START, END)
+    expect(series.weight).toEqual([{ date: "2026-04-11", value: 5500 }])
+    expect(series.height).toEqual([])
   })
 })
