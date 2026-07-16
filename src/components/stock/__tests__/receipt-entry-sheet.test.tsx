@@ -9,15 +9,22 @@ import {
 
 import { ReceiptEntrySheet } from "../receipt-entry-sheet"
 import { addReceiptItemsToStock } from "@/app/(main)/stock/actions"
+import { scanReceiptWithTesseract } from "@/lib/ocr/scan-receipt"
 
 vi.mock("@/app/(main)/stock/actions", () => ({
   addReceiptItemsToStock: vi.fn(),
 }))
+// 実 WASM OCR は browser 専用ゆえ、client 配線の検証のため provider をモックする
+vi.mock("@/lib/ocr/scan-receipt", () => ({
+  scanReceiptWithTesseract: vi.fn(),
+}))
 
 const mockedAdd = vi.mocked(addReceiptItemsToStock)
+const mockedScan = vi.mocked(scanReceiptWithTesseract)
 
 beforeEach(() => {
   mockedAdd.mockReset()
+  mockedScan.mockReset()
 })
 afterEach(cleanup)
 
@@ -65,5 +72,26 @@ describe("ReceiptEntrySheet", () => {
     render(<ReceiptEntrySheet open onOpenChange={() => {}} />)
     fireEvent.click(screen.getByRole("button", { name: /まとめて追加/ }))
     expect(mockedAdd).not.toHaveBeenCalled()
+  })
+
+  it("写真を選ぶと端末内OCRの結果が入力行に反映される", async () => {
+    mockedScan.mockResolvedValue([
+      { name: "牛乳", quantity: null },
+      { name: "トマト", quantity: 3 },
+    ])
+    render(<ReceiptEntrySheet open onOpenChange={() => {}} />)
+    // Sheet は portal で body 直下に描画されるため document から探す
+    const fileInput = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement
+    const file = new File(["dummy"], "receipt.jpg", { type: "image/jpeg" })
+    fireEvent.change(fileInput, { target: { files: [file] } })
+
+    await waitFor(() => expect(mockedScan).toHaveBeenCalledTimes(1))
+    await waitFor(() => {
+      const values = nameInputs().map((el) => (el as HTMLInputElement).value)
+      expect(values).toContain("牛乳")
+      expect(values).toContain("トマト")
+    })
   })
 })

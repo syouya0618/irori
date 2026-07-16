@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition } from "react"
+import { useRef, useState, useTransition } from "react"
 import {
   Sheet,
   SheetContent,
@@ -18,12 +18,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Loader2, Plus, Trash2, ReceiptText } from "lucide-react"
+import { Loader2, Plus, Trash2, ReceiptText, Camera } from "lucide-react"
 import { toast } from "sonner"
 import { addReceiptItemsToStock } from "@/app/(main)/stock/actions"
 import { allCategories } from "@/lib/utils/categories"
 import { guessItemCategory } from "@/lib/domain/item-category-guess"
-import type { ReceiptDraftItem } from "@/lib/domain/receipt"
+import { scannedItemsToDrafts, type ReceiptDraftItem } from "@/lib/domain/receipt"
+import { scanReceiptWithTesseract } from "@/lib/ocr/scan-receipt"
 import type { ItemCategory } from "@/lib/types/database"
 
 interface DraftRow {
@@ -52,6 +53,9 @@ function nextRowId(rows: DraftRow[]): number {
 export function ReceiptEntrySheet({ open, onOpenChange }: ReceiptEntrySheetProps) {
   const [rows, setRows] = useState<DraftRow[]>(() => [blankRow(0)])
   const [isPending, startTransition] = useTransition()
+  const [scanning, setScanning] = useState(false)
+  const [scanProgress, setScanProgress] = useState(0)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // open が閉→開に変わったら入力をリセット
   const [prevOpen, setPrevOpen] = useState(open)
@@ -59,7 +63,43 @@ export function ReceiptEntrySheet({ open, onOpenChange }: ReceiptEntrySheetProps
     setPrevOpen(open)
     if (open) {
       setRows([blankRow(0)])
+      setScanning(false)
+      setScanProgress(0)
     }
+  }
+
+  const handleScanFile = (file: File) => {
+    setScanning(true)
+    setScanProgress(0)
+    scanReceiptWithTesseract(file, (p) => {
+      if (p.status === "recognizing text") {
+        setScanProgress(Math.round(p.progress * 100))
+      }
+    })
+      .then((scanned) => {
+        const drafts = scannedItemsToDrafts(scanned)
+        if (drafts.length === 0) {
+          toast.error("レシートから商品を読み取れませんでした。手入力してください")
+          return
+        }
+        setRows((prev) => {
+          const filled = prev.filter((r) => r.name.trim() !== "")
+          let id = filled.reduce((max, r) => Math.max(max, r.id), 0) + 1
+          const scannedRows: DraftRow[] = drafts.map((d) => ({
+            id: id++,
+            name: d.name,
+            category: d.category,
+            quantity: String(d.quantity),
+            categoryTouched: false,
+          }))
+          return filled.length > 0 ? [...filled, ...scannedRows] : scannedRows
+        })
+        toast.success(`${drafts.length}件を読み取りました。確認して追加してください`)
+      })
+      .catch(() => {
+        toast.error("読み取りに失敗しました")
+      })
+      .finally(() => setScanning(false))
   }
 
   const filledCount = rows.filter((r) => r.name.trim() !== "").length
@@ -141,6 +181,39 @@ export function ReceiptEntrySheet({ open, onOpenChange }: ReceiptEntrySheetProps
             買ったものを続けて入力できます。カテゴリは名前から自動で推測します（変更可）。
           </SheetDescription>
         </SheetHeader>
+
+        {/* 端末内 OCR で写真から読み取る（外部送信なし） */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) handleScanFile(file)
+            e.target.value = "" // 同じ写真を再選択できるようクリア
+          }}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={scanning || isPending}
+          className="mt-3 w-full cursor-pointer"
+        >
+          {scanning ? (
+            <>
+              <Loader2 size={16} className="animate-spin" />
+              読み取り中… {scanProgress > 0 ? `${scanProgress}%` : ""}
+            </>
+          ) : (
+            <>
+              <Camera size={16} />
+              レシートを撮影して読み取る（端末内・送信なし）
+            </>
+          )}
+        </Button>
 
         <div className="flex flex-col gap-2 py-4">
           {rows.map((row, index) => (

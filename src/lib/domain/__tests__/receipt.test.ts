@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest"
-import { sanitizeReceiptItems, type ReceiptDraftItem } from "../receipt"
+import {
+  sanitizeReceiptItems,
+  scannedItemsToDrafts,
+  type ReceiptDraftItem,
+} from "../receipt"
 
 function draft(overrides: Partial<ReceiptDraftItem> = {}): ReceiptDraftItem {
   return { name: "トマト", category: "vegetable", quantity: 1, ...overrides }
@@ -41,5 +45,22 @@ describe("sanitizeReceiptItems", () => {
     const long = "あ".repeat(150)
     const result = sanitizeReceiptItems([draft({ name: long })])
     expect(result[0].name).toHaveLength(100)
+  })
+})
+
+describe("scannedItemsToDrafts", () => {
+  it("OCR 結果の品名からカテゴリを推測し、数量は null なら 1 にする", () => {
+    const drafts = scannedItemsToDrafts([
+      { name: "牛乳", quantity: null },
+      { name: "トマト", quantity: 3 },
+    ])
+    expect(drafts).toEqual([
+      { name: "牛乳", category: "dairy", quantity: 1 },
+      { name: "トマト", category: "vegetable", quantity: 3 },
+    ])
+  })
+
+  it("空配列 → 空配列", () => {
+    expect(scannedItemsToDrafts([])).toEqual([])
   })
 })

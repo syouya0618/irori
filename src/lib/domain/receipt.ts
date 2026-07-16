@@ -1,5 +1,7 @@
 import type { ItemCategory } from "@/lib/types/database"
 import { categoryDisplayOrder } from "@/lib/utils/categories"
+import { guessItemCategory } from "./item-category-guess"
+import type { ScannedReceiptItem } from "./receipt-ocr-parse"
 
 const MAX_NAME_LENGTH = 100
 
@@ -42,4 +44,18 @@ export function sanitizeReceiptItems(items: ReceiptDraftItem[]): ReceiptItem[] {
     result.push({ name, category, quantity })
   }
   return result
+}
+
+/**
+ * OCR で抽出した品名候補を、カテゴリ推測込みの入力ドラフト行に変換する。
+ * 数量が不明（null）なら 1 とする。UI で確認・修正する前提。
+ */
+export function scannedItemsToDrafts(
+  items: ScannedReceiptItem[],
+): ReceiptDraftItem[] {
+  return items.map((item) => ({
+    name: item.name,
+    category: guessItemCategory(item.name),
+    quantity: item.quantity ?? 1,
+  }))
 }
