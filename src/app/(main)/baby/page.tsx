@@ -15,11 +15,12 @@ export default async function BabyPage() {
   const tomorrowStart = `${tomorrowJst}T00:00:00+09:00`
   const weeklyStart = `${weeklyStartJst}T00:00:00+09:00`
 
-  // 今日のログ + 最新の完了済み睡眠 + 週間サマリー用ログを並列取得
+  // 今日のログ + 最新の完了済み睡眠 + 週間サマリー用ログ + 赤ちゃんプロフィールを並列取得
   const [
     { data: logs, error: logsError },
     { data: lastSleepData, error: lastSleepError },
     { data: weeklyLogs, error: weeklyLogsError },
+    { data: household, error: householdError },
   ] = await Promise.all([
       supabase
         .from("baby_logs")
@@ -50,6 +51,11 @@ export default async function BabyPage() {
           `logged_at.gte.${weeklyStart},and(log_type.eq.sleep,ended_at.gte.${weeklyStart})`,
         )
         .order("logged_at", { ascending: false }),
+      supabase
+        .from("households")
+        .select("baby_name, baby_birth_date")
+        .eq("id", householdId)
+        .maybeSingle(),
     ])
 
   if (logsError) {
@@ -70,6 +76,12 @@ export default async function BabyPage() {
     })
   }
 
+  if (householdError) {
+    logSupabaseError("baby", "household profile lookup failed", householdError, {
+      householdId,
+    })
+  }
+
   return (
     <BabyDashboard
       initialLogs={logs ?? []}
@@ -78,6 +90,8 @@ export default async function BabyPage() {
       userId={userId}
       initialDate={todayJst}
       lastSleepEndedAt={lastSleepData?.ended_at ?? null}
+      babyName={household?.baby_name ?? null}
+      babyBirthDate={household?.baby_birth_date ?? null}
     />
   )
 }

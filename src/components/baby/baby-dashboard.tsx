@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { logRealtimeStatus, logRealtimeEvent } from "@/lib/supabase/realtime-log"
+import { BabyAgeHeader } from "./baby-age-header"
 import { BabyDateNav } from "./baby-date-nav"
 import { BabySummaryBar } from "./baby-summary-bar"
 import { BabyQuickActions } from "./baby-quick-actions"
@@ -13,6 +14,7 @@ import { BabyWeeklySummary } from "./weekly-summary/baby-weekly-summary"
 import { useNow } from "@/lib/hooks/use-now"
 import { todayJstString, toJstDateString, shiftYmd } from "@/lib/utils/date-jst"
 import { buildBabyWeeklySummary } from "@/lib/domain/baby-weekly-summary"
+import { summarizeTodayCounts } from "@/lib/domain/baby-log-aggregation"
 import type { BabyLogData } from "@/lib/types/baby"
 import type { BabyLogType, FeedingType } from "@/lib/types/database"
 
@@ -23,6 +25,8 @@ interface BabyDashboardProps {
   userId: string
   initialDate: string
   lastSleepEndedAt: string | null
+  babyName: string | null
+  babyBirthDate: string | null
 }
 
 export function BabyDashboard({
@@ -31,6 +35,8 @@ export function BabyDashboard({
   householdId,
   initialDate,
   lastSleepEndedAt,
+  babyName,
+  babyBirthDate,
 }: BabyDashboardProps) {
   const [logs, setLogs] = useState<BabyLogData[]>(initialLogs)
   const [weeklyLogs, setWeeklyLogs] =
@@ -183,12 +189,11 @@ export function BabyDashboard({
   }, [selectedDate, householdId])
 
   // Derive summary in a single pass
-  const { activeSleep, lastFeeding, diaperCount, derivedLastSleepEndedAt } =
+  const { activeSleep, lastFeeding, derivedLastSleepEndedAt } =
     useMemo(() => {
       let activeSleep: BabyLogData | undefined
       let lastFeeding: BabyLogData | undefined
       let derivedLastSleepEndedAt: string | null = null
-      let diaperCount = 0
       for (const l of logs) {
         if (!activeSleep && l.log_type === "sleep" && !l.ended_at)
           activeSleep = l
@@ -199,15 +204,15 @@ export function BabyDashboard({
         )
           derivedLastSleepEndedAt = l.ended_at
         if (!lastFeeding && l.log_type === "feeding") lastFeeding = l
-        if (l.log_type === "diaper") diaperCount++
       }
       return {
         activeSleep: activeSleep ?? null,
         lastFeeding,
-        diaperCount,
         derivedLastSleepEndedAt,
       }
     }, [logs])
+
+  const todayCounts = useMemo(() => summarizeTodayCounts(logs), [logs])
 
   // Today's logs-derived value takes priority (reactive to Realtime),
   // server prop is fallback for cross-day wakeup
@@ -238,6 +243,12 @@ export function BabyDashboard({
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-12 pb-8">
+      <BabyAgeHeader
+        babyName={babyName}
+        babyBirthDate={babyBirthDate}
+        referenceDate={today}
+      />
+
       <BabyDateNav
         selectedDate={selectedDate}
         onDateChange={setSelectedDate}
@@ -245,10 +256,10 @@ export function BabyDashboard({
 
       <BabySummaryBar
         lastFeeding={lastFeeding ?? null}
-        diaperCount={diaperCount}
         activeSleep={activeSleep}
         lastSleepEndedAt={effectiveLastSleepEndedAt}
         now={now}
+        todayCounts={todayCounts}
       />
 
       {isToday && (

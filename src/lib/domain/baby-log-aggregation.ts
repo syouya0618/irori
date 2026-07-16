@@ -1,4 +1,4 @@
-import { toJstDateString, formatTimeJst } from "@/lib/utils/date-jst"
+import { toJstDateString, formatTimeJst, daysBetweenYmd } from "@/lib/utils/date-jst"
 import { minutesBetween } from "@/lib/utils/baby-log-labels"
 import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
 
@@ -227,4 +227,102 @@ export function calculateAge(birthDate: string, referenceDate: string): string {
   if (years === 0) return `${remainMonths}ヶ月`
   if (remainMonths === 0) return `${years}歳`
   return `${years}歳${remainMonths}ヶ月`
+}
+
+export interface TodayCounts {
+  feedingCount: number
+  diaperCount: number
+  sleepCount: number
+  totalSleepMinutes: number
+}
+
+/**
+ * 「今日の状況ひと目化」用の集計。
+ * 入力は呼び出し側で当日分にフィルタ済みのログ（日付フィルタは行わない）。
+ * 睡眠は ended_at のある完了セッションのみを回数・合計時間に含める。
+ */
+export function summarizeTodayCounts(
+  logs: Pick<AggregationLogInput, "log_type" | "logged_at" | "ended_at">[],
+): TodayCounts {
+  let feedingCount = 0
+  let diaperCount = 0
+  let sleepCount = 0
+  let totalSleepMinutes = 0
+
+  for (const log of logs) {
+    if (log.log_type === "feeding") {
+      feedingCount++
+    } else if (log.log_type === "diaper") {
+      diaperCount++
+    } else if (log.log_type === "sleep" && log.ended_at) {
+      sleepCount++
+      totalSleepMinutes += minutesBetween(log.logged_at, log.ended_at)
+    }
+  }
+
+  return { feedingCount, diaperCount, sleepCount, totalSleepMinutes }
+}
+
+export interface BabyAge {
+  years: number
+  months: number
+  days: number
+  label: string
+}
+
+const YMD_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+
+/** その年月の日数を返す（TZ 非依存）。month は 1-12。 */
+function daysInMonth(year: number, month: number): number {
+  // Date.UTC(y, month, 0) は「month 月の 0 日目」= 前月末日ゆえ month の日数
+  return new Date(Date.UTC(year, month, 0)).getUTCDate()
+}
+
+/**
+ * 生年月日から「生後○ヶ月○日 / ○歳○ヶ月」を暦計算で求める。
+ * 日数の借りは実日付演算（月末クランプ）で正しく処理する。
+ * @param birthDate "YYYY-MM-DD"
+ * @param referenceDate "YYYY-MM-DD"
+ * @returns 不正な日付文字列なら null。未来の生年月日は 生後0日 にフォールバック。
+ */
+export function getBabyAge(
+  birthDate: string,
+  referenceDate: string,
+): BabyAge | null {
+  if (!YMD_PATTERN.test(birthDate) || !YMD_PATTERN.test(referenceDate)) {
+    return null
+  }
+
+  const [by, bm, bd] = birthDate.split("-").map(Number)
+  const [ry, rm, rd] = referenceDate.split("-").map(Number)
+
+  // 未来の生年月日は 生後0日 に丸める（DB の CHECK 前提だが多層防御）
+  if (birthDate > referenceDate) {
+    return { years: 0, months: 0, days: 0, label: "生後0日" }
+  }
+
+  let monthsTotal = (ry - by) * 12 + (rm - bm)
+  if (rd < bd) monthsTotal -= 1
+
+  // 誕生日から monthsTotal ヶ月後の「直近の月齢記念日」を月末クランプで求める
+  const anchorMonthIndex = bm - 1 + monthsTotal
+  const anchorYear = by + Math.floor(anchorMonthIndex / 12)
+  const anchorMonth = (anchorMonthIndex % 12) + 1
+  const anchorDay = Math.min(bd, daysInMonth(anchorYear, anchorMonth))
+  const anchorYmd = `${anchorYear}-${String(anchorMonth).padStart(2, "0")}-${String(anchorDay).padStart(2, "0")}`
+
+  const days = daysBetweenYmd(anchorYmd, referenceDate) ?? 0
+  const years = Math.floor(monthsTotal / 12)
+  const months = monthsTotal % 12
+
+  let label: string
+  if (years >= 1) {
+    label = months === 0 ? `${years}歳` : `${years}歳${months}ヶ月`
+  } else if (months >= 1) {
+    label = days === 0 ? `生後${months}ヶ月` : `生後${months}ヶ月${days}日`
+  } else {
+    label = `生後${days}日`
+  }
+
+  return { years, months, days, label }
 }
