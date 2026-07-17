@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { logRealtimeStatus, logRealtimeEvent } from "@/lib/supabase/realtime-log"
+import { BabyAgeHeader } from "./baby-age-header"
 import { BabyDateNav } from "./baby-date-nav"
 import { BabySummaryBar } from "./baby-summary-bar"
 import { BabyQuickActions } from "./baby-quick-actions"
@@ -10,31 +11,44 @@ import { BabyTimeline } from "./baby-timeline"
 import { BabyLogFormSheet } from "./baby-log-form-sheet"
 import { FeedingTimer } from "./feeding-timer"
 import { BabyWeeklySummary } from "./weekly-summary/baby-weekly-summary"
+import { GrowthChartSection } from "./charts/growth-chart-section"
 import { useNow } from "@/lib/hooks/use-now"
 import { todayJstString, toJstDateString, shiftYmd } from "@/lib/utils/date-jst"
 import { buildBabyWeeklySummary } from "@/lib/domain/baby-weekly-summary"
+import {
+  summarizeTodayCounts,
+  buildGrowthSeries,
+} from "@/lib/domain/baby-log-aggregation"
 import type { BabyLogData } from "@/lib/types/baby"
 import type { BabyLogType, FeedingType } from "@/lib/types/database"
 
 interface BabyDashboardProps {
   initialLogs: BabyLogData[]
   initialWeeklyLogs: BabyLogData[]
+  initialGrowthLogs: BabyLogData[]
   householdId: string
   userId: string
   initialDate: string
   lastSleepEndedAt: string | null
+  babyName: string | null
+  babyBirthDate: string | null
 }
 
 export function BabyDashboard({
   initialLogs,
   initialWeeklyLogs,
+  initialGrowthLogs,
   householdId,
   initialDate,
   lastSleepEndedAt,
+  babyName,
+  babyBirthDate,
 }: BabyDashboardProps) {
   const [logs, setLogs] = useState<BabyLogData[]>(initialLogs)
   const [weeklyLogs, setWeeklyLogs] =
     useState<BabyLogData[]>(initialWeeklyLogs)
+  const [growthLogs, setGrowthLogs] =
+    useState<BabyLogData[]>(initialGrowthLogs)
   const [selectedDate, setSelectedDate] = useState(initialDate)
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editingLog, setEditingLog] = useState<BabyLogData | null>(null)
@@ -96,6 +110,15 @@ export function BabyDashboard({
           logRealtimeEvent("baby_logs", payload)
           if (payload.eventType === "INSERT") {
             const newLog = payload.new as BabyLogData
+            if (newLog.log_type === "growth") {
+              setGrowthLogs((prev) => {
+                if (prev.some((l) => l.id === newLog.id)) return prev
+                // 昇順維持のため logged_at で挿入位置を保つ（末尾追加後にソート）
+                return [...prev, newLog].sort((a, b) =>
+                  a.logged_at.localeCompare(b.logged_at),
+                )
+              })
+            }
             if (isRelevantToCurrentWeek(newLog)) {
               setWeeklyLogs((prev) => {
                 if (prev.some((l) => l.id === newLog.id)) return prev
@@ -111,6 +134,17 @@ export function BabyDashboard({
             })
           } else if (payload.eventType === "UPDATE") {
             const updated = payload.new as BabyLogData
+            if (updated.log_type === "growth") {
+              setGrowthLogs((prev) => {
+                const exists = prev.some((l) => l.id === updated.id)
+                const next = exists
+                  ? prev.map((l) => (l.id === updated.id ? updated : l))
+                  : [...prev, updated]
+                return next.sort((a, b) =>
+                  a.logged_at.localeCompare(b.logged_at),
+                )
+              })
+            }
             const belongsToWeek = isRelevantToCurrentWeek(updated)
             setWeeklyLogs((prev) => {
               const exists = prev.some((l) => l.id === updated.id)
@@ -140,6 +174,7 @@ export function BabyDashboard({
             const deleted = payload.old as { id: string }
             setLogs((prev) => prev.filter((l) => l.id !== deleted.id))
             setWeeklyLogs((prev) => prev.filter((l) => l.id !== deleted.id))
+            setGrowthLogs((prev) => prev.filter((l) => l.id !== deleted.id))
           }
         },
       )
@@ -183,12 +218,11 @@ export function BabyDashboard({
   }, [selectedDate, householdId])
 
   // Derive summary in a single pass
-  const { activeSleep, lastFeeding, diaperCount, derivedLastSleepEndedAt } =
+  const { activeSleep, lastFeeding, derivedLastSleepEndedAt } =
     useMemo(() => {
       let activeSleep: BabyLogData | undefined
       let lastFeeding: BabyLogData | undefined
       let derivedLastSleepEndedAt: string | null = null
-      let diaperCount = 0
       for (const l of logs) {
         if (!activeSleep && l.log_type === "sleep" && !l.ended_at)
           activeSleep = l
@@ -199,15 +233,21 @@ export function BabyDashboard({
         )
           derivedLastSleepEndedAt = l.ended_at
         if (!lastFeeding && l.log_type === "feeding") lastFeeding = l
-        if (l.log_type === "diaper") diaperCount++
       }
       return {
         activeSleep: activeSleep ?? null,
         lastFeeding,
-        diaperCount,
         derivedLastSleepEndedAt,
       }
     }, [logs])
+
+  const todayCounts = useMemo(() => summarizeTodayCounts(logs), [logs])
+
+  // 成長曲線: 全期間の成長ログから体重/身長系列を組む
+  const growthSeries = useMemo(
+    () => buildGrowthSeries(growthLogs, "2000-01-01", today),
+    [growthLogs, today],
+  )
 
   // Today's logs-derived value takes priority (reactive to Realtime),
   // server prop is fallback for cross-day wakeup
@@ -238,6 +278,12 @@ export function BabyDashboard({
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-12 pb-8">
+      <BabyAgeHeader
+        babyName={babyName}
+        babyBirthDate={babyBirthDate}
+        referenceDate={today}
+      />
+
       <BabyDateNav
         selectedDate={selectedDate}
         onDateChange={setSelectedDate}
@@ -245,10 +291,10 @@ export function BabyDashboard({
 
       <BabySummaryBar
         lastFeeding={lastFeeding ?? null}
-        diaperCount={diaperCount}
         activeSleep={activeSleep}
         lastSleepEndedAt={effectiveLastSleepEndedAt}
         now={now}
+        todayCounts={todayCounts}
       />
 
       {isToday && (
@@ -261,6 +307,8 @@ export function BabyDashboard({
       )}
 
       <BabyWeeklySummary days={weeklySummary} />
+
+      <GrowthChartSection series={growthSeries} />
 
       <BabyTimeline logs={logs} onEdit={handleEdit} />
 

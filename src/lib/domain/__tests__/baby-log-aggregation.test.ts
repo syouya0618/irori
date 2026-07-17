@@ -6,6 +6,9 @@ import {
   extractTemperatures,
   extractGrowth,
   calculateAge,
+  getBabyAge,
+  summarizeTodayCounts,
+  buildGrowthSeries,
   type AggregationLogInput,
 } from "../baby-log-aggregation"
 import type { BabyLogType } from "@/lib/types/database"
@@ -233,5 +236,172 @@ describe("calculateAge", () => {
 
   it("未来の生年月日 → 0ヶ月", () => {
     expect(calculateAge("2026-05-01", "2026-04-11")).toBe("0ヶ月")
+  })
+})
+
+// ─── getBabyAge（月齢＋日数の詳細）────────────────────────
+
+describe("getBabyAge", () => {
+  it("新生児は日数のみ表示（生後10日）", () => {
+    expect(getBabyAge("2026-04-01", "2026-04-11")).toEqual({
+      years: 0,
+      months: 0,
+      days: 10,
+      label: "生後10日",
+    })
+  })
+
+  it("当日誕生 → 生後0日", () => {
+    expect(getBabyAge("2026-04-11", "2026-04-11")).toEqual({
+      years: 0,
+      months: 0,
+      days: 0,
+      label: "生後0日",
+    })
+  })
+
+  it("1ヶ月以上は「生後○ヶ月○日」", () => {
+    expect(getBabyAge("2026-01-01", "2026-04-11")).toEqual({
+      years: 0,
+      months: 3,
+      days: 10,
+      label: "生後3ヶ月10日",
+    })
+  })
+
+  it("ちょうど1ヶ月（日数0）は「生後1ヶ月」", () => {
+    expect(getBabyAge("2026-03-11", "2026-04-11")).toEqual({
+      years: 0,
+      months: 1,
+      days: 0,
+      label: "生後1ヶ月",
+    })
+  })
+
+  it("月末→翌月頭の借り（1/31→3/1）を暦で正しく処理", () => {
+    // 2026-02 は 28 日。1/31 + 1ヶ月 = 2/28（クランプ）→ 3/1 まで 1 日
+    expect(getBabyAge("2026-01-31", "2026-03-01")).toEqual({
+      years: 0,
+      months: 1,
+      days: 1,
+      label: "生後1ヶ月1日",
+    })
+  })
+
+  it("1歳以上は「○歳○ヶ月」（日数は省略）", () => {
+    expect(getBabyAge("2025-02-11", "2026-04-11")).toEqual({
+      years: 1,
+      months: 2,
+      days: 0,
+      label: "1歳2ヶ月",
+    })
+  })
+
+  it("1歳ちょうどは「1歳」", () => {
+    expect(getBabyAge("2025-04-11", "2026-04-11")).toEqual({
+      years: 1,
+      months: 0,
+      days: 0,
+      label: "1歳",
+    })
+  })
+
+  it("未来の生年月日は 生後0日 にフォールバック", () => {
+    expect(getBabyAge("2026-04-12", "2026-04-11")).toEqual({
+      years: 0,
+      months: 0,
+      days: 0,
+      label: "生後0日",
+    })
+  })
+
+  it("不正な日付文字列は null を返す", () => {
+    expect(getBabyAge("invalid", "2026-04-11")).toBeNull()
+  })
+})
+
+// ─── summarizeTodayCounts（今日の状況ひと目化）────────────
+
+describe("summarizeTodayCounts", () => {
+  it("空ログ → 全て 0", () => {
+    expect(summarizeTodayCounts([])).toEqual({
+      feedingCount: 0,
+      diaperCount: 0,
+      sleepCount: 0,
+      totalSleepMinutes: 0,
+    })
+  })
+
+  it("授乳2・おむつ1・完了睡眠90分1・進行中睡眠1 を集計", () => {
+    const logs = [
+      mkLog("feeding", 1, { feeding_type: "breast_left" }),
+      mkLog("feeding", 3, { feeding_type: "bottle", amount_ml: 120 }),
+      mkLog("diaper", 2, { diaper_type: "pee" }),
+      // 完了睡眠: 90分（logged_at → ended_at）
+      {
+        ...mkLog("sleep", 5),
+        ended_at: new Date(BASE.getTime() - 3.5 * 3600_000).toISOString(),
+      },
+      // 進行中睡眠（ended_at なし）は睡眠時間に含めない
+      mkLog("sleep", 0),
+    ]
+    expect(summarizeTodayCounts(logs)).toEqual({
+      feedingCount: 2,
+      diaperCount: 1,
+      sleepCount: 1,
+      totalSleepMinutes: 90,
+    })
+  })
+
+  it("進行中睡眠のみなら睡眠回数・時間は 0", () => {
+    const logs = [mkLog("sleep", 0)]
+    expect(summarizeTodayCounts(logs)).toEqual({
+      feedingCount: 0,
+      diaperCount: 0,
+      sleepCount: 0,
+      totalSleepMinutes: 0,
+    })
+  })
+})
+
+// ─── buildGrowthSeries（成長曲線）────────────────────────
+
+describe("buildGrowthSeries", () => {
+  it("空ログ → 空系列", () => {
+    expect(buildGrowthSeries([], START, END)).toEqual({ weight: [], height: [] })
+  })
+
+  it("体重と身長を別系列に分離し、logged_at 昇順で並べる", () => {
+    const logs = [
+      mkLog("growth", 1, { weight_g: 5200, height_cm: 58.0 }),
+      mkLog("growth", 48, { weight_g: 5000, height_cm: null }),
+    ]
+    const series = buildGrowthSeries(logs, START, END)
+    // 古い順（48h前 → 1h前）
+    expect(series.weight).toEqual([
+      { date: "2026-04-09", value: 5000 },
+      { date: "2026-04-11", value: 5200 },
+    ])
+    expect(series.height).toEqual([{ date: "2026-04-11", value: 58.0 }])
+  })
+
+  it("体重のみ / 身長のみのログはそれぞれの系列にだけ入る", () => {
+    const logs = [
+      mkLog("growth", 2, { weight_g: 6000 }),
+      mkLog("growth", 1, { height_cm: 62.5 }),
+    ]
+    const series = buildGrowthSeries(logs, START, END)
+    expect(series.weight).toEqual([{ date: "2026-04-11", value: 6000 }])
+    expect(series.height).toEqual([{ date: "2026-04-11", value: 62.5 }])
+  })
+
+  it("growth 以外のログ種別は無視する", () => {
+    const logs = [
+      mkLog("feeding", 1, { feeding_type: "bottle", amount_ml: 100 }),
+      mkLog("growth", 1, { weight_g: 5500 }),
+    ]
+    const series = buildGrowthSeries(logs, START, END)
+    expect(series.weight).toEqual([{ date: "2026-04-11", value: 5500 }])
+    expect(series.height).toEqual([])
   })
 })

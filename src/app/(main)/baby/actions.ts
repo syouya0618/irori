@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache"
 import { getAuthContext } from "@/lib/supabase/auth-context"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 import type { FeedingType, DiaperType } from "@/lib/types/database"
 
 const MAX_MEMO_LENGTH = 1000
@@ -42,48 +43,70 @@ interface RecordMemoInput {
 
 export async function recordFeeding(input: RecordFeedingInput) {
   const memoError = validateMemoLength(input.memo)
-  if (memoError) return { error: memoError }
+  if (memoError) return { error: memoError, id: null }
 
   const result = await getAuthContext()
-  if (result.error !== null) return { error: result.error }
+  if (result.error !== null) return { error: result.error, id: null }
   const { supabase, userId, householdId } = result.context
 
-  const { error } = await supabase.from("baby_logs").insert({
-    household_id: householdId,
-    log_type: "feeding",
-    logged_by: userId,
-    feeding_type: input.feedingType,
-    amount_ml: input.amountMl ?? null,
-    duration_min: input.durationMin ?? null,
-    memo: input.memo || null,
-  })
+  const { data, error } = await supabase
+    .from("baby_logs")
+    .insert({
+      household_id: householdId,
+      log_type: "feeding",
+      logged_by: userId,
+      feeding_type: input.feedingType,
+      amount_ml: input.amountMl ?? null,
+      duration_min: input.durationMin ?? null,
+      memo: input.memo || null,
+    })
+    .select("id")
+    .single()
 
-  if (error) return { error: "授乳の記録に失敗しました。" }
+  if (error) {
+    logSupabaseError("baby", "授乳の記録に失敗", error, { userId, householdId })
+    return { error: "授乳の記録に失敗しました。", id: null }
+  }
+  if (!data) {
+    console.error("[baby] 授乳の記録: 行が返らず", { userId, householdId })
+    return { error: "授乳の記録に失敗しました。", id: null }
+  }
 
   revalidatePath("/baby")
-  return { error: null }
+  return { error: null, id: data.id }
 }
 
 export async function recordDiaper(input: RecordDiaperInput) {
   const memoError = validateMemoLength(input.memo)
-  if (memoError) return { error: memoError }
+  if (memoError) return { error: memoError, id: null }
 
   const result = await getAuthContext()
-  if (result.error !== null) return { error: result.error }
+  if (result.error !== null) return { error: result.error, id: null }
   const { supabase, userId, householdId } = result.context
 
-  const { error } = await supabase.from("baby_logs").insert({
-    household_id: householdId,
-    log_type: "diaper",
-    logged_by: userId,
-    diaper_type: input.diaperType,
-    memo: input.memo || null,
-  })
+  const { data, error } = await supabase
+    .from("baby_logs")
+    .insert({
+      household_id: householdId,
+      log_type: "diaper",
+      logged_by: userId,
+      diaper_type: input.diaperType,
+      memo: input.memo || null,
+    })
+    .select("id")
+    .single()
 
-  if (error) return { error: "おむつの記録に失敗しました。" }
+  if (error) {
+    logSupabaseError("baby", "おむつの記録に失敗", error, { userId, householdId })
+    return { error: "おむつの記録に失敗しました。", id: null }
+  }
+  if (!data) {
+    console.error("[baby] おむつの記録: 行が返らず", { userId, householdId })
+    return { error: "おむつの記録に失敗しました。", id: null }
+  }
 
   revalidatePath("/baby")
-  return { error: null }
+  return { error: null, id: data.id }
 }
 
 export async function startSleep() {
@@ -98,9 +121,11 @@ export async function startSleep() {
   })
 
   if (error) {
+    // 23505 は「既に睡眠中」= UNIQUE 制約による正常系ゆえログ対象外。
     if (error.code === "23505") {
       return { error: "既に睡眠中のセッションがあります。" }
     }
+    logSupabaseError("baby", "睡眠の開始に失敗", error, { userId, householdId })
     return { error: "睡眠の記録に失敗しました。" }
   }
 
@@ -122,7 +147,15 @@ export async function endSleep(logId: string) {
     .select("id")
     .single()
 
-  if (error || !data) {
+  // PGRST116 は .single() の「該当行なし」= アクティブな睡眠が無い正常系ゆえ
+  // ログ対象外。それ以外の error は真の失敗として構造化ログに残す。
+  if (error) {
+    if (error.code !== "PGRST116") {
+      logSupabaseError("baby", "睡眠の終了に失敗", error, { logId, householdId })
+    }
+    return { error: "アクティブな睡眠セッションが見つかりません。" }
+  }
+  if (!data) {
     return { error: "アクティブな睡眠セッションが見つかりません。" }
   }
 
@@ -146,7 +179,10 @@ export async function recordTemperature(input: RecordTemperatureInput) {
     memo: input.memo || null,
   })
 
-  if (error) return { error: "体温の記録に失敗しました。" }
+  if (error) {
+    logSupabaseError("baby", "体温の記録に失敗", error, { userId, householdId })
+    return { error: "体温の記録に失敗しました。" }
+  }
 
   revalidatePath("/baby")
   return { error: null }
@@ -169,7 +205,10 @@ export async function recordGrowth(input: RecordGrowthInput) {
     memo: input.memo || null,
   })
 
-  if (error) return { error: "成長記録に失敗しました。" }
+  if (error) {
+    logSupabaseError("baby", "成長記録に失敗", error, { userId, householdId })
+    return { error: "成長記録に失敗しました。" }
+  }
 
   revalidatePath("/baby")
   return { error: null }
@@ -191,7 +230,10 @@ export async function recordMemo(input: RecordMemoInput) {
     memo: input.memo,
   })
 
-  if (error) return { error: "メモの記録に失敗しました。" }
+  if (error) {
+    logSupabaseError("baby", "メモの記録に失敗", error, { userId, householdId })
+    return { error: "メモの記録に失敗しました。" }
+  }
 
   revalidatePath("/baby")
   return { error: null }
@@ -219,7 +261,9 @@ export async function updateLog(
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
 
-  const { error } = await supabase
+  // .update() は 0 行更新でも error: null を返す（別世帯・不在 id なら 0 行マッチ）。
+  // .select("id").single() で更新行を要求し、0 行を「成功」と偽らないようにする。
+  const { data, error } = await supabase
     .from("baby_logs")
     .update({
       ...(updates.loggedAt !== undefined && { logged_at: updates.loggedAt }),
@@ -243,8 +287,20 @@ export async function updateLog(
     })
     .eq("id", logId)
     .eq("household_id", householdId)
+    .select("id")
+    .single()
 
-  if (error) return { error: "ログの更新に失敗しました。" }
+  // PGRST116 は「該当行なし」= 対象ログが存在しない/別世帯という正常な失敗ゆえ
+  // ログ対象外。それ以外の error は真の失敗として構造化ログに残す。
+  if (error) {
+    if (error.code !== "PGRST116") {
+      logSupabaseError("baby", "ログの更新に失敗", error, { logId, householdId })
+    }
+    return { error: "ログの更新に失敗しました。" }
+  }
+  if (!data) {
+    return { error: "ログの更新に失敗しました。" }
+  }
 
   revalidatePath("/baby")
   return { error: null }
@@ -261,7 +317,10 @@ export async function deleteLog(logId: string) {
     .eq("id", logId)
     .eq("household_id", householdId)
 
-  if (error) return { error: "ログの削除に失敗しました。" }
+  if (error) {
+    logSupabaseError("baby", "ログの削除に失敗", error, { logId, householdId })
+    return { error: "ログの削除に失敗しました。" }
+  }
 
   revalidatePath("/baby")
   return { error: null }

@@ -15,11 +15,13 @@ export default async function BabyPage() {
   const tomorrowStart = `${tomorrowJst}T00:00:00+09:00`
   const weeklyStart = `${weeklyStartJst}T00:00:00+09:00`
 
-  // 今日のログ + 最新の完了済み睡眠 + 週間サマリー用ログを並列取得
+  // 今日のログ + 最新の完了済み睡眠 + 週間サマリー用ログ + 赤ちゃんプロフィールを並列取得
   const [
     { data: logs, error: logsError },
     { data: lastSleepData, error: lastSleepError },
     { data: weeklyLogs, error: weeklyLogsError },
+    { data: household, error: householdError },
+    { data: growthLogs, error: growthLogsError },
   ] = await Promise.all([
       supabase
         .from("baby_logs")
@@ -50,6 +52,20 @@ export default async function BabyPage() {
           `logged_at.gte.${weeklyStart},and(log_type.eq.sleep,ended_at.gte.${weeklyStart})`,
         )
         .order("logged_at", { ascending: false }),
+      supabase
+        .from("households")
+        .select("baby_name, baby_birth_date")
+        .eq("id", householdId)
+        .maybeSingle(),
+      // 成長曲線用: 成長ログを古い順に全件（低頻度データ・1000 未満想定、順序を昇順で決定化）
+      supabase
+        .from("baby_logs")
+        .select(
+          "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, memo, created_at",
+        )
+        .eq("household_id", householdId)
+        .eq("log_type", "growth")
+        .order("logged_at", { ascending: true }),
     ])
 
   if (logsError) {
@@ -70,14 +86,29 @@ export default async function BabyPage() {
     })
   }
 
+  if (householdError) {
+    logSupabaseError("baby", "household profile lookup failed", householdError, {
+      householdId,
+    })
+  }
+
+  if (growthLogsError) {
+    logSupabaseError("baby", "growth logs lookup failed", growthLogsError, {
+      householdId,
+    })
+  }
+
   return (
     <BabyDashboard
       initialLogs={logs ?? []}
       initialWeeklyLogs={weeklyLogs ?? []}
+      initialGrowthLogs={growthLogs ?? []}
       householdId={householdId}
       userId={userId}
       initialDate={todayJst}
       lastSleepEndedAt={lastSleepData?.ended_at ?? null}
+      babyName={household?.baby_name ?? null}
+      babyBirthDate={household?.baby_birth_date ?? null}
     />
   )
 }

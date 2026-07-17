@@ -108,10 +108,13 @@ function defaultProps(
   return {
     initialLogs: [],
     initialWeeklyLogs: [],
+    initialGrowthLogs: [],
     householdId: "h1",
     userId: "u1",
     initialDate: TODAY,
     lastSleepEndedAt: null,
+    babyName: null,
+    babyBirthDate: null,
     ...overrides,
   }
 }
