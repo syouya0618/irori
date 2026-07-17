@@ -8,6 +8,7 @@ import {
   recordDiaper,
   startSleep,
   endSleep,
+  deleteLog,
 } from "@/app/(main)/baby/actions"
 import { formatElapsedMinutes, minutesBetween } from "@/lib/utils/baby-log-labels"
 import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
@@ -41,6 +42,28 @@ export function BabyQuickActions({
 }: BabyQuickActionsProps) {
   const [isPending, startTransition] = useTransition()
 
+  // 片手操作での押し間違いをその場で取り消せるようにする（記録直後のトーストから）
+  function undoLog(logId: string, label: string) {
+    startTransition(async () => {
+      const result = await deleteLog(logId)
+      if (result.error) {
+        toast.error(result.error)
+        return
+      }
+      toast.success(`${label}の記録を取り消しました`)
+    })
+  }
+
+  function successWithUndo(message: string, label: string, logId: string | null) {
+    if (logId) {
+      toast.success(message, {
+        action: { label: "取り消す", onClick: () => undoLog(logId, label) },
+      })
+    } else {
+      toast.success(message)
+    }
+  }
+
   function handleFeeding(feedingType: FeedingType) {
     startTransition(async () => {
       const result = await recordFeeding({ feedingType })
@@ -48,7 +71,7 @@ export function BabyQuickActions({
         toast.error(result.error)
         return
       }
-      toast.success("授乳を記録しました")
+      successWithUndo("授乳を記録しました", "授乳", result.id)
     })
   }
 
@@ -59,7 +82,7 @@ export function BabyQuickActions({
         toast.error(result.error)
         return
       }
-      toast.success("おむつ交換を記録しました")
+      successWithUndo("おむつ交換を記録しました", "おむつ", result.id)
     })
   }
 
