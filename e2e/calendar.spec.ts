@@ -38,6 +38,17 @@ async function reloadHydrated(page: Page): Promise<void> {
 }
 
 async function openOverlay(trigger: Locator, readySignal: Locator): Promise<void> {
+  // Base UI Dialog は close 後も exit transition 中(~200ms)旧 Popup を DOM に残す
+  // (data-open が外れ data-closed/data-ending-style が付く。popupStateMapping.js)。
+  // opacity フェード中の旧シートは Playwright の isVisible() では true のため、
+  // 同一テスト内で「シート close → 即再オープン」すると下の readySignal 判定が
+  // 旧シートの見出しで満たされ、trigger クリックがスキップされる。fill/click は
+  // 死にゆく DOM に入り、unmount で detached になる(決定論的)。
+  // → 退場中シートの消滅を待ってから開く。entering/open 中のシートは
+  // data-open が付いているため誤ブロックしない。
+  await expect(
+    trigger.page().locator('[data-slot="sheet-content"]:not([data-open])'),
+  ).toHaveCount(0, { timeout: 10_000 })
   await expect(async () => {
     if (!(await readySignal.isVisible())) {
       await trigger.click({ timeout: 2_000 })
