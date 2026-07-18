@@ -14,7 +14,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { formatTimeJst } from "@/lib/utils/date-jst"
+import { segmentCn } from "@/lib/utils/segment-cn"
 import type { CalendarEventRecord } from "./use-month-events"
+
+/** 新規/クリア時の既定開始時刻。initialValue と時刻クリアで共有し値のドリフトを防ぐ。 */
+const DEFAULT_START_TIME = "09:00"
 
 export interface CalendarEventFormValue {
   title: string
@@ -79,7 +83,9 @@ function initialValue(
       isAllDay: editing.is_all_day,
       startDate: editing.start_date,
       endDate: editing.end_date,
-      startTime: editing.start_at ? formatTimeJst(editing.start_at) : "09:00",
+      startTime: editing.start_at
+        ? formatTimeJst(editing.start_at)
+        : DEFAULT_START_TIME,
       endTime: editing.end_at ? formatTimeJst(editing.end_at) : "",
     }
   }
@@ -89,7 +95,7 @@ function initialValue(
     isAllDay: true,
     startDate: defaultDate,
     endDate: defaultDate,
-    startTime: "09:00",
+    startTime: DEFAULT_START_TIME,
     endTime: "",
   }
 }
@@ -121,6 +127,15 @@ export function CalendarEventFormSheet({
     k: K,
     v: CalendarEventFormValue[K],
   ) => setValue((prev) => ({ ...prev, [k]: v }))
+
+  // 終日/時刻ありの切替。終日へ戻す時は入力済みの時刻を既定へクリアし、
+  // 次に時刻ありへ戻った際に前回値が残らないようにする。
+  const setAllDay = (isAllDay: boolean) =>
+    setValue((prev) =>
+      isAllDay
+        ? { ...prev, isAllDay: true, startTime: DEFAULT_START_TIME, endTime: "" }
+        : { ...prev, isAllDay: false },
+    )
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -162,15 +177,22 @@ export function CalendarEventFormSheet({
               />
             </div>
 
-            <label className="flex min-h-11 items-center justify-between">
-              <span className="text-sm font-medium">終日</span>
-              <input
-                type="checkbox"
-                checked={value.isAllDay}
-                onChange={(e) => set("isAllDay", e.target.checked)}
-                className="size-5 accent-primary"
-              />
-            </label>
+            <div className="flex gap-1.5">
+              <button
+                type="button"
+                onClick={() => setAllDay(true)}
+                className={`${segmentCn(value.isAllDay)} min-h-11`}
+              >
+                終日
+              </button>
+              <button
+                type="button"
+                onClick={() => setAllDay(false)}
+                className={`${segmentCn(!value.isAllDay)} min-h-11`}
+              >
+                時刻あり
+              </button>
+            </div>
 
             <div className="flex gap-3">
               <div className="flex flex-1 flex-col gap-2">

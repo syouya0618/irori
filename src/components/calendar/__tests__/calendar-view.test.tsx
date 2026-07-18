@@ -154,8 +154,8 @@ describe("CalendarView", () => {
     fireEvent.change(screen.getByLabelText("タイトル"), {
       target: { value: "会議" },
     })
-    // 終日を外して時刻フィールドを出す
-    fireEvent.click(screen.getByRole("checkbox"))
+    // 終日を外して時刻フィールドを出す(セグメント「時刻あり」)
+    fireEvent.click(screen.getByRole("button", { name: "時刻あり" }))
     // 既定 09:00 を空にする(date/time input は required 無しでクリア可能)
     const startTime = document.getElementById("cal-start-time") as HTMLInputElement
     fireEvent.change(startTime, { target: { value: "" } })
