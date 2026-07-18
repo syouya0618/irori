@@ -295,6 +295,7 @@ export function BabyDashboard({
         lastSleepEndedAt={effectiveLastSleepEndedAt}
         now={now}
         todayCounts={todayCounts}
+        date={selectedDate}
       />
 
       {isToday && (
