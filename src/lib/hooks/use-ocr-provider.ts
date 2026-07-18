@@ -30,8 +30,15 @@ function subscribe(callback: () => void): () => void {
 }
 
 function getSnapshot(): OcrProviderSetting {
-  const stored = localStorage.getItem(STORAGE_KEY)
-  return isValid(stored) ? stored : DEFAULT_PROVIDER
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    return isValid(stored) ? stored : DEFAULT_PROVIDER
+  } catch {
+    // Cookie 全ブロック等で localStorage アクセスが SecurityError を投げる環境。
+    // useSyncExternalStore が毎 render 呼ぶホットパスゆえ log せず既定へフォールバック
+    // （握り潰しではなく想定内の環境条件。use-onboarding-tour.ts と同方針）。
+    return DEFAULT_PROVIDER
+  }
 }
 
 function getServerSnapshot(): OcrProviderSetting {

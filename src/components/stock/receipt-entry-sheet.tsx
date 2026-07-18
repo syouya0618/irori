@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState, useTransition } from "react"
+import { useEffect, useRef, useState, useTransition } from "react"
 import {
   Sheet,
   SheetContent,
@@ -24,7 +24,7 @@ import { addReceiptItemsToStock } from "@/app/(main)/stock/actions"
 import { allCategories } from "@/lib/utils/categories"
 import { guessItemCategory } from "@/lib/domain/item-category-guess"
 import { scannedItemsToDrafts, type ReceiptDraftItem } from "@/lib/domain/receipt"
-import { scanReceipt } from "@/lib/ocr/scan-receipt"
+import { scanReceipt, describeScanPhase } from "@/lib/ocr/scan-receipt"
 import { useOcrProvider } from "@/lib/hooks/use-ocr-provider"
 import type { ItemCategory } from "@/lib/types/database"
 
@@ -35,6 +35,8 @@ interface DraftRow {
   quantity: string
   /** ユーザーが手動でカテゴリを変えたら自動推測を止める */
   categoryTouched: boolean
+  /** OCR スキャン由来の行。autoFocus してキーボードで一覧を隠さないための目印 */
+  fromScan: boolean
 }
 
 interface ReceiptEntrySheetProps {
@@ -43,7 +45,25 @@ interface ReceiptEntrySheetProps {
 }
 
 function blankRow(id: number): DraftRow {
-  return { id, name: "", category: "other_food", quantity: "1", categoryTouched: false }
+  return {
+    id,
+    name: "",
+    category: "other_food",
+    quantity: "1",
+    categoryTouched: false,
+    fromScan: false,
+  }
+}
+
+/**
+ * 数量入力の文字列を数値へ。空欄は「未指定」として 1 とする（stock-form の
+ * `quantity || "1"` と統一）。明示の "0" は sanitizeReceiptItems の「0=切らした」
+ * 仕様を尊重してそのまま通す。負値・非数はここで丸めず、サーバの sanitizeReceiptItems
+ * が 1 に正規化する。
+ */
+export function draftQuantity(input: string): number {
+  if (input.trim() === "") return 1
+  return Number(input)
 }
 
 /** 既存行の最大 id + 1（ref を使わず render 安全に一意 id を採る） */
@@ -56,8 +76,12 @@ export function ReceiptEntrySheet({ open, onOpenChange }: ReceiptEntrySheetProps
   const [isPending, startTransition] = useTransition()
   const [scanning, setScanning] = useState(false)
   const [scanProgress, setScanProgress] = useState(0)
+  const [scanPhase, setScanPhase] = useState("")
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [ocrProvider] = useOcrProvider()
+
+  // スキャンの世代。閉→再開や新スキャン開始で進め、古い非同期解決の反映を無効化する
+  const scanIdRef = useRef(0)
 
   // open が閉→開に変わったら入力をリセット
   const [prevOpen, setPrevOpen] = useState(open)
@@ -67,20 +91,38 @@ export function ReceiptEntrySheet({ open, onOpenChange }: ReceiptEntrySheetProps
       setRows([blankRow(0)])
       setScanning(false)
       setScanProgress(0)
+      setScanPhase("")
     }
   }
+
+  // 閉じたら実行中スキャンを無効化する（旧結果が次セッションの行に混ざらないよう世代を進める）。
+  // ref 変更は render 中に行えないため commit 後の effect で行う。余分に進めても古い世代を
+  // 捨てるだけで安全（混入=バグは確実に防ぐ）。
+  useEffect(() => {
+    if (!open) {
+      scanIdRef.current++
+    }
+  }, [open])
 
   const handleScanFile = (file: File) => {
     // manual の時は OCR ボタンを出さないが、防御的にガード
     const provider = ocrProvider === "manual" ? "tesseract" : ocrProvider
+    const scanId = ++scanIdRef.current
     setScanning(true)
     setScanProgress(0)
+    setScanPhase("")
     scanReceipt(file, provider, (p) => {
+      if (scanIdRef.current !== scanId) return
       if (p.status === "recognizing text") {
+        setScanPhase("")
         setScanProgress(Math.round(p.progress * 100))
+      } else {
+        // 認識前フェーズ（初回は辞書DLが最長）。進捗% ではなくフェーズ名を出す
+        setScanPhase(describeScanPhase(p.status))
       }
     })
       .then((scanned) => {
+        if (scanIdRef.current !== scanId) return
         const drafts = scannedItemsToDrafts(scanned)
         if (drafts.length === 0) {
           toast.error("レシートから商品を読み取れませんでした。手入力してください")
@@ -95,15 +137,29 @@ export function ReceiptEntrySheet({ open, onOpenChange }: ReceiptEntrySheetProps
             category: d.category,
             quantity: String(d.quantity),
             categoryTouched: false,
+            fromScan: true,
           }))
           return filled.length > 0 ? [...filled, ...scannedRows] : scannedRows
         })
         toast.success(`${drafts.length}件を読み取りました。確認して追加してください`)
       })
-      .catch(() => {
-        toast.error("読み取りに失敗しました")
+      .catch((err) => {
+        if (scanIdRef.current !== scanId) return
+        // scan-receipt はサーバ由来の具体的な日本語メッセージを Error で運んでくる。
+        // 握り潰さず必ずログし、日本語メッセージがあればそのままユーザーに見せる。
+        console.error("[receipt-entry] レシート読み取りに失敗", {
+          provider,
+          message: err instanceof Error ? err.message : String(err),
+          error: err,
+        })
+        const message =
+          err instanceof Error && err.message ? err.message : "読み取りに失敗しました"
+        toast.error(message)
       })
-      .finally(() => setScanning(false))
+      .finally(() => {
+        if (scanIdRef.current !== scanId) return
+        setScanning(false)
+      })
   }
 
   const filledCount = rows.filter((r) => r.name.trim() !== "").length
@@ -154,7 +210,7 @@ export function ReceiptEntrySheet({ open, onOpenChange }: ReceiptEntrySheetProps
       .map((r) => ({
         name: r.name,
         category: r.category,
-        quantity: Number(r.quantity),
+        quantity: draftQuantity(r.quantity),
       }))
 
     if (drafts.length === 0) {
@@ -191,7 +247,6 @@ export function ReceiptEntrySheet({ open, onOpenChange }: ReceiptEntrySheetProps
           ref={fileInputRef}
           type="file"
           accept="image/*"
-          capture="environment"
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0]
@@ -210,7 +265,9 @@ export function ReceiptEntrySheet({ open, onOpenChange }: ReceiptEntrySheetProps
             {scanning ? (
               <>
                 <Loader2 size={16} className="animate-spin" />
-                読み取り中… {scanProgress > 0 ? `${scanProgress}%` : ""}
+                {scanPhase
+                  ? scanPhase
+                  : `読み取り中…${scanProgress > 0 ? ` ${scanProgress}%` : ""}`}
               </>
             ) : (
               <>
@@ -232,7 +289,8 @@ export function ReceiptEntrySheet({ open, onOpenChange }: ReceiptEntrySheetProps
                 placeholder="商品名"
                 aria-label={`商品名 ${index + 1}`}
                 className="h-11 flex-1"
-                autoFocus={index === 0}
+                // スキャン由来の行は autoFocus しない（ソフトキーボードで確認一覧を隠さない）
+                autoFocus={index === 0 && !row.fromScan}
               />
               <Select
                 items={allCategories}

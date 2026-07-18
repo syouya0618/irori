@@ -49,6 +49,10 @@ export async function addStockItem(formData: FormData) {
 export async function addReceiptItemsToStock(
   items: ReceiptDraftItem[],
 ): Promise<{ error: string } | { success: true; count: number }> {
+  const result = await getAuthContext()
+  if (result.error !== null) return { error: result.error }
+  const { supabase, userId, householdId } = result.context
+
   if (!Array.isArray(items)) {
     return { error: "不正なリクエストです" }
   }
@@ -57,10 +61,6 @@ export async function addReceiptItemsToStock(
   if (sanitized.length === 0) {
     return { error: "追加できる商品がありません（商品名を入力してください）" }
   }
-
-  const result = await getAuthContext()
-  if (result.error !== null) return { error: result.error }
-  const { supabase, userId, householdId } = result.context
 
   const rows = sanitized.map((item) => ({
     household_id: householdId,

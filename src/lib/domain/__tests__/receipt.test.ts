@@ -46,6 +46,27 @@ describe("sanitizeReceiptItems", () => {
     const result = sanitizeReceiptItems([draft({ name: long })])
     expect(result[0].name).toHaveLength(100)
   })
+
+  it("untrusted な要素（object でない・name が string でない）は throw せず除外する", () => {
+    const malformed = [
+      null,
+      "文字列",
+      123,
+      { name: 456 },
+      { quantity: 1 },
+      draft({ name: "残る" }),
+    ] as unknown as ReceiptDraftItem[]
+    const result = sanitizeReceiptItems(malformed)
+    expect(result).toEqual([{ name: "残る", category: "vegetable", quantity: 1 }])
+  })
+
+  it("quantity が number でない場合は 1 にフォールバック", () => {
+    const result = sanitizeReceiptItems([
+      draft({ name: "A", quantity: "3" as never }),
+      draft({ name: "B", quantity: undefined as never }),
+    ])
+    expect(result.map((r) => r.quantity)).toEqual([1, 1])
+  })
 })
 
 describe("scannedItemsToDrafts", () => {

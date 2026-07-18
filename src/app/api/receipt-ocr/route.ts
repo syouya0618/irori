@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server"
 import { getAuthContext } from "@/lib/supabase/auth-context"
-import { extractVisionText } from "@/lib/ocr/vision-response"
+import { extractVisionText, extractVisionError } from "@/lib/ocr/vision-response"
 import { parseReceiptText } from "@/lib/domain/receipt-ocr-parse"
 
 // 画像アップロード + 外部 API 呼び出しを含むため十分な時間を確保する
 export const maxDuration = 30
+
+// Vercel の request body 上限 4.5MB と整合。base64 は元バイナリの約 4/3 ゆえ約 6MB を上限とする。
+const MAX_IMAGE_BASE64_LENGTH = 6 * 1024 * 1024
 
 /**
  * Google Cloud Vision（TEXT_DETECTION）でレシート画像を OCR し、商品名候補を返す。
@@ -35,6 +38,16 @@ export async function POST(request: Request) {
   if (typeof image !== "string" || image.length === 0) {
     return NextResponse.json({ error: "画像がありません" }, { status: 400 })
   }
+  if (image.length > MAX_IMAGE_BASE64_LENGTH) {
+    console.error("[receipt-ocr] payload too large", {
+      length: image.length,
+      limit: MAX_IMAGE_BASE64_LENGTH,
+    })
+    return NextResponse.json(
+      { error: "画像サイズが大きすぎます。もう少し小さい画像でお試しください" },
+      { status: 413 },
+    )
+  }
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 20_000)
@@ -64,6 +77,18 @@ export async function POST(request: Request) {
       })
       return NextResponse.json(
         { error: "OCRに失敗しました（Vision APIエラー）" },
+        { status: 502 },
+      )
+    }
+    // HTTP 200 でも responses[0].error（破損画像・権限等）を返す場合がある
+    const visionError = extractVisionError(data)
+    if (visionError !== null) {
+      console.error("[receipt-ocr] Vision per-image error", {
+        code: visionError.code,
+        message: visionError.message,
+      })
+      return NextResponse.json(
+        { error: "レシート画像を解析できませんでした。別の写真でお試しください" },
         { status: 502 },
       )
     }
