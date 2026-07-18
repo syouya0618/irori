@@ -1,8 +1,10 @@
 "use client"
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
+import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { logRealtimeStatus, logRealtimeEvent } from "@/lib/supabase/realtime-log"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 import { BabyAgeHeader } from "./baby-age-header"
 import { BabyDateNav } from "./baby-date-nav"
 import { BabySummaryBar } from "./baby-summary-bar"
@@ -15,7 +17,10 @@ import { GrowthChartSection } from "./charts/growth-chart-section"
 import { useNow } from "@/lib/hooks/use-now"
 import { todayJstString, toJstDateString, shiftYmd } from "@/lib/utils/date-jst"
 import { buildBabyWeeklySummary } from "@/lib/domain/baby-weekly-summary"
-import { deriveDashboardSummary } from "@/lib/domain/baby-dashboard-summary"
+import {
+  deriveDashboardSummary,
+  mergeDateNavLogs,
+} from "@/lib/domain/baby-dashboard-summary"
 import {
   summarizeTodayCounts,
   buildGrowthSeries,
@@ -227,8 +232,24 @@ export function BabyDashboard({
       .lt("logged_at", `${nextDay}T00:00:00+09:00`)
       .order("logged_at", { ascending: false })
       .abortSignal(abortController.signal)
-      .then(({ data }) => {
-        if (!abortController.signal.aborted && data) setLogs(data)
+      .then(({ data, error }) => {
+        // 遷移離脱（abort）は成功/失敗いずれの分岐にも入れない。
+        // 既存 AbortController 防御を保持し、離脱時の spurious toast を防ぐ。
+        if (abortController.signal.aborted) return
+        if (error) {
+          // AUDIT-012: 従来は error を捨てて無言失敗していた（B-08）。
+          logSupabaseError("baby", "date navigation fetch failed", error, {
+            householdId,
+            selectedDate,
+          })
+          toast.error("読み込みに失敗しました")
+          return
+        }
+        if (data) {
+          // H3-02: 無条件全置換だと in-flight 中に Realtime で先着した選択日の
+          // 行が消える。id ベースの dedupe マージで先着行を保持する（B-08）。
+          setLogs((prev) => mergeDateNavLogs(prev, data, selectedDate))
+        }
       })
 
     return () => {
