@@ -34,7 +34,8 @@ export function getDiaperTypeLabel(type: DiaperType): string {
   return diaperTypeLabels[type]
 }
 
-export function formatElapsedMinutes(minutes: number): string {
+export function formatElapsedMinutes(rawMinutes: number): string {
+  const minutes = Math.max(0, rawMinutes)
   if (minutes < 60) return `${minutes}分`
   const h = Math.floor(minutes / 60)
   const m = minutes % 60
