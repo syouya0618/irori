@@ -40,6 +40,13 @@ const STOCK_ITEM = "E2Eオフライン米"
 const OFFLINE_BANNER_TEXT =
   "オフラインです。表示中の内容は最新でない可能性があります"
 
+// B-07: 圏外で記録タップ → Server Action が reject。ハンドラの try/catch が握って
+// 圏外トーストを出し、error boundary (src/app/(main)/baby/error.tsx = 下記見出し)
+// へ全画面遷移しないことを検証する。
+const OFFLINE_ACTION_TOAST =
+  "通信できませんでした。電波の良い場所でもう一度お試しください"
+const BABY_ERROR_BOUNDARY_HEADING = "育児ログの読み込みに失敗しました"
+
 /**
  * Supabase error は plain object のため明示的にフィールドを抽出してログする
  * (String(err) だと "[object Object]" に化ける)。
@@ -232,6 +239,33 @@ test("オンラインで訪問済みの 4 画面がオフラインで閲覧で�
     await page.goto(path)
     await assertContent()
   }
+
+  // ── 6b. (B-07) オフラインで記録タップ → Server Action が reject しても
+  //   ハンドラの try/catch が握り、圏外トーストを出す。error boundary
+  //   (src/app/(main)/baby/error.tsx) へ全画面遷移しない（= 記録の無言喪失も
+  //   全画面クラッシュもしない）ことを検証する。ループ最終は /baby のため
+  //   ここでは /baby にいる。おむつ「おしっこ」をタップする。
+  //   full load 直後の click は React ハイドレーション完了前だと無反応に
+  //   なりうるため、golden-path.spec.ts の openOverlay と同方針で
+  //   「トースト未表示なら click」を toPass で再試行する。オフラインゆえ
+  //   再タップしても Server Action はサーバへ到達せず（DB 書き込みは起きず）
+  //   トーストが出るだけで安全。
+  const diaperButton = page.getByRole("button", { name: "おしっこ", exact: true })
+  const offlineToast = page.getByText(OFFLINE_ACTION_TOAST)
+  await expect(async () => {
+    if (!(await offlineToast.isVisible())) {
+      await diaperButton.click({ timeout: 2_000 })
+    }
+    await expect(offlineToast).toBeVisible({ timeout: 2_000 })
+  }).toPass({ timeout: 15_000 })
+  // error boundary の全画面フォールバック見出し (ErrorView は <h2>) は出ない
+  await expect(
+    page.getByRole("heading", { name: BABY_ERROR_BOUNDARY_HEADING })
+  ).toHaveCount(0)
+  // baby ページの操作 UI（ミルクボタン）は依然表示されている
+  await expect(
+    page.getByRole("button", { name: "ミルク", exact: true })
+  ).toBeVisible()
 
   // ── 7. オフラインバナー (navigator.onLine 連動) の表示 ──
   await expect(page.getByText(OFFLINE_BANNER_TEXT)).toBeVisible()

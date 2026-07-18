@@ -27,6 +27,21 @@ const DIAPER_OPTIONS: { value: DiaperType; label: string }[] = [
   { value: "both", label: "両方" },
 ]
 
+// 通信断で Server Action が reject すると、startTransition 内の unhandled reject が
+// 最寄りの error boundary へ bubble し全画面エラー化 + 記録が無言で失われる
+// (node_modules/next/dist/docs/01-app/01-getting-started/10-error-handling.md:375)。
+// 圏外タップでその袋小路に落ちないよう、各ハンドラの reject を握ってトーストへ倒す。
+const OFFLINE_ERROR_MESSAGE =
+  "通信できませんでした。電波の良い場所でもう一度お試しください"
+
+function toastOfflineError(context: string, err: unknown) {
+  // 握り潰さずエラー詳細を構造化ログに残す（CLAUDE.md: catch 内でログ必須）。
+  console.error(`[baby-quick-actions] ${context} が例外を投げました`, {
+    message: err instanceof Error ? err.message : String(err),
+  })
+  toast.error(OFFLINE_ERROR_MESSAGE)
+}
+
 interface BabyQuickActionsProps {
   activeSleep: BabyLogData | null
   now: Date
@@ -45,12 +60,16 @@ export function BabyQuickActions({
   // 片手操作での押し間違いをその場で取り消せるようにする（記録直後のトーストから）
   function undoLog(logId: string, label: string) {
     startTransition(async () => {
-      const result = await deleteLog(logId)
-      if (result.error) {
-        toast.error(result.error)
-        return
+      try {
+        const result = await deleteLog(logId)
+        if (result.error) {
+          toast.error(result.error)
+          return
+        }
+        toast.success(`${label}の記録を取り消しました`)
+      } catch (err) {
+        toastOfflineError("deleteLog(undo)", err)
       }
-      toast.success(`${label}の記録を取り消しました`)
     })
   }
 
@@ -66,46 +85,58 @@ export function BabyQuickActions({
 
   function handleFeeding(feedingType: FeedingType) {
     startTransition(async () => {
-      const result = await recordFeeding({ feedingType })
-      if (result.error) {
-        toast.error(result.error)
-        return
+      try {
+        const result = await recordFeeding({ feedingType })
+        if (result.error) {
+          toast.error(result.error)
+          return
+        }
+        successWithUndo("授乳を記録しました", "授乳", result.id)
+      } catch (err) {
+        toastOfflineError("recordFeeding", err)
       }
-      successWithUndo("授乳を記録しました", "授乳", result.id)
     })
   }
 
   function handleDiaper(diaperType: DiaperType) {
     startTransition(async () => {
-      const result = await recordDiaper({ diaperType })
-      if (result.error) {
-        toast.error(result.error)
-        return
+      try {
+        const result = await recordDiaper({ diaperType })
+        if (result.error) {
+          toast.error(result.error)
+          return
+        }
+        successWithUndo("おむつ交換を記録しました", "おむつ", result.id)
+      } catch (err) {
+        toastOfflineError("recordDiaper", err)
       }
-      successWithUndo("おむつ交換を記録しました", "おむつ", result.id)
     })
   }
 
   function handleSleepToggle() {
     startTransition(async () => {
-      if (activeSleep) {
-        const result = await endSleep(activeSleep.id)
-        if (result.error) {
-          toast.error(result.error)
-          return
+      try {
+        if (activeSleep) {
+          const result = await endSleep(activeSleep.id)
+          if (result.error) {
+            toast.error(result.error)
+            return
+          }
+          const mins = minutesBetween(
+            activeSleep.logged_at,
+            new Date().toISOString(),
+          )
+          toast.success(`おはよう！（${formatElapsedMinutes(mins)}）`)
+        } else {
+          const result = await startSleep()
+          if (result.error) {
+            toast.error(result.error)
+            return
+          }
+          toast.success("おやすみなさい")
         }
-        const mins = minutesBetween(
-          activeSleep.logged_at,
-          new Date().toISOString(),
-        )
-        toast.success(`おはよう！（${formatElapsedMinutes(mins)}）`)
-      } else {
-        const result = await startSleep()
-        if (result.error) {
-          toast.error(result.error)
-          return
-        }
-        toast.success("おやすみなさい")
+      } catch (err) {
+        toastOfflineError("sleepToggle", err)
       }
     })
   }
