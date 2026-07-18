@@ -32,6 +32,8 @@ interface BabyQuickActionsProps {
   now: Date
   onCreateLog: (type: BabyLogType) => void
   onStartTimer: (type: FeedingType) => void
+  /** endSleep 成功時に呼ばれる（B-01: 日跨ぎフォールバックの明示クリア用） */
+  onSleepEnded?: () => void
 }
 
 export function BabyQuickActions({
@@ -39,6 +41,7 @@ export function BabyQuickActions({
   now,
   onCreateLog,
   onStartTimer,
+  onSleepEnded,
 }: BabyQuickActionsProps) {
   const [isPending, startTransition] = useTransition()
 
@@ -94,6 +97,9 @@ export function BabyQuickActions({
           toast.error(result.error)
           return
         }
+        // B-01: 日跨ぎフォールバックの明示クリア（Server Action 応答ベース =
+        // Realtime 不達 #92 でもトグルが「睡眠中」へ戻らない）
+        onSleepEnded?.()
         const mins = minutesBetween(
           activeSleep.logged_at,
           new Date().toISOString(),
