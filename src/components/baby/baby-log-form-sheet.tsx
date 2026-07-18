@@ -28,6 +28,7 @@ import {
 } from "@/lib/utils/baby-log-labels"
 import { formatTimeJst } from "@/lib/utils/date-jst"
 import { segmentCn } from "@/lib/utils/segment-cn"
+import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
 import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
 import type { BabyLogData } from "@/lib/types/baby"
 
@@ -46,6 +47,16 @@ interface BabyLogFormSheetProps {
   log: BabyLogData | null
   /** create mode: 新規ログのタイプ（log が null 時に使用） */
   createLogType?: BabyLogType | null
+  /** 記録者（logged_by）。楽観 append 行の作成に使う（B-03） */
+  userId: string
+  /**
+   * 作成成功時に楽観 append する行を親へ渡す（B-03）。作成導線は quick actions
+   * （isToday ゲート下）からのみ開くため、logged_at（client now）は選択日と一致する。
+   * 編集（update）は既存行の書き換えで append 対象外 — 反映は従来どおり Realtime 経路。
+   */
+  onLogRecorded?: (log: BabyLogData) => void
+  /** 削除成功時にローカル state から除去する行の id を親へ渡す（B-03） */
+  onLogRemoved?: (id: string) => void
 }
 
 export function BabyLogFormSheet({
@@ -53,6 +64,9 @@ export function BabyLogFormSheet({
   onOpenChange,
   log,
   createLogType,
+  userId,
+  onLogRecorded,
+  onLogRemoved,
 }: BabyLogFormSheetProps) {
   const [isPending, startTransition] = useTransition()
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -79,7 +93,10 @@ export function BabyLogFormSheet({
 
   function handleCreate() {
     startTransition(async () => {
-      let result: { error: string | null }
+      let result: { error: string | null; id: string | null }
+      // B-03: 成功時に返却 id で楽観 append する行を組む builder（値が in-scope な
+      // 各 case 内で確定させる）。null のままなら append しない。
+      let buildLog: ((id: string) => BabyLogData) | null = null
 
       switch (createLogType) {
         case "temperature": {
@@ -92,6 +109,14 @@ export function BabyLogFormSheet({
             temperature: temp,
             memo: memo || undefined,
           })
+          buildLog = (id) =>
+            buildOptimisticLog({
+              id,
+              logType: "temperature",
+              loggedBy: userId,
+              temperature: temp,
+              memo: memo || null,
+            })
           break
         }
         case "growth": {
@@ -106,6 +131,15 @@ export function BabyLogFormSheet({
             heightCm: h,
             memo: memo || undefined,
           })
+          buildLog = (id) =>
+            buildOptimisticLog({
+              id,
+              logType: "growth",
+              loggedBy: userId,
+              weightG: w,
+              heightCm: h,
+              memo: memo || null,
+            })
           break
         }
         case "memo": {
@@ -114,6 +148,13 @@ export function BabyLogFormSheet({
             return
           }
           result = await recordMemoAction({ memo: memo.trim() })
+          buildLog = (id) =>
+            buildOptimisticLog({
+              id,
+              logType: "memo",
+              loggedBy: userId,
+              memo: memo.trim(),
+            })
           break
         }
         default:
@@ -123,6 +164,10 @@ export function BabyLogFormSheet({
       if (result.error) {
         toast.error(result.error)
         return
+      }
+      // B-03: Realtime を待たず timeline へ楽観 append
+      if (buildLog && result.id) {
+        onLogRecorded?.(buildLog(result.id))
       }
       toast.success("記録しました")
       onOpenChange(false)
@@ -183,6 +228,8 @@ export function BabyLogFormSheet({
         toast.error(result.error)
         return
       }
+      // B-03: Realtime DELETE echo を待たずローカル state からも除去
+      onLogRemoved?.(log.id)
       toast.success("ログを削除しました")
       onOpenChange(false)
     })
