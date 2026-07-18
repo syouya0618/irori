@@ -254,6 +254,23 @@ describe("BabyDashboard / 記録の楽観 append (B-03)", () => {
     expect(screen.getByText("睡眠中")).toBeInTheDocument()
     expect(screen.getByText("睡眠中...")).toBeInTheDocument()
 
+    // 整合（B-01/B-02）: 同 id の睡眠 INSERT echo が後追いで来ても二重 append されない。
+    // 楽観 append 済みの sleep-opt-1 を echo が重複させると timeline に睡眠中行が 2 本出る。
+    // id dedupe（appendLog / INSERT ハンドラ双方のガード）で 1 本のまま = serverActiveSleep とも二重化しない。
+    act(() => {
+      emit(
+        makePayload(
+          "INSERT",
+          makeLog({
+            id: "sleep-opt-1",
+            log_type: "sleep",
+            logged_at: `${TODAY}T09:00:00+09:00`,
+          }),
+        ),
+      )
+    })
+    expect(screen.getAllByText("睡眠中...")).toHaveLength(1)
+
     // 睡眠終了
     fireEvent.click(wakeButton)
     await waitFor(() =>
