@@ -50,14 +50,19 @@ export async function GET(request: Request) {
         .select("baby_name, baby_birth_date")
         .eq("id", householdId)
         .single(),
+      // AUDIT-067: 期間開始前に始まり期間内に終わった日跨ぎ睡眠も按分対象にするため、
+      // 週間クエリ（page.tsx）と同型の or() で窓端を拾う。logged_at 下端の gte を
+      // or() 側へ移し、睡眠は ended_at が窓開始以降なら開始が窓前でも取得する。
       supabase
         .from("baby_logs")
         .select(
           "log_type, logged_at, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm",
         )
         .eq("household_id", householdId)
-        .gte("logged_at", `${startDate}T00:00:00+09:00`)
         .lt("logged_at", `${shiftYmd(endDate, 1)}T00:00:00+09:00`)
+        .or(
+          `logged_at.gte.${startDate}T00:00:00+09:00,and(log_type.eq.sleep,ended_at.gte.${startDate}T00:00:00+09:00)`,
+        )
         .order("logged_at", { ascending: true })
         .limit(5000),
     ])

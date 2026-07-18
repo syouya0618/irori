@@ -1,5 +1,10 @@
-import { toJstDateString, formatTimeJst, daysBetweenYmd } from "@/lib/utils/date-jst"
-import { minutesBetween } from "@/lib/utils/baby-log-labels"
+import {
+  toJstDateString,
+  formatTimeJst,
+  daysBetweenYmd,
+  shiftYmd,
+} from "@/lib/utils/date-jst"
+import { sleepOverlapMinutesForDate } from "./baby-sleep-overlap"
 import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
 
 /** 集計に必要な最小ログ型 */
@@ -124,28 +129,43 @@ export function aggregateFeedings(
   })
 }
 
+/**
+ * 睡眠を JST 日別に按分集計する（AUDIT-019/067/072 / B-02）。
+ *
+ * 「開始日へ全量計上」ではなく、共通ヘルパ `sleepOverlapMinutesForDate` で各日の
+ * 当日窓と交差する分だけを計上する。これにより日跨ぎ睡眠が開始日・終了日へ正しく
+ * 分割され、週間サマリー・今日のまとめと per-day 値が一致する。集計開始日より前に
+ * 始まった睡眠でも、範囲内に重なる部分は計上する（窓端 = AUDIT-067）。
+ * 完了睡眠が 1 分以上重なる日のみを結果に含める。
+ */
 export function aggregateSleep(
   logs: AggregationLogInput[],
   startDate: string,
   endDate: string,
 ): DailySleepSummary[] {
-  const filtered = filterLogs(logs, "sleep", startDate, endDate)
-  const grouped = groupByDate(filtered)
+  const sleeps = logs.filter((l) => l.log_type === "sleep")
+  const result: DailySleepSummary[] = []
 
-  return sortedDates(grouped).map((date) => {
-    const dayLogs = grouped.get(date)!
+  for (let date = startDate; date <= endDate; date = shiftYmd(date, 1)) {
     let totalMinutes = 0
     let sessionCount = 0
 
-    for (const log of dayLogs) {
-      if (log.ended_at) {
-        totalMinutes += minutesBetween(log.logged_at, log.ended_at)
+    for (const log of sleeps) {
+      const overlap = sleepOverlapMinutesForDate(
+        log.logged_at,
+        log.ended_at,
+        date,
+      )
+      if (overlap > 0) {
+        totalMinutes += overlap
         sessionCount++
       }
     }
 
-    return { date, totalMinutes, sessionCount }
-  })
+    if (sessionCount > 0) result.push({ date, totalMinutes, sessionCount })
+  }
+
+  return result
 }
 
 export function aggregateDiapers(
@@ -268,12 +288,21 @@ export interface TodayCounts {
 }
 
 /**
- * 「今日の状況ひと目化」用の集計。
- * 入力は呼び出し側で当日分にフィルタ済みのログ（日付フィルタは行わない）。
- * 睡眠は ended_at のある完了セッションのみを回数・合計時間に含める。
+ * 「今日の状況ひと目化」用の、指定 JST 日付 `date` の集計（B-02 / I-11）。
+ *
+ * 契約は全種別で「`date` 当日分のみ数える」に統一する:
+ * - feeding / diaper は `toJstDateString(logged_at) === date` のもののみ計上。
+ * - sleep は共通ヘルパ `sleepOverlapMinutesForDate` で当日窓に按分し、重なりが
+ *   1 分以上ある完了セッションのみ回数・時間に含める（未完了は 0）。
+ *
+ * 入力に「前日開始・当日終了の日跨ぎ睡眠（overlapLogs）」を混ぜてよい。sleep は
+ * 按分され、feeding/diaper は `date` フィルタで弾かれるため二重計上しない
+ * （overlapLogs は sleep のみを供給する前提）。この date フィルタにより、
+ * 週間サマリー・PDF 集計と per-day 睡眠値が一致する（3面同値）。
  */
 export function summarizeTodayCounts(
   logs: Pick<AggregationLogInput, "log_type" | "logged_at" | "ended_at">[],
+  date: string,
 ): TodayCounts {
   let feedingCount = 0
   let diaperCount = 0
@@ -282,12 +311,19 @@ export function summarizeTodayCounts(
 
   for (const log of logs) {
     if (log.log_type === "feeding") {
-      feedingCount++
+      if (toJstDateString(log.logged_at) === date) feedingCount++
     } else if (log.log_type === "diaper") {
-      diaperCount++
-    } else if (log.log_type === "sleep" && log.ended_at) {
-      sleepCount++
-      totalSleepMinutes += minutesBetween(log.logged_at, log.ended_at)
+      if (toJstDateString(log.logged_at) === date) diaperCount++
+    } else if (log.log_type === "sleep") {
+      const overlap = sleepOverlapMinutesForDate(
+        log.logged_at,
+        log.ended_at,
+        date,
+      )
+      if (overlap > 0) {
+        sleepCount++
+        totalSleepMinutes += overlap
+      }
     }
   }
 

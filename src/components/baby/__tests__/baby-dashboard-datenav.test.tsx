@@ -154,6 +154,7 @@ function defaultProps(
 ): Parameters<typeof BabyDashboard>[0] {
   return {
     initialLogs: [],
+    initialOverlapLogs: [],
     initialWeeklyLogs: [],
     initialGrowthLogs: [],
     householdId: "h1",
@@ -176,12 +177,17 @@ function goPrevDay() {
   fireEvent.click(screen.getByLabelText("前の日"))
 }
 
-/** in-flight の fetch を解決する（microtask を flush） */
+/**
+ * in-flight の fetch を全て解決する（microtask を flush）。
+ * B-02 で日付ナビ refetch が logs + overlap 睡眠の 2 本になったため、同一結果で
+ * 両方を解決する（logs 側の error/merge 検証はそのまま成立。overlap 側は同結果を
+ * 受けても本テストの assert には無害）。
+ */
 async function resolvePendingFetch(result: FetchResult) {
-  const pending = mockState.pendingFetches.at(-1)
-  if (!pending) throw new Error("解決待ちの fetch が無い")
+  const pendings = mockState.pendingFetches.splice(0)
+  if (pendings.length === 0) throw new Error("解決待ちの fetch が無い")
   await act(async () => {
-    pending.resolve(result)
+    for (const pending of pendings) pending.resolve(result)
     // onFulfilled（setState を含む）を microtask で流し切る
     await Promise.resolve()
   })
