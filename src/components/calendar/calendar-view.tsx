@@ -209,6 +209,7 @@ export function CalendarView({
       <CalendarAgenda
         dateLabel={dayLabel(m.selectedDate)}
         events={m.selectedEvents}
+        selectedDate={m.selectedDate}
         onTapEvent={openEvent}
       />
 

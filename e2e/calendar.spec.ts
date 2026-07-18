@@ -164,3 +164,40 @@ test("時刻付き予定の作成→HH:MM 表示、編集でタイトル変更�
     timeout: 15_000,
   })
 })
+
+test("時刻付き予定は終了時刻も表示し、アジェンダは終日→時刻順に並ぶ", async ({
+  page,
+  approvedUser,
+}) => {
+  await loginAndOpenCalendar(page, approvedUser.email)
+
+  const addSheet = page.getByRole("heading", { name: "予定を追加" })
+
+  // 終日イベント(今日)
+  await openOverlay(page.getByRole("button", { name: "予定を追加" }), addSheet)
+  await page.getByLabel("タイトル").fill("終日イベント")
+  await page.getByRole("button", { name: "追加", exact: true }).click()
+  await waitForEventCount(approvedUser.id, "終日イベント", 1)
+
+  // 時刻付きイベント(今日 14:00〜15:00) — 開始・終了の両時刻を入れる
+  await openOverlay(page.getByRole("button", { name: "予定を追加" }), addSheet)
+  await page.getByLabel("タイトル").fill("面談")
+  await page.getByRole("checkbox").click() // 終日を外す
+  await page.locator("#cal-start-time").fill("14:00")
+  await page.locator("#cal-end-time").fill("15:00")
+  await page.getByRole("button", { name: "追加", exact: true }).click()
+  await waitForEventCount(approvedUser.id, "面談", 1)
+
+  await reloadHydrated(page)
+
+  // 終了時刻(2 段目「〜15:00」)と開始時刻(14:00)が両方見える
+  await expect(page.getByText("14:00")).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText("〜15:00")).toBeVisible()
+
+  // 並び順: 終日 → 時刻付き(sortDayEvents)。時刻文字列でなくタイトルの DOM 順で検証。
+  const agenda = page.locator("section").filter({ hasText: "の予定" })
+  const items = agenda.getByRole("button")
+  await expect(items).toHaveCount(2)
+  await expect(items.nth(0)).toContainText("終日イベント")
+  await expect(items.nth(1)).toContainText("面談")
+})
