@@ -22,9 +22,9 @@ const CACHE_NAMES = {
 }
 
 // オフライン閲覧を許可する認証済みページ。
-// src/lib/constants/pages.ts の VALID_PAGES (+ /settings) と手動同期すること。
+// src/lib/constants/pages.ts の VALID_PAGES (+ /settings, /calendar) と手動同期すること。
 // (classic script のため import できない — ページ追加時はここも更新する)
-const APP_PAGES = ["/meals", "/shopping", "/stock", "/baby", "/settings"]
+const APP_PAGES = ["/meals", "/shopping", "/stock", "/baby", "/calendar", "/settings"]
 
 // install 時に precache する静的リソース
 const PRECACHE_URLS = [
