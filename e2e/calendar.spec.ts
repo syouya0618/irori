@@ -152,7 +152,7 @@ test("時刻付き予定の作成→HH:MM 表示、編集でタイトル変更�
   const addSheet = page.getByRole("heading", { name: "予定を追加" })
   await openOverlay(page.getByRole("button", { name: "予定を追加" }), addSheet)
   await page.getByLabel("タイトル").fill("保育園見学")
-  await page.getByRole("checkbox").click() // 終日を外す
+  await page.getByRole("button", { name: "時刻あり", exact: true }).click() // 終日を外す
   await page.locator("#cal-start-time").fill("14:00")
   await page.getByRole("button", { name: "追加", exact: true }).click()
 
@@ -193,7 +193,7 @@ test("時刻付き予定は終了時刻も表示し、アジェンダは終日�
   // 時刻付きイベント(今日 14:00〜15:00) — 開始・終了の両時刻を入れる
   await openOverlay(page.getByRole("button", { name: "予定を追加" }), addSheet)
   await page.getByLabel("タイトル").fill("面談")
-  await page.getByRole("checkbox").click() // 終日を外す
+  await page.getByRole("button", { name: "時刻あり", exact: true }).click() // 終日を外す
   await page.locator("#cal-start-time").fill("14:00")
   await page.locator("#cal-end-time").fill("15:00")
   await page.getByRole("button", { name: "追加", exact: true }).click()
