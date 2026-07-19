@@ -14,6 +14,10 @@ import {
   parseStockFormData,
   type RecipeSuggestion,
 } from "@/lib/domain"
+import {
+  sanitizeReceiptItems,
+  type ReceiptDraftItem,
+} from "@/lib/domain/receipt"
 import { todayJstString, shiftYmd } from "@/lib/utils/date-jst"
 
 export async function addStockItem(formData: FormData) {
@@ -36,6 +40,48 @@ export async function addStockItem(formData: FormData) {
 
   revalidatePath("/stock")
   return { success: true }
+}
+
+/**
+ * レシート手動補助フォームから複数の在庫アイテムをまとめて追加する。
+ * 名前空・不正数量などはサーバ側で正規化・除外する（クライアント検証に依存しない）。
+ */
+export async function addReceiptItemsToStock(
+  items: ReceiptDraftItem[],
+): Promise<{ error: string } | { success: true; count: number }> {
+  const result = await getAuthContext()
+  if (result.error !== null) return { error: result.error }
+  const { supabase, userId, householdId } = result.context
+
+  if (!Array.isArray(items)) {
+    return { error: "不正なリクエストです" }
+  }
+
+  const sanitized = sanitizeReceiptItems(items)
+  if (sanitized.length === 0) {
+    return { error: "追加できる商品がありません（商品名を入力してください）" }
+  }
+
+  const rows = sanitized.map((item) => ({
+    household_id: householdId,
+    name: item.name,
+    category: item.category,
+    quantity: item.quantity,
+    created_by: userId,
+  }))
+
+  const { error } = await supabase.from("stock_items").insert(rows)
+
+  if (error) {
+    logSupabaseError("stock", "receipt batch insert failed", error, {
+      householdId,
+      count: rows.length,
+    })
+    return { error: "在庫の一括追加に失敗しました" }
+  }
+
+  revalidatePath("/stock")
+  return { success: true, count: sanitized.length }
 }
 
 export async function updateStockItem(itemId: string, formData: FormData) {

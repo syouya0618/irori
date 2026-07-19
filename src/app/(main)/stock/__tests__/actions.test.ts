@@ -13,7 +13,7 @@ vi.mock("@/lib/supabase/auth-context", () => ({
   getAuthContext: () => getAuthContext(),
 }))
 
-import { getConsumptionRates } from "../actions"
+import { getConsumptionRates, addReceiptItemsToStock } from "../actions"
 
 beforeEach(() => vi.clearAllMocks())
 
@@ -43,5 +43,52 @@ describe("getConsumptionRates: 消費レート週窓の TZ", () => {
     const call = gte.mock.calls.find(([col]) => col === "logged_at")
     expect(call).toBeDefined()
     expect(call?.[1]).toMatch(/T00:00:00\+09:00$/)
+  })
+})
+
+describe("addReceiptItemsToStock: 認可と入力検証の順序", () => {
+  it("未認証なら不正な引数でも throw せず認証エラーを返す（認可が入力処理より先）", async () => {
+    getAuthContext.mockResolvedValue({
+      error: "ログインしてください",
+      reason: "unauthenticated",
+      context: null,
+    })
+
+    const result = await addReceiptItemsToStock(null as never)
+
+    expect(result).toEqual({ error: "ログインしてください" })
+  })
+
+  it("認証済みでも非配列は拒否し、DB に触れない", async () => {
+    const from = vi.fn()
+    getAuthContext.mockResolvedValue({
+      error: null,
+      reason: null,
+      context: { supabase: { from }, userId: "u", householdId: "h" },
+    })
+
+    const result = await addReceiptItemsToStock("attack" as never)
+
+    expect(result).toEqual({ error: "不正なリクエストです" })
+    expect(from).not.toHaveBeenCalled()
+  })
+
+  it("細工した要素（name が number 等）は throw せず除外され、全滅なら追加不可エラー", async () => {
+    const from = vi.fn()
+    getAuthContext.mockResolvedValue({
+      error: null,
+      reason: null,
+      context: { supabase: { from }, userId: "u", householdId: "h" },
+    })
+
+    const result = await addReceiptItemsToStock([
+      { name: 123 },
+      null,
+    ] as never)
+
+    expect(result).toEqual({
+      error: "追加できる商品がありません（商品名を入力してください）",
+    })
+    expect(from).not.toHaveBeenCalled()
   })
 })

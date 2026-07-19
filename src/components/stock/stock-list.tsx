@@ -19,6 +19,7 @@ import {
   Heart,
   Package,
   AlertTriangle,
+  ReceiptText,
 } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
@@ -27,6 +28,7 @@ import { Button } from "@/components/ui/button"
 import { checkAndAutoAddLowStock } from "@/app/(main)/stock/actions"
 import { StockItem, type StockItemData } from "./stock-item"
 import { StockFormSheet } from "./stock-form-sheet"
+import { ReceiptEntrySheet } from "./receipt-entry-sheet"
 import { StockSuggestions } from "./stock-suggestions"
 import { getCategoryLabel, categoryDisplayOrder } from "@/lib/utils/categories"
 import { daysFromTodayJst } from "@/lib/utils/date-jst"
@@ -74,6 +76,7 @@ export function StockList({
 }: StockListProps) {
   const [items, setItems] = useState<StockItemData[]>(initialItems)
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [receiptOpen, setReceiptOpen] = useState(false)
   const [editingItem, setEditingItem] = useState<StockItemData | null>(null)
 
   useEffect(() => {
@@ -182,14 +185,25 @@ export function StockList({
           </span>
         </div>
 
-        <Button
-          onClick={handleAdd}
-          size="sm"
-          className="cursor-pointer"
-        >
-          <Plus size={16} />
-          追加
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={() => setReceiptOpen(true)}
+            size="sm"
+            variant="outline"
+            className="cursor-pointer"
+          >
+            <ReceiptText size={16} />
+            レシート
+          </Button>
+          <Button
+            onClick={handleAdd}
+            size="sm"
+            className="cursor-pointer"
+          >
+            <Plus size={16} />
+            追加
+          </Button>
+        </div>
       </div>
 
       {/* 期限切れアラート */}
@@ -265,6 +279,9 @@ export function StockList({
         onOpenChange={setSheetOpen}
         editingItem={editingItem}
       />
+
+      {/* レシートから一括追加シート */}
+      <ReceiptEntrySheet open={receiptOpen} onOpenChange={setReceiptOpen} />
     </div>
   )
 }
