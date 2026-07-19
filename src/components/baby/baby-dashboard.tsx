@@ -15,6 +15,7 @@ import { GrowthChartSection } from "./charts/growth-chart-section"
 import { useNow } from "@/lib/hooks/use-now"
 import { todayJstString, toJstDateString, shiftYmd } from "@/lib/utils/date-jst"
 import { buildBabyWeeklySummary } from "@/lib/domain/baby-weekly-summary"
+import { deriveDashboardSummary } from "@/lib/domain/baby-dashboard-summary"
 import {
   summarizeTodayCounts,
   buildGrowthSeries,
@@ -30,6 +31,7 @@ interface BabyDashboardProps {
   userId: string
   initialDate: string
   lastSleepEndedAt: string | null
+  activeSleepFallback: BabyLogData | null
   babyName: string | null
   babyBirthDate: string | null
 }
@@ -41,6 +43,7 @@ export function BabyDashboard({
   householdId,
   initialDate,
   lastSleepEndedAt,
+  activeSleepFallback,
   babyName,
   babyBirthDate,
 }: BabyDashboardProps) {
@@ -56,6 +59,11 @@ export function BabyDashboard({
   const [formKey, setFormKey] = useState(0)
   const [timerOpen, setTimerOpen] = useState(false)
   const [timerFeedingType, setTimerFeedingType] = useState<FeedingType>("breast_left")
+  // 日跨ぎアクティブ睡眠のサーバフォールバック（B-01）。
+  // state 保持にするのは endSleep 成功時に明示クリアするため
+  // （Realtime 不達 #92 でもトグルが「睡眠中」へ戻らない）。
+  const [serverActiveSleep, setServerActiveSleep] =
+    useState<BabyLogData | null>(activeSleepFallback)
   const now = useNow(60_000)
 
   const today = todayJstString()
@@ -156,6 +164,14 @@ export function BabyDashboard({
               return prev
             })
 
+            // B-01 フォールバックの同期: 前夜開始の未終了睡眠は選択日 logs に
+            // 属さないため上下の分岐では扱われない。別端末で終了（ended_at 設定）
+            // されたらクリアし、編集されたら追従させる。
+            setServerActiveSleep((prev) => {
+              if (!prev || prev.id !== updated.id) return prev
+              return updated.ended_at ? null : updated
+            })
+
             const belongsToDate =
               toJstDateString(updated.logged_at) ===
               selectedDateRef.current
@@ -175,6 +191,9 @@ export function BabyDashboard({
             setLogs((prev) => prev.filter((l) => l.id !== deleted.id))
             setWeeklyLogs((prev) => prev.filter((l) => l.id !== deleted.id))
             setGrowthLogs((prev) => prev.filter((l) => l.id !== deleted.id))
+            setServerActiveSleep((prev) =>
+              prev && prev.id === deleted.id ? null : prev,
+            )
           }
         },
       )
@@ -218,28 +237,12 @@ export function BabyDashboard({
   }, [selectedDate, householdId])
 
   // Derive summary in a single pass
-  const { activeSleep, lastFeeding, derivedLastSleepEndedAt } =
-    useMemo(() => {
-      let activeSleep: BabyLogData | undefined
-      let lastFeeding: BabyLogData | undefined
-      let derivedLastSleepEndedAt: string | null = null
-      for (const l of logs) {
-        if (!activeSleep && l.log_type === "sleep" && !l.ended_at)
-          activeSleep = l
-        if (
-          !derivedLastSleepEndedAt &&
-          l.log_type === "sleep" &&
-          l.ended_at
-        )
-          derivedLastSleepEndedAt = l.ended_at
-        if (!lastFeeding && l.log_type === "feeding") lastFeeding = l
-      }
-      return {
-        activeSleep: activeSleep ?? null,
-        lastFeeding,
-        derivedLastSleepEndedAt,
-      }
-    }, [logs])
+  // （B-01: 導出は純関数へ抽出。前夜開始の未終了睡眠は logs に現れないため
+  //   サーバフォールバック serverActiveSleep で補完する）
+  const { activeSleep, lastFeeding, derivedLastSleepEndedAt } = useMemo(
+    () => deriveDashboardSummary(logs, serverActiveSleep),
+    [logs, serverActiveSleep],
+  )
 
   const todayCounts = useMemo(() => summarizeTodayCounts(logs), [logs])
 
@@ -276,6 +279,13 @@ export function BabyDashboard({
     setTimerOpen(true)
   }, [])
 
+  // endSleep 成功時の明示クリア（B-01）。UNIQUE index idx_one_active_sleep により
+  // 未終了睡眠は高々 1 件ゆえ、どの睡眠を終了しても無条件クリアで正しい。
+  // Realtime 不達（#92）でも fallback がトグルを「睡眠中」へ戻さないようにする。
+  const handleSleepEnded = useCallback(() => {
+    setServerActiveSleep(null)
+  }, [])
+
   return (
     <div className="flex flex-col gap-4 px-4 pt-12 pb-8">
       <BabyAgeHeader
@@ -290,7 +300,7 @@ export function BabyDashboard({
       />
 
       <BabySummaryBar
-        lastFeeding={lastFeeding ?? null}
+        lastFeeding={lastFeeding}
         activeSleep={activeSleep}
         lastSleepEndedAt={effectiveLastSleepEndedAt}
         now={now}
@@ -303,6 +313,7 @@ export function BabyDashboard({
           now={now}
           onCreateLog={handleCreateLog}
           onStartTimer={handleStartTimer}
+          onSleepEnded={handleSleepEnded}
         />
       )}
 
