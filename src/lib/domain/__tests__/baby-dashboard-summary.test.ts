@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest"
-import { deriveDashboardSummary } from "../baby-dashboard-summary"
+import {
+  deriveDashboardSummary,
+  mergeDateNavLogs,
+} from "../baby-dashboard-summary"
 import type { BabyLogData } from "@/lib/types/baby"
 
 /**
@@ -127,5 +130,80 @@ describe("deriveDashboardSummary / activeSleep フォールバック (B-01)", ()
     expect(result.activeSleep).toEqual(crossMidnightSleep)
     expect(result.lastFeeding).toBeNull()
     expect(result.derivedLastSleepEndedAt).toBeNull()
+  })
+})
+
+describe("mergeDateNavLogs / 日付ナビ refetch の dedupe マージ (B-08)", () => {
+  const SELECTED = "2026-07-18"
+
+  const fetchedRow = makeLog({
+    id: "server-1",
+    log_type: "feeding",
+    logged_at: "2026-07-18T08:00:00+09:00",
+    feeding_type: "bottle",
+  })
+
+  it("干渉が無ければ fetched をそのまま返す（＝置換であって削除でない）", () => {
+    // prev は遷移前の旧選択日の行。全置換の従来挙動どおり落とす。
+    const prev = [
+      makeLog({
+        id: "old-date-1",
+        log_type: "diaper",
+        logged_at: "2026-07-17T20:00:00+09:00",
+        diaper_type: "pee",
+      }),
+    ]
+    const fetched = [fetchedRow]
+
+    const result = mergeDateNavLogs(prev, fetched, SELECTED)
+
+    // 保持行ゼロ時は fetched 配列そのものを返す（余計な再生成なし＝ setLogs(data) と等価）
+    expect(result).toBe(fetched)
+    expect(result).toEqual([fetchedRow])
+  })
+
+  it("in-flight 中に Realtime で先着した選択日の行（fetched に無い）は保持される", () => {
+    const realtimeRow = makeLog({
+      id: "realtime-1",
+      log_type: "diaper",
+      logged_at: "2026-07-18T08:30:00+09:00",
+      diaper_type: "poop",
+    })
+    // prev = fetch 発行後・解決前に Realtime INSERT で前置きされた選択日の行
+    const prev = [realtimeRow]
+
+    const result = mergeDateNavLogs(prev, [fetchedRow], SELECTED)
+
+    expect(result.map((l) => l.id)).toContain("realtime-1")
+    expect(result.map((l) => l.id)).toContain("server-1")
+    // 既存 Realtime INSERT の [newLog, ...prev] 前置き規約に合わせ保持行を前に置く
+    expect(result[0].id).toBe("realtime-1")
+  })
+
+  it("fetched に既に含まれる行は重複させない（id dedupe）", () => {
+    // Realtime 行が fetch にも入っている（クエリが INSERT コミット後に走った）ケース
+    const prev = [fetchedRow]
+
+    const result = mergeDateNavLogs(prev, [fetchedRow], SELECTED)
+
+    expect(result).toEqual([fetchedRow])
+    expect(result.filter((l) => l.id === "server-1")).toHaveLength(1)
+  })
+
+  it("選択日に属さない prev 行（旧日付の Realtime 残存等）は保持しない", () => {
+    // 選択日 = 2026-07-18。prev に前日の行があっても救済対象外。
+    const prev = [
+      makeLog({
+        id: "yesterday-realtime",
+        log_type: "feeding",
+        logged_at: "2026-07-17T23:00:00+09:00",
+        feeding_type: "breast_left",
+      }),
+    ]
+
+    const result = mergeDateNavLogs(prev, [fetchedRow], SELECTED)
+
+    expect(result.map((l) => l.id)).not.toContain("yesterday-realtime")
+    expect(result).toEqual([fetchedRow])
   })
 })

@@ -1,4 +1,5 @@
 import type { BabyLogData } from "@/lib/types/baby"
+import { toJstDateString } from "@/lib/utils/date-jst"
 
 export interface BabyDashboardSummary {
   activeSleep: BabyLogData | null
@@ -38,4 +39,46 @@ export function deriveDashboardSummary(
     lastFeeding: lastFeeding ?? null,
     derivedLastSleepEndedAt,
   }
+}
+
+/**
+ * 日付ナビの client refetch 結果（`fetched`、logged_at 降順・選択日窓）を
+ * 現在の logs state（`prev`）へ id ベースの dedupe マージで合流させる純関数（B-08）。
+ *
+ * 従来は `setLogs(data)` の無条件全置換だったため、fetch が in-flight の間に
+ * Realtime で先着した「選択日の新規行」が解決時に上書きで消えていた（H3-02）。
+ * `fetched` を真値の土台とし、`prev` のうち **選択日に属し**かつ `fetched` に
+ * 含まれない行（＝ in-flight 中に届いた Realtime 行）のみを保持して前置きする。
+ *
+ * `toJstDateString(logged_at) === selectedDate` の絞り込みは load-bearing:
+ * fetch 解決時点の `prev` には遷移前の旧選択日の行がまだ残っている場合があり、
+ * これを落とす（無条件全置換が持っていた「旧日付を捨てる」挙動の維持）と同時に、
+ * 選択日に属する Realtime 先着行だけを救済する。干渉が無い通常ケースでは
+ * `fetched` と同一配列を返す（＝置換であって削除でない）。
+ *
+ * 並び順は既存 Realtime INSERT の `[newLog, ...prev]` 前置き規約に合わせ、
+ * 保持行を `fetched`（サーバ降順）の前に置く。再ソートはしない。
+ *
+ * ⚠️ 下記の `toJstDateString(logged_at) === selectedDate` フィルタは、
+ * baby-dashboard.tsx の Realtime INSERT admission guard
+ * （`toJstDateString(newLog.logged_at) !== selectedDateRef.current` → skip）と
+ * **同じ入場条件を鏡写しにしている**（先着行はこの guard を通って初めて prev に
+ * 入るため）。B-02 が日付窓に cross-midnight の `or()` 節を足す際は、admission
+ * guard と本フィルタを**同時に**更新すること。片方だけ広げると、fetch in-flight
+ * 中に届いた前夜開始の睡眠が解決時に無音で落ちる。
+ */
+export function mergeDateNavLogs(
+  prev: BabyLogData[],
+  fetched: BabyLogData[],
+  selectedDate: string,
+): BabyLogData[] {
+  const fetchedIds = new Set(fetched.map((l) => l.id))
+  const preserved = prev.filter(
+    (l) =>
+      !fetchedIds.has(l.id) &&
+      // Realtime admission guard（baby-dashboard.tsx:136）と同期を保つこと（B-02 注意）
+      toJstDateString(l.logged_at) === selectedDate,
+  )
+  if (preserved.length === 0) return fetched
+  return [...preserved, ...fetched]
 }
