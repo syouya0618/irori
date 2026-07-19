@@ -137,10 +137,12 @@ export function BabyLogFormSheet({
 
       if (log.log_type === "feeding") {
         updates.feedingType = feedingType
-        updates.amountMl =
-          feedingType === "bottle" || feedingType === "solid"
-            ? parseInt(amountMl) || null
-            : null
+        if (feedingType === "bottle" || feedingType === "solid") {
+          const n = parseInt(amountMl, 10)
+          updates.amountMl = Number.isFinite(n) && n >= 0 ? n : null
+        } else {
+          updates.amountMl = null
+        }
       }
       if (log.log_type === "diaper") {
         updates.diaperType = diaperType
