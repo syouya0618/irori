@@ -68,6 +68,19 @@ export function daysFromTodayJst(
 }
 
 /**
+ * YYYY-MM-DD 文字列が JST の今日より未来の日付かを返す。
+ * 当日・過去・パース不能な文字列はいずれも false（未来ではない）。
+ * 形式検証は呼び出し側の責務（不正文字列は false を返すため単独では弾かない）。
+ *
+ * 誕生日など「今日以前のみ許可」の検証に使う。サーバー(UTC)でも JST 基準で
+ * 判定するため、JST 00:00〜08:59（UTC ではまだ前日）に当日を未来と誤判定しない。
+ */
+export function isFutureJstDate(ymd: string, now: Date = new Date()): boolean {
+  const days = daysFromTodayJst(ymd, now)
+  return days !== null && days > 0
+}
+
+/**
  * YYYY-MM-DD 文字列を指定日数シフトする。タイムゾーン非依存。
  */
 export function shiftYmd(ymd: string, days: number): string {

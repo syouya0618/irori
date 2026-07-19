@@ -7,6 +7,7 @@ import {
   currentWeekRangeJst,
   jstWallClockToIso,
   toJstDateString,
+  isFutureJstDate,
 } from "../date-jst"
 
 describe("todayJstString", () => {
@@ -141,6 +142,37 @@ describe("daysFromTodayJst", () => {
     const now = new Date("2026-04-08T15:30:00Z")
     expect(daysFromTodayJst("2026-04-09", now)).toBe(0)
     expect(daysFromTodayJst("2026-04-10", now)).toBe(1)
+  })
+})
+
+describe("isFutureJstDate", () => {
+  it("JST の当日は未来ではない（許可）", () => {
+    const now = new Date("2026-04-09T14:00:00Z") // 2026-04-09 23:00 JST
+    expect(isFutureJstDate("2026-04-09", now)).toBe(false)
+  })
+
+  it("JST の過去は未来ではない（許可）", () => {
+    const now = new Date("2026-04-09T14:00:00Z") // 2026-04-09 23:00 JST
+    expect(isFutureJstDate("2026-04-06", now)).toBe(false)
+  })
+
+  it("JST の未来は true（拒否）", () => {
+    const now = new Date("2026-04-09T14:00:00Z") // 2026-04-09 23:00 JST
+    expect(isFutureJstDate("2026-04-10", now)).toBe(true)
+  })
+
+  it("JST 00:30（UTC 前日 15:30）でも当日を未来と誤判定しない（誕生日 UTC 罠の核心）", () => {
+    // UTC では 2026-04-08 15:30 だが JST では 2026-04-09 00:30。
+    // ここで当日 2026-04-09 を「未来」と誤判定すると当日登録が弾かれる。
+    const now = new Date("2026-04-08T15:30:00Z")
+    expect(isFutureJstDate("2026-04-09", now)).toBe(false)
+    expect(isFutureJstDate("2026-04-10", now)).toBe(true)
+  })
+
+  it("不正なフォーマットは未来ではない（false、形式検証は呼び出し側の責務）", () => {
+    const now = new Date("2026-04-09T14:00:00Z")
+    expect(isFutureJstDate("2026/04/09", now)).toBe(false)
+    expect(isFutureJstDate("invalid", now)).toBe(false)
   })
 })
 

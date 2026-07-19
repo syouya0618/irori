@@ -281,3 +281,78 @@ test("オンラインで訪問済みの 4 画面がオフラインで閲覧で�
 
   // teardown は fixture (approvedUser) が household ごと削除する
 })
+
+test("オンラインで訪問済みの /calendar がオフラインで表示される（/offline に落ちない）", async ({
+  page,
+  context,
+  approvedUser,
+}) => {
+  // SW warmup + マジックリンクログインを含むため既定 60s から延長する
+  test.setTimeout(90_000)
+
+  // ── 1. 世帯を service_role で直 insert (calendar ページはイベント 0 件でも描画される) ──
+  const admin = adminClient()
+
+  const { data: household, error: householdError } = await admin
+    .from("households")
+    .insert({ name: "E2Eオフライン世帯(calendar)" })
+    .select("id")
+    .single()
+  if (householdError || !household) {
+    throw new Error(`households insert failed: ${formatError(householdError)}`)
+  }
+  const householdId = household.id as string
+
+  const { data: linked, error: linkError } = await admin
+    .from("profiles")
+    .update({ household_id: householdId, role: "owner" })
+    .eq("id", approvedUser.id)
+    .select("id")
+    .single()
+  if (linkError || !linked) {
+    throw new Error(`profiles link failed: ${formatError(linkError)}`)
+  }
+
+  // ── 2. 実ログイン ──
+  await loginViaMagicLink(page, approvedUser.email)
+
+  // ── 3. SW の register → activate → controlled 化を待つ ──
+  await page.goto("/calendar")
+  await page.waitForFunction(
+    async () => {
+      const registration = await navigator.serviceWorker.getRegistration()
+      return !!registration?.active
+    },
+    undefined,
+    { timeout: 15_000 }
+  )
+  await page.reload()
+  await page.waitForFunction(() => !!navigator.serviceWorker.controller)
+
+  // ── 4. /calendar をオンラインで再訪問して documents キャッシュを温める ──
+  // イベント未作成でも描画される骨格要素 (「予定を追加」ボタン) で内容を確認する。
+  await page.goto("/calendar")
+  await expect(page.getByRole("button", { name: "予定を追加" })).toBeVisible()
+  await page.waitForFunction(
+    async ({ cacheName, pagePath }) => {
+      const cache = await caches.open(cacheName)
+      const key = new URL(pagePath, location.origin).href
+      return !!(await cache.match(key))
+    },
+    { cacheName: DOCUMENTS_CACHE, pagePath: "/calendar" },
+    { timeout: 15_000 }
+  )
+
+  // ── 5. オフライン化 → /calendar は documents キャッシュから表示され、/offline へは落ちない ──
+  await context.setOffline(true)
+  await page.goto("/calendar")
+  await expect(page.getByRole("button", { name: "予定を追加" })).toBeVisible()
+  expect(new URL(page.url()).pathname).toBe("/calendar")
+  await expect(
+    page.getByRole("heading", { name: "オフラインです" })
+  ).not.toBeVisible()
+
+  await context.setOffline(false)
+
+  // teardown は fixture (approvedUser) が household ごと削除する
+})

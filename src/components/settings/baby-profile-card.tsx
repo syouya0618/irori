@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { updateBabyProfile } from "@/app/(main)/settings/actions"
+import { todayJstString } from "@/lib/utils/date-jst"
 
 export function BabyProfileCard({
   initialProfile,
@@ -62,6 +63,7 @@ export function BabyProfileCard({
               name="baby_birth_date"
               type="date"
               defaultValue={initialProfile.birthDate ?? ""}
+              max={todayJstString()}
               className="h-10"
             />
           </div>
