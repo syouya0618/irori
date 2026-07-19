@@ -111,26 +111,36 @@ export async function recordDiaper(input: RecordDiaperInput) {
 
 export async function startSleep() {
   const result = await getAuthContext()
-  if (result.error !== null) return { error: result.error }
+  if (result.error !== null) return { error: result.error, id: null }
   const { supabase, userId, householdId } = result.context
 
-  const { error } = await supabase.from("baby_logs").insert({
-    household_id: householdId,
-    log_type: "sleep",
-    logged_by: userId,
-  })
+  // B-03: 楽観 append 用に作成した睡眠ログの id を返す（.select("id").single()）。
+  // 既存の 23505（既に睡眠中）分岐は不変 — insert 競合時は error に 23505 が入る。
+  const { data, error } = await supabase
+    .from("baby_logs")
+    .insert({
+      household_id: householdId,
+      log_type: "sleep",
+      logged_by: userId,
+    })
+    .select("id")
+    .single()
 
   if (error) {
     // 23505 は「既に睡眠中」= UNIQUE 制約による正常系ゆえログ対象外。
     if (error.code === "23505") {
-      return { error: "既に睡眠中のセッションがあります。" }
+      return { error: "既に睡眠中のセッションがあります。", id: null }
     }
     logSupabaseError("baby", "睡眠の開始に失敗", error, { userId, householdId })
-    return { error: "睡眠の記録に失敗しました。" }
+    return { error: "睡眠の記録に失敗しました。", id: null }
+  }
+  if (!data) {
+    console.error("[baby] 睡眠の開始: 行が返らず", { userId, householdId })
+    return { error: "睡眠の記録に失敗しました。", id: null }
   }
 
   revalidatePath("/baby")
-  return { error: null }
+  return { error: null, id: data.id }
 }
 
 export async function endSleep(logId: string) {
@@ -165,78 +175,105 @@ export async function endSleep(logId: string) {
 
 export async function recordTemperature(input: RecordTemperatureInput) {
   const memoError = validateMemoLength(input.memo)
-  if (memoError) return { error: memoError }
+  if (memoError) return { error: memoError, id: null }
 
   const result = await getAuthContext()
-  if (result.error !== null) return { error: result.error }
+  if (result.error !== null) return { error: result.error, id: null }
   const { supabase, userId, householdId } = result.context
 
-  const { error } = await supabase.from("baby_logs").insert({
-    household_id: householdId,
-    log_type: "temperature",
-    logged_by: userId,
-    temperature: input.temperature,
-    memo: input.memo || null,
-  })
+  // B-03: 楽観 append 用に作成ログの id を返す。
+  const { data, error } = await supabase
+    .from("baby_logs")
+    .insert({
+      household_id: householdId,
+      log_type: "temperature",
+      logged_by: userId,
+      temperature: input.temperature,
+      memo: input.memo || null,
+    })
+    .select("id")
+    .single()
 
   if (error) {
     logSupabaseError("baby", "体温の記録に失敗", error, { userId, householdId })
-    return { error: "体温の記録に失敗しました。" }
+    return { error: "体温の記録に失敗しました。", id: null }
+  }
+  if (!data) {
+    console.error("[baby] 体温の記録: 行が返らず", { userId, householdId })
+    return { error: "体温の記録に失敗しました。", id: null }
   }
 
   revalidatePath("/baby")
-  return { error: null }
+  return { error: null, id: data.id }
 }
 
 export async function recordGrowth(input: RecordGrowthInput) {
   const memoError = validateMemoLength(input.memo)
-  if (memoError) return { error: memoError }
+  if (memoError) return { error: memoError, id: null }
 
   const result = await getAuthContext()
-  if (result.error !== null) return { error: result.error }
+  if (result.error !== null) return { error: result.error, id: null }
   const { supabase, userId, householdId } = result.context
 
-  const { error } = await supabase.from("baby_logs").insert({
-    household_id: householdId,
-    log_type: "growth",
-    logged_by: userId,
-    weight_g: input.weightG ?? null,
-    height_cm: input.heightCm ?? null,
-    memo: input.memo || null,
-  })
+  // B-03: 楽観 append 用に作成ログの id を返す。
+  const { data, error } = await supabase
+    .from("baby_logs")
+    .insert({
+      household_id: householdId,
+      log_type: "growth",
+      logged_by: userId,
+      weight_g: input.weightG ?? null,
+      height_cm: input.heightCm ?? null,
+      memo: input.memo || null,
+    })
+    .select("id")
+    .single()
 
   if (error) {
     logSupabaseError("baby", "成長記録に失敗", error, { userId, householdId })
-    return { error: "成長記録に失敗しました。" }
+    return { error: "成長記録に失敗しました。", id: null }
+  }
+  if (!data) {
+    console.error("[baby] 成長記録: 行が返らず", { userId, householdId })
+    return { error: "成長記録に失敗しました。", id: null }
   }
 
   revalidatePath("/baby")
-  return { error: null }
+  return { error: null, id: data.id }
 }
 
 export async function recordMemo(input: RecordMemoInput) {
-  if (!input.memo) return { error: "メモを入力してください" }
+  if (!input.memo) return { error: "メモを入力してください", id: null }
   const memoError = validateMemoLength(input.memo)
-  if (memoError) return { error: memoError }
+  if (memoError) return { error: memoError, id: null }
 
   const result = await getAuthContext()
-  if (result.error !== null) return { error: result.error }
+  if (result.error !== null) return { error: result.error, id: null }
   const { supabase, userId, householdId } = result.context
 
-  const { error } = await supabase.from("baby_logs").insert({
-    household_id: householdId,
-    log_type: "memo",
-    logged_by: userId,
-    memo: input.memo,
-  })
+  // B-03: 楽観 append 用に作成ログの id を返す。
+  const { data, error } = await supabase
+    .from("baby_logs")
+    .insert({
+      household_id: householdId,
+      log_type: "memo",
+      logged_by: userId,
+      memo: input.memo,
+    })
+    .select("id")
+    .single()
 
   if (error) {
     logSupabaseError("baby", "メモの記録に失敗", error, { userId, householdId })
-    return { error: "メモの記録に失敗しました。" }
+    return { error: "メモの記録に失敗しました。", id: null }
+  }
+  if (!data) {
+    console.error("[baby] メモの記録: 行が返らず", { userId, householdId })
+    return { error: "メモの記録に失敗しました。", id: null }
   }
 
   revalidatePath("/baby")
-  return { error: null }
+  return { error: null, id: data.id }
 }
 
 export async function updateLog(

@@ -11,6 +11,7 @@ import {
   deleteLog,
 } from "@/app/(main)/baby/actions"
 import { formatElapsedMinutes, minutesBetween } from "@/lib/utils/baby-log-labels"
+import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
 import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
 import type { BabyLogData } from "@/lib/types/baby"
 
@@ -45,18 +46,36 @@ function toastOfflineError(context: string, err: unknown) {
 interface BabyQuickActionsProps {
   activeSleep: BabyLogData | null
   now: Date
+  /** 記録者（logged_by）。楽観 append 行の作成に使う（B-03） */
+  userId: string
   onCreateLog: (type: BabyLogType) => void
   onStartTimer: (type: FeedingType) => void
-  /** endSleep 成功時に呼ばれる（B-01: 日跨ぎフォールバックの明示クリア用） */
-  onSleepEnded?: () => void
+  /**
+   * endSleep 成功時に呼ばれる（B-01: 日跨ぎフォールバックの明示クリア +
+   * B-03: logs 側の該当睡眠へ ended_at を楽観反映）。id と適用した ended_at を渡す。
+   */
+  onSleepEnded?: (id: string, endedAt: string) => void
+  /**
+   * 記録成功時に楽観 append する行を親へ渡す（B-03）。Realtime 単一経路を脱し、
+   * #92 不達下でも timeline/回数を即時更新する。既存 echo は id 重複で吸収。
+   *
+   * 前提: quick actions は isToday ゲート下でのみ描画されるため、ここで作る行の
+   * logged_at（client now）は常に選択日（当日）= timeline 窓と一致する（安全前提）。
+   */
+  onLogRecorded?: (log: BabyLogData) => void
+  /** Undo 成功時にローカル state から除去する行の id を親へ渡す（B-03） */
+  onLogRemoved?: (id: string) => void
 }
 
 export function BabyQuickActions({
   activeSleep,
   now,
+  userId,
   onCreateLog,
   onStartTimer,
   onSleepEnded,
+  onLogRecorded,
+  onLogRemoved,
 }: BabyQuickActionsProps) {
   const [isPending, startTransition] = useTransition()
 
@@ -69,6 +88,8 @@ export function BabyQuickActions({
           toast.error(result.error)
           return
         }
+        // B-03: Realtime DELETE echo を待たずローカル state からも除去
+        onLogRemoved?.(logId)
         toast.success(`${label}の記録を取り消しました`)
       } catch (err) {
         toastOfflineError("deleteLog(undo)", err)
@@ -94,6 +115,17 @@ export function BabyQuickActions({
           toast.error(result.error)
           return
         }
+        // B-03: 返却 id で楽観 append（Realtime を待たず timeline/回数を即時更新）
+        if (result.id) {
+          onLogRecorded?.(
+            buildOptimisticLog({
+              id: result.id,
+              logType: "feeding",
+              loggedBy: userId,
+              feedingType,
+            }),
+          )
+        }
         successWithUndo("授乳を記録しました", "授乳", result.id)
       } catch (err) {
         toastOfflineError("recordFeeding", err)
@@ -108,6 +140,18 @@ export function BabyQuickActions({
         if (result.error) {
           toast.error(result.error)
           return
+        }
+        // B-03: 返却 id で楽観 append（feeding/diaper は UNIQUE 防御が無いため、
+        // #92 下の再タップ二重記録を止血する本命経路）
+        if (result.id) {
+          onLogRecorded?.(
+            buildOptimisticLog({
+              id: result.id,
+              logType: "diaper",
+              loggedBy: userId,
+              diaperType,
+            }),
+          )
         }
         successWithUndo("おむつ交換を記録しました", "おむつ", result.id)
       } catch (err) {
@@ -125,19 +169,30 @@ export function BabyQuickActions({
             toast.error(result.error)
             return
           }
-          // B-01: 日跨ぎフォールバックの明示クリア（Server Action 応答ベース =
-          // Realtime 不達 #92 でもトグルが「睡眠中」へ戻らない）
-          onSleepEnded?.()
-          const mins = minutesBetween(
-            activeSleep.logged_at,
-            new Date().toISOString(),
-          )
+          // B-01/B-03: フォールバックの明示クリア + logs 側の睡眠へ ended_at を楽観反映
+          // （Server Action 応答ベース = Realtime 不達 #92 でもトグルが「睡眠中」に張り付かない）
+          const endedAt = new Date().toISOString()
+          onSleepEnded?.(activeSleep.id, endedAt)
+          const mins = minutesBetween(activeSleep.logged_at, endedAt)
           toast.success(`おはよう！（${formatElapsedMinutes(mins)}）`)
         } else {
           const result = await startSleep()
           if (result.error) {
             toast.error(result.error)
             return
+          }
+          // B-03: 睡眠開始も楽観 append。serverActiveSleep（B-01・日跨ぎ用の別 state）とは
+          // 別で、同日開始の睡眠は logs に入る。deriveDashboardSummary が logs 優先ゆえ
+          // トグルが即「起こす」へ。id dedupe により echo/serverActiveSleep と二重にならない。
+          if (result.id) {
+            onLogRecorded?.(
+              buildOptimisticLog({
+                id: result.id,
+                logType: "sleep",
+                loggedBy: userId,
+                // ended_at は未設定 = アクティブ睡眠
+              }),
+            )
           }
           toast.success("おやすみなさい")
         }

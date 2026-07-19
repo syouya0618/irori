@@ -34,6 +34,7 @@ describe("FeedingTimer 永久ローディング防止", () => {
         open
         onOpenChange={vi.fn()}
         initialFeedingType="breast_left"
+        userId="u1"
       />,
     )
 
@@ -56,11 +57,35 @@ describe("FeedingTimer 永久ローディング防止", () => {
         open
         onOpenChange={onOpenChange}
         initialFeedingType="breast_left"
+        userId="u1"
       />,
     )
     fireEvent.click(screen.getByRole("button", { name: /停止して記録|記録中/ }))
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
     expect(toast.success).toHaveBeenCalled()
+  })
+
+  it("記録成功時に onLogRecorded へ返却 id 付きの feeding 行を渡す（B-03 楽観 append）", async () => {
+    recordFeeding.mockResolvedValueOnce({ error: null, id: "ft-1" })
+    const onLogRecorded = vi.fn()
+    render(
+      <FeedingTimer
+        open
+        onOpenChange={vi.fn()}
+        initialFeedingType="breast_left"
+        userId="u1"
+        onLogRecorded={onLogRecorded}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: /停止して記録|記録中/ }))
+
+    await waitFor(() => expect(onLogRecorded).toHaveBeenCalledTimes(1))
+    const log = onLogRecorded.mock.calls[0][0]
+    expect(log.id).toBe("ft-1")
+    expect(log.log_type).toBe("feeding")
+    expect(log.feeding_type).toBe("breast_left")
+    expect(log.logged_by).toBe("u1")
+    expect(typeof log.duration_min).toBe("number")
   })
 })

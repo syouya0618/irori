@@ -53,7 +53,7 @@ describe("BabyLogFormSheet の amountMl 0ml falsy 衝突", () => {
   it("量に「0」を入力して更新すると amountMl: 0 が updateLog に渡る", async () => {
     mockedUpdateLog.mockResolvedValue({ error: null })
     render(
-      <BabyLogFormSheet open={true} onOpenChange={() => {}} log={bottleFeedingLog()} />,
+      <BabyLogFormSheet userId="u1" open={true} onOpenChange={() => {}} log={bottleFeedingLog()} />,
     )
 
     const input = screen.getByLabelText("量 (ml)")
@@ -70,7 +70,7 @@ describe("BabyLogFormSheet の amountMl 0ml falsy 衝突", () => {
   it("量を空文字にして更新すると amountMl: null が updateLog に渡る（回帰）", async () => {
     mockedUpdateLog.mockResolvedValue({ error: null })
     render(
-      <BabyLogFormSheet open={true} onOpenChange={() => {}} log={bottleFeedingLog()} />,
+      <BabyLogFormSheet userId="u1" open={true} onOpenChange={() => {}} log={bottleFeedingLog()} />,
     )
 
     const input = screen.getByLabelText("量 (ml)")
@@ -97,6 +97,7 @@ describe("BabyLogFormSheet の通信断 reject 握り（B-07）", () => {
     mockedRecordMemo.mockRejectedValue(new Error("network down"))
     render(
       <BabyLogFormSheet
+        userId="u1"
         open={true}
         onOpenChange={() => {}}
         log={null}
@@ -117,7 +118,7 @@ describe("BabyLogFormSheet の通信断 reject 握り（B-07）", () => {
   it("更新（updateLog）が reject → 圏外トースト", async () => {
     mockedUpdateLog.mockRejectedValue(new Error("network down"))
     render(
-      <BabyLogFormSheet open={true} onOpenChange={() => {}} log={bottleFeedingLog()} />,
+      <BabyLogFormSheet userId="u1" open={true} onOpenChange={() => {}} log={bottleFeedingLog()} />,
     )
     fireEvent.click(screen.getByRole("button", { name: "更新する" }))
 
@@ -130,7 +131,7 @@ describe("BabyLogFormSheet の通信断 reject 握り（B-07）", () => {
   it("削除（deleteLog）が reject → 圏外トースト", async () => {
     mockedDeleteLog.mockRejectedValue(new Error("network down"))
     render(
-      <BabyLogFormSheet open={true} onOpenChange={() => {}} log={bottleFeedingLog()} />,
+      <BabyLogFormSheet userId="u1" open={true} onOpenChange={() => {}} log={bottleFeedingLog()} />,
     )
     fireEvent.click(screen.getByRole("button", { name: "この記録を削除" }))
     fireEvent.click(screen.getByRole("button", { name: "削除する" }))

@@ -9,7 +9,16 @@ vi.mock("@/lib/supabase/auth-context", () => ({
   getAuthContext: () => getAuthContext(),
 }))
 
-import { recordFeeding, recordDiaper, updateLog, deleteLog } from "../actions"
+import {
+  recordFeeding,
+  recordDiaper,
+  updateLog,
+  deleteLog,
+  startSleep,
+  recordTemperature,
+  recordGrowth,
+  recordMemo,
+} from "../actions"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 
 const mockedLog = vi.mocked(logSupabaseError)
@@ -89,6 +98,69 @@ describe("recordFeeding / recordDiaper が作成した log id を返す（Undo �
     setContext(client)
     const result = await recordDiaper({ diaperType: "pee" })
     expect(result).toEqual({ error: null, id: "log-77" })
+  })
+})
+
+describe("startSleep / record{Temperature,Growth,Memo} が作成 log id を返す（B-03 楽観 append 用）", () => {
+  it("startSleep: 成功時に作成した睡眠 log の id を返す", async () => {
+    const { client } = makeSupabase({ data: { id: "sleep-1" }, error: null })
+    setContext(client)
+    const result = await startSleep()
+    expect(result).toEqual({ error: null, id: "sleep-1" })
+  })
+
+  it("startSleep: 23505（既に睡眠中）は正常系ゆえ id: null + ログ抑止", async () => {
+    const { client } = makeSupabase({
+      data: null,
+      error: { code: "23505", message: "duplicate key" },
+    })
+    setContext(client)
+    const result = await startSleep()
+    expect(result.error).toBe("既に睡眠中のセッションがあります。")
+    expect(result.id).toBeNull()
+    // 23505 は UNIQUE 制約による正常系ゆえ構造化ログは出さない
+    expect(mockedLog).not.toHaveBeenCalled()
+  })
+
+  it("startSleep: 23505 以外の DB エラーは id: null + logSupabaseError", async () => {
+    const { client } = makeSupabase({
+      data: null,
+      error: { code: "XX000", message: "boom" },
+    })
+    setContext(client)
+    const result = await startSleep()
+    expect(result.error).toBe("睡眠の記録に失敗しました。")
+    expect(result.id).toBeNull()
+    expect(mockedLog).toHaveBeenCalled()
+  })
+
+  it("recordTemperature: 成功時に id を返す", async () => {
+    const { client } = makeSupabase({ data: { id: "temp-1" }, error: null })
+    setContext(client)
+    const result = await recordTemperature({ temperature: 36.7 })
+    expect(result).toEqual({ error: null, id: "temp-1" })
+  })
+
+  it("recordGrowth: 成功時に id を返す", async () => {
+    const { client } = makeSupabase({ data: { id: "growth-1" }, error: null })
+    setContext(client)
+    const result = await recordGrowth({ weightG: 5200 })
+    expect(result).toEqual({ error: null, id: "growth-1" })
+  })
+
+  it("recordMemo: 成功時に id を返す", async () => {
+    const { client } = makeSupabase({ data: { id: "memo-1" }, error: null })
+    setContext(client)
+    const result = await recordMemo({ memo: "hello" })
+    expect(result).toEqual({ error: null, id: "memo-1" })
+  })
+
+  it("recordMemo: 空文字は id: null で早期 return（DB 到達なし）", async () => {
+    const { client } = makeSupabase({ data: { id: "x" }, error: null })
+    setContext(client)
+    const result = await recordMemo({ memo: "" })
+    expect(result.error).toBeTruthy()
+    expect(result.id).toBeNull()
   })
 })
 

@@ -13,10 +13,12 @@ import { Loader2, Square } from "lucide-react"
 import { toast } from "sonner"
 import { recordFeeding } from "@/app/(main)/baby/actions"
 import { clampFeedingDuration } from "@/lib/domain"
+import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
 import { useWakeLock } from "@/lib/hooks/use-wake-lock"
 import { useNow } from "@/lib/hooks/use-now"
 import { segmentCn } from "@/lib/utils/segment-cn"
 import type { FeedingType } from "@/lib/types/database"
+import type { BabyLogData } from "@/lib/types/baby"
 
 const STORAGE_KEY = "irori:feeding-timer"
 const MAX_TIMER_AGE_MS = 2 * 60 * 60 * 1000 // 2時間で stale 扱い
@@ -36,12 +38,21 @@ interface FeedingTimerProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   initialFeedingType: FeedingType
+  /** 記録者（logged_by）。楽観 append 行の作成に使う（B-03） */
+  userId: string
+  /**
+   * 記録成功時に楽観 append する行を親へ渡す（B-03）。タイマーは quick actions
+   * （isToday ゲート下）からのみ開くため、logged_at（client now）は選択日と一致する。
+   */
+  onLogRecorded?: (log: BabyLogData) => void
 }
 
 export function FeedingTimer({
   open,
   onOpenChange,
   initialFeedingType,
+  userId,
+  onLogRecorded,
 }: FeedingTimerProps) {
   const [feedingType, setFeedingType] = useState<FeedingType>(initialFeedingType)
   const [startedAt, setStartedAt] = useState<Date | null>(null)
@@ -139,6 +150,19 @@ export function FeedingTimer({
     if (result.error) {
       toast.error(result.error)
       return
+    }
+
+    // B-03: 返却 id で楽観 append（Realtime を待たず timeline/回数を即時更新）
+    if (result.id) {
+      onLogRecorded?.(
+        buildOptimisticLog({
+          id: result.id,
+          logType: "feeding",
+          loggedBy: userId,
+          feedingType,
+          durationMin: duration,
+        }),
+      )
     }
 
     localStorage.removeItem(STORAGE_KEY)

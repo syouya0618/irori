@@ -66,6 +66,7 @@ export function BabyDashboard({
   initialWeeklyLogs,
   initialGrowthLogs,
   householdId,
+  userId,
   initialDate,
   lastSleepEndedAt,
   activeSleepFallback,
@@ -387,11 +388,33 @@ export function BabyDashboard({
     setTimerOpen(true)
   }, [])
 
-  // endSleep 成功時の明示クリア（B-01）。UNIQUE index idx_one_active_sleep により
-  // 未終了睡眠は高々 1 件ゆえ、どの睡眠を終了しても無条件クリアで正しい。
-  // Realtime 不達（#92）でも fallback がトグルを「睡眠中」へ戻さないようにする。
-  const handleSleepEnded = useCallback(() => {
-    setServerActiveSleep(null)
+  // B-03: 記録系 Server Action の成功時に、返却 id で組んだ楽観ログを logs へ前置きする。
+  // 既存 Realtime INSERT ハンドラ（上）と同じ id 重複ガードを持たせ、echo が後追いで
+  // 届いても二重 append しない（同 id INSERT はスキップされる）。
+  // 楽観 append が正しいのは記録導線が全て isToday ゲート下にあるからこそ
+  // （F-03 過去日クイック記録の解禁時は要再検討 — baby-optimistic-log.ts の注記参照）。
+  const appendLog = useCallback((log: BabyLogData) => {
+    setLogs((prev) => (prev.some((l) => l.id === log.id) ? prev : [log, ...prev]))
+  }, [])
+
+  // B-03: Undo（quick actions の取り消し）・削除の成功時にローカル state から除去する。
+  // Realtime DELETE echo が後追いで来ても filter は冪等ゆえ二重除去にならない。
+  const removeLog = useCallback((id: string) => {
+    setLogs((prev) => prev.filter((l) => l.id !== id))
+  }, [])
+
+  // endSleep 成功時の楽観反映（B-01 の明示クリア + B-03 の logs 更新を統合）。
+  // - 同日開始の睡眠は logs に居る（B-03 で楽観 append 済み or Realtime 由来）。
+  //   その行へ ended_at を反映し、deriveDashboardSummary の activeSleep 判定を解除して
+  //   トグルを「ねんね」へ戻す（Realtime 不達 #92 でも「起こす」に張り付かない）。
+  // - 前夜開始の日跨ぎ睡眠は logs に居らず serverActiveSleep 側にある（B-01）。
+  //   id 一致時にそれをクリアする。UNIQUE index idx_one_active_sleep により未終了睡眠は
+  //   高々 1 件ゆえ、両者が同時に別の睡眠を指すことはない。
+  const handleSleepEnded = useCallback((id: string, endedAt: string) => {
+    setServerActiveSleep((prev) => (prev?.id === id ? null : prev))
+    setLogs((prev) =>
+      prev.map((l) => (l.id === id ? { ...l, ended_at: endedAt } : l)),
+    )
   }, [])
 
   return (
@@ -420,9 +443,12 @@ export function BabyDashboard({
         <BabyQuickActions
           activeSleep={activeSleep}
           now={now}
+          userId={userId}
           onCreateLog={handleCreateLog}
           onStartTimer={handleStartTimer}
           onSleepEnded={handleSleepEnded}
+          onLogRecorded={appendLog}
+          onLogRemoved={removeLog}
         />
       )}
 
@@ -438,12 +464,17 @@ export function BabyDashboard({
         onOpenChange={setSheetOpen}
         log={editingLog}
         createLogType={createLogType}
+        userId={userId}
+        onLogRecorded={appendLog}
+        onLogRemoved={removeLog}
       />
 
       <FeedingTimer
         open={timerOpen}
         onOpenChange={setTimerOpen}
         initialFeedingType={timerFeedingType}
+        userId={userId}
+        onLogRecorded={appendLog}
       />
     </div>
   )
