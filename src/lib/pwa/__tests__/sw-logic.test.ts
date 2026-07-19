@@ -80,6 +80,7 @@ describe("sw.js __TEST_HOOKS__", () => {
       "/shopping",
       "/stock",
       "/baby",
+      "/calendar",
       "/settings",
     ])
     expect(hooks.PRECACHE_URLS).toContain("/offline")

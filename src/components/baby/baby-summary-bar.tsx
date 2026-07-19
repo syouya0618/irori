@@ -2,6 +2,7 @@
 
 import { Milk, Droplets, Moon, Sun } from "lucide-react"
 import { formatElapsedMinutes, minutesBetween } from "@/lib/utils/baby-log-labels"
+import { todayJstString, formatTimeJst } from "@/lib/utils/date-jst"
 import type { TodayCounts } from "@/lib/domain/baby-log-aggregation"
 import type { BabyLogData } from "@/lib/types/baby"
 
@@ -11,6 +12,8 @@ interface BabySummaryBarProps {
   lastSleepEndedAt: string | null
   now: Date
   todayCounts: TodayCounts
+  /** 表示中の日付（YYYY-MM-DD、JST）。今日か過去日かでラベル・経過表示を切り替える */
+  date: string
 }
 
 export function BabySummaryBar({
@@ -19,18 +22,29 @@ export function BabySummaryBar({
   lastSleepEndedAt,
   now,
   todayCounts,
+  date,
 }: BabySummaryBarProps) {
-  const feedingElapsed = lastFeeding
-    ? minutesBetween(lastFeeding.logged_at, now.toISOString())
-    : null
+  // isToday は now 引数由来で判定する（実行環境の実時計は見ない）。
+  // テストで now を固定した際に実日付とズレて誤判定しないため。
+  const isToday = date === todayJstString(now)
+  const [, monthStr, dayStr] = date.split("-")
+  const dateLabel = isToday
+    ? "今日のまとめ"
+    : `${Number(monthStr)}/${Number(dayStr)} のまとめ`
 
-  const sleepElapsed = activeSleep
-    ? minutesBetween(activeSleep.logged_at, now.toISOString())
-    : null
+  const feedingElapsed =
+    isToday && lastFeeding
+      ? minutesBetween(lastFeeding.logged_at, now.toISOString())
+      : null
+
+  const sleepElapsed =
+    isToday && activeSleep
+      ? minutesBetween(activeSleep.logged_at, now.toISOString())
+      : null
 
   // 覚醒時間: 起きている + 最後に起きた時刻がある場合に計算
   const awakeElapsed =
-    !activeSleep && lastSleepEndedAt
+    isToday && !activeSleep && lastSleepEndedAt
       ? minutesBetween(lastSleepEndedAt, now.toISOString())
       : null
 
@@ -38,7 +52,8 @@ export function BabySummaryBar({
     <div className="flex flex-col gap-3">
       {/* 今日のまとめ（ひと目化） */}
       <div
-        aria-label="今日のまとめ"
+        role="group"
+        aria-label={dateLabel}
         className="glass flex items-center justify-around rounded-2xl px-3 py-2.5 shadow-lg shadow-black/[0.04]"
       >
         <TodayStat
@@ -69,9 +84,14 @@ export function BabySummaryBar({
           </div>
           <span className="text-[10px] text-muted-foreground">最終授乳</span>
           <span className="font-mono text-xs font-semibold">
-            {feedingElapsed !== null
-              ? formatElapsedMinutes(feedingElapsed) + "前"
-              : "---"}
+            {isToday
+              ? feedingElapsed !== null
+                ? formatElapsedMinutes(feedingElapsed) + "前"
+                : "---"
+              : // 過去日: lastFeeding はその日の logs 由来なので絶対時刻は正確
+                lastFeeding
+                ? formatTimeJst(lastFeeding.logged_at)
+                : "---"}
           </span>
         </div>
 
@@ -105,11 +125,17 @@ export function BabySummaryBar({
             {activeSleep ? "睡眠中" : "起きてる"}
           </span>
           <span className="font-mono text-xs font-semibold">
-            {sleepElapsed !== null
-              ? formatElapsedMinutes(sleepElapsed)
-              : awakeElapsed !== null
-                ? formatElapsedMinutes(awakeElapsed)
-                : "---"}
+            {/* 過去日は非表示（"---"）にする: lastSleepEndedAt は
+                derivedLastSleepEndedAt ?? サーバの today 向けクロスデイ
+                フォールバックであり、選択中の過去日にスコープされた値では
+                ないため、絶対時刻化すると別日のデータを表示しうる（B-01 領域）。*/}
+            {isToday
+              ? sleepElapsed !== null
+                ? formatElapsedMinutes(sleepElapsed)
+                : awakeElapsed !== null
+                  ? formatElapsedMinutes(awakeElapsed)
+                  : "---"
+              : "---"}
           </span>
         </div>
       </div>

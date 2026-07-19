@@ -15,10 +15,11 @@ export default async function BabyPage() {
   const tomorrowStart = `${tomorrowJst}T00:00:00+09:00`
   const weeklyStart = `${weeklyStartJst}T00:00:00+09:00`
 
-  // 今日のログ + 最新の完了済み睡眠 + 週間サマリー用ログ + 赤ちゃんプロフィールを並列取得
+  // 今日のログ + 最新の完了済み睡眠 + 未終了睡眠 + 週間サマリー用ログ + 赤ちゃんプロフィールを並列取得
   const [
     { data: logs, error: logsError },
     { data: lastSleepData, error: lastSleepError },
+    { data: activeSleepData, error: activeSleepError },
     { data: weeklyLogs, error: weeklyLogsError },
     { data: household, error: householdError },
     { data: growthLogs, error: growthLogsError },
@@ -39,6 +40,21 @@ export default async function BabyPage() {
         .eq("log_type", "sleep")
         .not("ended_at", "is", null)
         .order("ended_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      // 未終了睡眠（B-01: 日跨ぎアクティブ睡眠の袋小路対策）。
+      // 前夜開始の未終了睡眠は今日窓のクエリに現れないため、別途取得して
+      // dashboard へフォールバックとして渡す。UNIQUE 部分 index
+      // idx_one_active_sleep（20260410000001_baby_logs.sql）により高々 1 件。
+      supabase
+        .from("baby_logs")
+        .select(
+          "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, memo, created_at",
+        )
+        .eq("household_id", householdId)
+        .eq("log_type", "sleep")
+        .is("ended_at", null)
+        .order("logged_at", { ascending: false })
         .limit(1)
         .maybeSingle(),
       supabase
@@ -80,6 +96,12 @@ export default async function BabyPage() {
     })
   }
 
+  if (activeSleepError) {
+    logSupabaseError("baby", "active sleep lookup failed", activeSleepError, {
+      householdId,
+    })
+  }
+
   if (weeklyLogsError) {
     logSupabaseError("baby", "weekly logs lookup failed", weeklyLogsError, {
       householdId,
@@ -107,6 +129,7 @@ export default async function BabyPage() {
       userId={userId}
       initialDate={todayJst}
       lastSleepEndedAt={lastSleepData?.ended_at ?? null}
+      activeSleepFallback={activeSleepData ?? null}
       babyName={household?.baby_name ?? null}
       babyBirthDate={household?.baby_birth_date ?? null}
     />

@@ -113,6 +113,7 @@ function defaultProps(
     userId: "u1",
     initialDate: TODAY,
     lastSleepEndedAt: null,
+    activeSleepFallback: null,
     babyName: null,
     babyBirthDate: null,
     ...overrides,

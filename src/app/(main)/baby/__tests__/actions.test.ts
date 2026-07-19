@@ -9,7 +9,7 @@ vi.mock("@/lib/supabase/auth-context", () => ({
   getAuthContext: () => getAuthContext(),
 }))
 
-import { recordFeeding, recordDiaper, updateLog } from "../actions"
+import { recordFeeding, recordDiaper, updateLog, deleteLog } from "../actions"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 
 const mockedLog = vi.mocked(logSupabaseError)
@@ -32,6 +32,16 @@ function makeUpdateSupabase(updateResult: { data: unknown; error: unknown }) {
   const eqId = vi.fn(() => ({ eq: eqHousehold }))
   const update = vi.fn(() => ({ eq: eqId }))
   const from = vi.fn(() => ({ update }))
+  return { client: { from } }
+}
+
+/** delete().eq().eq().select("id") を模した fake client（.single() なし、data は配列）。 */
+function makeDeleteSupabase(deleteResult: { data: unknown; error: unknown }) {
+  const select = vi.fn().mockResolvedValue(deleteResult)
+  const eqHousehold = vi.fn(() => ({ select }))
+  const eqId = vi.fn(() => ({ eq: eqHousehold }))
+  const del = vi.fn(() => ({ eq: eqId }))
+  const from = vi.fn(() => ({ delete: del }))
   return { client: { from } }
 }
 
@@ -109,6 +119,39 @@ describe("updateLog が 0 行更新を成功と偽らない", () => {
     })
     setContext(client)
     const result = await updateLog("log-1", { memo: "hi" })
+    expect(result.error).toBeTruthy()
+    expect(mockedLog).toHaveBeenCalledWith(
+      "baby",
+      expect.any(String),
+      expect.objectContaining({ code: "XX000" }),
+      expect.objectContaining({ householdId: HOUSEHOLD }),
+    )
+  })
+})
+
+describe("deleteLog が 0 行削除を成功と偽らない", () => {
+  it("成功時（1 行削除）は error: null を返す", async () => {
+    const { client } = makeDeleteSupabase({ data: [{ id: "log-1" }], error: null })
+    setContext(client)
+    const result = await deleteLog("log-1")
+    expect(result).toEqual({ error: null })
+  })
+
+  it("0 行マッチ（既に削除済み/別世帯）は success を偽らず error を返し、ノイズログを出さない", async () => {
+    const { client } = makeDeleteSupabase({ data: [], error: null })
+    setContext(client)
+    const result = await deleteLog("missing-id")
+    expect(result.error).toBeTruthy()
+    expect(mockedLog).not.toHaveBeenCalled()
+  })
+
+  it("DB エラーは logSupabaseError で構造化ログに残す", async () => {
+    const { client } = makeDeleteSupabase({
+      data: null,
+      error: { code: "XX000", message: "boom" },
+    })
+    setContext(client)
+    const result = await deleteLog("log-1")
     expect(result.error).toBeTruthy()
     expect(mockedLog).toHaveBeenCalledWith(
       "baby",
