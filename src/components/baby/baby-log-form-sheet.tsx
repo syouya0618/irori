@@ -39,6 +39,21 @@ const FEEDING_TYPES: FeedingType[] = [
 ]
 const DIAPER_TYPES: DiaperType[] = ["pee", "poop", "both"]
 
+// 通信断で Server Action が reject すると、startTransition 内の unhandled reject が
+// 最寄りの error boundary へ bubble し全画面エラー化 + 入力/記録が無言で失われる
+// (node_modules/next/dist/docs/01-app/01-getting-started/10-error-handling.md:375)。
+// 圏外操作でその袋小路に落ちないよう、各ハンドラの reject を握ってトーストへ倒す。
+const OFFLINE_ERROR_MESSAGE =
+  "通信できませんでした。電波の良い場所でもう一度お試しください"
+
+function toastOfflineError(context: string, err: unknown) {
+  // 握り潰さずエラー詳細を構造化ログに残す（CLAUDE.md: catch 内でログ必須）。
+  console.error(`[baby-log-form-sheet] ${context} が例外を投げました`, {
+    message: err instanceof Error ? err.message : String(err),
+  })
+  toast.error(OFFLINE_ERROR_MESSAGE)
+}
+
 interface BabyLogFormSheetProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -79,53 +94,57 @@ export function BabyLogFormSheet({
 
   function handleCreate() {
     startTransition(async () => {
-      let result: { error: string | null }
+      try {
+        let result: { error: string | null }
 
-      switch (createLogType) {
-        case "temperature": {
-          const temp = parseFloat(temperature)
-          if (isNaN(temp) || temp < 34 || temp > 42) {
-            toast.error("体温は34.0〜42.0の範囲で入力してください")
-            return
+        switch (createLogType) {
+          case "temperature": {
+            const temp = parseFloat(temperature)
+            if (isNaN(temp) || temp < 34 || temp > 42) {
+              toast.error("体温は34.0〜42.0の範囲で入力してください")
+              return
+            }
+            result = await recordTemperature({
+              temperature: temp,
+              memo: memo || undefined,
+            })
+            break
           }
-          result = await recordTemperature({
-            temperature: temp,
-            memo: memo || undefined,
-          })
-          break
-        }
-        case "growth": {
-          const w = weightG ? parseInt(weightG) : null
-          const h = heightCm ? parseFloat(heightCm) : null
-          if (!w && !h) {
-            toast.error("体重または身長を入力してください")
-            return
+          case "growth": {
+            const w = weightG ? parseInt(weightG) : null
+            const h = heightCm ? parseFloat(heightCm) : null
+            if (!w && !h) {
+              toast.error("体重または身長を入力してください")
+              return
+            }
+            result = await recordGrowth({
+              weightG: w,
+              heightCm: h,
+              memo: memo || undefined,
+            })
+            break
           }
-          result = await recordGrowth({
-            weightG: w,
-            heightCm: h,
-            memo: memo || undefined,
-          })
-          break
-        }
-        case "memo": {
-          if (!memo.trim()) {
-            toast.error("メモを入力してください")
-            return
+          case "memo": {
+            if (!memo.trim()) {
+              toast.error("メモを入力してください")
+              return
+            }
+            result = await recordMemoAction({ memo: memo.trim() })
+            break
           }
-          result = await recordMemoAction({ memo: memo.trim() })
-          break
+          default:
+            return
         }
-        default:
+
+        if (result.error) {
+          toast.error(result.error)
           return
+        }
+        toast.success("記録しました")
+        onOpenChange(false)
+      } catch (err) {
+        toastOfflineError("recordCreate", err)
       }
-
-      if (result.error) {
-        toast.error(result.error)
-        return
-      }
-      toast.success("記録しました")
-      onOpenChange(false)
     })
   }
 
@@ -133,44 +152,50 @@ export function BabyLogFormSheet({
     if (!log) return
 
     startTransition(async () => {
-      const updates: Parameters<typeof updateLog>[1] = { memo: memo || null }
+      try {
+        const updates: Parameters<typeof updateLog>[1] = { memo: memo || null }
 
-      if (log.log_type === "feeding") {
-        updates.feedingType = feedingType
-        updates.amountMl =
-          feedingType === "bottle" || feedingType === "solid"
-            ? parseInt(amountMl) || null
-            : null
-      }
-      if (log.log_type === "diaper") {
-        updates.diaperType = diaperType
-      }
-      if (log.log_type === "temperature") {
-        const temp = parseFloat(temperature)
-        if (isNaN(temp) || temp < 34 || temp > 42) {
-          toast.error("体温は34.0〜42.0の範囲で入力してください")
+        if (log.log_type === "feeding") {
+          updates.feedingType = feedingType
+          if (feedingType === "bottle" || feedingType === "solid") {
+            const n = parseInt(amountMl, 10)
+            updates.amountMl = Number.isFinite(n) && n >= 0 ? n : null
+          } else {
+            updates.amountMl = null
+          }
+        }
+        if (log.log_type === "diaper") {
+          updates.diaperType = diaperType
+        }
+        if (log.log_type === "temperature") {
+          const temp = parseFloat(temperature)
+          if (isNaN(temp) || temp < 34 || temp > 42) {
+            toast.error("体温は34.0〜42.0の範囲で入力してください")
+            return
+          }
+          updates.temperature = temp
+        }
+        if (log.log_type === "growth") {
+          const w = weightG ? parseInt(weightG) : null
+          const h = heightCm ? parseFloat(heightCm) : null
+          if (!w && !h) {
+            toast.error("体重または身長を入力してください")
+            return
+          }
+          updates.weightG = w
+          updates.heightCm = h
+        }
+
+        const result = await updateLog(log.id, updates)
+        if (result.error) {
+          toast.error(result.error)
           return
         }
-        updates.temperature = temp
+        toast.success("ログを更新しました")
+        onOpenChange(false)
+      } catch (err) {
+        toastOfflineError("updateLog", err)
       }
-      if (log.log_type === "growth") {
-        const w = weightG ? parseInt(weightG) : null
-        const h = heightCm ? parseFloat(heightCm) : null
-        if (!w && !h) {
-          toast.error("体重または身長を入力してください")
-          return
-        }
-        updates.weightG = w
-        updates.heightCm = h
-      }
-
-      const result = await updateLog(log.id, updates)
-      if (result.error) {
-        toast.error(result.error)
-        return
-      }
-      toast.success("ログを更新しました")
-      onOpenChange(false)
     })
   }
 
@@ -178,13 +203,17 @@ export function BabyLogFormSheet({
     if (!log) return
 
     startTransition(async () => {
-      const result = await deleteLog(log.id)
-      if (result.error) {
-        toast.error(result.error)
-        return
+      try {
+        const result = await deleteLog(log.id)
+        if (result.error) {
+          toast.error(result.error)
+          return
+        }
+        toast.success("ログを削除しました")
+        onOpenChange(false)
+      } catch (err) {
+        toastOfflineError("deleteLog", err)
       }
-      toast.success("ログを削除しました")
-      onOpenChange(false)
     })
   }
 

@@ -42,6 +42,7 @@ import { CalendarView } from "../calendar-view"
 import type { CalendarEventRecord } from "../use-month-events"
 import { createCalendarEvent } from "@/app/(main)/calendar/actions"
 import { toast } from "sonner"
+import { jstWallClockToIso } from "@/lib/utils/date-jst"
 
 function ev(o: Partial<CalendarEventRecord> & { id: string }): CalendarEventRecord {
   return {
@@ -101,6 +102,50 @@ describe("CalendarView", () => {
     expect(screen.getByRole("button", { name: "閉じる" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "更新" })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "削除" })).not.toBeInTheDocument()
+  })
+
+  it("google 詳細シートに終日イベントの日時行が出る", () => {
+    render(
+      <CalendarView
+        {...base}
+        initialEvents={[
+          ev({
+            id: "g1",
+            title: "会議",
+            is_all_day: true,
+            start_date: "2026-07-15",
+            end_date: "2026-07-15",
+            source: "google",
+          }),
+        ]}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "2026-07-15 を選択" }))
+    fireEvent.click(screen.getByText("会議"))
+    expect(screen.getByText("7月15日・終日")).toBeInTheDocument()
+  })
+
+  it("google 詳細シートに時刻付きイベントの日時行が出る", () => {
+    render(
+      <CalendarView
+        {...base}
+        initialEvents={[
+          ev({
+            id: "g2",
+            title: "会議",
+            is_all_day: false,
+            start_date: "2026-07-15",
+            end_date: "2026-07-15",
+            start_at: jstWallClockToIso("2026-07-15", "14:00"),
+            end_at: jstWallClockToIso("2026-07-15", "15:00"),
+            source: "google",
+          }),
+        ]}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "2026-07-15 を選択" }))
+    fireEvent.click(screen.getByText("会議"))
+    expect(screen.getByText("7月15日 14:00〜15:00")).toBeInTheDocument()
   })
 
   it("時刻付き予定で開始時刻を空にして保存してもクラッシュせず toast で弾く", () => {

@@ -37,7 +37,7 @@ function getLogSummary(log: BabyLogData): string {
       if (!log.feeding_type) return "授乳"
       const label = getFeedingTypeLabel(log.feeding_type)
       const parts = [label]
-      if (log.amount_ml) parts.push(`${log.amount_ml}ml`)
+      if (log.amount_ml != null) parts.push(`${log.amount_ml}ml`)
       if (log.duration_min) parts.push(`${log.duration_min}分`)
       return parts.join(" ")
     }
