@@ -1,4 +1,5 @@
 import { shiftYmd, toJstDateString } from "@/lib/utils/date-jst"
+import { sleepOverlapMinutesForDate } from "./baby-sleep-overlap"
 import type { BabyLogType } from "@/lib/types/database"
 
 export interface BabyWeeklySummaryLogInput {
@@ -40,25 +41,6 @@ function createEmptyDay(date: string): BabyWeeklySummaryDay {
   }
 }
 
-function jstDayStartMs(date: string): number {
-  return new Date(`${date}T00:00:00+09:00`).getTime()
-}
-
-function addSleepMinutesByDay(
-  day: BabyWeeklySummaryDay,
-  sleepStartMs: number,
-  sleepEndMs: number,
-) {
-  const dayStartMs = jstDayStartMs(day.date)
-  const dayEndMs = jstDayStartMs(shiftYmd(day.date, 1))
-  const overlapMs =
-    Math.min(sleepEndMs, dayEndMs) - Math.max(sleepStartMs, dayStartMs)
-
-  if (overlapMs > 0) {
-    day.sleepMinutes += Math.round(overlapMs / 60000)
-  }
-}
-
 export function buildBabyWeeklySummary(
   logs: BabyWeeklySummaryLogInput[],
   endDate: string,
@@ -76,12 +58,13 @@ export function buildBabyWeeklySummary(
 
   for (const log of logs) {
     if (log.log_type === "sleep" && log.ended_at) {
-      const sleepStartMs = new Date(log.logged_at).getTime()
-      const sleepEndMs = new Date(log.ended_at).getTime()
-      if (sleepEndMs <= sleepStartMs) continue
-
+      // 日跨ぎ睡眠は共通ヘルパで各日へ按分（PDF 集計・今日のまとめと同一ロジック）
       for (const day of byDate.values()) {
-        addSleepMinutesByDay(day, sleepStartMs, sleepEndMs)
+        day.sleepMinutes += sleepOverlapMinutesForDate(
+          log.logged_at,
+          log.ended_at,
+          day.date,
+        )
       }
     } else if (log.log_type === "feeding") {
       const date = toJstDateString(log.logged_at)

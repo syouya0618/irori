@@ -15,11 +15,13 @@ export default async function BabyPage() {
   const tomorrowStart = `${tomorrowJst}T00:00:00+09:00`
   const weeklyStart = `${weeklyStartJst}T00:00:00+09:00`
 
-  // 今日のログ + 最新の完了済み睡眠 + 未終了睡眠 + 週間サマリー用ログ + 赤ちゃんプロフィールを並列取得
+  // 今日のログ + 最新の完了済み睡眠 + 未終了睡眠 + 前夜開始の overlap 睡眠
+  // + 週間サマリー用ログ + 赤ちゃんプロフィールを並列取得
   const [
     { data: logs, error: logsError },
     { data: lastSleepData, error: lastSleepError },
     { data: activeSleepData, error: activeSleepError },
+    { data: overlapSleepLogs, error: overlapSleepError },
     { data: weeklyLogs, error: weeklyLogsError },
     { data: household, error: householdError },
     { data: growthLogs, error: growthLogsError },
@@ -57,6 +59,21 @@ export default async function BabyPage() {
         .order("logged_at", { ascending: false })
         .limit(1)
         .maybeSingle(),
+      // 前夜開始・当日終了の overlap 睡眠（B-02: 今日のまとめの按分入力）。
+      // logged_at が前日以前のため today 窓（logs）には現れない完了睡眠を別 prop で渡し、
+      // summarizeTodayCounts の入力にのみ合流させる（timeline = logs の意味は不変）。
+      // ended_at が null の未終了睡眠は activeSleepFallback（B-01）が担い、按分には
+      // 寄与しない（完了セッションのみ集計）ため、ここは ended_at 非 null に限定して二重取得を避ける。
+      supabase
+        .from("baby_logs")
+        .select(
+          "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, memo, created_at",
+        )
+        .eq("household_id", householdId)
+        .eq("log_type", "sleep")
+        .lt("logged_at", todayStart)
+        .gte("ended_at", todayStart)
+        .order("logged_at", { ascending: false }),
       supabase
         .from("baby_logs")
         .select(
@@ -102,6 +119,12 @@ export default async function BabyPage() {
     })
   }
 
+  if (overlapSleepError) {
+    logSupabaseError("baby", "overlap sleep lookup failed", overlapSleepError, {
+      householdId,
+    })
+  }
+
   if (weeklyLogsError) {
     logSupabaseError("baby", "weekly logs lookup failed", weeklyLogsError, {
       householdId,
@@ -123,6 +146,7 @@ export default async function BabyPage() {
   return (
     <BabyDashboard
       initialLogs={logs ?? []}
+      initialOverlapLogs={overlapSleepLogs ?? []}
       initialWeeklyLogs={weeklyLogs ?? []}
       initialGrowthLogs={growthLogs ?? []}
       householdId={householdId}

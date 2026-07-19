@@ -63,9 +63,13 @@ export function deriveDashboardSummary(
  * baby-dashboard.tsx の Realtime INSERT admission guard
  * （`toJstDateString(newLog.logged_at) !== selectedDateRef.current` → skip）と
  * **同じ入場条件を鏡写しにしている**（先着行はこの guard を通って初めて prev に
- * 入るため）。B-02 が日付窓に cross-midnight の `or()` 節を足す際は、admission
+ * 入るため）。将来 logs の日付窓に cross-midnight の `or()` 節を足す際は、admission
  * guard と本フィルタを**同時に**更新すること。片方だけ広げると、fetch in-flight
  * 中に届いた前夜開始の睡眠が解決時に無音で落ちる。
+ *
+ * B-02（睡眠集計統一）は logs の窓を広げず、前夜開始の overlap 睡眠を **別 state
+ * overlapLogs** で扱う設計を採ったため、この鏡写し不変条件は不変のまま維持されている
+ * （logs = 選択日分のみ。timeline も B-09 も既存テストも前提が変わらない）。
  */
 export function mergeDateNavLogs(
   prev: BabyLogData[],

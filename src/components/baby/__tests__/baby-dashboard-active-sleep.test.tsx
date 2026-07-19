@@ -103,6 +103,7 @@ function defaultProps(
 ): Parameters<typeof BabyDashboard>[0] {
   return {
     initialLogs: [],
+    initialOverlapLogs: [],
     initialWeeklyLogs: [],
     initialGrowthLogs: [],
     householdId: "h1",

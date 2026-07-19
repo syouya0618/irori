@@ -25,11 +25,17 @@ import {
   summarizeTodayCounts,
   buildGrowthSeries,
 } from "@/lib/domain/baby-log-aggregation"
+import { sleepOverlapMinutesForDate } from "@/lib/domain/baby-sleep-overlap"
 import type { BabyLogData } from "@/lib/types/baby"
 import type { BabyLogType, FeedingType } from "@/lib/types/database"
 
 interface BabyDashboardProps {
   initialLogs: BabyLogData[]
+  /**
+   * 前夜開始・当日終了の overlap 睡眠（B-02）。今日のまとめの按分入力専用で
+   * timeline（logs）には合流させない。選択日変更時は refetch で入れ替える。
+   */
+  initialOverlapLogs: BabyLogData[]
   initialWeeklyLogs: BabyLogData[]
   initialGrowthLogs: BabyLogData[]
   householdId: string
@@ -41,8 +47,22 @@ interface BabyDashboardProps {
   babyBirthDate: string | null
 }
 
+/**
+ * 前夜以前に開始し、選択日 `date` の JST 窓に重なる完了睡眠か（overlapLogs 判定）。
+ * `date` 当日に開始した睡眠は logs 側に属するため除外し、二重計上を防ぐ。
+ */
+function isOverlapSleepFor(log: BabyLogData, date: string): boolean {
+  return (
+    log.log_type === "sleep" &&
+    !!log.ended_at &&
+    toJstDateString(log.logged_at) < date &&
+    sleepOverlapMinutesForDate(log.logged_at, log.ended_at, date) > 0
+  )
+}
+
 export function BabyDashboard({
   initialLogs,
+  initialOverlapLogs,
   initialWeeklyLogs,
   initialGrowthLogs,
   householdId,
@@ -53,6 +73,10 @@ export function BabyDashboard({
   babyBirthDate,
 }: BabyDashboardProps) {
   const [logs, setLogs] = useState<BabyLogData[]>(initialLogs)
+  // B-02: 前夜開始の overlap 睡眠。summarizeTodayCounts の入力にのみ合流させる
+  // （timeline = logs には混ぜない）。logs とは logged_at レンジが排他のため重複しない。
+  const [overlapLogs, setOverlapLogs] =
+    useState<BabyLogData[]>(initialOverlapLogs)
   const [weeklyLogs, setWeeklyLogs] =
     useState<BabyLogData[]>(initialWeeklyLogs)
   const [growthLogs, setGrowthLogs] =
@@ -138,6 +162,15 @@ export function BabyDashboard({
                 return [newLog, ...prev]
               })
             }
+            // B-02: 前夜開始の overlap 睡眠は logged_at が選択日でないため下の logs
+            // ガードで弾かれる。今日のまとめの按分入力として別 state に取り込む。
+            if (isOverlapSleepFor(newLog, selectedDateRef.current)) {
+              setOverlapLogs((prev) =>
+                prev.some((l) => l.id === newLog.id)
+                  ? prev
+                  : [newLog, ...prev],
+              )
+            }
             if (toJstDateString(newLog.logged_at) !== selectedDateRef.current) {
               return
             }
@@ -177,6 +210,23 @@ export function BabyDashboard({
               return updated.ended_at ? null : updated
             })
 
+            // B-02 overlap 睡眠の同期: 前夜開始の睡眠が終了（ended_at 設定）すると
+            // 今日のまとめの按分入力に加わる。ended_at 解除・日付変更で範囲外へ出たら除く。
+            // ここが「起こす」タップで今日のまとめが週間バーと同値になる live 経路。
+            const belongsToOverlap = isOverlapSleepFor(
+              updated,
+              selectedDateRef.current,
+            )
+            setOverlapLogs((prev) => {
+              const exists = prev.some((l) => l.id === updated.id)
+              if (belongsToOverlap && exists)
+                return prev.map((l) => (l.id === updated.id ? updated : l))
+              if (belongsToOverlap && !exists) return [updated, ...prev]
+              if (!belongsToOverlap && exists)
+                return prev.filter((l) => l.id !== updated.id)
+              return prev
+            })
+
             const belongsToDate =
               toJstDateString(updated.logged_at) ===
               selectedDateRef.current
@@ -196,6 +246,7 @@ export function BabyDashboard({
             setLogs((prev) => prev.filter((l) => l.id !== deleted.id))
             setWeeklyLogs((prev) => prev.filter((l) => l.id !== deleted.id))
             setGrowthLogs((prev) => prev.filter((l) => l.id !== deleted.id))
+            setOverlapLogs((prev) => prev.filter((l) => l.id !== deleted.id))
             setServerActiveSleep((prev) =>
               prev && prev.id === deleted.id ? null : prev,
             )
@@ -220,6 +271,7 @@ export function BabyDashboard({
     }
     const supabase = createClient()
     const nextDay = shiftYmd(selectedDate, 1)
+    const dayStart = `${selectedDate}T00:00:00+09:00`
     const abortController = new AbortController()
 
     supabase
@@ -228,7 +280,7 @@ export function BabyDashboard({
         "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, memo, created_at",
       )
       .eq("household_id", householdId)
-      .gte("logged_at", `${selectedDate}T00:00:00+09:00`)
+      .gte("logged_at", dayStart)
       .lt("logged_at", `${nextDay}T00:00:00+09:00`)
       .order("logged_at", { ascending: false })
       .abortSignal(abortController.signal)
@@ -252,6 +304,36 @@ export function BabyDashboard({
         }
       })
 
+    // B-02: overlap 睡眠も選択日に合わせて refetch し、サーバ初回表示と窓を同一化する。
+    // これを怠ると「過去日へ移動して今日へ戻る」往復で今日のまとめの睡眠分が経路依存で変動する。
+    // 別 prop のため logs のマージ経路（mergeDateNavLogs / admission guard）は不変。
+    supabase
+      .from("baby_logs")
+      .select(
+        "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, memo, created_at",
+      )
+      .eq("household_id", householdId)
+      .eq("log_type", "sleep")
+      .lt("logged_at", dayStart)
+      .gte("ended_at", dayStart)
+      .order("logged_at", { ascending: false })
+      .abortSignal(abortController.signal)
+      .then(({ data, error }) => {
+        if (abortController.signal.aborted) return
+        if (error) {
+          // logs 側の fetch が同時失敗時に toast を出すため、overlap 側は
+          // 二重トースト回避で構造化ログのみ（握り潰しはしない）。
+          logSupabaseError(
+            "baby",
+            "overlap sleep navigation fetch failed",
+            error,
+            { householdId, selectedDate },
+          )
+          return
+        }
+        if (data) setOverlapLogs(data)
+      })
+
     return () => {
       abortController.abort()
     }
@@ -265,7 +347,12 @@ export function BabyDashboard({
     [logs, serverActiveSleep],
   )
 
-  const todayCounts = useMemo(() => summarizeTodayCounts(logs), [logs])
+  // 今日のまとめ: 選択日の logs に加え、前夜開始の overlap 睡眠を按分入力へ合流。
+  // feeding/diaper は date フィルタ、sleep は当日窓へ按分され、週間/PDF と per-day 同値。
+  const todayCounts = useMemo(
+    () => summarizeTodayCounts([...logs, ...overlapLogs], selectedDate),
+    [logs, overlapLogs, selectedDate],
+  )
 
   // 成長曲線: 全期間の成長ログから体重/身長系列を組む
   const growthSeries = useMemo(

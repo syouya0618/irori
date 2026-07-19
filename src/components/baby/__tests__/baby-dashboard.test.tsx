@@ -29,7 +29,7 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest"
-import { render, screen, cleanup } from "@testing-library/react"
+import { render, screen, cleanup, within } from "@testing-library/react"
 import { act } from "react"
 import type { BabyLogData } from "@/lib/types/baby"
 import type {
@@ -107,6 +107,7 @@ function defaultProps(
 ): Parameters<typeof BabyDashboard>[0] {
   return {
     initialLogs: [],
+    initialOverlapLogs: [],
     initialWeeklyLogs: [],
     initialGrowthLogs: [],
     householdId: "h1",
@@ -391,6 +392,38 @@ describe("BabyDashboard / Realtime → 週間サマリー反映", () => {
 
     // 週外移動で belongsToWeek=false かつ exists=true → 除外
     expect(chartTitles("直近7日の授乳回数")).toContain("4/15: 0回")
+  })
+
+  it("前夜開始の睡眠を UPDATE で終了すると、今日のまとめの睡眠が overlapLogs 経由で反映される（B-02: 3面同値の live 経路）", () => {
+    render(<BabyDashboard {...defaultProps()} />)
+
+    // 初期: 今日のまとめの睡眠は 0分（overlapLogs 空）
+    expect(
+      within(screen.getByLabelText("今日のまとめ")).getByText("0分"),
+    ).toBeInTheDocument()
+
+    act(() => {
+      emit(
+        makePayload(
+          "UPDATE",
+          makeLog({
+            id: "log-overnight",
+            log_type: "sleep",
+            // 昨日 22:00 開始 → 今朝 06:30 終了。TODAY=4/16 の当日窓に 6時間30分=390分。
+            logged_at: "2026-04-15T22:00:00+09:00",
+            ended_at: "2026-04-16T06:30:00+09:00",
+            duration_min: 510,
+          }),
+        ),
+      )
+    })
+
+    // overlapLogs に取り込まれ、summarizeTodayCounts が当日分 390分 を按分計上する
+    expect(
+      within(screen.getByLabelText("今日のまとめ")).getByText("6時間30分"),
+    ).toBeInTheDocument()
+    // 週間サマリー（4/15 側）にも同睡眠が反映され、3面同値が live で成立
+    expect(chartTitles("直近7日の睡眠時間")).toContain("4/15: 2時間")
   })
 
   it("真夜中跨ぎ: useNow の interval が発火し today/weeklyStart の ref が前進、chart labels がシフトする", () => {
