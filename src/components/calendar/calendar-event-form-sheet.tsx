@@ -14,7 +14,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { formatTimeJst } from "@/lib/utils/date-jst"
+import { segmentCn } from "@/lib/utils/segment-cn"
 import type { CalendarEventRecord } from "./use-month-events"
+
+/** 新規/クリア時の既定開始時刻。initialValue と時刻クリアで共有し値のドリフトを防ぐ。 */
+const DEFAULT_START_TIME = "09:00"
 
 export interface CalendarEventFormValue {
   title: string
@@ -24,6 +28,37 @@ export interface CalendarEventFormValue {
   endDate: string
   startTime: string // "HH:MM"(終日なら未使用)
   endTime: string
+}
+
+/** "YYYY-MM-DD" を "M月D日" へ(TZ 非依存の文字列分解)。 */
+function dayLabelJa(ymd: string): string {
+  const [, m, d] = ymd.split("-").map(Number)
+  return `${m}月${d}日`
+}
+
+/**
+ * Google read-only 詳細シートの日時行テキストを組み立てる。
+ * - 終日単日: 「7月15日・終日」 / 終日多日: 「7月15日 〜 7月17日・終日」
+ * - 時刻付き単日: 「7月15日 14:00〜15:00」(終了なしは「7月15日 14:00」)
+ * - 時刻付き多日: 「7月15日 14:00〜7月17日 15:00」
+ */
+function googleWhenLabel(e: CalendarEventRecord): string {
+  if (e.is_all_day) {
+    const range =
+      e.start_date === e.end_date
+        ? dayLabelJa(e.start_date)
+        : `${dayLabelJa(e.start_date)} 〜 ${dayLabelJa(e.end_date)}`
+    return `${range}・終日`
+  }
+  const start = e.start_at
+    ? `${dayLabelJa(e.start_date)} ${formatTimeJst(e.start_at)}`
+    : dayLabelJa(e.start_date)
+  if (!e.end_at) return start
+  const end =
+    e.start_date === e.end_date
+      ? formatTimeJst(e.end_at)
+      : `${dayLabelJa(e.end_date)} ${formatTimeJst(e.end_at)}`
+  return `${start}〜${end}`
 }
 
 interface Props {
@@ -48,7 +83,9 @@ function initialValue(
       isAllDay: editing.is_all_day,
       startDate: editing.start_date,
       endDate: editing.end_date,
-      startTime: editing.start_at ? formatTimeJst(editing.start_at) : "09:00",
+      startTime: editing.start_at
+        ? formatTimeJst(editing.start_at)
+        : DEFAULT_START_TIME,
       endTime: editing.end_at ? formatTimeJst(editing.end_at) : "",
     }
   }
@@ -58,7 +95,7 @@ function initialValue(
     isAllDay: true,
     startDate: defaultDate,
     endDate: defaultDate,
-    startTime: "09:00",
+    startTime: DEFAULT_START_TIME,
     endTime: "",
   }
 }
@@ -91,6 +128,15 @@ export function CalendarEventFormSheet({
     v: CalendarEventFormValue[K],
   ) => setValue((prev) => ({ ...prev, [k]: v }))
 
+  // 終日/時刻ありの切替。終日へ戻す時は入力済みの時刻を既定へクリアし、
+  // 次に時刻ありへ戻った際に前回値が残らないようにする。
+  const setAllDay = (isAllDay: boolean) =>
+    setValue((prev) =>
+      isAllDay
+        ? { ...prev, isAllDay: true, startTime: DEFAULT_START_TIME, endTime: "" }
+        : { ...prev, isAllDay: false },
+    )
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="bottom" className="rounded-t-2xl safe-bottom">
@@ -108,6 +154,9 @@ export function CalendarEventFormSheet({
         {isGoogle ? (
           <div className="flex flex-col gap-2 py-4">
             <p className="text-base font-medium">{editing.title}</p>
+            <p className="text-sm tabular-nums text-muted-foreground">
+              {googleWhenLabel(editing)}
+            </p>
             {editing.memo && (
               <p className="whitespace-pre-wrap text-sm text-muted-foreground">
                 {editing.memo}
@@ -128,15 +177,22 @@ export function CalendarEventFormSheet({
               />
             </div>
 
-            <label className="flex min-h-11 items-center justify-between">
-              <span className="text-sm font-medium">終日</span>
-              <input
-                type="checkbox"
-                checked={value.isAllDay}
-                onChange={(e) => set("isAllDay", e.target.checked)}
-                className="size-5 accent-primary"
-              />
-            </label>
+            <div className="flex gap-1.5">
+              <button
+                type="button"
+                onClick={() => setAllDay(true)}
+                className={`${segmentCn(value.isAllDay)} min-h-11`}
+              >
+                終日
+              </button>
+              <button
+                type="button"
+                onClick={() => setAllDay(false)}
+                className={`${segmentCn(!value.isAllDay)} min-h-11`}
+              >
+                時刻あり
+              </button>
+            </div>
 
             <div className="flex gap-3">
               <div className="flex flex-1 flex-col gap-2">

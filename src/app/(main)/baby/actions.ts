@@ -348,15 +348,21 @@ export async function deleteLog(logId: string) {
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
 
-  const { error } = await supabase
+  // .delete() は 0 行削除でも error: null を返す（別世帯・不在 id なら 0 行マッチ）。
+  // .select("id") で削除行を要求し、0 行を「成功」と偽らないようにする。
+  const { data, error } = await supabase
     .from("baby_logs")
     .delete()
     .eq("id", logId)
     .eq("household_id", householdId)
+    .select("id")
 
   if (error) {
     logSupabaseError("baby", "ログの削除に失敗", error, { logId, householdId })
     return { error: "ログの削除に失敗しました。" }
+  }
+  if (!data || data.length === 0) {
+    return { error: "既に削除されています。" }
   }
 
   revalidatePath("/baby")

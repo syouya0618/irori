@@ -4,6 +4,8 @@ import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { getAppOrigin } from "@/lib/utils/app-origin"
+import { isFutureJstDate } from "@/lib/utils/date-jst"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 
 export async function updateProfile(formData: FormData) {
   const displayName = formData.get("display_name")
@@ -136,6 +138,13 @@ export async function updateBabyProfile(formData: FormData) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(babyBirthDate)) {
       return { error: "生年月日の形式が不正です" }
     }
+    // JST 基準で未来日を拒否する。DB 側 CHECK（chk_baby_birth_date）は
+    // CURRENT_DATE（UTC）基準のため単独では JST 当日を弾く窓があるが、
+    // その是正（CHECK の JST 化）は I-09a の migration 管轄。本 PR は
+    // アプリ層で JST 未来日を先に弾き、明確な文言を返す。
+    if (isFutureJstDate(babyBirthDate)) {
+      return { error: "誕生日には今日以前の日付を指定してください" }
+    }
     birthDateValue = babyBirthDate
   }
 
@@ -152,6 +161,16 @@ export async function updateBabyProfile(formData: FormData) {
     .eq("id", householdId)
 
   if (error) {
+    logSupabaseError("settings", "baby profile update failed", error, {
+      householdId,
+    })
+    // 23514 = CHECK 制約違反（chk_baby_birth_date）。DB の CURRENT_DATE は
+    // UTC 基準のため、JST 00:00〜08:59 に当日を登録すると UTC ではまだ前日で
+    // baby_birth_date <= CURRENT_DATE を満たさず弾かれる。汎用文言に化けさせず
+    // 誕生日起因と分かる文言を返す（DB 側 CHECK の JST 化は I-09a 管轄）。
+    if (error.code === "23514") {
+      return { error: "誕生日には今日以前の日付を指定してください" }
+    }
     return { error: "赤ちゃん情報の更新に失敗しました" }
   }
 
