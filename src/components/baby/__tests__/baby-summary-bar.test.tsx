@@ -15,6 +15,8 @@ const PAST_FEEDING_LOGGED_AT = "2026-04-05T09:15:00+09:00"
 
 const baseProps = {
   lastFeeding: null,
+  lastPumped: null,
+  pumpingIntervalMin: 180,
   activeSleep: null,
   lastSleepEndedAt: null,
   now: NOW,
@@ -139,5 +141,58 @@ describe("BabySummaryBar 今日のまとめ", () => {
     // ラベル（睡眠中）自体は残るが、経過時間（時間表記）は出ない
     expect(screen.getByText("睡眠中")).toBeInTheDocument()
     expect(screen.queryByText(/\d+時間/)).not.toBeInTheDocument()
+  })
+})
+
+describe("BabySummaryBar 次の搾乳の目安", () => {
+  function makePumpedLog(loggedAt: string): BabyLogData {
+    return makeFeedingLog({
+      id: "pumped-1",
+      feeding_type: "pumped",
+      logged_at: loggedAt,
+      amount_ml: 60,
+    })
+  }
+
+  it("今日・搾乳ありのとき目安時刻と残り時間を表示する", () => {
+    // NOW = 4/11 12:00。10:00 搾乳 + 180分 → 13:00 目安（残り1時間）
+    render(
+      <BabySummaryBar
+        {...baseProps}
+        lastPumped={makePumpedLog("2026-04-11T10:00:00+09:00")}
+        pumpingIntervalMin={180}
+      />,
+    )
+    expect(screen.getByText("次の搾乳の目安")).toBeInTheDocument()
+    expect(screen.getByText(formatTimeJst("2026-04-11T13:00:00+09:00"))).toBeInTheDocument()
+    expect(screen.getByText(/あと1時間/)).toBeInTheDocument()
+  })
+
+  it("目安を過ぎていると「そろそろです」を表示する", () => {
+    // 08:00 搾乳 + 180分 → 11:00 目安。NOW 12:00 は過ぎている
+    render(
+      <BabySummaryBar
+        {...baseProps}
+        lastPumped={makePumpedLog("2026-04-11T08:00:00+09:00")}
+        pumpingIntervalMin={180}
+      />,
+    )
+    expect(screen.getByText("そろそろです")).toBeInTheDocument()
+  })
+
+  it("搾乳が無ければ目安は表示しない", () => {
+    render(<BabySummaryBar {...baseProps} lastPumped={null} />)
+    expect(screen.queryByText("次の搾乳の目安")).not.toBeInTheDocument()
+  })
+
+  it("過去日を見ているときは目安を表示しない（今日限定）", () => {
+    render(
+      <BabySummaryBar
+        {...baseProps}
+        date={PAST_DATE}
+        lastPumped={makePumpedLog("2026-04-05T10:00:00+09:00")}
+      />,
+    )
+    expect(screen.queryByText("次の搾乳の目安")).not.toBeInTheDocument()
   })
 })

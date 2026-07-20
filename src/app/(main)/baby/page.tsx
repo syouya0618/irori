@@ -1,6 +1,7 @@
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { BabyDashboard } from "@/components/baby/baby-dashboard"
+import { PUMPING_INTERVAL_DEFAULT } from "@/lib/domain/baby-pumping"
 import { todayJstString, shiftYmd } from "@/lib/utils/date-jst"
 
 export default async function BabyPage() {
@@ -87,7 +88,7 @@ export default async function BabyPage() {
         .order("logged_at", { ascending: false }),
       supabase
         .from("households")
-        .select("baby_name, baby_birth_date")
+        .select("baby_name, baby_birth_date, pumping_interval_min")
         .eq("id", householdId)
         .maybeSingle(),
       // 成長曲線用: 成長ログを古い順に全件（低頻度データ・1000 未満想定、順序を昇順で決定化）
@@ -156,6 +157,9 @@ export default async function BabyPage() {
       activeSleepFallback={activeSleepData ?? null}
       babyName={household?.baby_name ?? null}
       babyBirthDate={household?.baby_birth_date ?? null}
+      pumpingIntervalMin={
+        household?.pumping_interval_min ?? PUMPING_INTERVAL_DEFAULT
+      }
     />
   )
 }

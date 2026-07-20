@@ -15,11 +15,17 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { updateBabyProfile } from "@/app/(main)/settings/actions"
 import { todayJstString } from "@/lib/utils/date-jst"
+import { formatElapsedMinutes } from "@/lib/utils/baby-log-labels"
+import { PUMPING_INTERVAL_OPTIONS } from "@/lib/domain/baby-pumping"
 
 export function BabyProfileCard({
   initialProfile,
 }: {
-  initialProfile: { name: string | null; birthDate: string | null }
+  initialProfile: {
+    name: string | null
+    birthDate: string | null
+    pumpingIntervalMin: number
+  }
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -66,6 +72,24 @@ export function BabyProfileCard({
               max={todayJstString()}
               className="h-10"
             />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="pumping_interval_min">搾乳間隔</Label>
+            <select
+              id="pumping_interval_min"
+              name="pumping_interval_min"
+              defaultValue={String(initialProfile.pumpingIntervalMin)}
+              className="h-10 rounded-md border bg-background px-3 text-sm transition-colors duration-200"
+            >
+              {PUMPING_INTERVAL_OPTIONS.map((min) => (
+                <option key={min} value={min}>
+                  {formatElapsedMinutes(min)}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">
+              最後の搾乳からこの時間後を「次の搾乳の目安」に表示します
+            </p>
           </div>
           <Button
             type="submit"

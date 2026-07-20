@@ -1,13 +1,18 @@
 "use client"
 
-import { Milk, Droplets, Moon, Sun } from "lucide-react"
+import { Milk, Droplets, Moon, Sun, Timer } from "lucide-react"
 import { formatElapsedMinutes, minutesBetween } from "@/lib/utils/baby-log-labels"
 import { todayJstString, formatTimeJst } from "@/lib/utils/date-jst"
+import { computeNextPumping } from "@/lib/domain/baby-pumping"
 import type { TodayCounts } from "@/lib/domain/baby-log-aggregation"
 import type { BabyLogData } from "@/lib/types/baby"
 
 interface BabySummaryBarProps {
   lastFeeding: BabyLogData | null
+  /** 最後の搾乳（feeding_type='pumped'）。次の搾乳の目安の起点に使う */
+  lastPumped: BabyLogData | null
+  /** 搾乳間隔（分・設定値）。最後の搾乳＋この間隔で次の目安を出す */
+  pumpingIntervalMin: number
   activeSleep: BabyLogData | null
   lastSleepEndedAt: string | null
   now: Date
@@ -18,6 +23,8 @@ interface BabySummaryBarProps {
 
 export function BabySummaryBar({
   lastFeeding,
+  lastPumped,
+  pumpingIntervalMin,
   activeSleep,
   lastSleepEndedAt,
   now,
@@ -46,6 +53,12 @@ export function BabySummaryBar({
   const awakeElapsed =
     isToday && !activeSleep && lastSleepEndedAt
       ? minutesBetween(lastSleepEndedAt, now.toISOString())
+      : null
+
+  // 次の搾乳の目安: 今日の表示 + 最後の搾乳がある時のみ（最後の搾乳＋設定間隔）
+  const nextPumping =
+    isToday && lastPumped
+      ? computeNextPumping(lastPumped.logged_at, pumpingIntervalMin, now)
       : null
 
   return (
@@ -139,6 +152,32 @@ export function BabySummaryBar({
           </span>
         </div>
       </div>
+
+      {/* 次の搾乳の目安（最後の搾乳＋設定間隔）。搾乳記録がある今日だけ表示 */}
+      {nextPumping && (
+        <div className="glass flex items-center gap-2.5 rounded-2xl px-3 py-2.5 shadow-lg shadow-black/[0.04]">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/40">
+            <Timer size={16} className="text-amber-700 dark:text-amber-300" />
+          </div>
+          <span className="text-xs text-muted-foreground">次の搾乳の目安</span>
+          <span className="ml-auto flex items-baseline gap-1.5">
+            <span className="font-mono text-sm font-semibold">
+              {formatTimeJst(nextPumping.targetIso)}
+            </span>
+            <span
+              className={`text-[11px] ${
+                nextPumping.minutesUntil > 0
+                  ? "text-muted-foreground"
+                  : "font-semibold text-amber-600 dark:text-amber-400"
+              }`}
+            >
+              {nextPumping.minutesUntil > 0
+                ? `あと${formatElapsedMinutes(nextPumping.minutesUntil)}`
+                : "そろそろです"}
+            </span>
+          </span>
+        </div>
+      )}
     </div>
   )
 }
