@@ -77,6 +77,8 @@ function blobToBase64(blob: Blob): Promise<string> {
  * 総画素が maxPixels を超える時だけ縮小した (width, height) を返す純関数。
  * 長辺キャップだと長尺レシート(例 800×4800)が幅 267px まで潰れて Vision でも読めなくなるため、
  * 総画素基準にしてアスペクト比を保ったまま情報量(≒精細さ)を最大化する。
+ * ただし 10MP 級の極端な長尺では総画素上限の分だけ幅も物理的に狭くなるが、それは許容とする
+ * （それでも旧長辺キャップの 267px よりは広く保たれる）。
  * canvas 実行部（ブラウザ専用 I/O）と分離して単体テスト可能にする。拡大はしない。
  */
 export function fitWithinPixelBudget(
@@ -97,6 +99,8 @@ export function fitWithinPixelBudget(
 
 /**
  * 総画素の上限(4MP)。413 防御の実体はこの硬い上限。
+ * 縮小結果は Math.round の丸めにより最大 0.5% 程度この上限を超過しうるため、上限値は余裕を持って設定する
+ * （6MB invariant に対し base64 でも 2 倍以上の余裕があり実害はない）。
  * 4MP × JPEG q0.8 の写真は base64 でも Vercel 4.5MB body / route.ts の
  * MAX_IMAGE_BASE64_LENGTH(6MB) を大幅に下回る（4MP JPEG q0.8 ≒ 1〜2MB、base64 は約 4/3 倍でも ≦ 2.7MB）。
  */

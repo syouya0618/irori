@@ -16,9 +16,20 @@ describe("fitWithinPixelBudget（クラウド送信前の総画素キャップ�
     // アスペクト比 3024:4032 = 0.75 を保つ（丸め誤差 ±0.01 内）
     expect(width / height).toBeCloseTo(3024 / 4032, 2)
   })
+  it("総画素がちょうど上限なら縮小しない（境界 <= 判定の固定）", () => {
+    // 2000×2000 = ちょうど 4MP。境界が < に退行したら縮小されて落ちる
+    expect(fitWithinPixelBudget(2000, 2000, 4_000_000)).toEqual({
+      width: 2000,
+      height: 2000,
+    })
+  })
   it("極端な長尺(10MP)も総画素上限まで縮小する（worst-case・幅は狭くなるが許容）", () => {
-    const { width, height } = fitWithinPixelBudget(500, 20000, 4_000_000)
-    expect(width * height).toBeLessThanOrEqual(4_000_000)
+    // 500×20000 = 10MP。scale=sqrt(0.4) で決定的に縮小されるため厳密値を固定する
+    // （width*height の上限だけだと過剰縮小(極端には 1×1)を見逃す）
+    expect(fitWithinPixelBudget(500, 20000, 4_000_000)).toEqual({
+      width: 316,
+      height: 12649,
+    })
   })
   it("上限以下は拡大せずそのまま返す", () => {
     expect(fitWithinPixelBudget(800, 600, 4_000_000)).toEqual({
