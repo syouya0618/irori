@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest"
-import { fitWithinPixelBudget, describeScanPhase } from "@/lib/ocr/scan-receipt"
+import {
+  fitWithinPixelBudget,
+  fitTesseractSize,
+  describeScanPhase,
+} from "@/lib/ocr/scan-receipt"
 
 describe("fitWithinPixelBudget（クラウド送信前の総画素キャップ縮小）", () => {
   it("総画素が上限以下なら縮小しない（長尺レシートも幅を保つ）", () => {
@@ -54,6 +58,24 @@ describe("fitWithinPixelBudget（クラウド送信前の総画素キャップ�
       fitWithinPixelBudget(Number.POSITIVE_INFINITY, 100, 4_000_000),
     ).toEqual({
       width: Number.POSITIVE_INFINITY,
+      height: 100,
+    })
+  })
+})
+
+describe("fitTesseractSize（端末内OCR前処理の縮小サイズ計算）", () => {
+  it("長辺が上限(2500)を超える場合は長辺基準で縮小する", () => {
+    expect(fitTesseractSize(4032, 3024)).toEqual({ width: 2500, height: 1875 })
+  })
+  it("上限以下は拡大せずそのまま返す", () => {
+    expect(fitTesseractSize(1200, 900)).toEqual({ width: 1200, height: 900 })
+  })
+  it("ちょうど上限はそのまま返す", () => {
+    expect(fitTesseractSize(2500, 1800)).toEqual({ width: 2500, height: 1800 })
+  })
+  it("不正値(NaN)はそのまま返す（クラッシュしない）", () => {
+    expect(fitTesseractSize(Number.NaN, 100)).toEqual({
+      width: Number.NaN,
       height: 100,
     })
   })

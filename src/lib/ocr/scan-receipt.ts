@@ -48,10 +48,85 @@ export async function scanReceiptWithTesseract(
       : undefined,
   })
   try {
-    const result = await worker.recognize(image)
+    // preserve_interword_spaces: jpn は字間に偽スペースが混入しやすく、公式 tessdata_fast も
+    //   同設定で対策する。user_defined_dpi: "Invalid resolution 0 dpi" 警告の解消。値は文字列。
+    // PSM は既定 6 のまま（変更は実機 A/B 未実施のため見送る）。
+    await worker.setParameters({
+      preserve_interword_spaces: "1",
+      user_defined_dpi: "300",
+    })
+    const prepared = await prepareImageForTesseract(image)
+    const result = await worker.recognize(prepared)
+    // 空結果の切り分け用に生テキスト先頭のみ端末内ログ（外部送信なし）
+    console.debug("[scan-receipt] raw", result.data.text.slice(0, 200))
     return parseReceiptText(result.data.text)
   } finally {
     await worker.terminate()
+  }
+}
+
+const TESSERACT_MAX_LONG_EDGE = 2500
+const TESSERACT_JPEG_QUALITY = 0.9
+
+/**
+ * Tesseract 認識前の縮小サイズを返す純関数。長辺が上限を超える時だけ縮小し、拡大はしない。
+ * canvas 実行部（ブラウザ専用 I/O）と分離して単体テスト可能にする。
+ * クラウド送信用の fitWithinPixelBudget とは目的（総画素 vs 長辺）が異なるため共有しない。
+ */
+export function fitTesseractSize(
+  width: number,
+  height: number,
+): { width: number; height: number } {
+  const longEdge = Math.max(width, height)
+  if (!Number.isFinite(longEdge) || longEdge <= TESSERACT_MAX_LONG_EDGE) {
+    return { width, height }
+  }
+  const scale = TESSERACT_MAX_LONG_EDGE / longEdge
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  }
+}
+
+/**
+ * Tesseract 認識前に画像を整える（この経路は client 限定・ブラウザ専用 I/O を含む）。
+ * - imageOrientation:"from-image" で canvas 再描画し EXIF 回転を焼き込む。tesseract.js@7
+ *   内蔵の EXIF 補正は little-endian EXIF（Android に多い）で不発なため、確実に正立させる。
+ * - 長辺 2500px 超のみ縮小し WASM の処理時間とメモリを抑える（拡大はしない）。
+ * createImageBitmap / canvas はブラウザ専用。非ブラウザ・生成失敗時は元 blob で続行する。
+ * クラウド送信用の compressImageForUpload とは前処理方針が異なるため共有しない（自己完結）。
+ */
+async function prepareImageForTesseract(blob: Blob): Promise<Blob> {
+  if (
+    typeof createImageBitmap !== "function" ||
+    typeof document === "undefined"
+  ) {
+    // 本番はブラウザ実行のため通常ここは通らない。通ったら整形せず認識へ回す
+    console.warn("[scan-receipt] 前処理不可（ブラウザ外）。元画像で認識します")
+    return blob
+  }
+  let bitmap: ImageBitmap
+  try {
+    bitmap = await createImageBitmap(blob, { imageOrientation: "from-image" })
+  } catch (err) {
+    // 前処理失敗は致命的ではないが、原因追跡のため必ず記録して元画像で続行する
+    console.warn("[scan-receipt] 前処理に失敗。元画像で認識します", err)
+    return blob
+  }
+  try {
+    const { width, height } = fitTesseractSize(bitmap.width, bitmap.height)
+    const canvas = document.createElement("canvas")
+    canvas.width = width
+    canvas.height = height
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return blob
+    ctx.drawImage(bitmap, 0, 0, width, height)
+    const prepared = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), "image/jpeg", TESSERACT_JPEG_QUALITY),
+    )
+    return prepared ?? blob
+  } finally {
+    bitmap.close()
   }
 }
 

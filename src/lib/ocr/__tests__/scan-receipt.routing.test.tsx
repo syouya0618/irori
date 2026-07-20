@@ -5,8 +5,11 @@ import { scanReceipt } from "@/lib/ocr/scan-receipt"
 // ネットワークへ一切出ない」プライバシー配線だけを検証したいので createWorker を差し替える。
 // OCR 出力の正しさは検証しない（＝動くふりの fake-success テストにしない。scan-receipt.ts は
 // client 専用経路であり、ネットワーク境界と browser lib を差し替えて分岐選択のみ確認する）。
+// setParameters は端末内前処理でパラメータ設定に呼ばれるため mock worker に追加する
+// （未定義だと "setParameters is not a function" で経路選択の検証前に落ちる）。
 vi.mock("tesseract.js", () => ({
   createWorker: vi.fn(async () => ({
+    setParameters: vi.fn(async () => {}),
     recognize: vi.fn(async () => ({ data: { text: "" } })),
     terminate: vi.fn(async () => {}),
   })),
