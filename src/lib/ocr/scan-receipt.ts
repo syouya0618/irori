@@ -74,34 +74,41 @@ function blobToBase64(blob: Blob): Promise<string> {
 }
 
 /**
- * 長辺が maxLongEdge を超える時だけ縮小した (width, height) を返す純関数。
+ * 総画素が maxPixels を超える時だけ縮小した (width, height) を返す純関数。
+ * 長辺キャップだと長尺レシート(例 800×4800)が幅 267px まで潰れて Vision でも読めなくなるため、
+ * 総画素基準にしてアスペクト比を保ったまま情報量(≒精細さ)を最大化する。
  * canvas 実行部（ブラウザ専用 I/O）と分離して単体テスト可能にする。拡大はしない。
  */
-export function fitWithinLongEdge(
+export function fitWithinPixelBudget(
   width: number,
   height: number,
-  maxLongEdge: number,
+  maxPixels: number,
 ): { width: number; height: number } {
-  const longEdge = Math.max(width, height)
-  if (!Number.isFinite(longEdge) || longEdge <= maxLongEdge) {
+  const pixels = width * height
+  if (!Number.isFinite(pixels) || pixels <= maxPixels) {
     return { width, height }
   }
-  const scale = maxLongEdge / longEdge
+  const scale = Math.sqrt(maxPixels / pixels)
   return {
     width: Math.max(1, Math.round(width * scale)),
     height: Math.max(1, Math.round(height * scale)),
   }
 }
 
-const UPLOAD_MAX_LONG_EDGE = 1600
+/**
+ * 総画素の上限(4MP)。413 防御の実体はこの硬い上限。
+ * 4MP × JPEG q0.8 の写真は base64 でも Vercel 4.5MB body / route.ts の
+ * MAX_IMAGE_BASE64_LENGTH(6MB) を大幅に下回る（4MP JPEG q0.8 ≒ 1〜2MB、base64 は約 4/3 倍でも ≦ 2.7MB）。
+ */
+const UPLOAD_MAX_PIXELS = 4_000_000
 const UPLOAD_JPEG_QUALITY = 0.8
 
 /**
- * クラウド送信前に画像を長辺基準で縮小・JPEG 圧縮する。
+ * クラウド送信前に画像を総画素基準で縮小・JPEG 圧縮する。
  * Vercel の 4.5MB リクエスト body 上限で、典型的なレシート写真(3-8MB)を無圧縮 base64 で
- * 送ると 413 になり機能が壊れるため必須。
+ * 送ると 413 になり機能が壊れるため必須。総画素キャップ(UPLOAD_MAX_PIXELS)で body 上限を守る。
  * 既存の compressImage(meal 用) は width 制約かつ EXIF 未考慮ゆえ、レシートで OCR 精度を
- * 保つべく長辺基準 + imageOrientation:"from-image"（縦横回転補正）で別実装する。
+ * 保つべく総画素基準 + imageOrientation:"from-image"（縦横回転補正）で別実装する。
  * createImageBitmap / canvas はブラウザ専用（この経路は client 限定）。
  */
 async function compressImageForUpload(blob: Blob): Promise<Blob> {
@@ -120,10 +127,10 @@ async function compressImageForUpload(blob: Blob): Promise<Blob> {
     return blob
   }
   try {
-    const { width, height } = fitWithinLongEdge(
+    const { width, height } = fitWithinPixelBudget(
       bitmap.width,
       bitmap.height,
-      UPLOAD_MAX_LONG_EDGE,
+      UPLOAD_MAX_PIXELS,
     )
     const canvas = document.createElement("canvas")
     canvas.width = width
