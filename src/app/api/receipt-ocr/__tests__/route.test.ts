@@ -163,4 +163,48 @@ describe("POST /api/receipt-ocr", () => {
     }
     expect(requestBody.requests[0].features).toEqual([{ type: "DOCUMENT_TEXT_DETECTION" }])
   })
+
+  it("正常系: 切り分けログを textLength/itemCount のみで出力し、本文を含まない", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {})
+    const text = "牛乳\n食パン\n合計 446"
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(visionOk({ responses: [{ fullTextAnnotation: { text } }] })),
+    )
+
+    const res = await POST(post({ image: "abc" }))
+    await res.json()
+
+    expect(logSpy).toHaveBeenCalledWith("[receipt-ocr] parsed", {
+      textLength: text.length,
+      itemCount: 2,
+    })
+    const loggedPayload = JSON.stringify(logSpy.mock.calls)
+    expect(loggedPayload).not.toContain("牛乳")
+    expect(loggedPayload).not.toContain("食パン")
+    logSpy.mockRestore()
+  })
+
+  it("OCR は成功したがパーサが全行を捨てた場合、warn で明示する", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {})
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    const text = "税込\n税込"
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(visionOk({ responses: [{ fullTextAnnotation: { text } }] })),
+    )
+
+    const res = await POST(post({ image: "abc" }))
+    const body = (await res.json()) as { items: unknown[] }
+
+    expect(body.items).toEqual([])
+    expect(warnSpy).toHaveBeenCalledWith("[receipt-ocr] OCR成功・パーサ全滅", {
+      textLength: text.length,
+      itemCount: 0,
+    })
+    const loggedPayload = JSON.stringify([...logSpy.mock.calls, ...warnSpy.mock.calls])
+    expect(loggedPayload).not.toContain("税込")
+    logSpy.mockRestore()
+    warnSpy.mockRestore()
+  })
 })
