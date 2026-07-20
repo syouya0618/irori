@@ -12,7 +12,8 @@ const MAX_IMAGE_BASE64_LENGTH = 6 * 1024 * 1024
 /**
  * Google Cloud Vision（DOCUMENT_TEXT_DETECTION）でレシート画像を OCR し、商品名候補を返す。
  * 画像はサーバ経由で Google へ送信される（クラウド provider）。
- * API キー未設定時は 400 を返し、クライアントは端末内 OCR / 手入力にフォールバックする。
+ * API キー未設定時は 400 を返す。クライアントは自動で端末内 OCR に切り替えず、
+ * 日本語エラーメッセージを表示する（手入力は常に可能）。
  */
 export async function POST(request: Request) {
   const auth = await getAuthContext()
@@ -92,7 +93,16 @@ export async function POST(request: Request) {
         { status: 502 },
       )
     }
-    const items = parseReceiptText(extractVisionText(data))
+    const text = extractVisionText(data)
+    const items = parseReceiptText(text)
+    // レシート本文は購買情報のためログに出さない。件数と長さのみ記録する。
+    console.log("[receipt-ocr] parsed", { textLength: text.length, itemCount: items.length })
+    if (text.length > 0 && items.length === 0) {
+      console.warn("[receipt-ocr] OCR成功・パーサ全滅", {
+        textLength: text.length,
+        itemCount: items.length,
+      })
+    }
     return NextResponse.json({ items })
   } catch (err) {
     const aborted = err instanceof Error && err.name === "AbortError"
