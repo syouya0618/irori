@@ -10,7 +10,7 @@ export const maxDuration = 30
 const MAX_IMAGE_BASE64_LENGTH = 6 * 1024 * 1024
 
 /**
- * Google Cloud Vision（TEXT_DETECTION）でレシート画像を OCR し、商品名候補を返す。
+ * Google Cloud Vision（DOCUMENT_TEXT_DETECTION）でレシート画像を OCR し、商品名候補を返す。
  * 画像はサーバ経由で Google へ送信される（クラウド provider）。
  * API キー未設定時は 400 を返し、クライアントは端末内 OCR / 手入力にフォールバックする。
  */
@@ -61,7 +61,7 @@ export async function POST(request: Request) {
           requests: [
             {
               image: { content: image },
-              features: [{ type: "TEXT_DETECTION" }],
+              features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
               imageContext: { languageHints: ["ja"] },
             },
           ],
