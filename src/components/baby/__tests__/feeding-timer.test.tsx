@@ -117,10 +117,10 @@ describe("FeedingTimer 手動入力モード（分・秒）", () => {
     ).not.toBeInTheDocument()
   })
 
-  it("分・秒を選んで記録すると duration_min（分）へ丸めて recordFeeding に渡る", async () => {
+  it("分・秒を選んで記録すると秒精度（durationSec）で recordFeeding に渡る", async () => {
     recordFeeding.mockResolvedValueOnce({ error: null, id: "m-1" })
     openManual("breast_right")
-    // 2分40秒 = 160秒 → 160/60 = 2.67分 → round → 3分
+    // 2分40秒 = 160秒（秒精度をそのまま保存）
     fireEvent.change(screen.getByLabelText("分"), { target: { value: "2" } })
     fireEvent.change(screen.getByLabelText("秒"), { target: { value: "40" } })
     fireEvent.click(screen.getByRole("button", { name: /記録する|記録中/ }))
@@ -128,11 +128,11 @@ describe("FeedingTimer 手動入力モード（分・秒）", () => {
     await waitFor(() => expect(recordFeeding).toHaveBeenCalled())
     expect(recordFeeding).toHaveBeenCalledWith({
       feedingType: "breast_right",
-      durationMin: 3,
+      durationSec: 160,
     })
   })
 
-  it("15分を超える選択は15分に丸める（15分まで）", async () => {
+  it("15分を超える選択は15分（900秒）に丸める（15分まで）", async () => {
     recordFeeding.mockResolvedValueOnce({ error: null, id: "m-2" })
     openManual()
     fireEvent.change(screen.getByLabelText("分"), { target: { value: "15" } })
@@ -142,7 +142,7 @@ describe("FeedingTimer 手動入力モード（分・秒）", () => {
     await waitFor(() => expect(recordFeeding).toHaveBeenCalled())
     expect(recordFeeding).toHaveBeenCalledWith({
       feedingType: "breast_left",
-      durationMin: 15,
+      durationSec: 900,
     })
   })
 

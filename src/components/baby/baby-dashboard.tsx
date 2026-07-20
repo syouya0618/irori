@@ -278,7 +278,7 @@ export function BabyDashboard({
     supabase
       .from("baby_logs")
       .select(
-        "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, memo, created_at",
+        "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at",
       )
       .eq("household_id", householdId)
       .gte("logged_at", dayStart)
@@ -311,7 +311,7 @@ export function BabyDashboard({
     supabase
       .from("baby_logs")
       .select(
-        "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, memo, created_at",
+        "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at",
       )
       .eq("household_id", householdId)
       .eq("log_type", "sleep")

@@ -15,6 +15,10 @@
 export const FEEDING_DURATION_MIN = 1
 export const FEEDING_DURATION_MAX = 180
 
+// 秒精度で保存する授乳時間（duration_sec）の範囲。分の上限 180 分と同値（180×60）。
+export const FEEDING_DURATION_SEC_MIN = 1
+export const FEEDING_DURATION_SEC_MAX = FEEDING_DURATION_MAX * 60 // 10800
+
 /**
  * 経過分を [FEEDING_DURATION_MIN, FEEDING_DURATION_MAX] にクランプする。
  *
@@ -31,4 +35,28 @@ export function clampFeedingDuration(elapsedMinutes: number): number {
     FEEDING_DURATION_MAX,
     Math.max(FEEDING_DURATION_MIN, Math.round(elapsedMinutes)),
   )
+}
+
+/**
+ * 経過秒を [FEEDING_DURATION_SEC_MIN, FEEDING_DURATION_SEC_MAX] にクランプする。
+ * clampFeedingDuration の秒精度版。非有限値の防御方針（最保守の下限へ倒す）も同じ。
+ */
+export function clampFeedingDurationSec(elapsedSeconds: number): number {
+  if (!Number.isFinite(elapsedSeconds)) return FEEDING_DURATION_SEC_MIN
+  return Math.min(
+    FEEDING_DURATION_SEC_MAX,
+    Math.max(FEEDING_DURATION_SEC_MIN, Math.round(elapsedSeconds)),
+  )
+}
+
+/**
+ * duration_sec から後方互換の duration_min（分丸め）を導出する単一の源。
+ * サーバの記録（recordFeeding）と楽観 append（buildOptimisticLog）で共有し、
+ * 両列の drift を防ぐ。null は「時間なしの授乳」を意味し duration_min も null。
+ */
+export function deriveDurationMinFromSec(
+  durationSec: number | null | undefined,
+): number | null {
+  if (durationSec == null || !Number.isFinite(durationSec)) return null
+  return Math.round(durationSec / 60)
 }

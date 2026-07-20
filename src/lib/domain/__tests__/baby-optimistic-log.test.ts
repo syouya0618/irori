@@ -26,7 +26,21 @@ describe("buildOptimisticLog (B-03)", () => {
     expect(log.weight_g).toBeNull()
     expect(log.height_cm).toBeNull()
     expect(log.duration_min).toBeNull()
+    expect(log.duration_sec).toBeNull()
     expect(log.memo).toBeNull()
+  })
+
+  it("feeding: durationSec は秒精度を保持し duration_min は round で導出する", () => {
+    const log = buildOptimisticLog({
+      id: "f2",
+      logType: "feeding",
+      loggedBy: "u1",
+      feedingType: "breast_left",
+      durationSec: 160, // 2:40
+    })
+    expect(log.duration_sec).toBe(160)
+    // サーバの recordFeeding と同じ round(160/60)=3 を共有
+    expect(log.duration_min).toBe(3)
   })
 
   it("diaper: diaper_type を埋める", () => {

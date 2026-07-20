@@ -35,6 +35,7 @@ const memoLog: BabyLogData = {
   weight_g: null,
   height_cm: null,
   duration_min: null,
+  duration_sec: null,
   memo: "既存メモ",
   created_at: "2026-07-19T02:00:00+09:00",
 }

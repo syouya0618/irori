@@ -48,6 +48,7 @@ function activeSleepLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
     weight_g: null,
     height_cm: null,
     duration_min: null,
+    duration_sec: null,
     memo: null,
     created_at: "2026-07-19T08:30:00Z",
     ...overrides,
@@ -300,6 +301,7 @@ describe("BabyQuickActions の楽観 append (B-03)", () => {
       weight_g: null,
       height_cm: null,
       duration_min: null,
+      duration_sec: null,
       memo: null,
       created_at: "2026-07-19T00:00:00+09:00",
     }

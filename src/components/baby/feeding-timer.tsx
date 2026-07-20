@@ -12,11 +12,12 @@ import { Button } from "@/components/ui/button"
 import { Loader2, Square, Check } from "lucide-react"
 import { toast } from "sonner"
 import { recordFeeding } from "@/app/(main)/baby/actions"
-import { clampFeedingDuration } from "@/lib/domain"
+import { clampFeedingDurationSec } from "@/lib/domain"
 import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
 import { useWakeLock } from "@/lib/hooks/use-wake-lock"
 import { useNow } from "@/lib/hooks/use-now"
 import { segmentCn } from "@/lib/utils/segment-cn"
+import { formatDurationSec } from "@/lib/utils/baby-log-labels"
 import type { FeedingType } from "@/lib/types/database"
 import type { BabyLogData } from "@/lib/types/baby"
 
@@ -24,7 +25,7 @@ const STORAGE_KEY = "irori:feeding-timer"
 const MAX_TIMER_AGE_MS = 2 * 60 * 60 * 1000 // 2時間で stale 扱い
 
 // 手動入力の上限。授乳（片側）は 15 分あれば足りるため 15 分までを選べる。
-// duration_min は分単位（DB CHECK 0〜180）ゆえ秒は丸めて保存する（タイマーと同方針）。
+// 秒精度（duration_sec）で保存する（duration_min は round で併記される）。
 const MANUAL_MAX_MINUTES = 15
 const MANUAL_MINUTE_OPTIONS = Array.from(
   { length: MANUAL_MAX_MINUTES + 1 },
@@ -47,16 +48,15 @@ function formatTimer(seconds: number): string {
 }
 
 /**
- * 手動入力の分・秒を duration_min（分・[1,180]）へ変換する。
- * 15 分（900 秒）を上限に丸め、既存タイマーと同じ clampFeedingDuration で
- * 分へ丸める（秒精度は保持しない = DB の分単位カラムに合わせる）。
+ * 手動入力の分・秒を保存用の秒数へ変換する。
+ * 15 分（900 秒）を上限にクランプする（秒精度をそのまま保持）。
  */
-function manualDurationMin(minutes: number, seconds: number): number {
+function manualDurationSec(minutes: number, seconds: number): number {
   const totalSeconds = Math.min(
     minutes * 60 + seconds,
     MANUAL_MAX_MINUTES * 60,
   )
-  return clampFeedingDuration(totalSeconds / 60)
+  return clampFeedingDurationSec(totalSeconds)
 }
 
 interface FeedingTimerProps {
@@ -153,11 +153,11 @@ export function FeedingTimer({
   const elapsedSeconds = startedAt
     ? Math.max(0, Math.floor((now.getTime() - startedAt.getTime()) / 1000))
     : 0
-  const elapsedMinutes = Math.round(elapsedSeconds / 60)
 
-  // タイマー停止・手動記録の共通保存経路。通信断 reject を握って永久 disabled を防ぐ
+  // タイマー停止・手動記録の共通保存経路。durationSec（秒精度）で記録し、duration_min は
+  // サーバ側で round 併記される。通信断 reject を握って永久 disabled を防ぐ
   // （recordFeeding は redirect しないため finally で isSaving を必ず戻せる）。
-  async function saveFeeding(duration: number) {
+  async function saveFeeding(durationSec: number) {
     if (isSavingRef.current) return
     isSavingRef.current = true
     setIsSaving(true)
@@ -166,14 +166,14 @@ export function FeedingTimer({
     try {
       result = await recordFeeding({
         feedingType,
-        durationMin: duration,
+        durationSec,
       })
     } catch (err) {
       // recordFeeding は通信断で reject しうる。握り潰さず記録し、再試行を促す。
       console.error("[feeding-timer] recordFeeding が例外を投げました", {
         message: err instanceof Error ? err.message : String(err),
         feedingType,
-        durationMin: duration,
+        durationSec,
       })
       toast.error("授乳の記録に失敗しました。通信状況を確認してもう一度お試しください。")
       return
@@ -197,19 +197,19 @@ export function FeedingTimer({
           logType: "feeding",
           loggedBy: userId,
           feedingType,
-          durationMin: duration,
+          durationSec,
         }),
       )
     }
 
     localStorage.removeItem(STORAGE_KEY)
     setStartedAt(null)
-    toast.success(`授乳を記録しました（${duration}分）`)
+    toast.success(`授乳を記録しました（${formatDurationSec(durationSec)}）`)
     onOpenChange(false)
   }
 
   function handleStop() {
-    void saveFeeding(clampFeedingDuration(elapsedMinutes))
+    void saveFeeding(clampFeedingDurationSec(elapsedSeconds))
   }
 
   function handleManualRecord() {
@@ -218,7 +218,7 @@ export function FeedingTimer({
       toast.error("授乳時間を選んでください")
       return
     }
-    void saveFeeding(manualDurationMin(manualMin, manualSec))
+    void saveFeeding(manualDurationSec(manualMin, manualSec))
   }
 
   function handleCancel() {

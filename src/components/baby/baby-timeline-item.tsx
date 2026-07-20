@@ -14,6 +14,7 @@ import {
   getDiaperTypeLabel,
   minutesBetween,
   formatElapsedMinutes,
+  formatDurationSec,
 } from "@/lib/utils/baby-log-labels"
 import { formatTimeJst } from "@/lib/utils/date-jst"
 import type { BabyLogData } from "@/lib/types/baby"
@@ -38,7 +39,9 @@ function getLogSummary(log: BabyLogData): string {
       const label = getFeedingTypeLabel(log.feeding_type)
       const parts = [label]
       if (log.amount_ml != null) parts.push(`${log.amount_ml}ml`)
-      if (log.duration_min) parts.push(`${log.duration_min}分`)
+      // 秒精度があれば「M分S秒」で表示、無ければ従来の分表示にフォールバック
+      if (log.duration_sec != null) parts.push(formatDurationSec(log.duration_sec))
+      else if (log.duration_min) parts.push(`${log.duration_min}分`)
       return parts.join(" ")
     }
     case "diaper":

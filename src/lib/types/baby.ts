@@ -13,6 +13,7 @@ export interface BabyLogData {
   weight_g: number | null
   height_cm: number | null
   duration_min: number | null
+  duration_sec: number | null
   memo: string | null
   created_at: string
 }

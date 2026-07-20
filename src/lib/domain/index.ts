@@ -45,6 +45,10 @@ export {
 export { parseStockFormData, type ParsedStockFields } from "./stock-form"
 export {
   clampFeedingDuration,
+  clampFeedingDurationSec,
+  deriveDurationMinFromSec,
   FEEDING_DURATION_MIN,
   FEEDING_DURATION_MAX,
+  FEEDING_DURATION_SEC_MIN,
+  FEEDING_DURATION_SEC_MAX,
 } from "./feeding"

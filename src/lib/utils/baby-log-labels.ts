@@ -34,6 +34,19 @@ export function getDiaperTypeLabel(type: DiaperType): string {
   return diaperTypeLabels[type]
 }
 
+/**
+ * 授乳時間（秒）を「M分S秒 / M分 / S秒」の日本語表記へ整形する。
+ * duration_sec を timeline やトーストで秒精度表示するのに使う。
+ */
+export function formatDurationSec(rawSeconds: number): string {
+  const total = Math.max(0, Math.round(rawSeconds))
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  if (m > 0 && s > 0) return `${m}分${s}秒`
+  if (m > 0) return `${m}分`
+  return `${s}秒`
+}
+
 export function formatElapsedMinutes(rawMinutes: number): string {
   const minutes = Math.max(0, rawMinutes)
   if (minutes < 60) return `${minutes}分`
