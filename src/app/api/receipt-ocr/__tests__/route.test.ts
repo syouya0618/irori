@@ -145,4 +145,22 @@ describe("POST /api/receipt-ocr", () => {
     const body = (await res.json()) as { items: { name: string; quantity: number | null }[] }
     expect(body.items.map((i) => i.name)).toEqual(["牛乳", "食パン"])
   })
+
+  it("Vision へのリクエストは密集テキスト向け DOCUMENT_TEXT_DETECTION を指定する", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(
+      visionOk({
+        responses: [{ fullTextAnnotation: { text: "牛乳" } }],
+      }),
+    )
+    vi.stubGlobal("fetch", fetchSpy)
+
+    await POST(post({ image: "abc" }))
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const requestInit = fetchSpy.mock.calls[0][1] as RequestInit
+    const requestBody = JSON.parse(requestInit.body as string) as {
+      requests: { features: { type: string }[] }[]
+    }
+    expect(requestBody.requests[0].features).toEqual([{ type: "DOCUMENT_TEXT_DETECTION" }])
+  })
 })
