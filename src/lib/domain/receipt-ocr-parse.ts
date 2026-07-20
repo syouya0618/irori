@@ -91,8 +91,10 @@ function extractItem(line: string): ScannedReceiptItem | null {
   s = s.replace(/[|｜「」『』【】〈〉《》〔〕~〜☆★◎●○◯■□▲△▼▽◆◇]/g, " ")
   s = s.replace(/[-—─＝=・]{2,}/g, " ")
 
-  // 税マーク・税表記を除去（価格除去より前）
-  s = s.replace(/[（(]?税[込抜][）)]?/g, " ")
+  // 税マーク・税表記を除去（価格除去より前）。「(税込108円)」のような括弧内注記は
+  // 開き括弧だけ食うと閉じ括弧が名前に残るため、括弧ごと丸ごと除去する
+  s = s.replace(/[（(][^（()）]*税[込抜][^（()）]*[)）]/g, " ")
+  s = s.replace(/税[込抜]/g, " ")
   s = s.replace(/[※*＊]/g, " ")
   s = s.replace(/(内|外|軽)\s*$/g, " ")
 
@@ -104,6 +106,14 @@ function extractItem(line: string): ScannedReceiptItem | null {
   s = s.replace(/(?<=[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}ー])\d{2,4}\s*$/u, " ")
   // 空白区切りの末尾価格（複数列。1 桁の「レジ袋 5」も価格ゆえ {2,} でなく + で拾う）
   s = s.replace(/(?:\s+[\d,]+)+\s*$/g, " ")
+
+  // 各種除去で対応相手を失った孤児括弧は商品名に残さない（「ミックスナッツ(小)」のような
+  // 揃った括弧は商品名の一部として残す）
+  const hasOpen = /[（(]/.test(s)
+  const hasClose = /[)）]/.test(s)
+  if (hasOpen !== hasClose) {
+    s = s.replace(/[（()）]/g, " ")
+  }
 
   const name = s.replace(/\s+/g, " ").trim()
   if (name === "") return null

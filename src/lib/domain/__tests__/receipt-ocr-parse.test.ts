@@ -96,6 +96,18 @@ describe("parseReceiptText", () => {
     expect(parseReceiptText("税込 1,234")).toEqual([])
   })
 
+  it("「(税込108円)」の括弧内税注記を丸ごと除去し閉じ括弧を残さない", () => {
+    expect(parseReceiptText("ポテト(税込108円)")).toEqual([
+      { name: "ポテト", quantity: null },
+    ])
+  })
+
+  it("対応の揃った括弧は商品名の一部として残す", () => {
+    expect(parseReceiptText("ミックスナッツ(小) 128")).toEqual([
+      { name: "ミックスナッツ(小)", quantity: null },
+    ])
+  })
+
   it("「レジ袋」は商品として残し「レジ NN」ヘッダは除外する", () => {
     expect(parseReceiptText("レジ袋 5")).toEqual([{ name: "レジ袋", quantity: null }])
     expect(parseReceiptText("レジ 03  責 12")).toEqual([])
