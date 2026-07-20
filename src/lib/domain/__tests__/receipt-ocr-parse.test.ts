@@ -108,6 +108,12 @@ describe("parseReceiptText", () => {
     ])
   })
 
+  it("価格除去で空になった括弧ペアを商品名に残さない", () => {
+    expect(parseReceiptText("ポテト(108円)")).toEqual([
+      { name: "ポテト", quantity: null },
+    ])
+  })
+
   it("「レジ袋」は商品として残し「レジ NN」ヘッダは除外する", () => {
     expect(parseReceiptText("レジ袋 5")).toEqual([{ name: "レジ袋", quantity: null }])
     expect(parseReceiptText("レジ 03  責 12")).toEqual([])
