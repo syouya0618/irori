@@ -19,6 +19,7 @@ const FEEDING_OPTIONS: { value: FeedingType; label: string }[] = [
   { value: "breast_left", label: "左" },
   { value: "breast_right", label: "右" },
   { value: "bottle", label: "ミルク" },
+  { value: "pumped", label: "搾乳" },
   { value: "solid", label: "離乳食" },
 ]
 
@@ -49,6 +50,8 @@ interface BabyQuickActionsProps {
   /** 記録者（logged_by）。楽観 append 行の作成に使う（B-03） */
   userId: string
   onCreateLog: (type: BabyLogType) => void
+  /** 搾乳など量ベースの授乳を create シートで開く（母乳のタイマー導線とは別） */
+  onCreateFeeding: (type: FeedingType) => void
   onStartTimer: (type: FeedingType) => void
   /**
    * endSleep 成功時に呼ばれる（B-01: 日跨ぎフォールバックの明示クリア +
@@ -72,6 +75,7 @@ export function BabyQuickActions({
   now,
   userId,
   onCreateLog,
+  onCreateFeeding,
   onStartTimer,
   onSleepEnded,
   onLogRecorded,
@@ -104,6 +108,18 @@ export function BabyQuickActions({
       })
     } else {
       toast.success(message)
+    }
+  }
+
+  // 授乳ボタンの振り分け: 母乳（左/右）はタイマー、搾乳は量入力のため create シート、
+  // ミルク/離乳食は即時記録（従来どおり）。
+  function handleFeedingOption(value: FeedingType) {
+    if (value === "breast_left" || value === "breast_right") {
+      onStartTimer(value)
+    } else if (value === "pumped") {
+      onCreateFeeding(value)
+    } else {
+      handleFeeding(value)
     }
   }
 
@@ -217,11 +233,7 @@ export function BabyQuickActions({
           {FEEDING_OPTIONS.map((opt) => (
             <button
               key={opt.value}
-              onClick={() =>
-                opt.value === "breast_left" || opt.value === "breast_right"
-                  ? onStartTimer(opt.value)
-                  : handleFeeding(opt.value)
-              }
+              onClick={() => handleFeedingOption(opt.value)}
               disabled={isPending}
               className="flex min-h-11 flex-1 items-center justify-center rounded-xl bg-amber-50 text-sm font-medium text-amber-800 transition-colors duration-200 hover:bg-amber-100 active:bg-amber-200 disabled:opacity-50 dark:bg-amber-900/30 dark:text-amber-200 dark:hover:bg-amber-900/50 dark:active:bg-amber-900/70"
             >

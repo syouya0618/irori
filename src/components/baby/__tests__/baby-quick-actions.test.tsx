@@ -17,6 +17,7 @@ import {
 } from "@/app/(main)/baby/actions"
 import { toast } from "sonner"
 import type { BabyLogData } from "@/lib/types/baby"
+import type { FeedingType } from "@/lib/types/database"
 
 vi.mock("@/app/(main)/baby/actions", () => ({
   recordFeeding: vi.fn(),
@@ -85,6 +86,7 @@ describe("BabyQuickActions の通信断 reject 握り（B-07）", () => {
         now={new Date()}
         onCreateLog={() => {}}
         onStartTimer={() => {}}
+        onCreateFeeding={() => {}}
       />,
     )
     fireEvent.click(screen.getByRole("button", { name: "ミルク" }))
@@ -103,6 +105,7 @@ describe("BabyQuickActions の通信断 reject 握り（B-07）", () => {
         now={new Date()}
         onCreateLog={() => {}}
         onStartTimer={() => {}}
+        onCreateFeeding={() => {}}
       />,
     )
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
@@ -121,6 +124,7 @@ describe("BabyQuickActions の通信断 reject 握り（B-07）", () => {
         now={new Date()}
         onCreateLog={() => {}}
         onStartTimer={() => {}}
+        onCreateFeeding={() => {}}
       />,
     )
     fireEvent.click(screen.getByRole("button", { name: "ねんね" }))
@@ -140,6 +144,7 @@ describe("BabyQuickActions の通信断 reject 握り（B-07）", () => {
         now={new Date("2026-07-19T10:00:00Z")}
         onCreateLog={() => {}}
         onStartTimer={() => {}}
+        onCreateFeeding={() => {}}
       />,
     )
     fireEvent.click(screen.getByRole("button", { name: "1時間30分" }))
@@ -160,6 +165,7 @@ describe("BabyQuickActions の通信断 reject 握り（B-07）", () => {
         now={new Date()}
         onCreateLog={() => {}}
         onStartTimer={() => {}}
+        onCreateFeeding={() => {}}
       />,
     )
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
@@ -186,6 +192,7 @@ describe("BabyQuickActions の押し間違い取り消し", () => {
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
+        onCreateFeeding={() => {}}
       />,
     )
 
@@ -210,6 +217,7 @@ describe("BabyQuickActions の押し間違い取り消し", () => {
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
+        onCreateFeeding={() => {}}
       />,
     )
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
@@ -232,6 +240,7 @@ describe("BabyQuickActions の押し間違い取り消し", () => {
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
+        onCreateFeeding={() => {}}
       />,
     )
     fireEvent.click(screen.getByRole("button", { name: "ミルク" }))
@@ -251,6 +260,7 @@ describe("BabyQuickActions の楽観 append (B-03)", () => {
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
+        onCreateFeeding={() => {}}
         onLogRecorded={onLogRecorded}
       />,
     )
@@ -274,6 +284,7 @@ describe("BabyQuickActions の楽観 append (B-03)", () => {
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
+        onCreateFeeding={() => {}}
         onLogRecorded={onLogRecorded}
       />,
     )
@@ -312,6 +323,7 @@ describe("BabyQuickActions の楽観 append (B-03)", () => {
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
+        onCreateFeeding={() => {}}
         onSleepEnded={onSleepEnded}
       />,
     )
@@ -334,6 +346,7 @@ describe("BabyQuickActions の楽観 append (B-03)", () => {
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
+        onCreateFeeding={() => {}}
         onLogRemoved={onLogRemoved}
       />,
     )
@@ -342,5 +355,26 @@ describe("BabyQuickActions の楽観 append (B-03)", () => {
     await waitFor(() => expect(mockedToast.success).toHaveBeenCalled())
     lastSuccessOptions()?.action?.onClick()
     await waitFor(() => expect(onLogRemoved).toHaveBeenCalledWith("diaper-77"))
+  })
+})
+
+describe("BabyQuickActions の搾乳導線", () => {
+  it("搾乳ボタンは量入力の create シートを開く（即時記録しない）", () => {
+    const onCreateFeeding = vi.fn<(type: FeedingType) => void>()
+    render(
+      <BabyQuickActions
+        activeSleep={null}
+        now={new Date()}
+        userId="u1"
+        onCreateLog={() => {}}
+        onStartTimer={() => {}}
+        onCreateFeeding={onCreateFeeding}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "搾乳" }))
+    // 母乳のタイマーやミルクの即時記録とは別経路: create シートへ pumped を渡す
+    expect(onCreateFeeding).toHaveBeenCalledWith("pumped")
+    expect(mockedRecordFeeding).not.toHaveBeenCalled()
   })
 })

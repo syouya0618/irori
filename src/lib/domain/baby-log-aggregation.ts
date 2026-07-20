@@ -107,7 +107,11 @@ export function aggregateFeedings(
     for (const log of dayLogs) {
       if (log.feeding_type === "breast_left" || log.feeding_type === "breast_right") {
         breastCount++
-      } else if (log.feeding_type === "bottle") {
+      } else if (log.feeding_type === "bottle" || log.feeding_type === "pumped") {
+        // 搾乳（pumped）は哺乳瓶で量を測って与える volumetric な授乳のため、
+        // ミルク（bottle）と同じバケットで回数・総量を集計する。こうしないと
+        // 新 ENUM 値が else-if を素通りし totalCount と内訳（母乳+ミルク+離乳食）が
+        // 食い違って PDF レポートで欠落する。搾乳を独立集計したい場合は別対応。
         bottleCount++
         if (log.amount_ml != null && log.amount_ml > 0) {
           totalBottleMl += log.amount_ml
