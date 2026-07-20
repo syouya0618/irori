@@ -114,6 +114,7 @@ function defaultProps(
     activeSleepFallback: null,
     babyName: null,
     babyBirthDate: null,
+    pumpingIntervalMin: 180,
     ...overrides,
   }
 }

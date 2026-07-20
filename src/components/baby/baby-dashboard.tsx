@@ -26,6 +26,7 @@ import {
   buildGrowthSeries,
 } from "@/lib/domain/baby-log-aggregation"
 import { sleepOverlapMinutesForDate } from "@/lib/domain/baby-sleep-overlap"
+import { findLastPumped } from "@/lib/domain/baby-pumping"
 import type { BabyLogData } from "@/lib/types/baby"
 import type { BabyLogType, FeedingType } from "@/lib/types/database"
 
@@ -45,6 +46,8 @@ interface BabyDashboardProps {
   activeSleepFallback: BabyLogData | null
   babyName: string | null
   babyBirthDate: string | null
+  /** 搾乳間隔（分）。次の搾乳の目安の算出に使う（設定で変更可能） */
+  pumpingIntervalMin: number
 }
 
 /**
@@ -72,6 +75,7 @@ export function BabyDashboard({
   activeSleepFallback,
   babyName,
   babyBirthDate,
+  pumpingIntervalMin,
 }: BabyDashboardProps) {
   const [logs, setLogs] = useState<BabyLogData[]>(initialLogs)
   // B-02: 前夜開始の overlap 睡眠。summarizeTodayCounts の入力にのみ合流させる
@@ -351,6 +355,9 @@ export function BabyDashboard({
     [logs, serverActiveSleep],
   )
 
+  // 次の搾乳の目安: 選択日の logs から最後の搾乳を導出（サマリバーで isToday 時のみ表示）
+  const lastPumped = useMemo(() => findLastPumped(logs), [logs])
+
   // 今日のまとめ: 選択日の logs に加え、前夜開始の overlap 睡眠を按分入力へ合流。
   // feeding/diaper は date フィルタ、sleep は当日窓へ按分され、週間/PDF と per-day 同値。
   const todayCounts = useMemo(
@@ -447,6 +454,8 @@ export function BabyDashboard({
 
       <BabySummaryBar
         lastFeeding={lastFeeding}
+        lastPumped={lastPumped}
+        pumpingIntervalMin={pumpingIntervalMin}
         activeSleep={activeSleep}
         lastSleepEndedAt={effectiveLastSleepEndedAt}
         now={now}
