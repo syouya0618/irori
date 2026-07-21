@@ -58,6 +58,7 @@ export interface Database {
           auto_stock_categories: Json
           baby_name: string | null
           baby_birth_date: string | null
+          pumping_interval_min: number
           created_at: string
         }
         Insert: {
@@ -66,6 +67,7 @@ export interface Database {
           auto_stock_categories?: Json
           baby_name?: string | null
           baby_birth_date?: string | null
+          pumping_interval_min?: number
           created_at?: string
         }
         Update: {
@@ -74,6 +76,7 @@ export interface Database {
           auto_stock_categories?: Json
           baby_name?: string | null
           baby_birth_date?: string | null
+          pumping_interval_min?: number
           created_at?: string
         }
         Relationships: []
