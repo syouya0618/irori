@@ -89,6 +89,7 @@ const baseLog = {
   weight_g: null,
   height_cm: null,
   duration_min: null,
+  duration_sec: null,
   memo: null,
   created_at: "2026-04-16T00:00:00+09:00",
 } satisfies Omit<BabyLogData, "id" | "log_type" | "logged_at">

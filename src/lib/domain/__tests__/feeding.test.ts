@@ -11,8 +11,12 @@
 import { describe, it, expect } from "vitest"
 import {
   clampFeedingDuration,
+  clampFeedingDurationSec,
+  deriveDurationMinFromSec,
   FEEDING_DURATION_MIN,
   FEEDING_DURATION_MAX,
+  FEEDING_DURATION_SEC_MIN,
+  FEEDING_DURATION_SEC_MAX,
 } from "../feeding"
 
 describe("clampFeedingDuration: 境界クランプ", () => {
@@ -44,5 +48,41 @@ describe("clampFeedingDuration: 定数", () => {
   it("下限/上限定数が DB CHECK と一致する", () => {
     expect(FEEDING_DURATION_MIN).toBe(1)
     expect(FEEDING_DURATION_MAX).toBe(180)
+  })
+})
+
+describe("clampFeedingDurationSec: 秒精度の境界クランプ", () => {
+  it.each([
+    ["0 → 下限 1 秒", 0, 1],
+    ["1 → 1", 1, 1],
+    ["160 (2:40) → 素通し", 160, 160],
+    ["900 (15:00) → 素通し", 900, 900],
+    ["10800 (180分) → 上限そのまま", 10800, 10800],
+    ["10801 → 上限 10800 に倒す", 10801, 10800],
+    ["-5 → 下限 1", -5, 1],
+    ["NaN → 下限 1（すり抜け防御）", NaN, 1],
+    ["Infinity → 下限 1", Infinity, 1],
+  ] as const)("%s", (_label, input, expected) => {
+    expect(clampFeedingDurationSec(input)).toBe(expected)
+  })
+
+  it("秒の定数が分定数と整合する（SEC_MAX = MAX × 60）", () => {
+    expect(FEEDING_DURATION_SEC_MIN).toBe(1)
+    expect(FEEDING_DURATION_SEC_MAX).toBe(FEEDING_DURATION_MAX * 60)
+  })
+})
+
+describe("deriveDurationMinFromSec: 秒→分（後方互換の丸め）", () => {
+  it.each([
+    ["null → null（時間なし）", null, null],
+    ["undefined → null", undefined, null],
+    ["NaN → null", NaN, null],
+    ["0 → 0", 0, 0],
+    ["29 → 0（round down）", 29, 0],
+    ["30 → 1（round up）", 30, 1],
+    ["160 (2:40) → 3（round 2.67）", 160, 3],
+    ["900 (15:00) → 15", 900, 15],
+  ] as const)("%s", (_label, input, expected) => {
+    expect(deriveDurationMinFromSec(input)).toBe(expected)
   })
 })

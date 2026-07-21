@@ -385,6 +385,7 @@ export interface Database {
           weight_g: number | null
           height_cm: number | null
           duration_min: number | null
+          duration_sec: number | null
           memo: string | null
           created_at: string
           updated_at: string
@@ -403,6 +404,7 @@ export interface Database {
           weight_g?: number | null
           height_cm?: number | null
           duration_min?: number | null
+          duration_sec?: number | null
           memo?: string | null
         }
         Update: {
@@ -416,6 +418,7 @@ export interface Database {
           weight_g?: number | null
           height_cm?: number | null
           duration_min?: number | null
+          duration_sec?: number | null
           memo?: string | null
         }
         Relationships: []

@@ -1,3 +1,4 @@
+import { deriveDurationMinFromSec } from "./feeding"
 import type { BabyLogData } from "@/lib/types/baby"
 import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
 
@@ -33,7 +34,8 @@ export interface BuildOptimisticLogParams {
   temperature?: number | null
   weightG?: number | null
   heightCm?: number | null
-  durationMin?: number | null
+  /** 授乳時間（秒精度）。duration_min は round(sec/60) で導出し併記する */
+  durationSec?: number | null
   memo?: string | null
 }
 
@@ -53,7 +55,9 @@ export function buildOptimisticLog(
     temperature: params.temperature ?? null,
     weight_g: params.weightG ?? null,
     height_cm: params.heightCm ?? null,
-    duration_min: params.durationMin ?? null,
+    duration_sec: params.durationSec ?? null,
+    // サーバの recordFeeding と同じ導出を共有し、楽観 append と DB 実体を一致させる
+    duration_min: deriveDurationMinFromSec(params.durationSec),
     memo: params.memo ?? null,
     created_at: now,
   }

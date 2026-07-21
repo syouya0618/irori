@@ -12,6 +12,7 @@ function feedingLog(overrides: Partial<BabyLogData>): BabyLogData {
     feeding_type: "bottle",
     amount_ml: null,
     duration_min: null,
+    duration_sec: null,
     diaper_type: null,
     temperature_c: null,
     weight_g: null,
@@ -38,5 +39,37 @@ describe("BabyTimelineItem の量表示（falsy 0 衝突: B-06 の表示側）",
   it("amount_ml が正の値のとき従来どおり表示する", () => {
     render(<BabyTimelineItem log={feedingLog({ amount_ml: 120 })} onEdit={vi.fn()} />)
     expect(screen.getByText(/120ml/)).toBeInTheDocument()
+  })
+})
+
+describe("BabyTimelineItem の授乳時間表示（秒精度）", () => {
+  it("duration_sec があれば「M分S秒」で表示する", () => {
+    render(
+      <BabyTimelineItem
+        log={feedingLog({ feeding_type: "breast_left", duration_sec: 160, duration_min: 3 })}
+        onEdit={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(/2分40秒/)).toBeInTheDocument()
+  })
+
+  it("秒が 0 の分ちょうどは「M分」で表示する", () => {
+    render(
+      <BabyTimelineItem
+        log={feedingLog({ feeding_type: "breast_left", duration_sec: 180, duration_min: 3 })}
+        onEdit={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(/3分/)).toBeInTheDocument()
+  })
+
+  it("duration_sec が無く duration_min のみの旧データは「M分」にフォールバックする", () => {
+    render(
+      <BabyTimelineItem
+        log={feedingLog({ feeding_type: "breast_left", duration_sec: null, duration_min: 5 })}
+        onEdit={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(/5分/)).toBeInTheDocument()
   })
 })

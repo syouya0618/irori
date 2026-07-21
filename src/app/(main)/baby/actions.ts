@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache"
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
+import { deriveDurationMinFromSec } from "@/lib/domain/feeding"
 import type { FeedingType, DiaperType } from "@/lib/types/database"
 
 const MAX_MEMO_LENGTH = 1000
@@ -17,7 +18,11 @@ function validateMemoLength(memo?: string | null): string | null {
 interface RecordFeedingInput {
   feedingType: FeedingType
   amountMl?: number | null
-  durationMin?: number | null
+  /**
+   * 授乳時間（秒精度）。duration_min は round(sec/60) でサーバ側導出し併記する
+   * （両列を1経路で書き drift を防ぐ）。母乳/ミルク等の時間なし記録では省略する。
+   */
+  durationSec?: number | null
   memo?: string
 }
 
@@ -49,6 +54,7 @@ export async function recordFeeding(input: RecordFeedingInput) {
   if (result.error !== null) return { error: result.error, id: null }
   const { supabase, userId, householdId } = result.context
 
+  const durationSec = input.durationSec ?? null
   const { data, error } = await supabase
     .from("baby_logs")
     .insert({
@@ -57,7 +63,9 @@ export async function recordFeeding(input: RecordFeedingInput) {
       logged_by: userId,
       feeding_type: input.feedingType,
       amount_ml: input.amountMl ?? null,
-      duration_min: input.durationMin ?? null,
+      // 秒を source of truth に、分は後方互換のため round で併記（1経路で両列を書く）
+      duration_sec: durationSec,
+      duration_min: deriveDurationMinFromSec(durationSec),
       memo: input.memo || null,
     })
     .select("id")
