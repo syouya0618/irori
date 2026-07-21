@@ -39,7 +39,12 @@ export type BabyLogType =
   | "temperature"
   | "growth"
   | "memo"
-export type FeedingType = "breast_left" | "breast_right" | "bottle" | "solid"
+export type FeedingType =
+  | "breast_left"
+  | "breast_right"
+  | "bottle"
+  | "solid"
+  | "pumped"
 export type DiaperType = "pee" | "poop" | "both"
 export type CalendarEventSource = "native" | "google"
 

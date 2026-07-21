@@ -14,6 +14,7 @@ const feedingTypeLabels: Record<FeedingType, string> = {
   breast_right: "右",
   bottle: "ミルク",
   solid: "離乳食",
+  pumped: "搾乳",
 }
 
 const diaperTypeLabels: Record<DiaperType, string> = {

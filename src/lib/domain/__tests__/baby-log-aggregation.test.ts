@@ -64,6 +64,35 @@ describe("aggregateFeedings", () => {
     expect(result[0].avgBottleMl).toBe(110)
   })
 
+  it("搾乳（pumped）はミルクと別バケットで回数・量を集計する", () => {
+    const logs = [
+      mkLog("feeding", 2, { feeding_type: "bottle", amount_ml: 100 }),
+      mkLog("feeding", 3, { feeding_type: "pumped", amount_ml: 60 }),
+      mkLog("feeding", 4, { feeding_type: "pumped", amount_ml: 40 }),
+      mkLog("feeding", 5, { feeding_type: "breast_left" }),
+    ]
+    const result = aggregateFeedings(logs, START, END)
+    expect(result).toHaveLength(1)
+    // 内訳（母乳+ミルク+離乳食+搾乳）は totalCount と一致し、搾乳が無音欠落しない
+    expect(result[0].totalCount).toBe(4)
+    expect(result[0].breastCount).toBe(1)
+    expect(result[0].bottleCount).toBe(1) // 搾乳は含めない
+    expect(result[0].solidCount).toBe(0)
+    expect(result[0].pumpedCount).toBe(2)
+    // ミルクと搾乳の総量・平均は独立
+    expect(result[0].totalBottleMl).toBe(100)
+    expect(result[0].avgBottleMl).toBe(100)
+    expect(result[0].totalPumpedMl).toBe(100) // 60 + 40
+    expect(result[0].avgPumpedMl).toBe(50) // round(100 / 2)
+  })
+
+  it("搾乳が無い日は pumpedCount 0・avgPumpedMl は null", () => {
+    const logs = [mkLog("feeding", 2, { feeding_type: "bottle", amount_ml: 100 })]
+    const result = aggregateFeedings(logs, START, END)
+    expect(result[0].pumpedCount).toBe(0)
+    expect(result[0].avgPumpedMl).toBeNull()
+  })
+
   it("ミルクなし → avgBottleMl は null", () => {
     const logs = [mkLog("feeding", 2, { feeding_type: "breast_left" })]
     const result = aggregateFeedings(logs, START, END)

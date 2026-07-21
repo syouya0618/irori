@@ -26,8 +26,13 @@ export interface DailyFeedingSummary {
   breastCount: number
   bottleCount: number
   solidCount: number
+  /** 搾乳（pumped）の回数。母乳/ミルク/離乳食とは独立に集計する */
+  pumpedCount: number
   totalBottleMl: number
   avgBottleMl: number | null
+  /** 搾乳の総量・平均（ml）。ミルクとは別に持つ */
+  totalPumpedMl: number
+  avgPumpedMl: number | null
 }
 
 export interface DailySleepSummary {
@@ -102,7 +107,9 @@ export function aggregateFeedings(
     let breastCount = 0
     let bottleCount = 0
     let solidCount = 0
+    let pumpedCount = 0
     let totalBottleMl = 0
+    let totalPumpedMl = 0
 
     for (const log of dayLogs) {
       if (log.feeding_type === "breast_left" || log.feeding_type === "breast_right") {
@@ -111,6 +118,14 @@ export function aggregateFeedings(
         bottleCount++
         if (log.amount_ml != null && log.amount_ml > 0) {
           totalBottleMl += log.amount_ml
+        }
+      } else if (log.feeding_type === "pumped") {
+        // 搾乳は母乳を哺乳瓶で与える volumetric な授乳。ミルクとは別バケットで
+        // 回数・総量を集計する（PDF レポートで独立列として表示するため）。
+        // enum 全5値を網羅するので breast+bottle+solid+pumped === totalCount が保たれる。
+        pumpedCount++
+        if (log.amount_ml != null && log.amount_ml > 0) {
+          totalPumpedMl += log.amount_ml
         }
       } else if (log.feeding_type === "solid") {
         solidCount++
@@ -123,8 +138,11 @@ export function aggregateFeedings(
       breastCount,
       bottleCount,
       solidCount,
+      pumpedCount,
       totalBottleMl,
       avgBottleMl: bottleCount > 0 ? Math.round(totalBottleMl / bottleCount) : null,
+      totalPumpedMl,
+      avgPumpedMl: pumpedCount > 0 ? Math.round(totalPumpedMl / pumpedCount) : null,
     }
   })
 }

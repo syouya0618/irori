@@ -5,6 +5,7 @@ import { BabyLogFormSheet } from "../baby-log-form-sheet"
 import {
   updateLog,
   deleteLog,
+  recordFeeding,
   recordMemo,
 } from "@/app/(main)/baby/actions"
 import { toast } from "sonner"
@@ -13,6 +14,7 @@ import type { BabyLogData } from "@/lib/types/baby"
 vi.mock("@/app/(main)/baby/actions", () => ({
   updateLog: vi.fn(),
   deleteLog: vi.fn(),
+  recordFeeding: vi.fn(),
   recordTemperature: vi.fn(),
   recordGrowth: vi.fn(),
   recordMemo: vi.fn(),
@@ -21,6 +23,7 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const mockedUpdateLog = vi.mocked(updateLog)
 const mockedDeleteLog = vi.mocked(deleteLog)
+const mockedRecordFeeding = vi.mocked(recordFeeding)
 const mockedRecordMemo = vi.mocked(recordMemo)
 const mockedToast = vi.mocked(toast)
 
@@ -81,6 +84,76 @@ describe("BabyLogFormSheet の amountMl 0ml falsy 衝突", () => {
     expect(mockedUpdateLog).toHaveBeenCalledWith(
       "log-1",
       expect.objectContaining({ amountMl: null }),
+    )
+  })
+})
+
+describe("BabyLogFormSheet の搾乳（pumped）作成 + 量プリセット", () => {
+  it("搾乳を create モードで開くと量プリセット（10〜100）が並ぶ", () => {
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={null}
+        createLogType="feeding"
+        createFeedingType="pumped"
+      />,
+    )
+    // 10刻み・10〜100mL の 10 個のプリセット
+    for (const ml of [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]) {
+      expect(
+        screen.getByRole("button", { name: String(ml) }),
+      ).toBeInTheDocument()
+    }
+  })
+
+  it("プリセットを押すと量入力欄に反映され、記録で recordFeeding に pumped + amountMl が渡る", async () => {
+    mockedRecordFeeding.mockResolvedValue({ error: null, id: "feed-1" })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={null}
+        createLogType="feeding"
+        createFeedingType="pumped"
+      />,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "60" }))
+    // プリセットは自由入力欄へ反映される（100mL 超も入力欄で指定可能なため）
+    expect((screen.getByLabelText("量 (ml)") as HTMLInputElement).value).toBe(
+      "60",
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "記録する" }))
+    await waitFor(() => expect(mockedRecordFeeding).toHaveBeenCalled())
+    expect(mockedRecordFeeding).toHaveBeenCalledWith(
+      expect.objectContaining({ feedingType: "pumped", amountMl: 60 }),
+    )
+  })
+
+  it("プリセットを使わず自由入力（120mL）でも記録できる（プリセットは天井でない）", async () => {
+    mockedRecordFeeding.mockResolvedValue({ error: null, id: "feed-2" })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={null}
+        createLogType="feeding"
+        createFeedingType="pumped"
+      />,
+    )
+
+    fireEvent.change(screen.getByLabelText("量 (ml)"), {
+      target: { value: "120" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "記録する" }))
+    await waitFor(() => expect(mockedRecordFeeding).toHaveBeenCalled())
+    expect(mockedRecordFeeding).toHaveBeenCalledWith(
+      expect.objectContaining({ feedingType: "pumped", amountMl: 120 }),
     )
   })
 })

@@ -86,6 +86,9 @@ export function BabyDashboard({
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editingLog, setEditingLog] = useState<BabyLogData | null>(null)
   const [createLogType, setCreateLogType] = useState<BabyLogType | null>(null)
+  // 搾乳など量ベースの授乳を create シートで開く際の初期授乳タイプ（B: 搾乳導線）
+  const [createFeedingType, setCreateFeedingType] =
+    useState<FeedingType | null>(null)
   const [formKey, setFormKey] = useState(0)
   const [timerOpen, setTimerOpen] = useState(false)
   const [timerFeedingType, setTimerFeedingType] = useState<FeedingType>("breast_left")
@@ -371,6 +374,7 @@ export function BabyDashboard({
 
   const handleEdit = useCallback((log: BabyLogData) => {
     setCreateLogType(null)
+    setCreateFeedingType(null)
     setEditingLog(log)
     setFormKey((k) => k + 1)
     setSheetOpen(true)
@@ -379,6 +383,17 @@ export function BabyDashboard({
   const handleCreateLog = useCallback((type: BabyLogType) => {
     setEditingLog(null)
     setCreateLogType(type)
+    // feeding 以外の create では前回の搾乳導線の残りを持ち越さない
+    setCreateFeedingType(null)
+    setFormKey((k) => k + 1)
+    setSheetOpen(true)
+  }, [])
+
+  // 搾乳など量ベースの授乳を create シートで記録する導線（母乳のタイマーとは別）
+  const handleCreateFeeding = useCallback((type: FeedingType) => {
+    setEditingLog(null)
+    setCreateLogType("feeding")
+    setCreateFeedingType(type)
     setFormKey((k) => k + 1)
     setSheetOpen(true)
   }, [])
@@ -445,6 +460,7 @@ export function BabyDashboard({
           now={now}
           userId={userId}
           onCreateLog={handleCreateLog}
+          onCreateFeeding={handleCreateFeeding}
           onStartTimer={handleStartTimer}
           onSleepEnded={handleSleepEnded}
           onLogRecorded={appendLog}
@@ -464,6 +480,7 @@ export function BabyDashboard({
         onOpenChange={setSheetOpen}
         log={editingLog}
         createLogType={createLogType}
+        createFeedingType={createFeedingType}
         userId={userId}
         onLogRecorded={appendLog}
         onLogRemoved={removeLog}

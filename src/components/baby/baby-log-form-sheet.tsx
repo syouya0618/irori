@@ -17,6 +17,7 @@ import { toast } from "sonner"
 import {
   updateLog,
   deleteLog,
+  recordFeeding,
   recordTemperature,
   recordGrowth,
   recordMemo as recordMemoAction,
@@ -37,8 +38,27 @@ const FEEDING_TYPES: FeedingType[] = [
   "breast_right",
   "bottle",
   "solid",
+  "pumped",
 ]
 const DIAPER_TYPES: DiaperType[] = ["pee", "poop", "both"]
+
+// 量（ml）を伴う授乳タイプ。母乳（左/右）は量を測らないため除外する。
+const AMOUNT_FEEDING_TYPES: FeedingType[] = ["bottle", "solid", "pumped"]
+
+function allowsAmount(type: FeedingType): boolean {
+  return AMOUNT_FEEDING_TYPES.includes(type)
+}
+
+// 搾乳・ミルク等の量をワンタップで入れるプリセット（10mL刻み・10〜100mL）。
+// これらは近道であって上限ではない。100mL を超える量は下の自由入力で記録できる。
+const AMOUNT_PRESETS_ML = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+
+// 「量 (ml)」入力を DB CHECK（0〜999）と整合する number|null へ正規化する。
+// falsy 衝突（0ml を null 扱いしない）を避けるため Number.isFinite で判定する。
+function parseAmountMl(raw: string): number | null {
+  const n = parseInt(raw, 10)
+  return Number.isFinite(n) && n >= 0 ? n : null
+}
 
 // 通信断で Server Action が reject すると、startTransition 内の unhandled reject が
 // 最寄りの error boundary へ bubble し全画面エラー化 + 入力/記録が無言で失われる
@@ -62,6 +82,11 @@ interface BabyLogFormSheetProps {
   log: BabyLogData | null
   /** create mode: 新規ログのタイプ（log が null 時に使用） */
   createLogType?: BabyLogType | null
+  /**
+   * create mode で log_type='feeding' の時の初期授乳タイプ（搾乳の記録導線用）。
+   * 未指定時は "bottle" にフォールバックする。
+   */
+  createFeedingType?: FeedingType | null
   /** 記録者（logged_by）。楽観 append 行の作成に使う（B-03） */
   userId: string
   /**
@@ -79,6 +104,7 @@ export function BabyLogFormSheet({
   onOpenChange,
   log,
   createLogType,
+  createFeedingType,
   userId,
   onLogRecorded,
   onLogRemoved,
@@ -87,7 +113,9 @@ export function BabyLogFormSheet({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
   // 親がkey={formKey}で毎回remountするため、propsから直接初期化
-  const [feedingType, setFeedingType] = useState<FeedingType>(log?.feeding_type ?? "bottle")
+  const [feedingType, setFeedingType] = useState<FeedingType>(
+    log?.feeding_type ?? createFeedingType ?? "bottle",
+  )
   const [amountMl, setAmountMl] = useState(log?.amount_ml?.toString() ?? "")
   const [diaperType, setDiaperType] = useState<DiaperType>(log?.diaper_type ?? "pee")
   const [temperature, setTemperature] = useState(log?.temperature?.toString() ?? "")
@@ -115,6 +143,26 @@ export function BabyLogFormSheet({
         let buildLog: ((id: string) => BabyLogData) | null = null
 
         switch (createLogType) {
+          case "feeding": {
+            const amt = allowsAmount(feedingType)
+              ? parseAmountMl(amountMl)
+              : null
+            result = await recordFeeding({
+              feedingType,
+              amountMl: amt,
+              memo: memo || undefined,
+            })
+            buildLog = (id) =>
+              buildOptimisticLog({
+                id,
+                logType: "feeding",
+                loggedBy: userId,
+                feedingType,
+                amountMl: amt,
+                memo: memo || null,
+              })
+            break
+          }
           case "temperature": {
             const temp = parseFloat(temperature)
             if (isNaN(temp) || temp < 34 || temp > 42) {
@@ -202,12 +250,9 @@ export function BabyLogFormSheet({
 
         if (log.log_type === "feeding") {
           updates.feedingType = feedingType
-          if (feedingType === "bottle" || feedingType === "solid") {
-            const n = parseInt(amountMl, 10)
-            updates.amountMl = Number.isFinite(n) && n >= 0 ? n : null
-          } else {
-            updates.amountMl = null
-          }
+          updates.amountMl = allowsAmount(feedingType)
+            ? parseAmountMl(amountMl)
+            : null
         }
         if (log.log_type === "diaper") {
           updates.diaperType = diaperType
@@ -306,9 +351,31 @@ export function BabyLogFormSheet({
                 </div>
               </div>
 
-              {(feedingType === "bottle" || feedingType === "solid") && (
+              {allowsAmount(feedingType) && (
                 <div className="space-y-1.5">
                   <Label htmlFor="amount-ml">量 (ml)</Label>
+                  {/* ワンタップ用プリセット（10〜100mL）。押すと下の入力欄に反映され、
+                      100mL 超は入力欄で直接指定できる。 */}
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {AMOUNT_PRESETS_ML.map((ml) => {
+                      const active = amountMl === String(ml)
+                      return (
+                        <button
+                          key={ml}
+                          type="button"
+                          onClick={() => setAmountMl(String(ml))}
+                          disabled={isPending}
+                          className={`min-h-11 rounded-lg text-sm font-medium transition-colors duration-200 disabled:opacity-50 ${
+                            active
+                              ? "bg-primary text-primary-foreground"
+                              : "bg-muted text-muted-foreground hover:text-foreground"
+                          }`}
+                        >
+                          {ml}
+                        </button>
+                      )
+                    })}
+                  </div>
                   <Input
                     id="amount-ml"
                     type="number"
