@@ -3,7 +3,11 @@
 import { revalidatePath } from "next/cache"
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
-import { deriveDurationMinFromSec } from "@/lib/domain/feeding"
+import {
+  deriveDurationMinFromSec,
+  FEEDING_DURATION_SEC_MIN,
+  FEEDING_DURATION_SEC_MAX,
+} from "@/lib/domain/feeding"
 import {
   validateLogTime,
   validateSleepOrder,
@@ -331,7 +335,12 @@ export async function updateLog(
     loggedAt?: string
     feedingType?: FeedingType
     amountMl?: number | null
-    durationMin?: number | null
+    /**
+     * 授乳時間（秒精度）。duration_min は record 系と同じく round(sec/60) で
+     * サーバ側導出し両列を1経路で書く（旧 durationMin 単独更新は sec との
+     * drift を生むため廃止）。null は「時間なしの授乳」= 両列 null。
+     */
+    durationSec?: number | null
     diaperType?: DiaperType
     endedAt?: string | null
     temperature?: number | null
@@ -342,6 +351,20 @@ export async function updateLog(
 ) {
   const memoError = validateMemoLength(updates.memo)
   if (memoError) return { error: memoError }
+
+  // 授乳時間の範囲検証（DB CHECK chk_duration_sec と同じ 1..10800 秒 + 整数のみ）。
+  // null は「時間なしへ戻す」で妥当。クライアント parse（parseFeedingDurationInput）
+  // との二重防御としてサーバでも弾く。
+  if (updates.durationSec !== undefined && updates.durationSec !== null) {
+    const sec = updates.durationSec
+    if (
+      !Number.isInteger(sec) ||
+      sec < FEEDING_DURATION_SEC_MIN ||
+      sec > FEEDING_DURATION_SEC_MAX
+    ) {
+      return { error: "授乳時間は1秒〜180分の範囲で指定してください" }
+    }
+  }
 
   // 未来時刻の拒否（+5 分の時計ずれ許容）。auth 前に純関数で弾く（memoError と同順）。
   // クライアント検証と同一の validateLogTime を共有し判定を一致させる。
@@ -393,8 +416,9 @@ export async function updateLog(
         feeding_type: updates.feedingType,
       }),
       ...(updates.amountMl !== undefined && { amount_ml: updates.amountMl }),
-      ...(updates.durationMin !== undefined && {
-        duration_min: updates.durationMin,
+      ...(updates.durationSec !== undefined && {
+        duration_sec: updates.durationSec,
+        duration_min: deriveDurationMinFromSec(updates.durationSec),
       }),
       ...(updates.diaperType !== undefined && {
         diaper_type: updates.diaperType,

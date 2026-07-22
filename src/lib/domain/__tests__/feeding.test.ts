@@ -13,6 +13,8 @@ import {
   clampFeedingDuration,
   clampFeedingDurationSec,
   deriveDurationMinFromSec,
+  allowsDuration,
+  parseFeedingDurationInput,
   FEEDING_DURATION_MIN,
   FEEDING_DURATION_MAX,
   FEEDING_DURATION_SEC_MIN,
@@ -84,5 +86,49 @@ describe("deriveDurationMinFromSec: 秒→分（後方互換の丸め）", () =>
     ["900 (15:00) → 15", 900, 15],
   ] as const)("%s", (_label, input, expected) => {
     expect(deriveDurationMinFromSec(input)).toBe(expected)
+  })
+})
+
+describe("allowsDuration（時間を持ちうる授乳タイプ）", () => {
+  it("母乳（左右）のみ true、他は false", () => {
+    expect(allowsDuration("breast_left")).toBe(true)
+    expect(allowsDuration("breast_right")).toBe(true)
+    expect(allowsDuration("bottle")).toBe(false)
+    expect(allowsDuration("solid")).toBe(false)
+    expect(allowsDuration("pumped")).toBe(false)
+  })
+})
+
+describe("parseFeedingDurationInput（分・秒入力 → duration_sec）", () => {
+  it("両方空は null（時間なしへ戻す）でエラーなし", () => {
+    expect(parseFeedingDurationInput("", "")).toEqual({
+      value: null,
+      error: null,
+    })
+    expect(parseFeedingDurationInput("  ", " ")).toEqual({
+      value: null,
+      error: null,
+    })
+  })
+
+  it("分・秒を合算し、片方のみは 0 補完する", () => {
+    expect(parseFeedingDurationInput("5", "30").value).toBe(330)
+    expect(parseFeedingDurationInput("5", "").value).toBe(300)
+    expect(parseFeedingDurationInput("", "45").value).toBe(45)
+    expect(parseFeedingDurationInput("180", "0").value).toBe(10800)
+  })
+
+  it("0分0秒は明示エラー（消すなら空欄に誘導）", () => {
+    const r = parseFeedingDurationInput("0", "0")
+    expect(r.value).toBeNull()
+    expect(r.error).toContain("1秒以上")
+  })
+
+  it("上限 180 分超・秒 59 超・負値・非整数・非数値はエラー", () => {
+    expect(parseFeedingDurationInput("180", "1").error).toContain("最大180分")
+    expect(parseFeedingDurationInput("3", "60").error).toBeTruthy()
+    expect(parseFeedingDurationInput("-1", "0").error).toBeTruthy()
+    expect(parseFeedingDurationInput("1.5", "0").error).toBeTruthy()
+    expect(parseFeedingDurationInput("abc", "0").error).toBeTruthy()
   })
 })

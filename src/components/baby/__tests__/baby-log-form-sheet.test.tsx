@@ -409,3 +409,161 @@ describe("BabyLogFormSheet の通信断 reject 握り（B-07）", () => {
     expect(mockedToast.success).not.toHaveBeenCalled()
   })
 })
+
+describe("BabyLogFormSheet の授乳時間（duration）編集", () => {
+  function breastFeedingLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
+    return bottleFeedingLog({
+      feeding_type: "breast_left",
+      amount_ml: null,
+      duration_sec: 330,
+      duration_min: 6,
+      ...overrides,
+    })
+  }
+
+  it("母乳の編集で時間欄が duration_sec から分・秒に seed される", () => {
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastFeedingLog()}
+      />,
+    )
+    expect(
+      (screen.getByLabelText("時間（分）") as HTMLInputElement).value,
+    ).toBe("5")
+    expect(
+      (screen.getByLabelText("時間（秒）") as HTMLInputElement).value,
+    ).toBe("30")
+  })
+
+  it("#140 以前の旧行（duration_min のみ）は min*60 で seed され、未変更保存で durationSec を送らない", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastFeedingLog({ duration_sec: null, duration_min: 5 })}
+      />,
+    )
+    // 旧行の分精度が 5分0秒 として seed される（silent 消滅の防止）
+    expect(
+      (screen.getByLabelText("時間（分）") as HTMLInputElement).value,
+    ).toBe("5")
+    expect(
+      (screen.getByLabelText("時間（秒）") as HTMLInputElement).value,
+    ).toBe("0")
+
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
+    // 時間を触っていないので durationSec は送らない（dirty check）
+    expect(mockedUpdateLog.mock.calls[0][1]).not.toHaveProperty("durationSec")
+  })
+
+  it("時間を変更して保存すると durationSec（合算秒）が updateLog に渡る", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastFeedingLog()}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText("時間（分）"), {
+      target: { value: "12" },
+    })
+    fireEvent.change(screen.getByLabelText("時間（秒）"), {
+      target: { value: "15" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
+    expect(mockedUpdateLog).toHaveBeenCalledWith(
+      "log-1",
+      expect.objectContaining({ durationSec: 12 * 60 + 15 }),
+    )
+  })
+
+  it("両方空にして保存すると durationSec: null（時間なしへ戻す）", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastFeedingLog()}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText("時間（分）"), {
+      target: { value: "" },
+    })
+    fireEvent.change(screen.getByLabelText("時間（秒）"), {
+      target: { value: "" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
+    expect(mockedUpdateLog).toHaveBeenCalledWith(
+      "log-1",
+      expect.objectContaining({ durationSec: null }),
+    )
+  })
+
+  it("母乳以外へ種類変更すると durationSec: null を明示送信し時間欄は消える", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastFeedingLog()}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "ミルク" }))
+    expect(screen.queryByLabelText("時間（分）")).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
+    expect(mockedUpdateLog).toHaveBeenCalledWith(
+      "log-1",
+      expect.objectContaining({ feedingType: "bottle", durationSec: null }),
+    )
+  })
+
+  it("0分0秒はクライアントで拒否し updateLog を呼ばない", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastFeedingLog()}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText("時間（分）"), {
+      target: { value: "0" },
+    })
+    fireEvent.change(screen.getByLabelText("時間（秒）"), {
+      target: { value: "0" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+    await waitFor(() =>
+      expect(mockedToast.error).toHaveBeenCalledWith(
+        expect.stringContaining("1秒以上"),
+      ),
+    )
+    expect(mockedUpdateLog).not.toHaveBeenCalled()
+  })
+
+  it("ミルクの編集では時間欄を表示しない", () => {
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={bottleFeedingLog()}
+      />,
+    )
+    expect(screen.queryByLabelText("時間（分）")).toBeNull()
+  })
+})

@@ -60,3 +60,48 @@ export function deriveDurationMinFromSec(
   if (durationSec == null || !Number.isFinite(durationSec)) return null
   return Math.round(durationSec / 60)
 }
+
+/** 授乳時間（duration）を持ちうる授乳タイプか（タイマー計測の対象 = 母乳のみ）。 */
+export function allowsDuration(type: "breast_left" | "breast_right" | "bottle" | "solid" | "pumped"): boolean {
+  return type === "breast_left" || type === "breast_right"
+}
+
+/**
+ * 編集シートの「時間（分・秒）」入力から duration_sec を組み立てる純関数。
+ *
+ * - 両方空 = null（時間なしの授乳へ戻す）。片方のみの入力は 0 補完。
+ * - 数値でない・負・秒 59 超・合計が範囲外（1〜10800 秒 = 最大180分）はエラー。
+ * - 合計 0 秒は「0 分授乳を記録しない」アプリ側の意図（clampFeedingDuration と同じ）に
+ *   反するためエラーとし、時間を消したい場合は両方空にするよう促す。
+ *
+ * クライアント（編集シート）とテストで共有し、サーバ（updateLog）は組み立て後の
+ * duration_sec を FEEDING_DURATION_SEC_MIN..MAX で再検証する（判定の二重防御）。
+ */
+export function parseFeedingDurationInput(
+  minStr: string,
+  secStr: string,
+): { value: number | null; error: string | null } {
+  const minTrim = minStr.trim()
+  const secTrim = secStr.trim()
+  if (minTrim === "" && secTrim === "") return { value: null, error: null }
+
+  const min = minTrim === "" ? 0 : Number(minTrim)
+  const sec = secTrim === "" ? 0 : Number(secTrim)
+  if (!Number.isInteger(min) || !Number.isInteger(sec)) {
+    return { value: null, error: "時間は整数で入力してください" }
+  }
+  if (min < 0 || sec < 0 || sec > 59) {
+    return { value: null, error: "時間は 分0〜180・秒0〜59 で入力してください" }
+  }
+  const total = min * 60 + sec
+  if (total === 0) {
+    return {
+      value: null,
+      error: "時間は1秒以上で入力してください（時間なしにする場合は両方空欄に）",
+    }
+  }
+  if (total > FEEDING_DURATION_SEC_MAX) {
+    return { value: null, error: "時間は最大180分です" }
+  }
+  return { value: total, error: null }
+}
