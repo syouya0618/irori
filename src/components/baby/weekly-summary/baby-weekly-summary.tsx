@@ -6,9 +6,16 @@ import {
   totalBabyWeeklySummary,
   type BabyWeeklySummaryDay,
 } from "@/lib/domain/baby-weekly-summary"
+import type { DiaperBreakdown } from "@/lib/domain/baby-log-aggregation"
 
 interface BabyWeeklySummaryProps {
   days: BabyWeeklySummaryDay[]
+  /** 週間のおしっこ/うんち内訳（aggregateDiapers の出力から導出、both は双方に加算） */
+  diaperBreakdown: DiaperBreakdown
+}
+
+function diaperBreakdownLabel(breakdown: DiaperBreakdown): string {
+  return `おしっこ${breakdown.peeCount}・うんち${breakdown.poopCount}`
 }
 
 function shortDate(ymd: string): string {
@@ -46,7 +53,10 @@ function StatHeader({
   )
 }
 
-export function BabyWeeklySummary({ days }: BabyWeeklySummaryProps) {
+export function BabyWeeklySummary({
+  days,
+  diaperBreakdown,
+}: BabyWeeklySummaryProps) {
   const totals = totalBabyWeeklySummary(days)
   const labels = days.map((day) => shortDate(day.date))
 
@@ -86,7 +96,7 @@ export function BabyWeeklySummary({ days }: BabyWeeklySummaryProps) {
           <StatHeader
             icon={Droplets}
             label="おむつ"
-            value={countLabel(totals.diaperCount)}
+            value={diaperBreakdownLabel(diaperBreakdown)}
             toneClassName="bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300"
           />
         </div>
@@ -128,7 +138,7 @@ export function BabyWeeklySummary({ days }: BabyWeeklySummaryProps) {
             <div className="mb-1 flex items-center justify-between text-xs">
               <span className="font-medium">おむつ</span>
               <span className="font-mono text-muted-foreground">
-                {countLabel(totals.diaperCount)}
+                {diaperBreakdownLabel(diaperBreakdown)}
               </span>
             </div>
             <BarChart

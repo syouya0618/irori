@@ -3,6 +3,7 @@ import {
   aggregateFeedings,
   aggregateSleep,
   aggregateDiapers,
+  sumDiaperBreakdown,
   extractTemperatures,
   extractGrowth,
   calculateAge,
@@ -222,6 +223,38 @@ describe("aggregateDiapers", () => {
   })
 })
 
+// ─── sumDiaperBreakdown（週間サマリー等の pee/poop 内訳導出） ─────
+
+describe("sumDiaperBreakdown", () => {
+  it("空配列 → 全て 0", () => {
+    expect(sumDiaperBreakdown([])).toEqual({ peeCount: 0, poopCount: 0 })
+  })
+
+  it("複数日の pee/poop/both を合算し、both は双方に加算する", () => {
+    const diapers = [
+      { peeCount: 2, poopCount: 1, bothCount: 1 }, // day1: pee 2+1(both)=3, poop 1+1(both)=2
+      { peeCount: 0, poopCount: 3, bothCount: 0 }, // day2: pee 0, poop 3
+    ]
+    expect(sumDiaperBreakdown(diapers)).toEqual({
+      peeCount: 3,
+      poopCount: 5,
+    })
+  })
+
+  it("aggregateDiapers の出力をそのまま渡せる", () => {
+    const logs = [
+      mkLog("diaper", 1, { diaper_type: "pee" }),
+      mkLog("diaper", 26, { diaper_type: "poop" }), // 前日
+      mkLog("diaper", 50, { diaper_type: "both" }), // 2日前
+    ]
+    const diapers = aggregateDiapers(logs, START, END)
+    expect(sumDiaperBreakdown(diapers)).toEqual({
+      peeCount: 2, // pee 1件 + both 1件
+      poopCount: 2, // poop 1件 + both 1件
+    })
+  })
+})
+
 // ─── extractTemperatures ────────────────────────────────
 
 describe("extractTemperatures", () => {
@@ -395,10 +428,12 @@ describe("summarizeTodayCounts", () => {
       diaperCount: 0,
       sleepCount: 0,
       totalSleepMinutes: 0,
+      peeCount: 0,
+      poopCount: 0,
     })
   })
 
-  it("授乳2・おむつ1・完了睡眠90分1・進行中睡眠1 を集計", () => {
+  it("授乳2・おむつ1(pee)・完了睡眠90分1・進行中睡眠1 を集計", () => {
     const logs = [
       mkLog("feeding", 1, { feeding_type: "breast_left" }),
       mkLog("feeding", 3, { feeding_type: "bottle", amount_ml: 120 }),
@@ -416,6 +451,8 @@ describe("summarizeTodayCounts", () => {
       diaperCount: 1,
       sleepCount: 1,
       totalSleepMinutes: 90,
+      peeCount: 1,
+      poopCount: 0,
     })
   })
 
@@ -426,16 +463,22 @@ describe("summarizeTodayCounts", () => {
       diaperCount: 0,
       sleepCount: 0,
       totalSleepMinutes: 0,
+      peeCount: 0,
+      poopCount: 0,
     })
   })
 
   it("前夜開始の日跨ぎ睡眠は当日窓分だけ按分計上する（22:00→翌06:30 で 390分）", () => {
     // B-02 core: 前日開始の overlap 睡眠を入力に合流させても当日分（390分）のみ数える。
-    const logs: Pick<AggregationLogInput, "log_type" | "logged_at" | "ended_at">[] = [
+    const logs: Pick<
+      AggregationLogInput,
+      "log_type" | "logged_at" | "ended_at" | "diaper_type"
+    >[] = [
       {
         log_type: "sleep",
         logged_at: "2026-04-11T22:00:00+09:00",
         ended_at: "2026-04-12T06:30:00+09:00",
+        diaper_type: null,
       },
     ]
     // 翌日（2026-04-12）視点: 00:00→06:30 = 390分
@@ -451,14 +494,63 @@ describe("summarizeTodayCounts", () => {
   })
 
   it("feeding/diaper も date 当日分のみ数える（前日ログは混ぜても加算しない）", () => {
-    const logs: Pick<AggregationLogInput, "log_type" | "logged_at" | "ended_at">[] = [
-      { log_type: "feeding", logged_at: "2026-04-11T08:00:00+09:00", ended_at: null },
-      { log_type: "feeding", logged_at: "2026-04-10T23:00:00+09:00", ended_at: null }, // 前日
-      { log_type: "diaper", logged_at: "2026-04-11T09:00:00+09:00", ended_at: null },
+    const logs: Pick<
+      AggregationLogInput,
+      "log_type" | "logged_at" | "ended_at" | "diaper_type"
+    >[] = [
+      {
+        log_type: "feeding",
+        logged_at: "2026-04-11T08:00:00+09:00",
+        ended_at: null,
+        diaper_type: null,
+      },
+      {
+        log_type: "feeding",
+        logged_at: "2026-04-10T23:00:00+09:00",
+        ended_at: null,
+        diaper_type: null,
+      }, // 前日
+      {
+        log_type: "diaper",
+        logged_at: "2026-04-11T09:00:00+09:00",
+        ended_at: null,
+        diaper_type: "poop",
+      },
+      // 前日の diaper（pee）は date フィルタで弾かれ peeCount に加算されない
+      {
+        log_type: "diaper",
+        logged_at: "2026-04-10T09:00:00+09:00",
+        ended_at: null,
+        diaper_type: "pee",
+      },
     ]
     expect(summarizeTodayCounts(logs, "2026-04-11")).toMatchObject({
       feedingCount: 1,
       diaperCount: 1,
+      peeCount: 0,
+      poopCount: 1,
+    })
+  })
+
+  it("pee/poop/both が混在するとき、both は peeCount/poopCount 双方に加算する", () => {
+    const logs = [
+      mkLog("diaper", 1, { diaper_type: "pee" }),
+      mkLog("diaper", 2, { diaper_type: "poop" }),
+      mkLog("diaper", 3, { diaper_type: "both" }),
+    ]
+    expect(summarizeTodayCounts(logs, TODAY)).toMatchObject({
+      diaperCount: 3,
+      peeCount: 2, // pee 1件 + both 1件
+      poopCount: 2, // poop 1件 + both 1件
+    })
+  })
+
+  it("both 単体では diaperCount=1 のまま peeCount/poopCount 双方が 1 になる", () => {
+    const logs = [mkLog("diaper", 1, { diaper_type: "both" })]
+    expect(summarizeTodayCounts(logs, TODAY)).toMatchObject({
+      diaperCount: 1,
+      peeCount: 1,
+      poopCount: 1,
     })
   })
 })
