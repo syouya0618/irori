@@ -20,7 +20,7 @@ jobs:
         # version は package.json の `packageManager` フィールドから自動取得する
         # (二重指定すると ERR_PNPM_BAD_PM_VERSION で失敗する)。
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
