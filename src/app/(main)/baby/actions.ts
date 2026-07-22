@@ -12,6 +12,7 @@ import {
   validateLogTime,
   validateSleepOrder,
 } from "@/lib/domain/baby-log-time"
+import { todayJstString } from "@/lib/utils/date-jst"
 import type { FeedingType, DiaperType } from "@/lib/types/database"
 
 const MAX_MEMO_LENGTH = 1000
@@ -476,4 +477,85 @@ export async function deleteLog(logId: string) {
 
   revalidatePath("/baby")
   return { error: null }
+}
+
+// ---------------------------------------------------------------------------
+// 育児日記（baby_diaries: 1世帯・1日1本のテキスト。ぴよログ流）
+// ---------------------------------------------------------------------------
+
+const MAX_DIARY_LENGTH = 5000
+const DIARY_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * その日の育児日記を保存する（1日1本、upsert 1経路）。
+ * - content の trim 後が空なら「その日の日記を消す」= 行 DELETE（冪等: 行が無くても成功）。
+ * - 日付キー（diary_date）ゆえ過去日の日記も作成・編集できる（ぴよログ準拠）。
+ *   未来日は拒否（date nav は未来へ進めない前提の二重防御）。
+ */
+export async function upsertBabyDiary(diaryDate: string, content: string) {
+  if (!DIARY_DATE_RE.test(diaryDate)) {
+    return { error: "日付の形式が不正です", diary: null }
+  }
+  // YYYY-MM-DD は辞書順 = 暦順
+  if (diaryDate > todayJstString()) {
+    return { error: "未来の日記は書けません", diary: null }
+  }
+  const trimmed = content.trim()
+  if (trimmed.length > MAX_DIARY_LENGTH) {
+    return {
+      error: `日記は${MAX_DIARY_LENGTH}文字以内で入力してください`,
+      diary: null,
+    }
+  }
+
+  const result = await getAuthContext()
+  if (result.error !== null) return { error: result.error, diary: null }
+  const { supabase, userId, householdId } = result.context
+
+  if (trimmed === "") {
+    // 空保存 = その日の日記を削除（DB CHECK も空行を禁じており、空行は残さない）。
+    const { error } = await supabase
+      .from("baby_diaries")
+      .delete()
+      .eq("household_id", householdId)
+      .eq("diary_date", diaryDate)
+
+    if (error) {
+      logSupabaseError("baby", "diary delete failed", error, {
+        householdId,
+        diaryDate,
+      })
+      return { error: "日記の削除に失敗しました。もう一度お試しください。", diary: null }
+    }
+    revalidatePath("/baby")
+    return { error: null, diary: null }
+  }
+
+  const { data, error } = await supabase
+    .from("baby_diaries")
+    .upsert(
+      {
+        household_id: householdId,
+        diary_date: diaryDate,
+        content: trimmed,
+        updated_by: userId,
+      },
+      { onConflict: "household_id,diary_date" },
+    )
+    .select("id, diary_date, content, updated_at")
+    .single()
+
+  if (error) {
+    logSupabaseError("baby", "diary upsert failed", error, {
+      householdId,
+      diaryDate,
+    })
+    return { error: "日記の保存に失敗しました。もう一度お試しください。", diary: null }
+  }
+  if (!data) {
+    return { error: "日記の保存に失敗しました。もう一度お試しください。", diary: null }
+  }
+
+  revalidatePath("/baby")
+  return { error: null, diary: data }
 }

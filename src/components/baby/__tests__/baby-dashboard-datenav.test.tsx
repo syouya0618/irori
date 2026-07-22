@@ -97,6 +97,9 @@ vi.mock("@/lib/supabase/client", async () => {
             record.signal = sig
             return q
           },
+          // 育児日記の選択日 refetch（maybeSingle 終端）。このテスト群では日記
+          // クエリは解決せず放置する（logs/overlap のアサーションに影響しない）。
+          maybeSingle: () => q,
           then: (
             onF: (value: FetchResult) => unknown,
             onR?: (reason: unknown) => unknown,
@@ -161,6 +164,7 @@ function defaultProps(
     householdId: "h1",
     userId: "u1",
     initialDate: TODAY,
+    initialDiary: null,
     lastSleepEndedAt: null,
     activeSleepFallback: null,
     babyName: null,

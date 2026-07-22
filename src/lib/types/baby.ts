@@ -17,3 +17,11 @@ export interface BabyLogData {
   memo: string | null
   created_at: string
 }
+
+/** 育児日記（1世帯・1日1本、baby_diaries）。SELECT で使う実データ形。 */
+export interface BabyDiaryData {
+  id: string
+  diary_date: string
+  content: string
+  updated_at: string
+}

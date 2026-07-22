@@ -1,8 +1,6 @@
 "use client"
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
-import Link from "next/link"
-import { BookOpen, ChevronRight } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { logRealtimeStatus, logRealtimeEvent } from "@/lib/supabase/realtime-log"
@@ -12,6 +10,8 @@ import { BabyDateNav } from "./baby-date-nav"
 import { BabySummaryBar } from "./baby-summary-bar"
 import { BabyQuickActions } from "./baby-quick-actions"
 import { BabyTimeline } from "./baby-timeline"
+import { BabyDailyDiary } from "./baby-daily-diary"
+import { BabyDiaryEditSheet } from "./baby-diary-edit-sheet"
 import { BabyLogFormSheet } from "./baby-log-form-sheet"
 import { FeedingTimer } from "./feeding-timer"
 import { BabyWeeklySummary } from "./weekly-summary/baby-weekly-summary"
@@ -31,7 +31,7 @@ import {
 } from "@/lib/domain/baby-log-aggregation"
 import { sleepOverlapMinutesForDate } from "@/lib/domain/baby-sleep-overlap"
 import { findLastPumped } from "@/lib/domain/baby-pumping"
-import type { BabyLogData } from "@/lib/types/baby"
+import type { BabyLogData, BabyDiaryData } from "@/lib/types/baby"
 import type { BabyLogType, FeedingType } from "@/lib/types/database"
 
 interface BabyDashboardProps {
@@ -46,6 +46,8 @@ interface BabyDashboardProps {
   householdId: string
   userId: string
   initialDate: string
+  /** 今日の育児日記（1日1本・無ければ null）。選択日変更時は refetch で入れ替える。 */
+  initialDiary: BabyDiaryData | null
   lastSleepEndedAt: string | null
   activeSleepFallback: BabyLogData | null
   babyName: string | null
@@ -75,6 +77,7 @@ export function BabyDashboard({
   householdId,
   userId,
   initialDate,
+  initialDiary,
   lastSleepEndedAt,
   activeSleepFallback,
   babyName,
@@ -91,6 +94,10 @@ export function BabyDashboard({
   const [growthLogs, setGrowthLogs] =
     useState<BabyLogData[]>(initialGrowthLogs)
   const [selectedDate, setSelectedDate] = useState(initialDate)
+  // 選択日の育児日記（1日1本）。日付変更で refetch、保存/削除は編集シートから反映。
+  const [diary, setDiary] = useState<BabyDiaryData | null>(initialDiary)
+  const [diaryEditOpen, setDiaryEditOpen] = useState(false)
+  const [diaryKey, setDiaryKey] = useState(0)
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editingLog, setEditingLog] = useState<BabyLogData | null>(null)
   const [createLogType, setCreateLogType] = useState<BabyLogType | null>(null)
@@ -346,6 +353,28 @@ export function BabyDashboard({
         if (data) setOverlapLogs(data)
       })
 
+    // 育児日記（1日1本）も選択日に合わせて refetch する。無い日は正常系（maybeSingle）。
+    supabase
+      .from("baby_diaries")
+      .select("id, diary_date, content, updated_at")
+      .eq("household_id", householdId)
+      .eq("diary_date", selectedDate)
+      .abortSignal(abortController.signal)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (abortController.signal.aborted) return
+        if (error) {
+          // logs 側の fetch が同時失敗時に toast を出すため、日記側は
+          // 二重トースト回避で構造化ログのみ（握り潰しはしない）。
+          logSupabaseError("baby", "diary navigation fetch failed", error, {
+            householdId,
+            selectedDate,
+          })
+          return
+        }
+        setDiary(data ?? null)
+      })
+
     return () => {
       abortController.abort()
     }
@@ -498,16 +527,27 @@ export function BabyDashboard({
 
       <GrowthChartSection series={growthSeries} />
 
-      <Link
-        href="/baby/diary"
-        className="glass flex min-h-11 items-center gap-2 rounded-2xl px-4 py-2.5 text-sm text-muted-foreground shadow-lg shadow-black/[0.04] transition-colors duration-200 hover:text-foreground"
-      >
-        <BookOpen size={16} className="shrink-0 text-primary" />
-        <span className="flex-1">日記</span>
-        <ChevronRight size={16} className="shrink-0" />
-      </Link>
-
       <BabyTimeline logs={logs} onEdit={handleEdit} />
+
+      {/* その日の育児日記（1日1本・ぴよログ流）。日末に全文を常時表示する。
+          /baby/diary への導線はセクションヘッダの「すべて」に集約（旧 Link カード廃止）。 */}
+      <BabyDailyDiary
+        diary={diary}
+        isToday={isToday}
+        onEdit={() => {
+          setDiaryKey((k) => k + 1)
+          setDiaryEditOpen(true)
+        }}
+      />
+
+      <BabyDiaryEditSheet
+        key={diaryKey}
+        open={diaryEditOpen}
+        onOpenChange={setDiaryEditOpen}
+        diaryDate={selectedDate}
+        initialContent={diary?.content ?? ""}
+        onSaved={setDiary}
+      />
 
       <BabyLogFormSheet
         key={formKey}

@@ -26,6 +26,7 @@ export default async function BabyPage() {
     { data: weeklyLogs, error: weeklyLogsError },
     { data: household, error: householdError },
     { data: growthLogs, error: growthLogsError },
+    { data: todayDiary, error: diaryError },
   ] = await Promise.all([
       supabase
         .from("baby_logs")
@@ -100,6 +101,13 @@ export default async function BabyPage() {
         .eq("household_id", householdId)
         .eq("log_type", "growth")
         .order("logged_at", { ascending: true }),
+      // 今日の育児日記（1日1本・無い日は正常系ゆえ maybeSingle）
+      supabase
+        .from("baby_diaries")
+        .select("id, diary_date, content, updated_at")
+        .eq("household_id", householdId)
+        .eq("diary_date", todayJst)
+        .maybeSingle(),
     ])
 
   if (logsError) {
@@ -144,6 +152,12 @@ export default async function BabyPage() {
     })
   }
 
+  if (diaryError) {
+    logSupabaseError("baby", "today diary lookup failed", diaryError, {
+      householdId,
+    })
+  }
+
   return (
     <BabyDashboard
       initialLogs={logs ?? []}
@@ -153,6 +167,7 @@ export default async function BabyPage() {
       householdId={householdId}
       userId={userId}
       initialDate={todayJst}
+      initialDiary={todayDiary ?? null}
       lastSleepEndedAt={lastSleepData?.ended_at ?? null}
       activeSleepFallback={activeSleepData ?? null}
       babyName={household?.baby_name ?? null}

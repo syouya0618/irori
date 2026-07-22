@@ -114,6 +114,7 @@ function defaultProps(
     householdId: "h1",
     userId: "u1",
     initialDate: TODAY,
+    initialDiary: null,
     lastSleepEndedAt: null,
     activeSleepFallback: null,
     babyName: null,
