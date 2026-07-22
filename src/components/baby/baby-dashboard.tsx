@@ -370,6 +370,10 @@ export function BabyDashboard({
             householdId,
             selectedDate,
           })
+          // logs の「stale 保持」流儀とあえて変えて fail-to-empty に倒す:
+          // 前の日の本文が選択日の日記として残ると、タップ→保存で「前日の本文を
+          // 別日として upsert する」事故経路になるため（レビュー W-1）。
+          setDiary(null)
           return
         }
         setDiary(data ?? null)

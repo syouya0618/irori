@@ -303,3 +303,36 @@ describe("BabyDashboard / 日付ナビ fetch の error 握り潰し (B-08)", () 
     expect(screen.getByText("REALTIMEROW")).toBeInTheDocument()
   })
 })
+
+describe("BabyDashboard / 日付ナビの育児日記 refetch（W-1: fail-to-empty）", () => {
+  it("日記 fetch が error のとき前の日の日記を残さない（誤日付上書き経路の遮断）", async () => {
+    render(
+      <BabyDashboard
+        {...defaultProps({
+          initialDiary: {
+            id: "d1",
+            diary_date: TODAY,
+            content: "今日の日記本文",
+            updated_at: "2026-07-18T00:00:00+09:00",
+          },
+        })}
+      />,
+    )
+    expect(screen.getByText("今日の日記本文")).toBeInTheDocument()
+
+    goPrevDay()
+    // logs / overlap / diary の3クエリを同一 error で解決する。
+    // logs 側の toast は既存テストで検証済み。本テストの本命は日記の挙動。
+    await resolvePendingFetch({
+      data: null,
+      error: { message: "boom", code: "500" },
+    })
+
+    // 日記は error 時 null へ倒す（logs の stale 保持と違い、本文の残留は
+    // 「前日の本文を別日として上書き保存」する事故経路になるため）。
+    expect(screen.queryByText("今日の日記本文")).not.toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: /日記を書く/ }),
+    ).toBeInTheDocument()
+  })
+})
