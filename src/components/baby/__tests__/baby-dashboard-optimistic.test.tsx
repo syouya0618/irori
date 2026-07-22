@@ -160,17 +160,21 @@ describe("BabyDashboard / 記録の楽観 append (B-03)", () => {
     mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-opt-1" })
     render(<BabyDashboard {...defaultProps()} />)
 
-    // 初期: timeline 空・今日のまとめ おむつ 0回
+    // 初期: timeline 空・今日のまとめ おむつ 内訳 0/0
     expect(screen.getByText("まだ記録がありません")).toBeInTheDocument()
-    expect(within(summary()).queryByText("1回")).not.toBeInTheDocument()
+    expect(
+      within(summary()).getByText("おしっこ0・うんち0"),
+    ).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
 
     await waitFor(() => expect(mockedRecordDiaper).toHaveBeenCalled())
 
-    // Realtime を一切 emit していないのに、楽観 append で回数が 1 になる
+    // Realtime を一切 emit していないのに、楽観 append で内訳が おしっこ1・うんち0 になる
     await waitFor(() =>
-      expect(within(summary()).getByText("1回")).toBeInTheDocument(),
+      expect(
+        within(summary()).getByText("おしっこ1・うんち0"),
+      ).toBeInTheDocument(),
     )
     // timeline にも新行が出る（空状態は消える）
     expect(screen.queryByText("まだ記録がありません")).not.toBeInTheDocument()
@@ -183,7 +187,9 @@ describe("BabyDashboard / 記録の楽観 append (B-03)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
     await waitFor(() =>
-      expect(within(summary()).getByText("1回")).toBeInTheDocument(),
+      expect(
+        within(summary()).getByText("おしっこ1・うんち0"),
+      ).toBeInTheDocument(),
     )
 
     // 記録直後トーストの「取り消す」を発火
@@ -200,16 +206,20 @@ describe("BabyDashboard / 記録の楽観 append (B-03)", () => {
     await waitFor(() =>
       expect(screen.getByText("まだ記録がありません")).toBeInTheDocument(),
     )
-    expect(within(summary()).queryByText("1回")).not.toBeInTheDocument()
+    expect(
+      within(summary()).getByText("おしっこ0・うんち0"),
+    ).toBeInTheDocument()
   })
 
-  it("同 id の Realtime INSERT echo が来ても二重 append されない（1回 のまま）", async () => {
+  it("同 id の Realtime INSERT echo が来ても二重 append されない（おしっこ1・うんち0 のまま）", async () => {
     mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-echo" })
     render(<BabyDashboard {...defaultProps()} />)
 
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
     await waitFor(() =>
-      expect(within(summary()).getByText("1回")).toBeInTheDocument(),
+      expect(
+        within(summary()).getByText("おしっこ1・うんち0"),
+      ).toBeInTheDocument(),
     )
 
     // 同じ id の INSERT echo（本番 Realtime が後追いで届くケース）
@@ -228,8 +238,12 @@ describe("BabyDashboard / 記録の楽観 append (B-03)", () => {
     })
 
     // 二重に増えない
-    expect(within(summary()).getByText("1回")).toBeInTheDocument()
-    expect(within(summary()).queryByText("2回")).not.toBeInTheDocument()
+    expect(
+      within(summary()).getByText("おしっこ1・うんち0"),
+    ).toBeInTheDocument()
+    expect(
+      within(summary()).queryByText("おしっこ2・うんち0"),
+    ).not.toBeInTheDocument()
   })
 
   it("睡眠開始→終了を Realtime 無しで楽観反映（トグル ねんね→起こす→ねんね）", async () => {

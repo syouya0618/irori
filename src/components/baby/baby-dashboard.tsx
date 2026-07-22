@@ -24,6 +24,8 @@ import {
 import {
   summarizeTodayCounts,
   buildGrowthSeries,
+  aggregateDiapers,
+  sumDiaperBreakdown,
 } from "@/lib/domain/baby-log-aggregation"
 import { sleepOverlapMinutesForDate } from "@/lib/domain/baby-sleep-overlap"
 import { findLastPumped } from "@/lib/domain/baby-pumping"
@@ -379,6 +381,16 @@ export function BabyDashboard({
     [weeklyLogs, today],
   )
 
+  // 週間のおしっこ/うんち内訳: aggregateDiapers（PDF と同じ日別集計）の出力から
+  // pee+both / poop+both を導出する（weeklyLogs は weeklyStartDate〜today のクエリ窓）。
+  const weeklyDiaperBreakdown = useMemo(
+    () =>
+      sumDiaperBreakdown(
+        aggregateDiapers(weeklyLogs, weeklyStartDate, today),
+      ),
+    [weeklyLogs, weeklyStartDate, today],
+  )
+
   const handleEdit = useCallback((log: BabyLogData) => {
     setCreateLogType(null)
     setCreateFeedingType(null)
@@ -477,7 +489,10 @@ export function BabyDashboard({
         />
       )}
 
-      <BabyWeeklySummary days={weeklySummary} />
+      <BabyWeeklySummary
+        days={weeklySummary}
+        diaperBreakdown={weeklyDiaperBreakdown}
+      />
 
       <GrowthChartSection series={growthSeries} />
 

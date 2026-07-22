@@ -26,6 +26,8 @@ const baseProps = {
     diaperCount: 0,
     sleepCount: 0,
     totalSleepMinutes: 0,
+    peeCount: 0,
+    poopCount: 0,
   },
 }
 
@@ -72,7 +74,7 @@ function makeSleepLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
 }
 
 describe("BabySummaryBar 今日のまとめ", () => {
-  it("今日の授乳回数・合計睡眠・おむつ回数をひと目で表示する", () => {
+  it("今日の授乳回数・合計睡眠・おむつ内訳(おしっこ/うんち)をひと目で表示する", () => {
     render(
       <BabySummaryBar
         {...baseProps}
@@ -81,19 +83,53 @@ describe("BabySummaryBar 今日のまとめ", () => {
           diaperCount: 3,
           sleepCount: 1,
           totalSleepMinutes: 90,
+          peeCount: 2, // pee 1件 + both 1件
+          poopCount: 1, // poop 0件 + both 1件
         }}
       />,
     )
     const summary = screen.getByLabelText("今日のまとめ")
     expect(within(summary).getByText("2回")).toBeInTheDocument() // 授乳
     expect(within(summary).getByText("1時間30分")).toBeInTheDocument() // 睡眠
-    expect(within(summary).getByText("3回")).toBeInTheDocument() // おむつ
+    // おむつは合算値ではなく「おしっこ/うんち」の2値内訳で表示する
+    expect(
+      within(summary).getByText("おしっこ2・うんち1"),
+    ).toBeInTheDocument()
+    expect(within(summary).queryByText("3回")).not.toBeInTheDocument()
   })
 
   it("記録ゼロの日は睡眠を 0分 と表示する", () => {
     render(<BabySummaryBar {...baseProps} />)
     const summary = screen.getByLabelText("今日のまとめ")
     expect(within(summary).getByText("0分")).toBeInTheDocument()
+  })
+
+  it("おむつ0件のとき、今日のまとめは「おしっこ0・うんち0」、直近カードは「---」", () => {
+    render(<BabySummaryBar {...baseProps} />)
+    const summary = screen.getByLabelText("今日のまとめ")
+    expect(
+      within(summary).getByText("おしっこ0・うんち0"),
+    ).toBeInTheDocument()
+    // 直近カード側は diaperCount===0 のとき "---" にフォールバックするため、
+    // 内訳文言は画面全体で今日のまとめの1箇所のみに出る
+    expect(screen.getAllByText("おしっこ0・うんち0")).toHaveLength(1)
+  })
+
+  it("おむつ記録があるとき、今日のまとめ・直近カードの両方に同じ内訳を表示する", () => {
+    render(
+      <BabySummaryBar
+        {...baseProps}
+        todayCounts={{
+          feedingCount: 0,
+          diaperCount: 2,
+          sleepCount: 0,
+          totalSleepMinutes: 0,
+          peeCount: 1,
+          poopCount: 2,
+        }}
+      />,
+    )
+    expect(screen.getAllByText("おしっこ1・うんち2")).toHaveLength(2)
   })
 
   it("role=group で今日のまとめがアクセシブルネームとして公開される", () => {

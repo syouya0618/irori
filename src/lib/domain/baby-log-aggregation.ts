@@ -49,6 +49,30 @@ export interface DailyDiaperSummary {
   bothCount: number
 }
 
+export interface DiaperBreakdown {
+  /** おしっこ（pee + both）の回数 */
+  peeCount: number
+  /** うんち（poop + both）の回数 */
+  poopCount: number
+}
+
+/**
+ * aggregateDiapers の日別出力（複数日ぶん）から、pee/poop の内訳合計を導出する。
+ * both は両方に加算されるため、`peeCount + poopCount` は交換回数合計（totalCount の
+ * 総和）を超えうる（「今日のまとめ」「週間サマリー」の2値表示で共通利用）。
+ */
+export function sumDiaperBreakdown(
+  diapers: Pick<DailyDiaperSummary, "peeCount" | "poopCount" | "bothCount">[],
+): DiaperBreakdown {
+  return diapers.reduce<DiaperBreakdown>(
+    (total, day) => ({
+      peeCount: total.peeCount + day.peeCount + day.bothCount,
+      poopCount: total.poopCount + day.poopCount + day.bothCount,
+    }),
+    { peeCount: 0, poopCount: 0 },
+  )
+}
+
 export interface TemperatureRecord {
   date: string
   time: string
@@ -303,6 +327,10 @@ export interface TodayCounts {
   diaperCount: number
   sleepCount: number
   totalSleepMinutes: number
+  /** おしっこ（pee + both）の当日回数 */
+  peeCount: number
+  /** うんち（poop + both）の当日回数 */
+  poopCount: number
 }
 
 /**
@@ -312,6 +340,9 @@ export interface TodayCounts {
  * - feeding / diaper は `toJstDateString(logged_at) === date` のもののみ計上。
  * - sleep は共通ヘルパ `sleepOverlapMinutesForDate` で当日窓に按分し、重なりが
  *   1 分以上ある完了セッションのみ回数・時間に含める（未完了は 0）。
+ * - diaper はさらに `diaper_type` で pee/poop の内訳（peeCount/poopCount）も
+ *   同時に集計する。both は pee/poop 双方に加算するため（aggregateDiapers と
+ *   同じ規約）、`peeCount + poopCount` は `diaperCount` を超えうる。
  *
  * 入力に「前日開始・当日終了の日跨ぎ睡眠（overlapLogs）」を混ぜてよい。sleep は
  * 按分され、feeding/diaper は `date` フィルタで弾かれるため二重計上しない
@@ -319,19 +350,33 @@ export interface TodayCounts {
  * 週間サマリー・PDF 集計と per-day 睡眠値が一致する（3面同値）。
  */
 export function summarizeTodayCounts(
-  logs: Pick<AggregationLogInput, "log_type" | "logged_at" | "ended_at">[],
+  logs: Pick<
+    AggregationLogInput,
+    "log_type" | "logged_at" | "ended_at" | "diaper_type"
+  >[],
   date: string,
 ): TodayCounts {
   let feedingCount = 0
   let diaperCount = 0
   let sleepCount = 0
   let totalSleepMinutes = 0
+  let peeCount = 0
+  let poopCount = 0
 
   for (const log of logs) {
     if (log.log_type === "feeding") {
       if (toJstDateString(log.logged_at) === date) feedingCount++
     } else if (log.log_type === "diaper") {
-      if (toJstDateString(log.logged_at) === date) diaperCount++
+      if (toJstDateString(log.logged_at) === date) {
+        diaperCount++
+        // both は pee/poop 双方に加算する（aggregateDiapers と同じ規約）。
+        if (log.diaper_type === "pee") peeCount++
+        else if (log.diaper_type === "poop") poopCount++
+        else if (log.diaper_type === "both") {
+          peeCount++
+          poopCount++
+        }
+      }
     } else if (log.log_type === "sleep") {
       const overlap = sleepOverlapMinutesForDate(
         log.logged_at,
@@ -345,7 +390,14 @@ export function summarizeTodayCounts(
     }
   }
 
-  return { feedingCount, diaperCount, sleepCount, totalSleepMinutes }
+  return {
+    feedingCount,
+    diaperCount,
+    sleepCount,
+    totalSleepMinutes,
+    peeCount,
+    poopCount,
+  }
 }
 
 export interface BabyAge {

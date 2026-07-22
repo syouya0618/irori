@@ -84,7 +84,7 @@ export function BabySummaryBar({
         <TodayStat
           icon={<Droplets size={14} className="text-sky-600 dark:text-sky-400" />}
           label="おむつ"
-          value={`${todayCounts.diaperCount}回`}
+          value={`おしっこ${todayCounts.peeCount}・うんち${todayCounts.poopCount}`}
         />
       </div>
 
@@ -115,7 +115,9 @@ export function BabySummaryBar({
           </div>
           <span className="text-[10px] text-muted-foreground">おむつ</span>
           <span className="font-mono text-xs font-semibold">
-            {todayCounts.diaperCount > 0 ? `${todayCounts.diaperCount}回` : "---"}
+            {todayCounts.diaperCount > 0
+              ? `おしっこ${todayCounts.peeCount}・うんち${todayCounts.poopCount}`
+              : "---"}
           </span>
         </div>
 
