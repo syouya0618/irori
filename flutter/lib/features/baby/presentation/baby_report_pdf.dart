@@ -194,14 +194,26 @@ Future<Uint8List> buildBabyReportBytes(
         // 原典 5 テーブル (`:124-138`)。列見出し・列幅・空状態を 1:1 で移植。
         ..._buildTable(
           '授乳記録',
-          const ['日付', '合計', '母乳', 'ミルク', '離乳食', 'ミルク平均(ml)'],
-          // 原典 widths ["auto","auto","auto","auto","auto","*"] (`:124`)。
+          // 搾乳(pumped)をミルクと独立列で表示 (web `baby-report.ts:124` の 8 列に追従)。
+          const [
+            '日付',
+            '合計',
+            '母乳',
+            'ミルク',
+            '搾乳',
+            '離乳食',
+            'ミルク平均(ml)',
+            '搾乳平均(ml)',
+          ],
+          // 原典 widths ["auto","auto","auto","auto","auto","auto","*","*"] (`:124`)。
           const [
             _ColW.auto,
             _ColW.auto,
             _ColW.auto,
             _ColW.auto,
             _ColW.auto,
+            _ColW.auto,
+            _ColW.flex,
             _ColW.flex,
           ],
           [
@@ -211,8 +223,10 @@ Future<Uint8List> buildBabyReportBytes(
                 '${f.totalCount}',
                 '${f.breastCount}',
                 '${f.bottleCount}',
+                '${f.pumpedCount}',
                 '${f.solidCount}',
                 _orDash(f.avgBottleMl),
+                _orDash(f.avgPumpedMl),
               ],
           ],
         ),

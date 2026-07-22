@@ -113,12 +113,15 @@ void main() {
           feedings: const [
             (
               date: '2026-04-10',
-              totalCount: 3,
+              totalCount: 4,
               breastCount: 1,
               bottleCount: 1,
               solidCount: 1,
+              pumpedCount: 1,
               totalBottleMl: 120,
               avgBottleMl: 120,
+              totalPumpedMl: 80,
+              avgPumpedMl: 80,
             ),
           ],
           sleep: const [
@@ -169,12 +172,15 @@ void main() {
         for (var d = 1; d <= 28; d++)
           (
             date: '2026-04-${d.toString().padLeft(2, '0')}',
-            totalCount: 5,
+            totalCount: 6,
             breastCount: 2,
             bottleCount: 2,
             solidCount: 1,
+            pumpedCount: 1,
             totalBottleMl: 240,
             avgBottleMl: 120,
+            totalPumpedMl: 80,
+            avgPumpedMl: 80,
           ),
       ];
       final populated = await buildBabyReportBytes(

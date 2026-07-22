@@ -51,6 +51,8 @@ String feedingTypeLabel(FeedingType type) {
       return 'ミルク';
     case FeedingType.solid:
       return '離乳食';
+    case FeedingType.pumped:
+      return '搾乳';
   }
 }
 

@@ -50,6 +50,7 @@ void main() {
       expect(feedingTypeLabel(FeedingType.breastRight), '右');
       expect(feedingTypeLabel(FeedingType.bottle), 'ミルク');
       expect(feedingTypeLabel(FeedingType.solid), '離乳食');
+      expect(feedingTypeLabel(FeedingType.pumped), '搾乳');
     });
 
     test('diaperTypeLabel', () {

@@ -610,7 +610,12 @@ class _NumberField extends StatelessWidget {
 }
 
 bool _allowsAmountMl(FeedingType type) {
-  return type == FeedingType.bottle || type == FeedingType.solid;
+  // 搾乳(pumped)も量(ml)入力を許す (web `AMOUNT_FEEDING_TYPES` と一致)。
+  // 搾乳セグメントは FeedingType.values 反復で自動表示されるため、これを欠くと
+  // 量入力欄が出ず web 作成の搾乳ログを編集すると amount_ml を失う。
+  return type == FeedingType.bottle ||
+      type == FeedingType.solid ||
+      type == FeedingType.pumped;
 }
 
 int? _parseOptionalInt(String value) {

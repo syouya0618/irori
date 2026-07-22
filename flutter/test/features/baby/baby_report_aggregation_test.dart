@@ -76,6 +76,72 @@ void main() {
       expect(result[0].avgBottleMl, 110);
     });
 
+    test('搾乳(pumped) の feeding_type を fromJson で throw せず復元 (#147 回帰)', () {
+      // AggregationLogInput.fromJson の _feedingTypeFromDb は pumped 欠落で
+      // ArgumentError を throw していた（レポート集計経路の第2クラッシュパス）。
+      final json = <String, dynamic>{
+        'log_type': 'feeding',
+        'logged_at': '2026-07-22T03:00:00+00:00',
+        'feeding_type': 'pumped',
+        'amount_ml': 80,
+      };
+      expect(() => AggregationLogInput.fromJson(json), returnsNormally);
+      final input = AggregationLogInput.fromJson(json);
+      expect(input.feedingType, FeedingType.pumped);
+      expect(input.amountMl, 80);
+    });
+
+    test('搾乳(pumped)はミルクと別バケットで集計する (web parity)', () {
+      // 原典 baby-log-aggregation.test.ts:68-95。bottle と pumped を独立集計し、
+      // breast+bottle+solid+pumped === totalCount の不変条件を保つ。
+      final logs = [
+        _mkLog(
+          BabyLogType.feeding,
+          2,
+          feedingType: FeedingType.bottle,
+          amountMl: 100,
+        ),
+        _mkLog(
+          BabyLogType.feeding,
+          3,
+          feedingType: FeedingType.pumped,
+          amountMl: 40,
+        ),
+        _mkLog(
+          BabyLogType.feeding,
+          4,
+          feedingType: FeedingType.pumped,
+          amountMl: 60,
+        ),
+        _mkLog(BabyLogType.feeding, 5, feedingType: FeedingType.breastLeft),
+      ];
+      final result = aggregateFeedings(logs, _start, _end);
+      expect(result, hasLength(1));
+      final day = result[0];
+      expect(day.totalCount, 4);
+      expect(day.breastCount, 1);
+      expect(day.bottleCount, 1); // 搾乳はミルクに含めない
+      expect(day.totalBottleMl, 100);
+      expect(day.pumpedCount, 2);
+      expect(day.totalPumpedMl, 100);
+      expect(day.avgPumpedMl, 50);
+    });
+
+    test('搾乳なし日 → pumpedCount 0 / avgPumpedMl は null', () {
+      final logs = [
+        _mkLog(
+          BabyLogType.feeding,
+          2,
+          feedingType: FeedingType.bottle,
+          amountMl: 100,
+        ),
+      ];
+      final result = aggregateFeedings(logs, _start, _end);
+      expect(result[0].pumpedCount, 0);
+      expect(result[0].totalPumpedMl, 0);
+      expect(result[0].avgPumpedMl, isNull);
+    });
+
     test('ミルクなし → avgBottleMl は null', () {
       final logs = [
         _mkLog(BabyLogType.feeding, 2, feedingType: FeedingType.breastLeft),
