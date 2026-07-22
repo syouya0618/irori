@@ -1,7 +1,14 @@
 import { toJstDateString } from "@/lib/utils/date-jst"
+import {
+  recurrenceMaxUntil,
+  type RecurrenceRepeat,
+} from "@/lib/domain/calendar-recurrence"
 
 const MAX_TITLE = 200
 const MAX_MEMO = 1000
+
+/** 繰り返し種別。"none" は単発予定。 */
+export type CalendarRepeat = "none" | RecurrenceRepeat
 
 const YMD_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
@@ -28,6 +35,9 @@ export interface ValidatedCalendarInput {
   endDate: string
   startAt: string | null
   endAt: string | null
+  repeat: CalendarRepeat
+  /** repeat !== "none" のときのみ非 null(YYYY-MM-DD, inclusive)。 */
+  repeatUntil: string | null
 }
 
 export type CalendarValidationResult =
@@ -46,6 +56,8 @@ export function validateCalendarEventInput(raw: {
   endDate: string
   startAt?: string | null
   endAt?: string | null
+  repeat?: CalendarRepeat
+  repeatUntil?: string | null
 }): CalendarValidationResult {
   const title = raw.title.trim()
   if (title.length < 1) return { error: "タイトルを入力してください", value: null }
@@ -66,6 +78,26 @@ export function validateCalendarEventInput(raw: {
   if (raw.endDate < raw.startDate)
     return { error: "終了日は開始日以降にしてください", value: null }
 
+  // 繰り返し検証。repeat !== "none" のとき repeatUntil 必須 + 範囲(startDate より後・
+  // startDate+1年以内)。上限は generateRecurrenceDates の防御ガードと同一の
+  // recurrenceMaxUntil で計算し、DB 側 materialize と不変条件を一致させる。
+  const repeat: CalendarRepeat = raw.repeat ?? "none"
+  let repeatUntil: string | null = null
+  if (repeat !== "none") {
+    if (!raw.repeatUntil)
+      return { error: "繰り返しの終了日を入力してください", value: null }
+    if (!isValidYmd(raw.repeatUntil))
+      return { error: "繰り返しの終了日の形式が不正です", value: null }
+    if (raw.repeatUntil <= raw.startDate)
+      return { error: "繰り返しの終了日は開始日より後にしてください", value: null }
+    if (raw.repeatUntil > recurrenceMaxUntil(raw.startDate))
+      return {
+        error: "繰り返しの終了日は開始日から1年以内にしてください",
+        value: null,
+      }
+    repeatUntil = raw.repeatUntil
+  }
+
   if (raw.isAllDay) {
     return {
       error: null,
@@ -77,6 +109,8 @@ export function validateCalendarEventInput(raw: {
         endDate: raw.endDate,
         startAt: null,
         endAt: null,
+        repeat,
+        repeatUntil,
       },
     }
   }
@@ -112,6 +146,8 @@ export function validateCalendarEventInput(raw: {
       endDate: raw.endDate,
       startAt: raw.startAt,
       endAt: raw.endAt ?? null,
+      repeat,
+      repeatUntil,
     },
   }
 }

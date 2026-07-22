@@ -13,12 +13,40 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { formatTimeJst } from "@/lib/utils/date-jst"
 import { segmentCn } from "@/lib/utils/segment-cn"
+import type { CalendarRepeat } from "@/lib/domain/calendar-validation"
 import type { CalendarEventRecord } from "./use-month-events"
 
 /** 新規/クリア時の既定開始時刻。initialValue と時刻クリアで共有し値のドリフトを防ぐ。 */
 const DEFAULT_START_TIME = "09:00"
+
+/** 繰り返し select の選択肢(base-ui Select の items = ラベル解決に使う)。 */
+const REPEAT_OPTIONS: { value: CalendarRepeat; label: string }[] = [
+  { value: "none", label: "なし" },
+  { value: "daily", label: "毎日" },
+  { value: "weekly", label: "毎週" },
+  { value: "monthly", label: "毎月" },
+]
+
+/** 新規作成時の繰り返し終了日の既定 = 開始日 + N ヶ月。 */
+const DEFAULT_REPEAT_UNTIL_MONTHS = 3
+
+/**
+ * "YYYY-MM-DD" を月数シフトする(TZ 非依存。Date.UTC で overflow を正規化)。
+ * 繰り返し終了日の既定値算出にのみ使う(UTC 罠を避けるため new Date(str) は使わない)。
+ */
+function addMonthsYmd(ymd: string, months: number): string {
+  const [y, m, d] = ymd.split("-").map(Number)
+  return new Date(Date.UTC(y, m - 1 + months, d)).toISOString().slice(0, 10)
+}
 
 export interface CalendarEventFormValue {
   title: string
@@ -28,6 +56,10 @@ export interface CalendarEventFormValue {
   endDate: string
   startTime: string // "HH:MM"(終日なら未使用)
   endTime: string
+  /** 繰り返し種別(作成モードのみ有効。編集モードは常に "none")。 */
+  repeat: CalendarRepeat
+  /** 繰り返し終了日(YYYY-MM-DD)。repeat === "none" のときは未使用。 */
+  repeatUntil: string
 }
 
 /** "YYYY-MM-DD" を "M月D日" へ(TZ 非依存の文字列分解)。 */
@@ -70,6 +102,8 @@ interface Props {
   saving: boolean
   onSubmit: (value: CalendarEventFormValue) => void
   onDelete: (id: string) => void
+  /** 繰り返しシリーズ全体を削除する(series_id を持つ予定の編集時のみ使う)。 */
+  onDeleteSeries: (seriesId: string) => void
 }
 
 function initialValue(
@@ -87,6 +121,9 @@ function initialValue(
         ? formatTimeJst(editing.start_at)
         : DEFAULT_START_TIME,
       endTime: editing.end_at ? formatTimeJst(editing.end_at) : "",
+      // 編集モードは繰り返し変更をスコープ外とするため常に "none"。
+      repeat: "none",
+      repeatUntil: "",
     }
   }
   return {
@@ -97,6 +134,8 @@ function initialValue(
     endDate: defaultDate,
     startTime: DEFAULT_START_TIME,
     endTime: "",
+    repeat: "none",
+    repeatUntil: "",
   }
 }
 
@@ -108,6 +147,7 @@ export function CalendarEventFormSheet({
   saving,
   onSubmit,
   onDelete,
+  onDeleteSeries,
 }: Props) {
   // open/editing 変化でフォームを初期化(render-time conditional setState)。
   const [prevKey, setPrevKey] = useState<string | null>(null)
@@ -136,6 +176,21 @@ export function CalendarEventFormSheet({
         ? { ...prev, isAllDay: true, startTime: DEFAULT_START_TIME, endTime: "" }
         : { ...prev, isAllDay: false },
     )
+
+  // 繰り返し種別の切替。none 以外へ変える際、終了日が未入力なら開始日 + 3ヶ月を
+  // 既定として補う(startDate 変更後に空へ戻していなければ既存値を尊重)。
+  const setRepeat = (repeat: CalendarRepeat) =>
+    setValue((prev) => ({
+      ...prev,
+      repeat,
+      repeatUntil:
+        repeat !== "none" && !prev.repeatUntil
+          ? addMonthsYmd(prev.startDate, DEFAULT_REPEAT_UNTIL_MONTHS)
+          : prev.repeatUntil,
+    }))
+
+  // 編集中の予定が繰り返しシリーズに属するか(series_id を持つ native 行)。
+  const seriesId = !isGoogle ? (editing?.series_id ?? null) : null
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -242,6 +297,41 @@ export function CalendarEventFormSheet({
               </div>
             )}
 
+            {/* 繰り返しは作成モードのみ(シリーズ編集はスコープ外)。 */}
+            {!isEditing && (
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="cal-repeat">繰り返し</Label>
+                <Select
+                  items={REPEAT_OPTIONS}
+                  value={value.repeat}
+                  onValueChange={(v) => setRepeat(v as CalendarRepeat)}
+                >
+                  <SelectTrigger id="cal-repeat" className="h-11 w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {REPEAT_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {value.repeat !== "none" && (
+                  <div className="mt-2 flex flex-col gap-2">
+                    <Label htmlFor="cal-repeat-until">繰り返しの終了日</Label>
+                    <Input
+                      id="cal-repeat-until"
+                      type="date"
+                      value={value.repeatUntil}
+                      onChange={(e) => set("repeatUntil", e.target.value)}
+                      className="h-11"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="flex flex-col gap-2">
               <Label htmlFor="cal-memo">メモ（任意）</Label>
               <Input
@@ -252,6 +342,20 @@ export function CalendarEventFormSheet({
                 className="h-11"
               />
             </div>
+
+            {/* 繰り返しシリーズに属する予定はシリーズ一括削除を提供する。
+                既存の単発削除(フッタのゴミ箱)は「この 1 件のみ」を担い続ける。 */}
+            {seriesId && (
+              <Button
+                variant="ghost"
+                onClick={() => onDeleteSeries(seriesId)}
+                disabled={saving}
+                className="min-h-11 w-full cursor-pointer text-destructive hover:text-destructive"
+              >
+                <Trash2 size={18} />
+                この繰り返し予定をすべて削除
+              </Button>
+            )}
           </div>
         )}
 

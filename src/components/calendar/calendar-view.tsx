@@ -9,6 +9,7 @@ import {
   createCalendarEvent,
   updateCalendarEvent,
   deleteCalendarEvent,
+  deleteCalendarEventSeries,
 } from "@/app/(main)/calendar/actions"
 import {
   useMonthEvents,
@@ -80,6 +81,7 @@ export function CalendarView({
         start_at: startAt,
         end_at: endAt,
         source: "native",
+        series_id: null,
       },
       startAt,
       endAt,
@@ -124,6 +126,29 @@ export function CalendarView({
           toast.error(res.error)
         }
       })
+    } else if (v.repeat !== "none") {
+      // 繰り返し作成: 複数行 materialize の楽観再現はコストに見合わないため楽観挿入を
+      // スキップし、action 成功後に refetch(use-month-events の既存 refetch)。
+      const { startAt, endAt } = toRecord(v, "recurring")
+      setSheetOpen(false)
+      startTransition(async () => {
+        const res = await createCalendarEvent({
+          title: v.title,
+          memo: v.memo,
+          isAllDay: v.isAllDay,
+          startDate: v.startDate,
+          endDate: v.endDate,
+          startAt,
+          endAt,
+          repeat: v.repeat,
+          repeatUntil: v.repeatUntil,
+        })
+        if (res.error) {
+          toast.error(res.error)
+        } else {
+          void m.refetch(m.monthFirst)
+        }
+      })
     } else {
       // 新規: temp id で楽観挿入 → 成功で確定 id 差し替え / 失敗で除去
       const tempId = `${OPTIMISTIC_EVENT_ID_PREFIX}${optimisticSeq++}`
@@ -158,6 +183,21 @@ export function CalendarView({
       const res = await deleteCalendarEvent(id)
       if (res.error) {
         if (snapshot) m.upsertOptimistic(snapshot) // 復元
+        toast.error(res.error)
+      }
+    })
+  }
+
+  // シリーズ一括削除: 楽観的に同 series_id の行を全除去 → 失敗でスナップショット復元。
+  // 単発削除(単一 id 除去)と違い複数行を消すため setAllEvents で一括置換する。
+  const handleDeleteSeries = (seriesId: string) => {
+    const snapshot = m.events
+    m.setAllEvents(m.events.filter((e) => e.series_id !== seriesId))
+    setSheetOpen(false)
+    startTransition(async () => {
+      const res = await deleteCalendarEventSeries(seriesId)
+      if (res.error) {
+        m.setAllEvents(snapshot) // 復元
         toast.error(res.error)
       }
     })
@@ -230,6 +270,7 @@ export function CalendarView({
         saving={pending}
         onSubmit={handleSubmit}
         onDelete={handleDelete}
+        onDeleteSeries={handleDeleteSeries}
       />
     </div>
   )

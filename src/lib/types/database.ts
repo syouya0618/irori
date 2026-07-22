@@ -438,6 +438,7 @@ export interface Database {
           start_at: string | null // ISO 8601 (timed only)
           end_at: string | null
           source: CalendarEventSource
+          series_id: string | null // 繰り返しシリーズ識別子(単発は null)
           google_event_id: string | null
           google_calendar_id: string | null
           etag: string | null
@@ -457,6 +458,7 @@ export interface Database {
           start_at?: string | null
           end_at?: string | null
           source?: CalendarEventSource
+          series_id?: string | null
           google_event_id?: string | null
           google_calendar_id?: string | null
           etag?: string | null
@@ -471,6 +473,7 @@ export interface Database {
           end_date?: string
           start_at?: string | null
           end_at?: string | null
+          series_id?: string | null
           // source / google_* は native 行の編集で触らない(型上も出さない)
         }
         Relationships: []

@@ -165,4 +165,84 @@ describe("validateCalendarEventInput", () => {
     expect(r.error).toBe("日付の形式が不正です")
     expect(r.value).toBeNull()
   })
+
+  // --- 繰り返し(repeat / repeatUntil)の検証 ---
+
+  it("repeat 省略時は none で repeatUntil は null", () => {
+    const r = validateCalendarEventInput({
+      title: "検診",
+      isAllDay: true,
+      startDate: "2026-07-09",
+      endDate: "2026-07-09",
+    })
+    expect(r.error).toBeNull()
+    expect(r.value).toMatchObject({ repeat: "none", repeatUntil: null })
+  })
+
+  it("repeat≠none で repeatUntil 未指定は弾く", () => {
+    const r = validateCalendarEventInput({
+      title: "検診",
+      isAllDay: true,
+      startDate: "2026-07-09",
+      endDate: "2026-07-09",
+      repeat: "weekly",
+    })
+    expect(r.error).toBe("繰り返しの終了日を入力してください")
+    expect(r.value).toBeNull()
+  })
+
+  it("repeat≠none で repeatUntil の形式不正を弾く", () => {
+    const r = validateCalendarEventInput({
+      title: "検診",
+      isAllDay: true,
+      startDate: "2026-07-09",
+      endDate: "2026-07-09",
+      repeat: "weekly",
+      repeatUntil: "2026/09/09",
+    })
+    expect(r.error).toBe("繰り返しの終了日の形式が不正です")
+    expect(r.value).toBeNull()
+  })
+
+  it("repeatUntil が開始日以前は弾く", () => {
+    const r = validateCalendarEventInput({
+      title: "検診",
+      isAllDay: true,
+      startDate: "2026-07-09",
+      endDate: "2026-07-09",
+      repeat: "daily",
+      repeatUntil: "2026-07-09",
+    })
+    expect(r.error).toBe("繰り返しの終了日は開始日より後にしてください")
+    expect(r.value).toBeNull()
+  })
+
+  it("repeatUntil が開始日+1年超は弾く", () => {
+    const r = validateCalendarEventInput({
+      title: "検診",
+      isAllDay: true,
+      startDate: "2026-07-09",
+      endDate: "2026-07-09",
+      repeat: "monthly",
+      repeatUntil: "2027-07-10", // +1年 = 2027-07-09 を超える
+    })
+    expect(r.error).toBe("繰り返しの終了日は開始日から1年以内にしてください")
+    expect(r.value).toBeNull()
+  })
+
+  it("repeat≠none の正常系は repeat / repeatUntil を保持する", () => {
+    const r = validateCalendarEventInput({
+      title: "検診",
+      isAllDay: true,
+      startDate: "2026-07-09",
+      endDate: "2026-07-09",
+      repeat: "weekly",
+      repeatUntil: "2026-08-06",
+    })
+    expect(r.error).toBeNull()
+    expect(r.value).toMatchObject({
+      repeat: "weekly",
+      repeatUntil: "2026-08-06",
+    })
+  })
 })

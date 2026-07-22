@@ -15,7 +15,7 @@ export default async function CalendarPage() {
   const { data: events, error } = await supabase
     .from("calendar_events")
     .select(
-      "id, title, memo, is_all_day, start_date, end_date, start_at, end_at, source",
+      "id, title, memo, is_all_day, start_date, end_date, start_at, end_at, source, series_id",
     )
     .eq("household_id", householdId)
     .lte("start_date", gridEnd) // 重なり判定: start_date <= gridEnd
