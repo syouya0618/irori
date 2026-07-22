@@ -1,12 +1,13 @@
 "use client"
 
 import { useState, useEffect, useRef, useMemo } from "react"
-import { BookOpen, Loader2 } from "lucide-react"
+import { BookOpen, Loader2, PenLine } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { formatTimeJst } from "@/lib/utils/date-jst"
 import { groupMemoLogsByDate, DIARY_PAGE_SIZE } from "@/lib/domain/baby-diary"
+import { BabyLogFormSheet } from "./baby-log-form-sheet"
 import type { BabyLogData } from "@/lib/types/baby"
 
 // 日記一覧で取得するカラム（BabyLogData と対応・page.tsx と一致させる）。
@@ -16,6 +17,8 @@ const BABY_LOG_COLUMNS =
 interface BabyDiaryViewProps {
   initialLogs: BabyLogData[]
   householdId: string
+  /** 記録者（logged_by）。日記の新規作成シート（BabyLogFormSheet）に渡す。 */
+  userId: string
 }
 
 /**
@@ -28,12 +31,21 @@ interface BabyDiaryViewProps {
  *   行を無音で飛ばさない（page*PAGE_SIZE 固定オフセットは飛ばす危険がある）。
  * - 終端は「返却0件」でのみ判定する。短いページ（0 < n < PAGE_SIZE）を終端扱いしない。
  */
-export function BabyDiaryView({ initialLogs, householdId }: BabyDiaryViewProps) {
+export function BabyDiaryView({
+  initialLogs,
+  householdId,
+  userId,
+}: BabyDiaryViewProps) {
   const [logs, setLogs] = useState<BabyLogData[]>(initialLogs)
   // 「もっと見る」押下ごとに増やして追ページ取得の useEffect を発火させるトークン。
   const [loadToken, setLoadToken] = useState(0)
   const [loading, setLoading] = useState(false)
   const [reachedEnd, setReachedEnd] = useState(false)
+  // 「日記を書く」シート（memo 作成モードの BabyLogFormSheet）の開閉。
+  // formKey は開くたびに増やして再マウントし、シートの全 state（本文・時刻）を
+  // 初期化式から再構築する（dashboard の formKey 流儀を踏襲）。
+  const [composeOpen, setComposeOpen] = useState(false)
+  const [composeKey, setComposeKey] = useState(0)
 
   // 次に取得すべきオフセット = これまでに受領した件数。logs 更新に追従させる。
   const offsetRef = useRef(initialLogs.length)
@@ -91,17 +103,56 @@ export function BabyDiaryView({ initialLogs, householdId }: BabyDiaryViewProps) 
 
   const groups = useMemo(() => groupMemoLogsByDate(logs), [logs])
 
+  // 作成成功時の楽観 prepend（新規日記は「今」の記録ゆえ降順リストの先頭が正位置。
+  // Realtime echo との二重追加は id dedupe で防ぐ）。
+  const handleLogRecorded = (log: BabyLogData) => {
+    setLogs((prev) =>
+      prev.some((l) => l.id === log.id) ? prev : [log, ...prev],
+    )
+  }
+
+  const composeButton = (
+    <button
+      type="button"
+      onClick={() => {
+        setComposeKey((k) => k + 1)
+        setComposeOpen(true)
+      }}
+      className="glass flex min-h-11 items-center justify-center gap-2 rounded-2xl px-4 text-sm font-medium text-primary shadow-lg shadow-black/[0.04] transition-colors duration-200 hover:text-primary/80"
+    >
+      <PenLine size={16} />
+      日記を書く
+    </button>
+  )
+
+  const composeSheet = (
+    <BabyLogFormSheet
+      key={composeKey}
+      open={composeOpen}
+      onOpenChange={setComposeOpen}
+      log={null}
+      createLogType="memo"
+      userId={userId}
+      onLogRecorded={handleLogRecorded}
+    />
+  )
+
   if (logs.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 py-16">
-        <BookOpen size={48} className="text-muted-foreground/30" />
-        <p className="text-sm text-muted-foreground">まだ日記がありません</p>
+      <div className="flex flex-col gap-4">
+        {composeButton}
+        <div className="flex flex-col items-center justify-center gap-3 py-16">
+          <BookOpen size={48} className="text-muted-foreground/30" />
+          <p className="text-sm text-muted-foreground">まだ日記がありません</p>
+        </div>
+        {composeSheet}
       </div>
     )
   }
 
   return (
     <div className="flex flex-col gap-4">
+      {composeButton}
       {groups.map((group) => (
         <section key={group.date} className="flex flex-col gap-1">
           <h2 className="px-1 text-sm font-semibold text-muted-foreground">
@@ -144,6 +195,8 @@ export function BabyDiaryView({ initialLogs, householdId }: BabyDiaryViewProps) 
           )}
         </button>
       )}
+
+      {composeSheet}
     </div>
   )
 }
