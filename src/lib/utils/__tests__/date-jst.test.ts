@@ -8,6 +8,8 @@ import {
   jstWallClockToIso,
   toJstDateString,
   isFutureJstDate,
+  formatJstTimeInput,
+  isFutureIso,
 } from "../date-jst"
 
 describe("todayJstString", () => {
@@ -192,5 +194,67 @@ describe("jstWallClockToIso", () => {
     ] as const) {
       expect(toJstDateString(jstWallClockToIso(d, t))).toBe(d)
     }
+  })
+})
+
+describe("formatJstTimeInput", () => {
+  it("深夜 0 時は '24:00' でなく '00:00'（<input type=time> が拒否する 24:00 を出さない）", () => {
+    // JST 00:00 = UTC 前日 15:00。h23 固定ゆえ 00:00 を返す（0時境界の核心）。
+    expect(formatJstTimeInput("2026-07-09T00:00:00+09:00")).toBe("00:00")
+  })
+
+  it("JST 9 時前後（UTC 0 時境界）を正しい HH:mm で返す", () => {
+    // JST 09:00 = UTC 00:00。UTC 日付が変わる境界でも JST 壁時計を返す。
+    expect(formatJstTimeInput("2026-07-09T09:00:00+09:00")).toBe("09:00")
+    expect(formatJstTimeInput("2026-07-09T08:59:00+09:00")).toBe("08:59")
+  })
+
+  it("正午・深夜直前も 24 時間表記で返す", () => {
+    expect(formatJstTimeInput("2026-07-09T12:00:00+09:00")).toBe("12:00")
+    expect(formatJstTimeInput("2026-07-09T23:59:00+09:00")).toBe("23:59")
+  })
+
+  it("既存ログの logged_at を seed → jstWallClockToIso で往復しても同一分に戻る", () => {
+    // 編集シートの seed（formatJstTimeInput）→ 保存（jstWallClockToIso）の往復不変条件。
+    for (const iso of [
+      "2026-07-09T00:00:00+09:00",
+      "2026-07-09T09:00:00+09:00",
+      "2026-07-09T23:59:00+09:00",
+    ]) {
+      const date = toJstDateString(iso)
+      const time = formatJstTimeInput(iso)
+      expect(jstWallClockToIso(date, time)).toBe(new Date(iso).toISOString())
+    }
+  })
+})
+
+describe("isFutureIso", () => {
+  it("現在より 5 分超の未来は true（拒否）", () => {
+    const now = new Date("2026-07-09T00:00:00Z")
+    // +6 分は許容(5分)超ゆえ未来
+    expect(isFutureIso("2026-07-09T00:06:00Z", 5, now)).toBe(true)
+  })
+
+  it("+5 分ちょうどは許容内（false）— 時計ずれ許容の境界", () => {
+    const now = new Date("2026-07-09T00:00:00Z")
+    expect(isFutureIso("2026-07-09T00:05:00Z", 5, now)).toBe(false)
+  })
+
+  it("過去・現在は未来ではない（false）", () => {
+    const now = new Date("2026-07-09T00:00:00Z")
+    expect(isFutureIso("2026-07-09T00:00:00Z", 5, now)).toBe(false)
+    expect(isFutureIso("2026-07-08T23:00:00Z", 5, now)).toBe(false)
+  })
+
+  it("JST 0 時境界でも epoch 比較ゆえ TZ 非依存で正しく判定", () => {
+    // now = JST 2026-07-09 00:30（UTC 前日 15:30）。同日 JST 00:00 は過去。
+    const now = new Date("2026-07-08T15:30:00Z")
+    expect(isFutureIso("2026-07-08T15:00:00Z", 5, now)).toBe(false) // JST 00:00 = 過去
+    expect(isFutureIso("2026-07-08T16:00:00Z", 5, now)).toBe(true) // JST 01:00 = 未来
+  })
+
+  it("不正 ISO(NaN)は false（未来ではない・形式検証は呼び出し側）", () => {
+    const now = new Date("2026-07-09T00:00:00Z")
+    expect(isFutureIso("not-a-date", 5, now)).toBe(false)
   })
 })

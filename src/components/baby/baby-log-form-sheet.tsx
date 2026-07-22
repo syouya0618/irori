@@ -27,7 +27,16 @@ import {
   getFeedingTypeLabel,
   getDiaperTypeLabel,
 } from "@/lib/utils/baby-log-labels"
-import { formatTimeJst } from "@/lib/utils/date-jst"
+import {
+  formatTimeJst,
+  formatJstTimeInput,
+  toJstDateString,
+  todayJstString,
+} from "@/lib/utils/date-jst"
+import {
+  jstDateTimeToIso,
+  validateLogTime,
+} from "@/lib/domain/baby-log-time"
 import { segmentCn } from "@/lib/utils/segment-cn"
 import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
 import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
@@ -122,6 +131,19 @@ export function BabyLogFormSheet({
   const [weightG, setWeightG] = useState(log?.weight_g?.toString() ?? "")
   const [heightCm, setHeightCm] = useState(log?.height_cm?.toString() ?? "")
   const [memo, setMemo] = useState(log?.memo ?? "")
+  // 記録時刻（JST の "HH:mm"）。編集時は既存 logged_at、新規時は現在時刻を既定に。
+  // remount ごとに初期化式が再評価されるため resetForm 不要（全 state が prop から再構築される）。
+  const [timeHm, setTimeHm] = useState(() =>
+    formatJstTimeInput(log ? log.logged_at : new Date().toISOString()),
+  )
+  // 編集モードの時刻 seed（初期 HH:mm）。ユーザーが時刻を触ったかの dirty 判定に使う。
+  // remount ごとに初期化されるため、その編集セッションの起点値を保持する（新規は空）。
+  const [seedTimeHm] = useState(() =>
+    log ? formatJstTimeInput(log.logged_at) : "",
+  )
+  // 日付はそのログの JST 日付を維持（日付跨ぎ編集はスコープ外）。新規は当日（作成導線は
+  // isToday ゲート下ゆえ today = 選択日）。時刻のみ編集可能で date 部は不可視に固定する。
+  const logDate = log ? toJstDateString(log.logged_at) : todayJstString()
 
   const isCreateMode = !log && !!createLogType
   const logType = log?.log_type ?? createLogType
@@ -137,6 +159,19 @@ export function BabyLogFormSheet({
   function handleCreate() {
     startTransition(async () => {
       try {
+        // 選択した時刻（JST の logDate + timeHm）を ISO へ。未来/不正はここで弾く。
+        // record アクションと楽観 append で同じ loggedAt を使い、DB と即時表示を一致させる。
+        const loggedAt = jstDateTimeToIso(logDate, timeHm)
+        if (!loggedAt) {
+          toast.error("時刻を入力してください")
+          return
+        }
+        const timeError = validateLogTime(loggedAt)
+        if (timeError) {
+          toast.error(timeError)
+          return
+        }
+
         let result: { error: string | null; id: string | null }
         // B-03: 成功時に返却 id で楽観 append する行を組む builder（値が in-scope な
         // 各 case 内で確定させる）。null のままなら append しない。
@@ -150,6 +185,7 @@ export function BabyLogFormSheet({
             result = await recordFeeding({
               feedingType,
               amountMl: amt,
+              loggedAt,
               memo: memo || undefined,
             })
             buildLog = (id) =>
@@ -157,6 +193,7 @@ export function BabyLogFormSheet({
                 id,
                 logType: "feeding",
                 loggedBy: userId,
+                loggedAt,
                 feedingType,
                 amountMl: amt,
                 memo: memo || null,
@@ -171,6 +208,7 @@ export function BabyLogFormSheet({
             }
             result = await recordTemperature({
               temperature: temp,
+              loggedAt,
               memo: memo || undefined,
             })
             buildLog = (id) =>
@@ -178,6 +216,7 @@ export function BabyLogFormSheet({
                 id,
                 logType: "temperature",
                 loggedBy: userId,
+                loggedAt,
                 temperature: temp,
                 memo: memo || null,
               })
@@ -193,6 +232,7 @@ export function BabyLogFormSheet({
             result = await recordGrowth({
               weightG: w,
               heightCm: h,
+              loggedAt,
               memo: memo || undefined,
             })
             buildLog = (id) =>
@@ -200,6 +240,7 @@ export function BabyLogFormSheet({
                 id,
                 logType: "growth",
                 loggedBy: userId,
+                loggedAt,
                 weightG: w,
                 heightCm: h,
                 memo: memo || null,
@@ -211,12 +252,13 @@ export function BabyLogFormSheet({
               toast.error("メモを入力してください")
               return
             }
-            result = await recordMemoAction({ memo: memo.trim() })
+            result = await recordMemoAction({ memo: memo.trim(), loggedAt })
             buildLog = (id) =>
               buildOptimisticLog({
                 id,
                 logType: "memo",
                 loggedBy: userId,
+                loggedAt,
                 memo: memo.trim(),
               })
             break
@@ -246,7 +288,27 @@ export function BabyLogFormSheet({
 
     startTransition(async () => {
       try {
-        const updates: Parameters<typeof updateLog>[1] = { memo: memo || null }
+        const updates: Parameters<typeof updateLog>[1] = {
+          memo: memo || null,
+        }
+
+        // 時刻を触った時のみ loggedAt を送る。量やメモだけの編集で既存 logged_at の秒が
+        // HH:mm 丸めで無言に失われるのを防ぐ（updateLog は未指定なら logged_at を変更しない）。
+        // seed と同値（変更→元に戻した場合含む）なら送らず、時刻検証もスキップしてよい
+        // — 既存記録の時刻はそのまま妥当。sleep の logged_at ≤ ended_at 整合はサーバ Action 側で拒否する。
+        if (timeHm !== seedTimeHm) {
+          const loggedAt = jstDateTimeToIso(logDate, timeHm)
+          if (!loggedAt) {
+            toast.error("時刻を入力してください")
+            return
+          }
+          const timeError = validateLogTime(loggedAt)
+          if (timeError) {
+            toast.error(timeError)
+            return
+          }
+          updates.loggedAt = loggedAt
+        }
 
         if (log.log_type === "feeding") {
           updates.feedingType = feedingType
@@ -332,6 +394,19 @@ export function BabyLogFormSheet({
         </SheetHeader>
 
         <div className="flex flex-col gap-4 overflow-y-auto px-4 pb-2">
+          {/* 記録時刻（全タイプ共通・HH:mm/JST）。日付はそのログの日付を維持する */}
+          <div className="space-y-1.5">
+            <Label htmlFor="log-time">時刻</Label>
+            <Input
+              id="log-time"
+              type="time"
+              value={timeHm}
+              onChange={(e) => setTimeHm(e.target.value)}
+              disabled={isPending}
+              className="min-h-11 rounded-lg"
+            />
+          </div>
+
           {/* Feeding fields */}
           {logType === "feeding" && (
             <>

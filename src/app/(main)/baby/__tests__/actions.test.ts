@@ -20,6 +20,10 @@ import {
   recordMemo,
 } from "../actions"
 import { logSupabaseError } from "@/lib/supabase/log-error"
+import {
+  FUTURE_LOG_TIME_ERROR,
+  SLEEP_START_AFTER_END_ERROR,
+} from "@/lib/domain/baby-log-time"
 
 const mockedLog = vi.mocked(logSupabaseError)
 const HOUSEHOLD = "house-1"
@@ -42,6 +46,32 @@ function makeUpdateSupabase(updateResult: { data: unknown; error: unknown }) {
   const update = vi.fn(() => ({ eq: eqId }))
   const from = vi.fn(() => ({ update }))
   return { client: { from } }
+}
+
+/**
+ * updateLog の loggedAt 指定経路を模した fake client。
+ * 先に log_type/ended_at を pre-fetch（select().eq().eq().maybeSingle()）してから
+ * update().eq().eq().select("id").single() する。両方 supabase.from("baby_logs") 起点。
+ */
+function makeUpdateSupabaseWithFetch(
+  fetchResult: { data: unknown; error: unknown },
+  updateResult: { data: unknown; error: unknown },
+) {
+  // pre-fetch: from().select("log_type, ended_at").eq().eq().maybeSingle()
+  const maybeSingle = vi.fn().mockResolvedValue(fetchResult)
+  const fetchEq2 = vi.fn(() => ({ maybeSingle }))
+  const fetchEq1 = vi.fn(() => ({ eq: fetchEq2 }))
+  const fetchSelect = vi.fn(() => ({ eq: fetchEq1 }))
+
+  // update: from().update().eq().eq().select("id").single()
+  const single = vi.fn().mockResolvedValue(updateResult)
+  const updSelect = vi.fn(() => ({ single }))
+  const updEq2 = vi.fn(() => ({ select: updSelect }))
+  const updEq1 = vi.fn(() => ({ eq: updEq2 }))
+  const update = vi.fn(() => ({ eq: updEq1 }))
+
+  const from = vi.fn(() => ({ select: fetchSelect, update }))
+  return { client: { from }, update, fetchSelect }
 }
 
 /** delete().eq().eq().select("id") を模した fake client（.single() なし、data は配列）。 */
@@ -161,6 +191,142 @@ describe("startSleep / record{Temperature,Growth,Memo} が作成 log id を返�
     const result = await recordMemo({ memo: "" })
     expect(result.error).toBeTruthy()
     expect(result.id).toBeNull()
+  })
+})
+
+describe("record* の loggedAt（記録時刻の指定・タスクB）", () => {
+  it("recordFeeding: loggedAt 指定時は logged_at を insert する", async () => {
+    const { client, insert } = makeSupabase({
+      data: { id: "log-1" },
+      error: null,
+    })
+    setContext(client)
+    const result = await recordFeeding({
+      feedingType: "bottle",
+      loggedAt: "2026-07-09T11:00:00.000Z",
+    })
+    expect(result.error).toBeNull()
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ logged_at: "2026-07-09T11:00:00.000Z" }),
+    )
+  })
+
+  it("recordFeeding: loggedAt 未指定時は logged_at を insert しない（DB now 既定に委ねる）", async () => {
+    const { client, insert } = makeSupabase({
+      data: { id: "log-2" },
+      error: null,
+    })
+    setContext(client)
+    await recordFeeding({ feedingType: "bottle" })
+    const payload = (insert.mock.calls[0] as unknown as [
+      Record<string, unknown>,
+    ])[0]
+    expect("logged_at" in payload).toBe(false)
+  })
+
+  it("recordFeeding: 未来の loggedAt は DB 到達前に拒否（+5 分許容超）", async () => {
+    const { client, insert } = makeSupabase({
+      data: { id: "x" },
+      error: null,
+    })
+    setContext(client)
+    const result = await recordFeeding({
+      feedingType: "bottle",
+      loggedAt: "2099-01-01T00:00:00.000Z",
+    })
+    expect(result.error).toBe(FUTURE_LOG_TIME_ERROR)
+    expect(result.id).toBeNull()
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("recordMemo: loggedAt 指定時は logged_at を insert する", async () => {
+    const { client, insert } = makeSupabase({
+      data: { id: "memo-1" },
+      error: null,
+    })
+    setContext(client)
+    const result = await recordMemo({
+      memo: "hi",
+      loggedAt: "2026-07-09T11:00:00.000Z",
+    })
+    expect(result.error).toBeNull()
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ logged_at: "2026-07-09T11:00:00.000Z" }),
+    )
+  })
+})
+
+describe("updateLog の記録時刻検証（タスクB）", () => {
+  it("未来の loggedAt は DB 到達前に拒否（update 未実行）", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      { data: null, error: null },
+      { data: null, error: null },
+    )
+    setContext(client)
+    const result = await updateLog("log-1", {
+      loggedAt: "2099-01-01T00:00:00.000Z",
+    })
+    expect(result.error).toBe(FUTURE_LOG_TIME_ERROR)
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it("sleep で logged_at > ended_at は拒否し update しない（負 overlap 防止）", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      {
+        data: { log_type: "sleep", ended_at: "2026-07-09T11:00:00Z" },
+        error: null,
+      },
+      { data: { id: "sleep-1" }, error: null },
+    )
+    setContext(client)
+    const result = await updateLog("sleep-1", {
+      loggedAt: "2026-07-09T12:00:00.000Z",
+    })
+    expect(result.error).toBe(SLEEP_START_AFTER_END_ERROR)
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it("sleep で logged_at ≤ ended_at は update まで進む", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      {
+        data: { log_type: "sleep", ended_at: "2026-07-09T12:00:00Z" },
+        error: null,
+      },
+      { data: { id: "sleep-1" }, error: null },
+    )
+    setContext(client)
+    const result = await updateLog("sleep-1", {
+      loggedAt: "2026-07-09T10:00:00.000Z",
+    })
+    expect(result).toEqual({ error: null })
+    expect(update).toHaveBeenCalled()
+  })
+
+  it("非 sleep（feeding）は order 検証をスキップして update まで進む", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      { data: { log_type: "feeding", ended_at: null }, error: null },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    const result = await updateLog("log-1", {
+      loggedAt: "2026-07-09T10:00:00.000Z",
+      amountMl: 80,
+    })
+    expect(result).toEqual({ error: null })
+    expect(update).toHaveBeenCalled()
+  })
+
+  it("pre-fetch が 0 行（別世帯/不在）なら update せず失敗を返す", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      { data: null, error: null },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    const result = await updateLog("missing", {
+      loggedAt: "2026-07-09T10:00:00.000Z",
+    })
+    expect(result.error).toBeTruthy()
+    expect(update).not.toHaveBeenCalled()
   })
 })
 

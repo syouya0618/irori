@@ -157,3 +157,38 @@ export function toJstDateString(iso: string): string {
 export function jstWallClockToIso(dateYmd: string, timeHm: string): string {
   return new Date(`${dateYmd}T${timeHm}:00+09:00`).toISOString()
 }
+
+// <input type="time"> の value 用フォーマッター（hourCycle="h23" を明示）。
+// formatTimeJst(ja-JP) は hourCycle 未指定で ICU 既定に依存し、環境により深夜 0 時を
+// "24:00" と出しうる。<input type="time"> は "24:00" を不正値として空表示するため、
+// seed 専用に h23 を固定し 00:00〜23:59 を保証する。
+const JST_TIME_INPUT_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Tokyo",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+})
+
+/**
+ * ISO 8601 から <input type="time"> 用の JST "HH:mm"(h23 固定)を返す。
+ * 深夜 0 時を "24:00" にせず "00:00"〜"23:59" の範囲を保証する（seed 専用）。
+ */
+export function formatJstTimeInput(iso: string): string {
+  return JST_TIME_INPUT_FORMATTER.format(new Date(iso))
+}
+
+/**
+ * ISO 8601 時刻が現在より許容誤差(分)を超えて未来かを返す。
+ * 端末時計の微小なズレを許すため toleranceMinutes(既定 5 分)まで未来を許容する。
+ * epoch ms 比較のため TZ 非依存。不正 ISO(NaN)は false（未来ではない）を返す
+ * — 形式検証は呼び出し側の責務。記録時刻が未来にならないことの検証に使う。
+ */
+export function isFutureIso(
+  iso: string,
+  toleranceMinutes = 5,
+  now: Date = new Date(),
+): boolean {
+  const t = new Date(iso).getTime()
+  if (Number.isNaN(t)) return false
+  return t > now.getTime() + toleranceMinutes * 60_000
+}
