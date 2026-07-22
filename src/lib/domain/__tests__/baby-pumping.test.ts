@@ -23,6 +23,7 @@ function mkLog(overrides: Partial<BabyLogData>): BabyLogData {
     weight_g: null,
     height_cm: null,
     duration_min: null,
+    duration_sec: null,
     memo: null,
     created_at: "2026-07-21T10:00:00+09:00",
     ...overrides,
