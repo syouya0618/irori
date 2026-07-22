@@ -399,3 +399,62 @@ describe("deleteLog が 0 行削除を成功と偽らない", () => {
     )
   })
 })
+
+describe("updateLog の授乳時間（durationSec）更新", () => {
+  function makeCapturedUpdate() {
+    const single = vi
+      .fn()
+      .mockResolvedValue({ data: { id: "log-1" }, error: null })
+    const select = vi.fn(() => ({ single }))
+    const eq2 = vi.fn(() => ({ select }))
+    const eq1 = vi.fn(() => ({ eq: eq2 }))
+    const update = vi.fn((_payload: Record<string, unknown>) => ({ eq: eq1 }))
+    const from = vi.fn(() => ({ update }))
+    return { client: { from }, update }
+  }
+
+  it("durationSec 指定で duration_sec と導出 duration_min の両列を1経路で書く", async () => {
+    const { client, update } = makeCapturedUpdate()
+    setContext(client)
+
+    const result = await updateLog("log-1", { durationSec: 330 })
+    expect(result.error).toBeNull()
+    // 330 秒 → duration_min = round(330/60) = 6（recordFeeding の導出と同一規約）
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ duration_sec: 330, duration_min: 6 }),
+    )
+  })
+
+  it("durationSec: null は両列を null に戻す（時間なしの授乳へ）", async () => {
+    const { client, update } = makeCapturedUpdate()
+    setContext(client)
+
+    const result = await updateLog("log-1", { durationSec: null })
+    expect(result.error).toBeNull()
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ duration_sec: null, duration_min: null }),
+    )
+  })
+
+  it("durationSec 未指定なら duration 列に触れない", async () => {
+    const { client, update } = makeCapturedUpdate()
+    setContext(client)
+
+    const result = await updateLog("log-1", { memo: "hi" })
+    expect(result.error).toBeNull()
+    const payload = update.mock.calls[0][0] as Record<string, unknown>
+    expect(payload).not.toHaveProperty("duration_sec")
+    expect(payload).not.toHaveProperty("duration_min")
+  })
+
+  it.each([[0], [10801], [5.5], [NaN]])(
+    "範囲外・非整数の durationSec(%s) は auth 前に拒否し DB へ到達しない",
+    async (bad) => {
+      const { client } = makeCapturedUpdate()
+      setContext(client)
+      const result = await updateLog("log-1", { durationSec: bad as number })
+      expect(result.error).toBe("授乳時間は1秒〜180分の範囲で指定してください")
+      expect(client.from).not.toHaveBeenCalled()
+    },
+  )
+})

@@ -39,6 +39,10 @@ import {
   validateLogTime,
 } from "@/lib/domain/baby-log-time"
 import { segmentCn } from "@/lib/utils/segment-cn"
+import {
+  allowsDuration,
+  parseFeedingDurationInput,
+} from "@/lib/domain/feeding"
 import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
 import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
 import type { BabyLogData } from "@/lib/types/baby"
@@ -127,6 +131,19 @@ export function BabyLogFormSheet({
     log?.feeding_type ?? createFeedingType ?? "bottle",
   )
   const [amountMl, setAmountMl] = useState(log?.amount_ml?.toString() ?? "")
+  // 授乳時間の編集入力（分・秒）。seed は duration_sec を優先し、#140 以前の旧行
+  // （duration_min のみ・sec null）は min*60 で補完する — さもなくば旧行の編集保存で
+  // 時間が silent に消える。dirty 判定（seed と同値なら durationSec を送らない）は
+  // 時刻編集（seedTimeHm）と同じ規約。
+  const seededDurationSec =
+    log?.duration_sec ??
+    (log?.duration_min != null ? log.duration_min * 60 : null)
+  const [durMinInput, setDurMinInput] = useState(() =>
+    seededDurationSec != null ? String(Math.floor(seededDurationSec / 60)) : "",
+  )
+  const [durSecInput, setDurSecInput] = useState(() =>
+    seededDurationSec != null ? String(seededDurationSec % 60) : "",
+  )
   const [diaperType, setDiaperType] = useState<DiaperType>(log?.diaper_type ?? "pee")
   const [temperature, setTemperature] = useState(log?.temperature?.toString() ?? "")
   const [weightG, setWeightG] = useState(log?.weight_g?.toString() ?? "")
@@ -316,6 +333,27 @@ export function BabyLogFormSheet({
           updates.amountMl = allowsAmount(feedingType)
             ? parseAmountMl(amountMl)
             : null
+          if (allowsDuration(feedingType)) {
+            // dirty 時のみ送る（未変更の保存で旧行の時間を無言に書き換えない）。
+            const seedMin =
+              seededDurationSec != null
+                ? String(Math.floor(seededDurationSec / 60))
+                : ""
+            const seedSec =
+              seededDurationSec != null ? String(seededDurationSec % 60) : ""
+            if (durMinInput !== seedMin || durSecInput !== seedSec) {
+              const parsed = parseFeedingDurationInput(durMinInput, durSecInput)
+              if (parsed.error) {
+                toast.error(parsed.error)
+                return
+              }
+              updates.durationSec = parsed.value
+            }
+          } else if (seededDurationSec != null) {
+            // 母乳以外へ種類変更: 時間の意味が無くなるため明示クリア
+            // （amount の null 化と同じ規約。duration_min も action 側で連動 null）。
+            updates.durationSec = null
+          }
         }
         if (log.log_type === "diaper") {
           updates.diaperType = diaperType
@@ -426,6 +464,46 @@ export function BabyLogFormSheet({
                   ))}
                 </div>
               </div>
+
+              {/* 授乳時間の編集（母乳のみ・編集モードのみ）。タイマー記録の
+                  「何分間行ったか」をあとから直せるようにする。 */}
+              {log && allowsDuration(feedingType) && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="duration-min">時間（分・秒）</Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="duration-min"
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      max={180}
+                      aria-label="時間（分）"
+                      value={durMinInput}
+                      onChange={(e) => setDurMinInput(e.target.value)}
+                      disabled={isPending}
+                      className="min-h-11 rounded-lg"
+                    />
+                    <span className="shrink-0 text-sm text-muted-foreground">
+                      分
+                    </span>
+                    <Input
+                      id="duration-sec"
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      max={59}
+                      aria-label="時間（秒）"
+                      value={durSecInput}
+                      onChange={(e) => setDurSecInput(e.target.value)}
+                      disabled={isPending}
+                      className="min-h-11 rounded-lg"
+                    />
+                    <span className="shrink-0 text-sm text-muted-foreground">
+                      秒
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {allowsAmount(feedingType) && (
                 <div className="space-y-1.5">
