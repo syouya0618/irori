@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Loader2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
@@ -547,14 +548,16 @@ export function BabyLogFormSheet({
           {/* Memo (all types) */}
           <div className="space-y-1.5">
             <Label htmlFor="memo">メモ</Label>
-            <Input
+            {/* 複数行対応: 改行を含む日記メモを保存できるよう textarea を使う。
+                日記ビューは whitespace-pre-wrap で改行を反映する。 */}
+            <Textarea
               id="memo"
-              type="text"
               placeholder={logType === "memo" ? "メモを入力" : "任意のメモ"}
               value={memo}
               onChange={(e) => setMemo(e.target.value)}
               disabled={isPending}
               autoComplete="off"
+              rows={logType === "memo" ? 4 : 2}
               className="min-h-11 rounded-lg"
             />
           </div>

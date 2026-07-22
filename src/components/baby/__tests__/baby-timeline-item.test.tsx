@@ -73,3 +73,51 @@ describe("BabyTimelineItem の授乳時間表示（秒精度）", () => {
     expect(screen.getByText(/5分/)).toBeInTheDocument()
   })
 })
+
+describe("BabyTimelineItem のメモ表示（複数行・改行反映）", () => {
+  it("メモログは全文を whitespace-pre-wrap で表示し改行を保持する", () => {
+    render(
+      <BabyTimelineItem
+        log={feedingLog({
+          log_type: "memo",
+          feeding_type: null,
+          memo: "1行目\n2行目",
+        })}
+        onEdit={vi.fn()}
+      />,
+    )
+    const el = screen.getByText(/1行目/)
+    expect(el).toHaveClass("whitespace-pre-wrap")
+    expect(el.textContent).toBe("1行目\n2行目")
+  })
+
+  it("メモ本文が空のメモログは「メモ」を表示する", () => {
+    render(
+      <BabyTimelineItem
+        log={feedingLog({ log_type: "memo", feeding_type: null, memo: null })}
+        onEdit={vi.fn()}
+      />,
+    )
+    expect(screen.getByText("メモ")).toBeInTheDocument()
+  })
+
+  it("授乳など他タイプのメモ注記は要約 + 複数行注記（改行反映）で密度を保つ（回帰）", () => {
+    render(
+      <BabyTimelineItem
+        log={feedingLog({
+          feeding_type: "bottle",
+          amount_ml: 120,
+          memo: "よく飲んだ\nご機嫌",
+        })}
+        onEdit={vi.fn()}
+      />,
+    )
+    // 要約行（量）は従来どおり残る
+    expect(screen.getByText(/120ml/)).toBeInTheDocument()
+    // 注記は複数行対応（改行反映・line-clamp-2）
+    const note = screen.getByText(/よく飲んだ/)
+    expect(note).toHaveClass("whitespace-pre-wrap")
+    expect(note).toHaveClass("line-clamp-2")
+    expect(note.textContent).toBe("よく飲んだ\nご機嫌")
+  })
+})
