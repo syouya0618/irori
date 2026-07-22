@@ -310,7 +310,9 @@ export function BabyDashboard({
             // 時刻付き（"...T00:00:00"）で来ても guard が silent 全滅しないよう
             // 先頭10文字で比較する（mock では検出不能な wire フォーマット境界の保険。
             // DATE 列ゆえ toJstDateString の timestamptz 変換は使わない）。
-            if (next.diary_date.slice(0, 10) !== selectedDateRef.current) return
+            // `?.` は diary_date 欠落の payload（本番の channel 分離下では届かないが
+            // 防御）を安全に no-op にする。
+            if (next.diary_date?.slice(0, 10) !== selectedDateRef.current) return
             setDiary(next)
           }
           // DELETE は配信されない（上記）。refetch 経路で回収する。

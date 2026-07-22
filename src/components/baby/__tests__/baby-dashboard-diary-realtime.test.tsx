@@ -35,6 +35,9 @@ const mockState = vi.hoisted(() => ({
   /** 購読 table 名 → その callback 群。per-table 配信を再現する */
   listenersByTable: new Map<string, Array<(payload: unknown) => void>>(),
   removeChannelMock: undefined as unknown as ViFn,
+  /** visibilitychange refetch の `.from(baby_diaries)...maybeSingle()` が返す結果。
+   *  テスト側が仕込んでから visibilitychange を発火させる。 */
+  diaryFetchResult: { data: null as unknown, error: null as unknown },
 }))
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
@@ -61,15 +64,15 @@ vi.mock("@/lib/supabase/client", async () => {
         },
         subscribe: () => channel,
       }
-      // visibilitychange refetch 等の from() は本テストでは発火しない（visibility
-      // イベントも date-nav も起こさない）。呼ばれても壊れない安全な chainable を返す。
+      // visibilitychange refetch の `.from("baby_diaries").select().eq().eq()
+      // .maybeSingle().then()` chain。mockState.diaryFetchResult を resolve する。
       const makeQuery = (): Record<string, unknown> => {
         const q: Record<string, unknown> = {
           select: () => q,
           eq: () => q,
           maybeSingle: () => q,
-          then: (onF: (v: { data: null; error: null }) => unknown) =>
-            Promise.resolve({ data: null, error: null }).then(onF),
+          then: (onF: (v: { data: unknown; error: unknown }) => unknown) =>
+            Promise.resolve(mockState.diaryFetchResult).then(onF),
         }
         return q
       }
@@ -152,6 +155,12 @@ beforeEach(() => {
   cleanup()
   mockState.listenersByTable.clear()
   mockState.removeChannelMock?.mockClear()
+  mockState.diaryFetchResult = { data: null, error: null }
+  // jsdom の可視状態を "visible" に固定（visibilitychange ハンドラの guard 用）。
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => "visible",
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -249,6 +258,37 @@ describe("BabyDashboard / baby_diaries Realtime 購読 (issue #155)", () => {
     expect(screen.getByText("時刻付き日付でも反映")).toBeInTheDocument()
   })
 
+  it("diary_date を持たない payload が届いても throw せず no-op（防御・?.slice）", () => {
+    // 本番は channel 分離で baby_diaries イベントのみ届くが、共有 listener 経路
+    // （他ダッシュボードテストの mock）で非 diary payload が来ても crash しないこと。
+    render(
+      <BabyDashboard
+        {...defaultProps({
+          initialDiary: makeDiary({ diary_date: TODAY, content: "壊れない本文" }),
+        })}
+      />,
+    )
+    expect(screen.getByText("壊れない本文")).toBeInTheDocument()
+
+    act(() => {
+      for (const cb of mockState.listenersByTable.get("baby_diaries") ?? []) {
+        // diary_date を欠く INSERT payload（例: baby_logs 由来の混入）。
+        cb({
+          eventType: "INSERT",
+          schema: "public",
+          table: "baby_diaries",
+          commit_timestamp: "2026-07-18T00:00:00Z",
+          errors: [],
+          new: { id: "x", logged_at: `${TODAY}T01:00:00+09:00` },
+          old: {},
+        })
+      }
+    })
+
+    // throw せず、本文も変わらない。
+    expect(screen.getByText("壊れない本文")).toBeInTheDocument()
+  })
+
   it("DELETE は購読側で扱わない（本文は保持され、refetch 経路に委ねる）", () => {
     render(
       <BabyDashboard
@@ -266,5 +306,69 @@ describe("BabyDashboard / baby_diaries Realtime 購読 (issue #155)", () => {
     // DELETE は household filter 付き購読では配信されない前提。仮に届いても
     // 購読側は無視し（本文保持）、実際の削除反映は date-nav / visibility refetch が担う。
     expect(screen.getByText("残る本文")).toBeInTheDocument()
+  })
+})
+
+describe("BabyDashboard / 日記の visibilitychange refetch (DELETE 回収・#155)", () => {
+  /** visibilitychange を発火し、refetch の microtask を flush する */
+  async function fireVisibilityRefetch() {
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"))
+      // .from()...maybeSingle().then(setDiary) の microtask を流し切る
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+  }
+
+  it("タブ復帰で選択日の日記を取り直し、配偶者の空保存(DELETE)を回収する", async () => {
+    // 配偶者が日記を空にして保存 = 行 DELETE（購読では届かない）→ refetch は null。
+    mockState.diaryFetchResult = { data: null, error: null }
+    render(
+      <BabyDashboard
+        {...defaultProps({
+          initialDiary: makeDiary({ diary_date: TODAY, content: "消える本文" }),
+        })}
+      />,
+    )
+    expect(screen.getByText("消える本文")).toBeInTheDocument()
+
+    await fireVisibilityRefetch()
+
+    expect(screen.queryByText("消える本文")).not.toBeInTheDocument()
+    expect(screen.getByText("日記を書く")).toBeInTheDocument()
+  })
+
+  it("タブ復帰で新規/更新された日記を取り直して表示する", async () => {
+    mockState.diaryFetchResult = {
+      data: makeDiary({ diary_date: TODAY, content: "復帰後に取得した本文" }),
+      error: null,
+    }
+    render(<BabyDashboard {...defaultProps({ initialDiary: null })} />)
+    expect(screen.getByText("日記を書く")).toBeInTheDocument()
+
+    await fireVisibilityRefetch()
+
+    expect(screen.getByText("復帰後に取得した本文")).toBeInTheDocument()
+  })
+
+  it("refetch が error のときは現在の本文を保持する（同一日ゆえ fail-to-empty しない）", async () => {
+    mockState.diaryFetchResult = {
+      data: null,
+      error: { message: "boom", code: "500" },
+    }
+    render(
+      <BabyDashboard
+        {...defaultProps({
+          initialDiary: makeDiary({ diary_date: TODAY, content: "保持される本文" }),
+        })}
+      />,
+    )
+    expect(screen.getByText("保持される本文")).toBeInTheDocument()
+
+    await fireVisibilityRefetch()
+
+    // date-nav の cross-date fail-to-empty と違い、同一日の取り直し失敗では
+    // 現在の本文を消さない。
+    expect(screen.getByText("保持される本文")).toBeInTheDocument()
   })
 })
