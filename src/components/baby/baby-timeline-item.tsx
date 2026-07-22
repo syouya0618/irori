@@ -86,9 +86,22 @@ export function BabyTimelineItem({ log, onEdit }: BabyTimelineItemProps) {
       </div>
 
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium">{getLogSummary(log)}</p>
-        {log.memo && (
-          <p className="truncate text-xs text-muted-foreground">{log.memo}</p>
+        {log.log_type === "memo" ? (
+          // メモは全文をタイムラインでも読めるよう複数行で頭出し（改行を反映）。
+          // 密度維持のため line-clamp-3 で切り、全文は編集シート/日記ビューで読む。
+          <p className="text-sm whitespace-pre-wrap line-clamp-3">
+            {log.memo || "メモ"}
+          </p>
+        ) : (
+          <>
+            <p className="text-sm font-medium">{getLogSummary(log)}</p>
+            {log.memo && (
+              // メモ注記は複数行入力に対応（改行反映・2行まで頭出し）。
+              <p className="line-clamp-2 whitespace-pre-wrap text-xs text-muted-foreground">
+                {log.memo}
+              </p>
+            )}
+          </>
         )}
       </div>
 

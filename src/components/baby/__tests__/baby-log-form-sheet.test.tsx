@@ -324,6 +324,34 @@ describe("BabyLogFormSheet の記録時刻の編集・指定（タスクB）", (
   })
 })
 
+describe("BabyLogFormSheet のメモ複数行入力（textarea）", () => {
+  it("メモ欄は textarea で、改行を含む本文をそのまま recordMemo へ渡す", async () => {
+    mockedRecordMemo.mockResolvedValue({ error: null, id: "memo-1" })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={null}
+        createLogType="memo"
+      />,
+    )
+
+    const memoField = screen.getByLabelText("メモ")
+    // Input(text) ではなく Textarea に置き換わっている
+    expect(memoField.tagName).toBe("TEXTAREA")
+
+    fireEvent.change(memoField, { target: { value: "1行目\n2行目\n3行目" } })
+    fireEvent.click(screen.getByRole("button", { name: "記録する" }))
+
+    await waitFor(() => expect(mockedRecordMemo).toHaveBeenCalled())
+    // 時刻指定（#151）との合流後、作成時は loggedAt が併送されるため memo のみの厳密一致は見ない
+    expect(mockedRecordMemo).toHaveBeenCalledWith(
+      expect.objectContaining({ memo: "1行目\n2行目\n3行目" }),
+    )
+  })
+})
+
 // B-07: startTransition 内の Server Action が reject（通信断）すると error boundary へ
 // bubble する（error-handling.md:375）。作成/更新/削除の 3 ハンドラが try/catch で
 // 握り、圏外トーストへ倒すことを固定する。toast.error(OFFLINE_MESSAGE) が呼ばれる
