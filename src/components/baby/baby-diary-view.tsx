@@ -1,60 +1,59 @@
 "use client"
 
-import { useState, useEffect, useRef, useMemo } from "react"
+import { useState, useEffect, useRef } from "react"
 import { BookOpen, Loader2, PenLine } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { logSupabaseError } from "@/lib/supabase/log-error"
-import { formatTimeJst } from "@/lib/utils/date-jst"
-import { groupMemoLogsByDate, DIARY_PAGE_SIZE } from "@/lib/domain/baby-diary"
-import { BabyLogFormSheet } from "./baby-log-form-sheet"
-import type { BabyLogData } from "@/lib/types/baby"
+import { todayJstString } from "@/lib/utils/date-jst"
+import {
+  DIARY_PAGE_SIZE,
+  formatDiaryDateHeadingFromYmd,
+} from "@/lib/domain/baby-diary"
+import { BabyDiaryEditSheet } from "./baby-diary-edit-sheet"
+import type { BabyDiaryData } from "@/lib/types/baby"
 
-// 日記一覧で取得するカラム（BabyLogData と対応・page.tsx と一致させる）。
-const BABY_LOG_COLUMNS =
-  "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at"
+// 日記一覧で取得するカラム（BabyDiaryData と対応・diary/page.tsx と一致させる）。
+const BABY_DIARY_COLUMNS = "id, diary_date, content, updated_at"
 
 interface BabyDiaryViewProps {
-  initialLogs: BabyLogData[]
+  initialDiaries: BabyDiaryData[]
   householdId: string
-  /** 記録者（logged_by）。日記の新規作成シート（BabyLogFormSheet）に渡す。 */
-  userId: string
 }
 
 /**
- * メモログを日記として JST 日付降順にグルーピングし全文表示する一覧ビュー。
+ * 育児日記（1日1本）の一覧ビュー。日付降順に全文表示し、タップでその日の
+ * 日記を編集できる。「今日の日記を書く」は当日分の作成/編集への近道。
  *
  * ページネーション掟（CLAUDE.md）:
- * - order は logged_at 降順 + id を最終ソートキー（一意）で全順序を決定化する。
- * - オフセットは「受領済み件数（logs.length）」を用いる。サーバの max_rows で
- *   1ページが要求件数未満に切り詰められても、次ページが受領済みの直後から続くため
- *   行を無音で飛ばさない（page*PAGE_SIZE 固定オフセットは飛ばす危険がある）。
- * - 終端は「返却0件」でのみ判定する。短いページ（0 < n < PAGE_SIZE）を終端扱いしない。
+ * - diary_date は UNIQUE(household_id, diary_date) ゆえ世帯内で一意 —
+ *   order("diary_date", desc) だけで全順序が決定化される（tiebreak 不要）。
+ * - オフセットは「受領済み件数（diaries.length）」を用いる。サーバの max_rows で
+ *   切り詰められても次ページが受領済みの直後から続き、行を無音で飛ばさない。
+ * - 終端は「返却0件」でのみ判定する。短いページを終端扱いしない。
  */
 export function BabyDiaryView({
-  initialLogs,
+  initialDiaries,
   householdId,
-  userId,
 }: BabyDiaryViewProps) {
-  const [logs, setLogs] = useState<BabyLogData[]>(initialLogs)
+  const [diaries, setDiaries] = useState<BabyDiaryData[]>(initialDiaries)
   // 「もっと見る」押下ごとに増やして追ページ取得の useEffect を発火させるトークン。
   const [loadToken, setLoadToken] = useState(0)
   const [loading, setLoading] = useState(false)
   const [reachedEnd, setReachedEnd] = useState(false)
-  // 「日記を書く」シート（memo 作成モードの BabyLogFormSheet）の開閉。
-  // formKey は開くたびに増やして再マウントし、シートの全 state（本文・時刻）を
-  // 初期化式から再構築する（dashboard の formKey 流儀を踏襲）。
-  const [composeOpen, setComposeOpen] = useState(false)
-  const [composeKey, setComposeKey] = useState(0)
+  // 編集シート（key 再マウントで state を初期化式から再構築する formKey 流儀）。
+  const [editOpen, setEditOpen] = useState(false)
+  const [editDate, setEditDate] = useState("")
+  const [editContent, setEditContent] = useState("")
+  const [editKey, setEditKey] = useState(0)
 
-  // 次に取得すべきオフセット = これまでに受領した件数。logs 更新に追従させる。
-  const offsetRef = useRef(initialLogs.length)
+  // 次に取得すべきオフセット = これまでに受領した件数。diaries 更新に追従させる。
+  const offsetRef = useRef(initialDiaries.length)
   useEffect(() => {
-    offsetRef.current = logs.length
-  }, [logs])
+    offsetRef.current = diaries.length
+  }, [diaries])
 
-  // 追ページ取得。loadToken の変化（= ボタン押下）でのみ発火し、初期マウント
-  // （loadToken === 0）では initialLogs で足りるため何もしない。
+  // 追ページ取得。loadToken の変化（= ボタン押下）でのみ発火する。
   useEffect(() => {
     if (loadToken === 0) return
 
@@ -63,12 +62,10 @@ export function BabyDiaryView({
     const offset = offsetRef.current
 
     supabase
-      .from("baby_logs")
-      .select(BABY_LOG_COLUMNS)
+      .from("baby_diaries")
+      .select(BABY_DIARY_COLUMNS)
       .eq("household_id", householdId)
-      .eq("log_type", "memo")
-      .order("logged_at", { ascending: false })
-      .order("id")
+      .order("diary_date", { ascending: false })
       .range(offset, offset + DIARY_PAGE_SIZE - 1)
       .abortSignal(abortController.signal)
       .then(({ data, error }) => {
@@ -89,9 +86,9 @@ export function BabyDiaryView({
           return
         }
         // id ベースの dedupe マージ（受領済み行を末尾に追記して降順を維持）。
-        setLogs((prev) => {
-          const seen = new Set(prev.map((l) => l.id))
-          const additions = data.filter((l) => !seen.has(l.id))
+        setDiaries((prev) => {
+          const seen = new Set(prev.map((d) => d.id))
+          const additions = data.filter((d) => !seen.has(d.id))
           return additions.length > 0 ? [...prev, ...additions] : prev
         })
       })
@@ -101,75 +98,81 @@ export function BabyDiaryView({
     }
   }, [loadToken, householdId])
 
-  const groups = useMemo(() => groupMemoLogsByDate(logs), [logs])
-
-  // 作成成功時の楽観 prepend（新規日記は「今」の記録ゆえ降順リストの先頭が正位置。
-  // Realtime echo との二重追加は id dedupe で防ぐ）。
-  const handleLogRecorded = (log: BabyLogData) => {
-    setLogs((prev) =>
-      prev.some((l) => l.id === log.id) ? prev : [log, ...prev],
-    )
+  const openEdit = (date: string, content: string) => {
+    setEditDate(date)
+    setEditContent(content)
+    setEditKey((k) => k + 1)
+    setEditOpen(true)
   }
 
-  const composeButton = (
+  // 保存/削除の反映: 1日1本ゆえ diary_date で置換・除去し、日付降順を保つ。
+  const handleSaved = (diary: BabyDiaryData | null) => {
+    setDiaries((prev) => {
+      if (!diary) return prev.filter((d) => d.diary_date !== editDate)
+      const without = prev.filter((d) => d.diary_date !== diary.diary_date)
+      return [...without, diary].sort((a, b) =>
+        b.diary_date.localeCompare(a.diary_date),
+      )
+    })
+  }
+
+  const today = todayJstString()
+  const todayDiary = diaries.find((d) => d.diary_date === today) ?? null
+
+  const writeButton = (
     <button
       type="button"
-      onClick={() => {
-        setComposeKey((k) => k + 1)
-        setComposeOpen(true)
-      }}
+      onClick={() => openEdit(today, todayDiary?.content ?? "")}
       className="glass flex min-h-11 items-center justify-center gap-2 rounded-2xl px-4 text-sm font-medium text-primary shadow-lg shadow-black/[0.04] transition-colors duration-200 hover:text-primary/80"
     >
       <PenLine size={16} />
-      日記を書く
+      今日の日記を書く
     </button>
   )
 
-  const composeSheet = (
-    <BabyLogFormSheet
-      key={composeKey}
-      open={composeOpen}
-      onOpenChange={setComposeOpen}
-      log={null}
-      createLogType="memo"
-      userId={userId}
-      onLogRecorded={handleLogRecorded}
+  const editSheet = (
+    <BabyDiaryEditSheet
+      key={editKey}
+      open={editOpen}
+      onOpenChange={setEditOpen}
+      diaryDate={editDate || today}
+      initialContent={editContent}
+      onSaved={handleSaved}
     />
   )
 
-  if (logs.length === 0) {
+  if (diaries.length === 0) {
     return (
       <div className="flex flex-col gap-4">
-        {composeButton}
+        {writeButton}
         <div className="flex flex-col items-center justify-center gap-3 py-16">
           <BookOpen size={48} className="text-muted-foreground/30" />
           <p className="text-sm text-muted-foreground">まだ日記がありません</p>
         </div>
-        {composeSheet}
+        {editSheet}
       </div>
     )
   }
 
   return (
     <div className="flex flex-col gap-4">
-      {composeButton}
-      {groups.map((group) => (
-        <section key={group.date} className="flex flex-col gap-1">
+      {writeButton}
+
+      {diaries.map((diary) => (
+        <section key={diary.id} className="flex flex-col gap-1">
           <h2 className="px-1 text-sm font-semibold text-muted-foreground">
-            {group.label}
+            {formatDiaryDateHeadingFromYmd(diary.diary_date)}
           </h2>
-          <div className="glass divide-y divide-border/30 rounded-2xl shadow-lg shadow-black/[0.04]">
-            {group.logs.map((log) => (
-              <div key={log.id} className="flex gap-3 p-3">
-                <span className="shrink-0 pt-0.5 font-mono text-xs text-muted-foreground">
-                  {formatTimeJst(log.logged_at)}
-                </span>
-                <p className="min-w-0 flex-1 text-sm break-words whitespace-pre-wrap">
-                  {log.memo}
-                </p>
-              </div>
-            ))}
-          </div>
+          <button
+            type="button"
+            onClick={() => openEdit(diary.diary_date, diary.content)}
+            aria-label={`${diary.diary_date} の日記を編集`}
+            className="glass block min-h-11 w-full rounded-2xl p-4 text-left shadow-lg shadow-black/[0.04] transition-colors duration-200 hover:bg-accent/30"
+          >
+            <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">
+              {diary.content}
+            </p>
+          </button>
         </section>
       ))}
 
@@ -196,7 +199,7 @@ export function BabyDiaryView({
         </button>
       )}
 
-      {composeSheet}
+      {editSheet}
     </div>
   )
 }

@@ -426,6 +426,30 @@ export interface Database {
         }
         Relationships: []
       }
+      baby_diaries: {
+        Row: {
+          id: string
+          household_id: string
+          /** JST の暦日 "YYYY-MM-DD"（1世帯・1日につき1本、UNIQUE） */
+          diary_date: string
+          content: string
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          household_id: string
+          diary_date: string
+          content: string
+          updated_by?: string | null
+        }
+        Update: {
+          content?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       calendar_events: {
         Row: {
           id: string

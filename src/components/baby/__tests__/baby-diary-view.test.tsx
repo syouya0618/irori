@@ -7,13 +7,14 @@ import {
   waitFor,
   act,
 } from "@testing-library/react"
-import type { BabyLogData } from "@/lib/types/baby"
+import { todayJstString } from "@/lib/utils/date-jst"
+import type { BabyDiaryData } from "@/lib/types/baby"
 
 // ---------------------------------------------------------------------------
 // Mocks（vi.hoisted で factory と test body で共有）
 // ---------------------------------------------------------------------------
 
-type FetchResult = { data: BabyLogData[] | null; error: unknown }
+type FetchResult = { data: BabyDiaryData[] | null; error: unknown }
 
 const mockState = vi.hoisted(() => ({
   results: [] as FetchResult[],
@@ -22,24 +23,26 @@ const mockState = vi.hoisted(() => ({
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
-// BabyLogFormSheet は自身のテストで網羅済みのため stub 化し、ここでは
-// 「日記を書く」導線の開閉と onLogRecorded の prepend 配線だけを検証する。
+// BabyDiaryEditSheet は自身のテストで網羅する前提の stub。ここでは
+// 「開閉・対象日・初期本文の受け渡し」と「onSaved の一覧反映」だけを検証する。
 const sheetState = vi.hoisted(() => ({
   props: null as null | {
     open: boolean
-    createLogType?: string | null
-    onLogRecorded?: (log: BabyLogData) => void
+    diaryDate: string
+    initialContent: string
+    onSaved: (diary: BabyDiaryData | null) => void
   },
 }))
 
-vi.mock("../baby-log-form-sheet", () => ({
-  BabyLogFormSheet: (props: {
+vi.mock("../baby-diary-edit-sheet", () => ({
+  BabyDiaryEditSheet: (props: {
     open: boolean
-    createLogType?: string | null
-    onLogRecorded?: (log: BabyLogData) => void
+    diaryDate: string
+    initialContent: string
+    onSaved: (diary: BabyDiaryData | null) => void
   }) => {
     sheetState.props = props
-    return props.open ? <div data-testid="compose-sheet" /> : null
+    return props.open ? <div data-testid="diary-edit-sheet" /> : null
   },
 }))
 
@@ -75,23 +78,12 @@ import { toast } from "sonner"
 // Fixtures
 // ---------------------------------------------------------------------------
 
-function memoLog(
-  overrides: Partial<BabyLogData> & Pick<BabyLogData, "id" | "logged_at">,
-): BabyLogData {
+function diaryRow(
+  overrides: Partial<BabyDiaryData> & Pick<BabyDiaryData, "id" | "diary_date">,
+): BabyDiaryData {
   return {
-    log_type: "memo",
-    logged_by: "user-1",
-    feeding_type: null,
-    amount_ml: null,
-    diaper_type: null,
-    ended_at: null,
-    temperature: null,
-    weight_g: null,
-    height_cm: null,
-    duration_min: null,
-    duration_sec: null,
-    memo: "メモ本文",
-    created_at: "2026-07-18T00:00:00+09:00",
+    content: "日記本文",
+    updated_at: "2026-07-22T12:00:00+09:00",
     ...overrides,
   }
 }
@@ -108,52 +100,107 @@ afterEach(cleanup)
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("BabyDiaryView の表示（グルーピング・全文・改行）", () => {
-  it("メモを JST 日付でグルーピングし日付見出しを出す", () => {
+describe("BabyDiaryView の表示（1日1本・日付降順・全文）", () => {
+  it("日付見出しと全文（改行保持）を降順で表示する", () => {
     render(
       <BabyDiaryView
         householdId="h1"
-        userId="user-1"
-        initialLogs={[
-          memoLog({ id: "a", logged_at: "2026-07-22T15:00:00+09:00", memo: "きょうのメモ" }),
-          memoLog({ id: "b", logged_at: "2026-07-21T09:00:00+09:00", memo: "きのうのメモ" }),
+        initialDiaries={[
+          diaryRow({
+            id: "a",
+            diary_date: "2026-07-22",
+            content: "1行目\n2行目",
+          }),
+          diaryRow({ id: "b", diary_date: "2026-07-21", content: "きのうの日記" }),
         ]}
       />,
     )
     expect(screen.getByText(/7月22日/)).toBeInTheDocument()
     expect(screen.getByText(/7月21日/)).toBeInTheDocument()
-    expect(screen.getByText("きょうのメモ")).toBeInTheDocument()
-    expect(screen.getByText("きのうのメモ")).toBeInTheDocument()
+    const body = screen.getByText(/1行目/)
+    expect(body).toHaveClass("whitespace-pre-wrap")
+    expect(body.textContent).toBe("1行目\n2行目")
+    // 降順: 22日の見出しが 21日より先に出る
+    const headings = screen.getAllByRole("heading", { level: 2 })
+    expect(headings[0].textContent).toContain("7月22日")
   })
 
-  it("メモ全文を whitespace-pre-wrap で表示し改行を保持する", () => {
-    render(
-      <BabyDiaryView
-        householdId="h1"
-        userId="user-1"
-        initialLogs={[
-          memoLog({
-            id: "a",
-            logged_at: "2026-07-22T10:00:00+09:00",
-            memo: "1行目\n2行目\n3行目",
-          }),
-        ]}
-      />,
-    )
-    const el = screen.getByText(/1行目/)
-    expect(el).toHaveClass("whitespace-pre-wrap")
-    // textContent は正規化されないため生の改行が保持されている
-    expect(el.textContent).toContain("\n")
-    expect(el.textContent).toBe("1行目\n2行目\n3行目")
-  })
-
-  it("メモが空なら空状態を出す", () => {
-    render(<BabyDiaryView householdId="h1"
-        userId="user-1" initialLogs={[]} />)
+  it("日記が空なら空状態と「今日の日記を書く」を出す", () => {
+    render(<BabyDiaryView householdId="h1" initialDiaries={[]} />)
     expect(screen.getByText("まだ日記がありません")).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: /今日の日記を書く/ }),
+    ).toBeInTheDocument()
     expect(
       screen.queryByRole("button", { name: "もっと見る" }),
     ).not.toBeInTheDocument()
+  })
+})
+
+describe("BabyDiaryView の編集導線", () => {
+  it("エントリのタップでその日の編集シートが本文 seed 付きで開く", () => {
+    render(
+      <BabyDiaryView
+        householdId="h1"
+        initialDiaries={[
+          diaryRow({ id: "a", diary_date: "2026-07-20", content: "過去の日記" }),
+        ]}
+      />,
+    )
+    fireEvent.click(
+      screen.getByRole("button", { name: "2026-07-20 の日記を編集" }),
+    )
+    expect(screen.getByTestId("diary-edit-sheet")).toBeInTheDocument()
+    expect(sheetState.props?.diaryDate).toBe("2026-07-20")
+    expect(sheetState.props?.initialContent).toBe("過去の日記")
+  })
+
+  it("「今日の日記を書く」は当日を対象に開き、既存の今日分があれば本文を seed する", () => {
+    const today = todayJstString()
+    render(
+      <BabyDiaryView
+        householdId="h1"
+        initialDiaries={[
+          diaryRow({ id: "t", diary_date: today, content: "今日のぶん" }),
+        ]}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: /今日の日記を書く/ }))
+    expect(sheetState.props?.diaryDate).toBe(today)
+    expect(sheetState.props?.initialContent).toBe("今日のぶん")
+  })
+
+  it("onSaved の保存で該当日を置換して降順を保ち、null で一覧から除く", () => {
+    render(
+      <BabyDiaryView
+        householdId="h1"
+        initialDiaries={[
+          diaryRow({ id: "a", diary_date: "2026-07-22", content: "before" }),
+          diaryRow({ id: "b", diary_date: "2026-07-20", content: "古い日記" }),
+        ]}
+      />,
+    )
+    // 22日を開いて置換保存
+    fireEvent.click(
+      screen.getByRole("button", { name: "2026-07-22 の日記を編集" }),
+    )
+    act(() => {
+      sheetState.props?.onSaved(
+        diaryRow({ id: "a", diary_date: "2026-07-22", content: "after" }),
+      )
+    })
+    expect(screen.getByText("after")).toBeInTheDocument()
+    expect(screen.queryByText("before")).not.toBeInTheDocument()
+
+    // 20日を開いて空保存（削除）
+    fireEvent.click(
+      screen.getByRole("button", { name: "2026-07-20 の日記を編集" }),
+    )
+    act(() => {
+      sheetState.props?.onSaved(null)
+    })
+    expect(screen.queryByText("古い日記")).not.toBeInTheDocument()
+    expect(screen.getByText("after")).toBeInTheDocument()
   })
 })
 
@@ -162,72 +209,32 @@ describe("BabyDiaryView のページネーション", () => {
     render(
       <BabyDiaryView
         householdId="h1"
-        userId="user-1"
-        initialLogs={[
-          memoLog({ id: "a", logged_at: "2026-07-22T15:00:00+09:00", memo: "1件目" }),
-          memoLog({ id: "b", logged_at: "2026-07-22T09:00:00+09:00", memo: "2件目" }),
+        initialDiaries={[
+          diaryRow({ id: "a", diary_date: "2026-07-22", content: "1件目" }),
+          diaryRow({ id: "b", diary_date: "2026-07-21", content: "2件目" }),
         ]}
       />,
     )
-    // 次ページに古い日付の 1 件
     mockState.results.push({
-      data: [
-        memoLog({ id: "c", logged_at: "2026-07-20T12:00:00+09:00", memo: "3件目" }),
-      ],
+      data: [diaryRow({ id: "c", diary_date: "2026-07-20", content: "3件目" })],
       error: null,
     })
 
     fireEvent.click(screen.getByRole("button", { name: "もっと見る" }))
 
-    // 追記された行が表示される
     expect(await screen.findByText("3件目")).toBeInTheDocument()
     // オフセット = 受領済み件数（2）。to = 2 + 50 - 1 = 51
     expect(mockState.rangeCalls[0]).toEqual([2, 51])
-    // 既存行は保持
     expect(screen.getByText("1件目")).toBeInTheDocument()
     expect(screen.getByText("2件目")).toBeInTheDocument()
-  })
-
-  it("2ページ目のオフセットは1ページ目受領後の総件数になる（短いページでも飛ばさない）", async () => {
-    render(
-      <BabyDiaryView
-        householdId="h1"
-        userId="user-1"
-        initialLogs={[
-          memoLog({ id: "a", logged_at: "2026-07-22T15:00:00+09:00", memo: "初回" }),
-        ]}
-      />,
-    )
-    // 1ページ目は 50 未満（短いページ）でも終端扱いしない
-    mockState.results.push({
-      data: [
-        memoLog({ id: "b", logged_at: "2026-07-21T12:00:00+09:00", memo: "2回目" }),
-      ],
-      error: null,
-    })
-    fireEvent.click(screen.getByRole("button", { name: "もっと見る" }))
-    expect(await screen.findByText("2回目")).toBeInTheDocument()
-    expect(mockState.rangeCalls[0]).toEqual([1, 50])
-
-    // 2ページ目: 受領済み総件数 = 2 がオフセット
-    mockState.results.push({
-      data: [
-        memoLog({ id: "c", logged_at: "2026-07-20T12:00:00+09:00", memo: "3回目" }),
-      ],
-      error: null,
-    })
-    fireEvent.click(screen.getByRole("button", { name: "もっと見る" }))
-    expect(await screen.findByText("3回目")).toBeInTheDocument()
-    expect(mockState.rangeCalls[1]).toEqual([2, 51])
   })
 
   it("返却0件で終端 → 「もっと見る」が消える", async () => {
     render(
       <BabyDiaryView
         householdId="h1"
-        userId="user-1"
-        initialLogs={[
-          memoLog({ id: "a", logged_at: "2026-07-22T15:00:00+09:00", memo: "唯一" }),
+        initialDiaries={[
+          diaryRow({ id: "a", diary_date: "2026-07-22", content: "唯一" }),
         ]}
       />,
     )
@@ -239,7 +246,6 @@ describe("BabyDiaryView のページネーション", () => {
         screen.queryByRole("button", { name: "もっと見る" }),
       ).not.toBeInTheDocument(),
     )
-    // 既存行は残る
     expect(screen.getByText("唯一")).toBeInTheDocument()
   })
 
@@ -247,71 +253,25 @@ describe("BabyDiaryView のページネーション", () => {
     render(
       <BabyDiaryView
         householdId="h1"
-        userId="user-1"
-        initialLogs={[
-          memoLog({ id: "a", logged_at: "2026-07-22T15:00:00+09:00", memo: "唯一" }),
+        initialDiaries={[
+          diaryRow({ id: "a", diary_date: "2026-07-22", content: "既存" }),
         ]}
       />,
     )
     mockState.results.push({
       data: null,
-      error: { message: "boom", code: "PGRST500", details: null, hint: null },
+      error: { message: "boom", code: "500" },
     })
     fireEvent.click(screen.getByRole("button", { name: "もっと見る" }))
 
     await waitFor(() =>
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith("読み込みに失敗しました"),
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        "読み込みに失敗しました",
+      ),
     )
-    // 終端ではないのでボタンは残る
     expect(
       screen.getByRole("button", { name: "もっと見る" }),
     ).toBeInTheDocument()
-  })
-})
-
-describe("BabyDiaryView の日記を書く（作成導線）", () => {
-  it("空状態でも「日記を書く」ボタンがあり、押すと memo 作成モードのシートが開く", () => {
-    render(
-      <BabyDiaryView householdId="h1" userId="user-1" initialLogs={[]} />,
-    )
-    expect(screen.queryByTestId("compose-sheet")).toBeNull()
-    fireEvent.click(screen.getByRole("button", { name: /日記を書く/ }))
-    expect(screen.getByTestId("compose-sheet")).toBeInTheDocument()
-    expect(sheetState.props?.createLogType).toBe("memo")
-  })
-
-  it("作成成功（onLogRecorded）で新しい日記が先頭グループに即時表示され、同一 id の重複 prepend はしない", () => {
-    render(
-      <BabyDiaryView
-        householdId="h1"
-        userId="user-1"
-        initialLogs={[
-          memoLog({
-            id: "old",
-            logged_at: "2026-07-20T12:00:00+09:00",
-            memo: "以前の日記",
-          }),
-        ]}
-      />,
-    )
-    fireEvent.click(screen.getByRole("button", { name: /日記を書く/ }))
-    const newLog = memoLog({
-      id: "new",
-      logged_at: "2026-07-22T20:00:00+09:00",
-      memo: "今日の日記",
-    })
-    act(() => {
-      sheetState.props?.onLogRecorded?.(newLog)
-    })
-    // 新規日記は最新（降順の先頭）グループとして表示される
-    const headings = screen.getAllByRole("heading", { level: 2 })
-    expect(headings[0].textContent).toContain("7月22日")
-    expect(screen.getByText("今日の日記")).toBeInTheDocument()
-    expect(screen.getByText("以前の日記")).toBeInTheDocument()
-    // Realtime echo 等で同じ行が再度届いても重複表示しない（id dedupe）
-    act(() => {
-      sheetState.props?.onLogRecorded?.(newLog)
-    })
-    expect(screen.getAllByText("今日の日記")).toHaveLength(1)
+    expect(screen.getByText("既存")).toBeInTheDocument()
   })
 })

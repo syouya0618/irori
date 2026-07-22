@@ -18,6 +18,7 @@ import {
   recordTemperature,
   recordGrowth,
   recordMemo,
+  upsertBabyDiary,
 } from "../actions"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import {
@@ -457,4 +458,90 @@ describe("updateLog の授乳時間（durationSec）更新", () => {
       expect(client.from).not.toHaveBeenCalled()
     },
   )
+})
+
+describe("upsertBabyDiary（育児日記・1日1本）", () => {
+  function makeUpsertSupabase(upsertResult: { data: unknown; error: unknown }) {
+    const single = vi.fn().mockResolvedValue(upsertResult)
+    const select = vi.fn(() => ({ single }))
+    const upsert = vi.fn<
+      (
+        row: Record<string, unknown>,
+        opts: Record<string, unknown>,
+      ) => { select: typeof select }
+    >(() => ({ select }))
+    const from = vi.fn(() => ({ upsert }))
+    return { client: { from }, upsert }
+  }
+
+  function makeDiaryDeleteSupabase(deleteResult: { error: unknown }) {
+    const eqDate = vi.fn().mockResolvedValue(deleteResult)
+    const eqHousehold = vi.fn(() => ({ eq: eqDate }))
+    const del = vi.fn(() => ({ eq: eqHousehold }))
+    const from = vi.fn(() => ({ delete: del }))
+    return { client: { from }, del }
+  }
+
+  it("本文ありは onConflict(household_id,diary_date) の upsert 1経路で保存し、trim 済み本文を書く", async () => {
+    const { client, upsert } = makeUpsertSupabase({
+      data: {
+        id: "d1",
+        diary_date: "2026-07-20",
+        content: "今日は散歩",
+        updated_at: "2026-07-22T12:00:00Z",
+      },
+      error: null,
+    })
+    setContext(client)
+
+    const result = await upsertBabyDiary("2026-07-20", "  今日は散歩  ")
+    expect(result.error).toBeNull()
+    expect(result.diary?.content).toBe("今日は散歩")
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        household_id: HOUSEHOLD,
+        diary_date: "2026-07-20",
+        content: "今日は散歩",
+      }),
+      { onConflict: "household_id,diary_date" },
+    )
+  })
+
+  it("空保存はその日の行を DELETE し diary: null を返す（冪等）", async () => {
+    const { client, del } = makeDiaryDeleteSupabase({ error: null })
+    setContext(client)
+
+    const result = await upsertBabyDiary("2026-07-20", "   \n  ")
+    expect(result.error).toBeNull()
+    expect(result.diary).toBeNull()
+    expect(del).toHaveBeenCalled()
+  })
+
+  it("不正な日付形式・未来日・上限超過は auth 前に拒否する", async () => {
+    const from = vi.fn()
+    setContext({ from })
+
+    expect((await upsertBabyDiary("2026/07/20", "x")).error).toBe(
+      "日付の形式が不正です",
+    )
+    expect((await upsertBabyDiary("2999-01-01", "x")).error).toBe(
+      "未来の日記は書けません",
+    )
+    expect((await upsertBabyDiary("2026-07-20", "あ".repeat(5001))).error).toContain(
+      "5000文字以内",
+    )
+    expect(from).not.toHaveBeenCalled()
+  })
+
+  it("upsert の DB error は握り潰さず日本語エラーを返す", async () => {
+    const { client } = makeUpsertSupabase({
+      data: null,
+      error: { message: "boom", code: "23514" },
+    })
+    setContext(client)
+
+    const result = await upsertBabyDiary("2026-07-20", "本文")
+    expect(result.error).toBe("日記の保存に失敗しました。もう一度お試しください。")
+    expect(result.diary).toBeNull()
+  })
 })
