@@ -15,7 +15,7 @@ dependencies:
   intl: ^0.20.2
 
   # Supabase: Auth / DB / Realtime / Storage
-  supabase_flutter: ^2.15.2
+  supabase_flutter: ^2.16.0
 
   # State 管理 / Routing
   # riverpod 3.x は API 変更あり (StreamNotifier → AsyncNotifier 推奨等)
@@ -35,7 +35,7 @@ dependencies:
   json_annotation: ^4.12.0
 
   # Icons (既存 Lucide React の移植)
-  lucide_icons_flutter: ^3.1.14
+  lucide_icons_flutter: ^3.1.15
 
   # 授乳タイマーの中断復元 (原典 feeding-timer.tsx の localStorage 相当)。
   # 既に transitive 解決済み (supabase_flutter 経由) の版を direct に昇格。
@@ -44,7 +44,7 @@ dependencies:
   # 授乳タイマー実行中の画面消灯防止 (原典 use-wake-lock.ts の
   # Screen Wake Lock API 相当)。platform API 必須のため既存手段では代替不可。
   # Flutter Favorite の定番パッケージ (#77)。
-  wakelock_plus: ^1.6.1
+  wakelock_plus: ^1.7.0
 
   cupertino_icons: ^1.0.9
 
@@ -52,7 +52,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
-  build_runner: ^2.15.0
+  build_runner: ^2.15.1
   freezed: ^3.2.5
   json_serializable: ^6.14.0
   # custom_lint / riverpod_lint は Phase 0 では analysis_options.yaml から
