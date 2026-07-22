@@ -20,6 +20,7 @@ function ev(o: Partial<CalendarEventRecord> & { id: string }): CalendarEventReco
     start_at: o.start_at ?? null,
     end_at: o.end_at ?? null,
     source: o.source ?? "native",
+    series_id: o.series_id ?? null,
     ...o,
   }
 }

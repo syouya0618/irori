@@ -13,8 +13,24 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, cleanup } from "@testing-library/react"
 
 import { CalendarEventFormSheet } from "../calendar-event-form-sheet"
+import type { CalendarEventRecord } from "../use-month-events"
 
 beforeEach(() => cleanup())
+
+function ev(o: Partial<CalendarEventRecord> & { id: string }): CalendarEventRecord {
+  return {
+    title: o.title ?? "予定",
+    memo: o.memo ?? null,
+    is_all_day: o.is_all_day ?? true,
+    start_date: o.start_date ?? "2026-07-15",
+    end_date: o.end_date ?? o.start_date ?? "2026-07-15",
+    start_at: o.start_at ?? null,
+    end_at: o.end_at ?? null,
+    source: o.source ?? "native",
+    series_id: o.series_id ?? null,
+    ...o,
+  }
+}
 
 function renderNewForm() {
   return render(
@@ -26,6 +42,25 @@ function renderNewForm() {
       saving={false}
       onSubmit={vi.fn()}
       onDelete={vi.fn()}
+      onDeleteSeries={vi.fn()}
+    />,
+  )
+}
+
+function renderEditForm(
+  editing: CalendarEventRecord,
+  overrides?: { onDeleteSeries?: () => void },
+) {
+  return render(
+    <CalendarEventFormSheet
+      open
+      onOpenChange={() => {}}
+      editing={editing}
+      defaultDate="2026-07-15"
+      saving={false}
+      onSubmit={vi.fn()}
+      onDelete={vi.fn()}
+      onDeleteSeries={overrides?.onDeleteSeries ?? vi.fn()}
     />,
   )
 }
@@ -76,5 +111,56 @@ describe("CalendarEventFormSheet - 終日/時刻あり セグメント", () => {
     fireEvent.click(screen.getByRole("button", { name: "時刻あり" }))
     expect(startTimeInput()!.value).toBe("09:00")
     expect(endTimeInput()!.value).toBe("")
+  })
+})
+
+describe("CalendarEventFormSheet - 繰り返し(作成モードのみ)", () => {
+  it("作成モードで繰り返し select が見え、既定「なし」・終了日入力は非表示", () => {
+    renderNewForm()
+    expect(screen.getByText("タイトル")).toBeInTheDocument()
+
+    // 繰り返しラベル + trigger 表示値「なし」
+    expect(screen.getByText("繰り返し")).toBeInTheDocument()
+    expect(screen.getByText("なし")).toBeInTheDocument()
+    // repeat=none のため終了日入力は出ていない
+    expect(document.getElementById("cal-repeat-until")).toBeNull()
+  })
+
+  it("編集モードでは繰り返し UI を出さない(シリーズ編集はスコープ外)", () => {
+    renderEditForm(ev({ id: "e1", source: "native" }))
+    // sanity anchor
+    expect(screen.getByText("予定を編集")).toBeInTheDocument()
+
+    expect(screen.queryByText("繰り返し")).not.toBeInTheDocument()
+    expect(document.getElementById("cal-repeat")).toBeNull()
+  })
+})
+
+describe("CalendarEventFormSheet - シリーズ一括削除", () => {
+  it("series_id を持つ予定の編集で「すべて削除」ボタンが出て onDeleteSeries を呼ぶ", () => {
+    const onDeleteSeries = vi.fn()
+    renderEditForm(ev({ id: "e1", source: "native", series_id: "ser-9" }), {
+      onDeleteSeries,
+    })
+    const btn = screen.getByRole("button", { name: /すべて削除/ })
+    expect(btn).toBeInTheDocument()
+    fireEvent.click(btn)
+    expect(onDeleteSeries).toHaveBeenCalledWith("ser-9")
+  })
+
+  it("単発(series_id null)の編集では「すべて削除」ボタンを出さない", () => {
+    renderEditForm(ev({ id: "e1", source: "native", series_id: null }))
+    expect(screen.getByText("予定を編集")).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: /すべて削除/ }),
+    ).not.toBeInTheDocument()
+  })
+
+  it("Google 予定(閲覧のみ)ではシリーズ削除ボタンを出さない", () => {
+    renderEditForm(ev({ id: "g1", source: "google", series_id: "ser-9" }))
+    expect(screen.getByText("予定（Google）")).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: /すべて削除/ }),
+    ).not.toBeInTheDocument()
   })
 })

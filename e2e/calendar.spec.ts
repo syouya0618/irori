@@ -20,6 +20,12 @@ function todayJst(): string {
   }).format(new Date())
 }
 
+/** YYYY-MM-DD を日数シフト(TZ 非依存)。繰り返し終了日の算出に使う。 */
+function shiftYmd(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split("-").map(Number)
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10)
+}
+
 /** login(マジックリンク)→ 世帯作成 → BottomNav「予定」で /calendar を開く。 */
 async function loginAndOpenCalendar(page: Page, email: string): Promise<void> {
   await loginViaMagicLink(page, email)
@@ -106,6 +112,46 @@ test("共有カレンダー: 予定を作成 → 反映 → 削除", async ({ pa
   await waitForEventCount(approvedUser.id, "検診", 0)
   await reloadHydrated(page)
   await expect(page.getByText("検診")).toHaveCount(0)
+})
+
+test("繰り返し予定: 毎週×3週を作成 → 3件生成 → シリーズ一括削除で全消滅", async ({
+  page,
+  approvedUser,
+}) => {
+  await loginAndOpenCalendar(page, approvedUser.email)
+
+  const today = todayJst()
+  // 今日から2週間後まで(毎週) = 今日 / +7 / +14 の 3 開催日。
+  const until = shiftYmd(today, 14)
+
+  // FAB → フォーム。終日・毎週・終了日 = 今日+14日。
+  const addSheet = page.getByRole("heading", { name: "予定を追加" })
+  await openOverlay(page.getByRole("button", { name: "予定を追加" }), addSheet)
+  await page.getByLabel("タイトル").fill("毎週予定")
+  // 繰り返し select を「毎週」に。
+  await page.locator("#cal-repeat").click()
+  await page.getByRole("option", { name: "毎週" }).click()
+  // 終了日(既定は開始日+3ヶ月)を今日+14日へ上書きし、3 開催日に固定する。
+  await page.locator("#cal-repeat-until").fill(until)
+  await page.getByRole("button", { name: "追加", exact: true }).click()
+
+  // DB 断面で 3 行生成を待つ(date 非依存 = household + title で数える)。
+  await waitForEventCount(approvedUser.id, "毎週予定", 3)
+  await reloadHydrated(page)
+  // 今日の開催回はアジェンダ(選択日 = 今日)に必ず出る(範囲内の1件のみ assert)。
+  await expect(page.getByText("毎週予定")).toBeVisible({ timeout: 15_000 })
+
+  // アジェンダの予定をタップ → 編集シート → シリーズ一括削除。
+  await page.getByText("毎週予定").click()
+  await expect(page.getByRole("heading", { name: "予定を編集" })).toBeVisible({
+    timeout: 5_000,
+  })
+  await page.getByRole("button", { name: /すべて削除/ }).click()
+
+  // DB からシリーズ全体(3 行)が消えたことを待ち、reload で SSR でも消えている。
+  await waitForEventCount(approvedUser.id, "毎週予定", 0)
+  await reloadHydrated(page)
+  await expect(page.getByText("毎週予定")).toHaveCount(0)
 })
 
 test("世帯分離: 別世帯の予定は見えない（RLS 回帰ガード）", async ({

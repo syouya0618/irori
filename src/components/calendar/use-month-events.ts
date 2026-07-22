@@ -25,10 +25,12 @@ export interface CalendarEventRecord extends CalendarEventLite {
   memo: string | null
   end_at: string | null
   source: CalendarEventSource
+  /** 繰り返しシリーズ識別子(単発は null)。シリーズ一括削除の可否判定に使う。 */
+  series_id: string | null
 }
 
 const EVENT_COLUMNS =
-  "id, title, memo, is_all_day, start_date, end_date, start_at, end_at, source"
+  "id, title, memo, is_all_day, start_date, end_date, start_at, end_at, source, series_id"
 
 interface UseMonthEventsArgs {
   initialEvents: CalendarEventRecord[]

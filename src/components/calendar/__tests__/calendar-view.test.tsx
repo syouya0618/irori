@@ -32,6 +32,7 @@ vi.mock("@/app/(main)/calendar/actions", () => ({
   createCalendarEvent: vi.fn().mockResolvedValue({ error: null, eventId: "x" }),
   updateCalendarEvent: vi.fn().mockResolvedValue({ error: null }),
   deleteCalendarEvent: vi.fn().mockResolvedValue({ error: null }),
+  deleteCalendarEventSeries: vi.fn().mockResolvedValue({ error: null }),
 }))
 vi.mock("sonner", async () => {
   const { vi: viMod } = await import("vitest")
@@ -54,6 +55,7 @@ function ev(o: Partial<CalendarEventRecord> & { id: string }): CalendarEventReco
     start_at: o.start_at ?? null,
     end_at: o.end_at ?? null,
     source: o.source ?? "native",
+    series_id: o.series_id ?? null,
     ...o,
   }
 }
