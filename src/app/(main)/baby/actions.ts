@@ -4,6 +4,10 @@ import { revalidatePath } from "next/cache"
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { deriveDurationMinFromSec } from "@/lib/domain/feeding"
+import {
+  validateLogTime,
+  validateSleepOrder,
+} from "@/lib/domain/baby-log-time"
 import type { FeedingType, DiaperType } from "@/lib/types/database"
 
 const MAX_MEMO_LENGTH = 1000
@@ -15,6 +19,13 @@ function validateMemoLength(memo?: string | null): string | null {
   return null
 }
 
+// 記録時刻（loggedAt）を伴う作成系 Action 共通の検証。
+// 未指定（従来どおり DB の now() 既定）は素通し、指定時のみ未来/不正 ISO を拒否する。
+function validateCreateLoggedAt(loggedAt?: string | null): string | null {
+  if (loggedAt === undefined || loggedAt === null) return null
+  return validateLogTime(loggedAt)
+}
+
 interface RecordFeedingInput {
   feedingType: FeedingType
   amountMl?: number | null
@@ -23,32 +34,44 @@ interface RecordFeedingInput {
    * （両列を1経路で書き drift を防ぐ）。母乳/ミルク等の時間なし記録では省略する。
    */
   durationSec?: number | null
+  /** 記録時刻（ISO 8601）。未指定時は DB の now() 既定に依存する。 */
+  loggedAt?: string
   memo?: string
 }
 
 interface RecordDiaperInput {
   diaperType: DiaperType
+  /** 記録時刻（ISO 8601）。未指定時は DB の now() 既定に依存する。 */
+  loggedAt?: string
   memo?: string
 }
 
 interface RecordTemperatureInput {
   temperature: number
+  /** 記録時刻（ISO 8601）。未指定時は DB の now() 既定に依存する。 */
+  loggedAt?: string
   memo?: string
 }
 
 interface RecordGrowthInput {
   weightG?: number | null
   heightCm?: number | null
+  /** 記録時刻（ISO 8601）。未指定時は DB の now() 既定に依存する。 */
+  loggedAt?: string
   memo?: string
 }
 
 interface RecordMemoInput {
   memo: string
+  /** 記録時刻（ISO 8601）。未指定時は DB の now() 既定に依存する。 */
+  loggedAt?: string
 }
 
 export async function recordFeeding(input: RecordFeedingInput) {
   const memoError = validateMemoLength(input.memo)
   if (memoError) return { error: memoError, id: null }
+  const timeError = validateCreateLoggedAt(input.loggedAt)
+  if (timeError) return { error: timeError, id: null }
 
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error, id: null }
@@ -66,6 +89,8 @@ export async function recordFeeding(input: RecordFeedingInput) {
       // 秒を source of truth に、分は後方互換のため round で併記（1経路で両列を書く）
       duration_sec: durationSec,
       duration_min: deriveDurationMinFromSec(durationSec),
+      // 未指定時は logged_at を送らず DB の now() 既定に委ねる（従来挙動）
+      ...(input.loggedAt != null && { logged_at: input.loggedAt }),
       memo: input.memo || null,
     })
     .select("id")
@@ -87,6 +112,8 @@ export async function recordFeeding(input: RecordFeedingInput) {
 export async function recordDiaper(input: RecordDiaperInput) {
   const memoError = validateMemoLength(input.memo)
   if (memoError) return { error: memoError, id: null }
+  const timeError = validateCreateLoggedAt(input.loggedAt)
+  if (timeError) return { error: timeError, id: null }
 
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error, id: null }
@@ -99,6 +126,7 @@ export async function recordDiaper(input: RecordDiaperInput) {
       log_type: "diaper",
       logged_by: userId,
       diaper_type: input.diaperType,
+      ...(input.loggedAt != null && { logged_at: input.loggedAt }),
       memo: input.memo || null,
     })
     .select("id")
@@ -117,7 +145,10 @@ export async function recordDiaper(input: RecordDiaperInput) {
   return { error: null, id: data.id }
 }
 
-export async function startSleep() {
+export async function startSleep(loggedAt?: string) {
+  const timeError = validateCreateLoggedAt(loggedAt)
+  if (timeError) return { error: timeError, id: null }
+
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error, id: null }
   const { supabase, userId, householdId } = result.context
@@ -130,6 +161,7 @@ export async function startSleep() {
       household_id: householdId,
       log_type: "sleep",
       logged_by: userId,
+      ...(loggedAt != null && { logged_at: loggedAt }),
     })
     .select("id")
     .single()
@@ -184,6 +216,8 @@ export async function endSleep(logId: string) {
 export async function recordTemperature(input: RecordTemperatureInput) {
   const memoError = validateMemoLength(input.memo)
   if (memoError) return { error: memoError, id: null }
+  const timeError = validateCreateLoggedAt(input.loggedAt)
+  if (timeError) return { error: timeError, id: null }
 
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error, id: null }
@@ -197,6 +231,7 @@ export async function recordTemperature(input: RecordTemperatureInput) {
       log_type: "temperature",
       logged_by: userId,
       temperature: input.temperature,
+      ...(input.loggedAt != null && { logged_at: input.loggedAt }),
       memo: input.memo || null,
     })
     .select("id")
@@ -218,6 +253,8 @@ export async function recordTemperature(input: RecordTemperatureInput) {
 export async function recordGrowth(input: RecordGrowthInput) {
   const memoError = validateMemoLength(input.memo)
   if (memoError) return { error: memoError, id: null }
+  const timeError = validateCreateLoggedAt(input.loggedAt)
+  if (timeError) return { error: timeError, id: null }
 
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error, id: null }
@@ -232,6 +269,7 @@ export async function recordGrowth(input: RecordGrowthInput) {
       logged_by: userId,
       weight_g: input.weightG ?? null,
       height_cm: input.heightCm ?? null,
+      ...(input.loggedAt != null && { logged_at: input.loggedAt }),
       memo: input.memo || null,
     })
     .select("id")
@@ -254,6 +292,8 @@ export async function recordMemo(input: RecordMemoInput) {
   if (!input.memo) return { error: "メモを入力してください", id: null }
   const memoError = validateMemoLength(input.memo)
   if (memoError) return { error: memoError, id: null }
+  const timeError = validateCreateLoggedAt(input.loggedAt)
+  if (timeError) return { error: timeError, id: null }
 
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error, id: null }
@@ -266,6 +306,7 @@ export async function recordMemo(input: RecordMemoInput) {
       household_id: householdId,
       log_type: "memo",
       logged_by: userId,
+      ...(input.loggedAt != null && { logged_at: input.loggedAt }),
       memo: input.memo,
     })
     .select("id")
@@ -302,9 +343,45 @@ export async function updateLog(
   const memoError = validateMemoLength(updates.memo)
   if (memoError) return { error: memoError }
 
+  // 未来時刻の拒否（+5 分の時計ずれ許容）。auth 前に純関数で弾く（memoError と同順）。
+  // クライアント検証と同一の validateLogTime を共有し判定を一致させる。
+  if (updates.loggedAt !== undefined) {
+    const timeError = validateLogTime(updates.loggedAt)
+    if (timeError) return { error: timeError }
+  }
+
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
+
+  // sleep ログの logged_at ≤ ended_at 整合をサーバで担保する。クライアント送信値ではなく
+  // 実 DB の ended_at と突き合わせる（sleepOverlapMinutesForDate が負 overlap で壊れるのを防ぐ）。
+  // loggedAt を変更する時のみ既存行の log_type / ended_at を取得して検証する。
+  if (updates.loggedAt !== undefined) {
+    const { data: existing, error: fetchError } = await supabase
+      .from("baby_logs")
+      .select("log_type, ended_at")
+      .eq("id", logId)
+      .eq("household_id", householdId)
+      .maybeSingle()
+    if (fetchError) {
+      logSupabaseError("baby", "ログ更新前の取得に失敗", fetchError, {
+        logId,
+        householdId,
+      })
+      return { error: "ログの更新に失敗しました。" }
+    }
+    if (!existing) {
+      return { error: "ログの更新に失敗しました。" }
+    }
+    if (existing.log_type === "sleep") {
+      // endedAt も同時変更されるなら新値、そうでなければ既存値と突き合わせる。
+      const effectiveEndedAt =
+        updates.endedAt !== undefined ? updates.endedAt : existing.ended_at
+      const orderError = validateSleepOrder(updates.loggedAt, effectiveEndedAt)
+      if (orderError) return { error: orderError }
+    }
+  }
 
   // .update() は 0 行更新でも error: null を返す（別世帯・不在 id なら 0 行マッチ）。
   // .select("id").single() で更新行を要求し、0 行を「成功」と偽らないようにする。

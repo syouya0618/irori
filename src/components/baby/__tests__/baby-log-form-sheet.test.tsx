@@ -9,6 +9,7 @@ import {
   recordMemo,
 } from "@/app/(main)/baby/actions"
 import { toast } from "sonner"
+import { FUTURE_LOG_TIME_ERROR } from "@/lib/domain/baby-log-time"
 import type { BabyLogData } from "@/lib/types/baby"
 
 vi.mock("@/app/(main)/baby/actions", () => ({
@@ -156,6 +157,170 @@ describe("BabyLogFormSheet の搾乳（pumped）作成 + 量プリセット", ()
     expect(mockedRecordFeeding).toHaveBeenCalledWith(
       expect.objectContaining({ feedingType: "pumped", amountMl: 120 }),
     )
+  })
+})
+
+describe("BabyLogFormSheet の記録時刻の編集・指定（タスクB）", () => {
+  it("編集: 時刻入力は既存 logged_at を JST HH:mm で seed する", () => {
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={bottleFeedingLog()}
+      />,
+    )
+    // logged_at 2026-07-18T12:00:00+09:00 → "12:00"
+    expect((screen.getByLabelText("時刻") as HTMLInputElement).value).toBe(
+      "12:00",
+    )
+  })
+
+  it("編集: 時刻を変更すると updateLog に loggedAt(ISO)が渡る", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={bottleFeedingLog()}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText("時刻"), {
+      target: { value: "13:30" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
+    // jstWallClockToIso("2026-07-18","13:30") = 2026-07-18T04:30Z（JST 罠回避）
+    expect(mockedUpdateLog).toHaveBeenCalledWith(
+      "log-1",
+      expect.objectContaining({ loggedAt: "2026-07-18T04:30:00.000Z" }),
+    )
+  })
+
+  it("編集: 時刻を未来に変更するとクライアントで拒否し updateLog を呼ばない", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    // 遠未来の日付のログで時刻を（seed から）変更して保存 → 未来として弾かれる。
+    // 新仕様では時刻検証は「時刻を触った時のみ」走るため、seed と異なる値に変更する。
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={bottleFeedingLog({
+          logged_at: "2099-06-15T10:00:00+09:00",
+        })}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText("時刻"), {
+      target: { value: "11:00" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+
+    await waitFor(() =>
+      expect(mockedToast.error).toHaveBeenCalledWith(FUTURE_LOG_TIME_ERROR),
+    )
+    expect(mockedUpdateLog).not.toHaveBeenCalled()
+  })
+
+  it("編集: 時刻を変更せず量のみ編集すると updateLog に loggedAt を含めない（秒丸め防止の回帰）", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={bottleFeedingLog()}
+      />,
+    )
+    // 時刻入力は触らず、量だけ変更して更新する
+    fireEvent.change(screen.getByLabelText("量 (ml)"), {
+      target: { value: "120" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
+    const updates = mockedUpdateLog.mock.calls[0][1]
+    // loggedAt を送らなければ updateLog は既存 logged_at（秒精度含む）を変更しない
+    expect(updates).not.toHaveProperty("loggedAt")
+    expect(updates).toMatchObject({ amountMl: 120 })
+  })
+
+  it("編集: 時刻を seed から変更→元に戻すと loggedAt を含めない（同値なら未 dirty）", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={bottleFeedingLog()}
+      />,
+    )
+    // seed は "12:00"。一度変えてから元に戻す
+    fireEvent.change(screen.getByLabelText("時刻"), {
+      target: { value: "13:30" },
+    })
+    fireEvent.change(screen.getByLabelText("時刻"), {
+      target: { value: "12:00" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
+    expect(mockedUpdateLog.mock.calls[0][1]).not.toHaveProperty("loggedAt")
+  })
+
+  it("作成(メモ): loggedAt が recordMemo に渡る", async () => {
+    mockedRecordMemo.mockResolvedValue({ error: null, id: "memo-1" })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={null}
+        createLogType="memo"
+      />,
+    )
+    fireEvent.change(screen.getByLabelText("メモ"), {
+      target: { value: "メモ本文" },
+    })
+    // 当日の早朝時刻は未来にならない（+5 分許容内）
+    fireEvent.change(screen.getByLabelText("時刻"), {
+      target: { value: "00:01" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "記録する" }))
+
+    await waitFor(() => expect(mockedRecordMemo).toHaveBeenCalled())
+    const arg = mockedRecordMemo.mock.calls[0][0]
+    expect(arg.memo).toBe("メモ本文")
+    expect(typeof arg.loggedAt).toBe("string")
+  })
+
+  it("作成(搾乳): 楽観 append する行の logged_at が record に渡した loggedAt と一致", async () => {
+    mockedRecordFeeding.mockResolvedValue({ error: null, id: "feed-1" })
+    const onLogRecorded = vi.fn()
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={null}
+        createLogType="feeding"
+        createFeedingType="pumped"
+        onLogRecorded={onLogRecorded}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText("時刻"), {
+      target: { value: "00:01" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "記録する" }))
+
+    await waitFor(() => expect(mockedRecordFeeding).toHaveBeenCalled())
+    const sentLoggedAt = mockedRecordFeeding.mock.calls[0][0].loggedAt
+    expect(sentLoggedAt).toBeTruthy()
+    await waitFor(() => expect(onLogRecorded).toHaveBeenCalled())
+    // 楽観 append 行の logged_at が DB へ送った loggedAt と一致（表示と DB の整合）
+    expect(onLogRecorded.mock.calls[0][0].logged_at).toBe(sentLoggedAt)
   })
 })
 
