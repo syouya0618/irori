@@ -12,7 +12,7 @@ const BABY_LOG_COLUMNS =
 export default async function BabyDiaryPage() {
   const result = await getAuthContext()
   if (result.error !== null) return null
-  const { supabase, householdId } = result.context
+  const { supabase, householdId, userId } = result.context
 
   // メモログを JST 日付降順で1ページ目のみ取得。
   // ページネーション掟: order は logged_at 降順 + id を最終ソートキー（一意）にして
@@ -46,7 +46,11 @@ export default async function BabyDiaryPage() {
         <h1 className="text-lg font-semibold">日記</h1>
       </div>
 
-      <BabyDiaryView initialLogs={logs ?? []} householdId={householdId} />
+      <BabyDiaryView
+        initialLogs={logs ?? []}
+        householdId={householdId}
+        userId={userId}
+      />
     </div>
   )
 }

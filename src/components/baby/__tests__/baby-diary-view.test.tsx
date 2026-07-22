@@ -5,6 +5,7 @@ import {
   cleanup,
   fireEvent,
   waitFor,
+  act,
 } from "@testing-library/react"
 import type { BabyLogData } from "@/lib/types/baby"
 
@@ -20,6 +21,27 @@ const mockState = vi.hoisted(() => ({
 }))
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+
+// BabyLogFormSheet は自身のテストで網羅済みのため stub 化し、ここでは
+// 「日記を書く」導線の開閉と onLogRecorded の prepend 配線だけを検証する。
+const sheetState = vi.hoisted(() => ({
+  props: null as null | {
+    open: boolean
+    createLogType?: string | null
+    onLogRecorded?: (log: BabyLogData) => void
+  },
+}))
+
+vi.mock("../baby-log-form-sheet", () => ({
+  BabyLogFormSheet: (props: {
+    open: boolean
+    createLogType?: string | null
+    onLogRecorded?: (log: BabyLogData) => void
+  }) => {
+    sheetState.props = props
+    return props.open ? <div data-testid="compose-sheet" /> : null
+  },
+}))
 
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => ({
@@ -77,6 +99,7 @@ function memoLog(
 beforeEach(() => {
   mockState.results.length = 0
   mockState.rangeCalls.length = 0
+  sheetState.props = null
   vi.mocked(toast.error).mockClear()
 })
 afterEach(cleanup)
@@ -90,6 +113,7 @@ describe("BabyDiaryView の表示（グルーピング・全文・改行）", ()
     render(
       <BabyDiaryView
         householdId="h1"
+        userId="user-1"
         initialLogs={[
           memoLog({ id: "a", logged_at: "2026-07-22T15:00:00+09:00", memo: "きょうのメモ" }),
           memoLog({ id: "b", logged_at: "2026-07-21T09:00:00+09:00", memo: "きのうのメモ" }),
@@ -106,6 +130,7 @@ describe("BabyDiaryView の表示（グルーピング・全文・改行）", ()
     render(
       <BabyDiaryView
         householdId="h1"
+        userId="user-1"
         initialLogs={[
           memoLog({
             id: "a",
@@ -123,7 +148,8 @@ describe("BabyDiaryView の表示（グルーピング・全文・改行）", ()
   })
 
   it("メモが空なら空状態を出す", () => {
-    render(<BabyDiaryView householdId="h1" initialLogs={[]} />)
+    render(<BabyDiaryView householdId="h1"
+        userId="user-1" initialLogs={[]} />)
     expect(screen.getByText("まだ日記がありません")).toBeInTheDocument()
     expect(
       screen.queryByRole("button", { name: "もっと見る" }),
@@ -136,6 +162,7 @@ describe("BabyDiaryView のページネーション", () => {
     render(
       <BabyDiaryView
         householdId="h1"
+        userId="user-1"
         initialLogs={[
           memoLog({ id: "a", logged_at: "2026-07-22T15:00:00+09:00", memo: "1件目" }),
           memoLog({ id: "b", logged_at: "2026-07-22T09:00:00+09:00", memo: "2件目" }),
@@ -165,6 +192,7 @@ describe("BabyDiaryView のページネーション", () => {
     render(
       <BabyDiaryView
         householdId="h1"
+        userId="user-1"
         initialLogs={[
           memoLog({ id: "a", logged_at: "2026-07-22T15:00:00+09:00", memo: "初回" }),
         ]}
@@ -197,6 +225,7 @@ describe("BabyDiaryView のページネーション", () => {
     render(
       <BabyDiaryView
         householdId="h1"
+        userId="user-1"
         initialLogs={[
           memoLog({ id: "a", logged_at: "2026-07-22T15:00:00+09:00", memo: "唯一" }),
         ]}
@@ -218,6 +247,7 @@ describe("BabyDiaryView のページネーション", () => {
     render(
       <BabyDiaryView
         householdId="h1"
+        userId="user-1"
         initialLogs={[
           memoLog({ id: "a", logged_at: "2026-07-22T15:00:00+09:00", memo: "唯一" }),
         ]}
@@ -236,5 +266,52 @@ describe("BabyDiaryView のページネーション", () => {
     expect(
       screen.getByRole("button", { name: "もっと見る" }),
     ).toBeInTheDocument()
+  })
+})
+
+describe("BabyDiaryView の日記を書く（作成導線）", () => {
+  it("空状態でも「日記を書く」ボタンがあり、押すと memo 作成モードのシートが開く", () => {
+    render(
+      <BabyDiaryView householdId="h1" userId="user-1" initialLogs={[]} />,
+    )
+    expect(screen.queryByTestId("compose-sheet")).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: /日記を書く/ }))
+    expect(screen.getByTestId("compose-sheet")).toBeInTheDocument()
+    expect(sheetState.props?.createLogType).toBe("memo")
+  })
+
+  it("作成成功（onLogRecorded）で新しい日記が先頭グループに即時表示され、同一 id の重複 prepend はしない", () => {
+    render(
+      <BabyDiaryView
+        householdId="h1"
+        userId="user-1"
+        initialLogs={[
+          memoLog({
+            id: "old",
+            logged_at: "2026-07-20T12:00:00+09:00",
+            memo: "以前の日記",
+          }),
+        ]}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: /日記を書く/ }))
+    const newLog = memoLog({
+      id: "new",
+      logged_at: "2026-07-22T20:00:00+09:00",
+      memo: "今日の日記",
+    })
+    act(() => {
+      sheetState.props?.onLogRecorded?.(newLog)
+    })
+    // 新規日記は最新（降順の先頭）グループとして表示される
+    const headings = screen.getAllByRole("heading", { level: 2 })
+    expect(headings[0].textContent).toContain("7月22日")
+    expect(screen.getByText("今日の日記")).toBeInTheDocument()
+    expect(screen.getByText("以前の日記")).toBeInTheDocument()
+    // Realtime echo 等で同じ行が再度届いても重複表示しない（id dedupe）
+    act(() => {
+      sheetState.props?.onLogRecorded?.(newLog)
+    })
+    expect(screen.getAllByText("今日の日記")).toHaveLength(1)
   })
 })
