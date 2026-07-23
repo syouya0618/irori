@@ -87,9 +87,23 @@ sealed class BabyLog with _$BabyLog {
     @JsonKey(name: 'log_type') required BabyLogType logType,
     @JsonKey(name: 'logged_at') required DateTime loggedAt,
     @JsonKey(name: 'logged_by') required String loggedBy,
-    @JsonKey(name: 'feeding_type') FeedingType? feedingType,
+    // enum drift 防御 (#158): DB が feeding_type ENUM に将来値を足し Flutter が
+    // 未追随の間、未知値で `$enumDecodeNullable` が ArgumentError を投げ、
+    // fetchTodayLogs がダッシュボード全体を AsyncError に倒す (#147 と同クラス)。
+    // 未知値は null へ退化させ、getLogSummary の「型 null の授乳」経路で穏当に
+    // 劣化させる。log_type (required 判別子) は退化不能ゆえ対象外・厳格維持。
+    @JsonKey(
+      name: 'feeding_type',
+      unknownEnumValue: JsonKey.nullForUndefinedEnumValue,
+    )
+    FeedingType? feedingType,
     @JsonKey(name: 'amount_ml') int? amountMl,
-    @JsonKey(name: 'diaper_type') DiaperType? diaperType,
+    // feeding_type と同じ enum drift 防御 (#158)。未知の diaper_type → null。
+    @JsonKey(
+      name: 'diaper_type',
+      unknownEnumValue: JsonKey.nullForUndefinedEnumValue,
+    )
+    DiaperType? diaperType,
     @JsonKey(name: 'ended_at') DateTime? endedAt,
     @JsonKey(fromJson: _numericFromJson) double? temperature,
     @JsonKey(name: 'weight_g') int? weightG,

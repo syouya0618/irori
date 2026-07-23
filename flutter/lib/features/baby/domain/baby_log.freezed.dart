@@ -15,7 +15,13 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$BabyLog {
 
- String get id;@JsonKey(name: 'household_id') String get householdId;@JsonKey(name: 'log_type') BabyLogType get logType;@JsonKey(name: 'logged_at') DateTime get loggedAt;@JsonKey(name: 'logged_by') String get loggedBy;@JsonKey(name: 'feeding_type') FeedingType? get feedingType;@JsonKey(name: 'amount_ml') int? get amountMl;@JsonKey(name: 'diaper_type') DiaperType? get diaperType;@JsonKey(name: 'ended_at') DateTime? get endedAt;@JsonKey(fromJson: _numericFromJson) double? get temperature;@JsonKey(name: 'weight_g') int? get weightG;@JsonKey(name: 'height_cm', fromJson: _numericFromJson) double? get heightCm;@JsonKey(name: 'duration_min') int? get durationMin; String? get memo;@JsonKey(name: 'created_at') DateTime get createdAt;// updated_at は NOT NULL だが、page.tsx の SELECT では取得していない列。
+ String get id;@JsonKey(name: 'household_id') String get householdId;@JsonKey(name: 'log_type') BabyLogType get logType;@JsonKey(name: 'logged_at') DateTime get loggedAt;@JsonKey(name: 'logged_by') String get loggedBy;// enum drift 防御 (#158): DB が feeding_type ENUM に将来値を足し Flutter が
+// 未追随の間、未知値で `$enumDecodeNullable` が ArgumentError を投げ、
+// fetchTodayLogs がダッシュボード全体を AsyncError に倒す (#147 と同クラス)。
+// 未知値は null へ退化させ、getLogSummary の「型 null の授乳」経路で穏当に
+// 劣化させる。log_type (required 判別子) は退化不能ゆえ対象外・厳格維持。
+@JsonKey(name: 'feeding_type', unknownEnumValue: JsonKey.nullForUndefinedEnumValue) FeedingType? get feedingType;@JsonKey(name: 'amount_ml') int? get amountMl;// feeding_type と同じ enum drift 防御 (#158)。未知の diaper_type → null。
+@JsonKey(name: 'diaper_type', unknownEnumValue: JsonKey.nullForUndefinedEnumValue) DiaperType? get diaperType;@JsonKey(name: 'ended_at') DateTime? get endedAt;@JsonKey(fromJson: _numericFromJson) double? get temperature;@JsonKey(name: 'weight_g') int? get weightG;@JsonKey(name: 'height_cm', fromJson: _numericFromJson) double? get heightCm;@JsonKey(name: 'duration_min') int? get durationMin; String? get memo;@JsonKey(name: 'created_at') DateTime get createdAt;// updated_at は NOT NULL だが、page.tsx の SELECT では取得していない列。
 // Realtime payload (`payload.new`) には含まれるため nullable で受ける
 // (初期取得時の select でも含めるが、欠落しても壊れないように防御)。
 @JsonKey(name: 'updated_at') DateTime? get updatedAt;
@@ -51,7 +57,7 @@ abstract mixin class $BabyLogCopyWith<$Res>  {
   factory $BabyLogCopyWith(BabyLog value, $Res Function(BabyLog) _then) = _$BabyLogCopyWithImpl;
 @useResult
 $Res call({
- String id,@JsonKey(name: 'household_id') String householdId,@JsonKey(name: 'log_type') BabyLogType logType,@JsonKey(name: 'logged_at') DateTime loggedAt,@JsonKey(name: 'logged_by') String loggedBy,@JsonKey(name: 'feeding_type') FeedingType? feedingType,@JsonKey(name: 'amount_ml') int? amountMl,@JsonKey(name: 'diaper_type') DiaperType? diaperType,@JsonKey(name: 'ended_at') DateTime? endedAt,@JsonKey(fromJson: _numericFromJson) double? temperature,@JsonKey(name: 'weight_g') int? weightG,@JsonKey(name: 'height_cm', fromJson: _numericFromJson) double? heightCm,@JsonKey(name: 'duration_min') int? durationMin, String? memo,@JsonKey(name: 'created_at') DateTime createdAt,@JsonKey(name: 'updated_at') DateTime? updatedAt
+ String id,@JsonKey(name: 'household_id') String householdId,@JsonKey(name: 'log_type') BabyLogType logType,@JsonKey(name: 'logged_at') DateTime loggedAt,@JsonKey(name: 'logged_by') String loggedBy,@JsonKey(name: 'feeding_type', unknownEnumValue: JsonKey.nullForUndefinedEnumValue) FeedingType? feedingType,@JsonKey(name: 'amount_ml') int? amountMl,@JsonKey(name: 'diaper_type', unknownEnumValue: JsonKey.nullForUndefinedEnumValue) DiaperType? diaperType,@JsonKey(name: 'ended_at') DateTime? endedAt,@JsonKey(fromJson: _numericFromJson) double? temperature,@JsonKey(name: 'weight_g') int? weightG,@JsonKey(name: 'height_cm', fromJson: _numericFromJson) double? heightCm,@JsonKey(name: 'duration_min') int? durationMin, String? memo,@JsonKey(name: 'created_at') DateTime createdAt,@JsonKey(name: 'updated_at') DateTime? updatedAt
 });
 
 
@@ -168,7 +174,7 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id, @JsonKey(name: 'household_id')  String householdId, @JsonKey(name: 'log_type')  BabyLogType logType, @JsonKey(name: 'logged_at')  DateTime loggedAt, @JsonKey(name: 'logged_by')  String loggedBy, @JsonKey(name: 'feeding_type')  FeedingType? feedingType, @JsonKey(name: 'amount_ml')  int? amountMl, @JsonKey(name: 'diaper_type')  DiaperType? diaperType, @JsonKey(name: 'ended_at')  DateTime? endedAt, @JsonKey(fromJson: _numericFromJson)  double? temperature, @JsonKey(name: 'weight_g')  int? weightG, @JsonKey(name: 'height_cm', fromJson: _numericFromJson)  double? heightCm, @JsonKey(name: 'duration_min')  int? durationMin,  String? memo, @JsonKey(name: 'created_at')  DateTime createdAt, @JsonKey(name: 'updated_at')  DateTime? updatedAt)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id, @JsonKey(name: 'household_id')  String householdId, @JsonKey(name: 'log_type')  BabyLogType logType, @JsonKey(name: 'logged_at')  DateTime loggedAt, @JsonKey(name: 'logged_by')  String loggedBy, @JsonKey(name: 'feeding_type', unknownEnumValue: JsonKey.nullForUndefinedEnumValue)  FeedingType? feedingType, @JsonKey(name: 'amount_ml')  int? amountMl, @JsonKey(name: 'diaper_type', unknownEnumValue: JsonKey.nullForUndefinedEnumValue)  DiaperType? diaperType, @JsonKey(name: 'ended_at')  DateTime? endedAt, @JsonKey(fromJson: _numericFromJson)  double? temperature, @JsonKey(name: 'weight_g')  int? weightG, @JsonKey(name: 'height_cm', fromJson: _numericFromJson)  double? heightCm, @JsonKey(name: 'duration_min')  int? durationMin,  String? memo, @JsonKey(name: 'created_at')  DateTime createdAt, @JsonKey(name: 'updated_at')  DateTime? updatedAt)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _BabyLog() when $default != null:
 return $default(_that.id,_that.householdId,_that.logType,_that.loggedAt,_that.loggedBy,_that.feedingType,_that.amountMl,_that.diaperType,_that.endedAt,_that.temperature,_that.weightG,_that.heightCm,_that.durationMin,_that.memo,_that.createdAt,_that.updatedAt);case _:
@@ -189,7 +195,7 @@ return $default(_that.id,_that.householdId,_that.logType,_that.loggedAt,_that.lo
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id, @JsonKey(name: 'household_id')  String householdId, @JsonKey(name: 'log_type')  BabyLogType logType, @JsonKey(name: 'logged_at')  DateTime loggedAt, @JsonKey(name: 'logged_by')  String loggedBy, @JsonKey(name: 'feeding_type')  FeedingType? feedingType, @JsonKey(name: 'amount_ml')  int? amountMl, @JsonKey(name: 'diaper_type')  DiaperType? diaperType, @JsonKey(name: 'ended_at')  DateTime? endedAt, @JsonKey(fromJson: _numericFromJson)  double? temperature, @JsonKey(name: 'weight_g')  int? weightG, @JsonKey(name: 'height_cm', fromJson: _numericFromJson)  double? heightCm, @JsonKey(name: 'duration_min')  int? durationMin,  String? memo, @JsonKey(name: 'created_at')  DateTime createdAt, @JsonKey(name: 'updated_at')  DateTime? updatedAt)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id, @JsonKey(name: 'household_id')  String householdId, @JsonKey(name: 'log_type')  BabyLogType logType, @JsonKey(name: 'logged_at')  DateTime loggedAt, @JsonKey(name: 'logged_by')  String loggedBy, @JsonKey(name: 'feeding_type', unknownEnumValue: JsonKey.nullForUndefinedEnumValue)  FeedingType? feedingType, @JsonKey(name: 'amount_ml')  int? amountMl, @JsonKey(name: 'diaper_type', unknownEnumValue: JsonKey.nullForUndefinedEnumValue)  DiaperType? diaperType, @JsonKey(name: 'ended_at')  DateTime? endedAt, @JsonKey(fromJson: _numericFromJson)  double? temperature, @JsonKey(name: 'weight_g')  int? weightG, @JsonKey(name: 'height_cm', fromJson: _numericFromJson)  double? heightCm, @JsonKey(name: 'duration_min')  int? durationMin,  String? memo, @JsonKey(name: 'created_at')  DateTime createdAt, @JsonKey(name: 'updated_at')  DateTime? updatedAt)  $default,) {final _that = this;
 switch (_that) {
 case _BabyLog():
 return $default(_that.id,_that.householdId,_that.logType,_that.loggedAt,_that.loggedBy,_that.feedingType,_that.amountMl,_that.diaperType,_that.endedAt,_that.temperature,_that.weightG,_that.heightCm,_that.durationMin,_that.memo,_that.createdAt,_that.updatedAt);}
@@ -206,7 +212,7 @@ return $default(_that.id,_that.householdId,_that.logType,_that.loggedAt,_that.lo
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id, @JsonKey(name: 'household_id')  String householdId, @JsonKey(name: 'log_type')  BabyLogType logType, @JsonKey(name: 'logged_at')  DateTime loggedAt, @JsonKey(name: 'logged_by')  String loggedBy, @JsonKey(name: 'feeding_type')  FeedingType? feedingType, @JsonKey(name: 'amount_ml')  int? amountMl, @JsonKey(name: 'diaper_type')  DiaperType? diaperType, @JsonKey(name: 'ended_at')  DateTime? endedAt, @JsonKey(fromJson: _numericFromJson)  double? temperature, @JsonKey(name: 'weight_g')  int? weightG, @JsonKey(name: 'height_cm', fromJson: _numericFromJson)  double? heightCm, @JsonKey(name: 'duration_min')  int? durationMin,  String? memo, @JsonKey(name: 'created_at')  DateTime createdAt, @JsonKey(name: 'updated_at')  DateTime? updatedAt)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id, @JsonKey(name: 'household_id')  String householdId, @JsonKey(name: 'log_type')  BabyLogType logType, @JsonKey(name: 'logged_at')  DateTime loggedAt, @JsonKey(name: 'logged_by')  String loggedBy, @JsonKey(name: 'feeding_type', unknownEnumValue: JsonKey.nullForUndefinedEnumValue)  FeedingType? feedingType, @JsonKey(name: 'amount_ml')  int? amountMl, @JsonKey(name: 'diaper_type', unknownEnumValue: JsonKey.nullForUndefinedEnumValue)  DiaperType? diaperType, @JsonKey(name: 'ended_at')  DateTime? endedAt, @JsonKey(fromJson: _numericFromJson)  double? temperature, @JsonKey(name: 'weight_g')  int? weightG, @JsonKey(name: 'height_cm', fromJson: _numericFromJson)  double? heightCm, @JsonKey(name: 'duration_min')  int? durationMin,  String? memo, @JsonKey(name: 'created_at')  DateTime createdAt, @JsonKey(name: 'updated_at')  DateTime? updatedAt)?  $default,) {final _that = this;
 switch (_that) {
 case _BabyLog() when $default != null:
 return $default(_that.id,_that.householdId,_that.logType,_that.loggedAt,_that.loggedBy,_that.feedingType,_that.amountMl,_that.diaperType,_that.endedAt,_that.temperature,_that.weightG,_that.heightCm,_that.durationMin,_that.memo,_that.createdAt,_that.updatedAt);case _:
@@ -221,7 +227,7 @@ return $default(_that.id,_that.householdId,_that.logType,_that.loggedAt,_that.lo
 @JsonSerializable()
 
 class _BabyLog implements BabyLog {
-  const _BabyLog({required this.id, @JsonKey(name: 'household_id') required this.householdId, @JsonKey(name: 'log_type') required this.logType, @JsonKey(name: 'logged_at') required this.loggedAt, @JsonKey(name: 'logged_by') required this.loggedBy, @JsonKey(name: 'feeding_type') this.feedingType, @JsonKey(name: 'amount_ml') this.amountMl, @JsonKey(name: 'diaper_type') this.diaperType, @JsonKey(name: 'ended_at') this.endedAt, @JsonKey(fromJson: _numericFromJson) this.temperature, @JsonKey(name: 'weight_g') this.weightG, @JsonKey(name: 'height_cm', fromJson: _numericFromJson) this.heightCm, @JsonKey(name: 'duration_min') this.durationMin, this.memo, @JsonKey(name: 'created_at') required this.createdAt, @JsonKey(name: 'updated_at') this.updatedAt});
+  const _BabyLog({required this.id, @JsonKey(name: 'household_id') required this.householdId, @JsonKey(name: 'log_type') required this.logType, @JsonKey(name: 'logged_at') required this.loggedAt, @JsonKey(name: 'logged_by') required this.loggedBy, @JsonKey(name: 'feeding_type', unknownEnumValue: JsonKey.nullForUndefinedEnumValue) this.feedingType, @JsonKey(name: 'amount_ml') this.amountMl, @JsonKey(name: 'diaper_type', unknownEnumValue: JsonKey.nullForUndefinedEnumValue) this.diaperType, @JsonKey(name: 'ended_at') this.endedAt, @JsonKey(fromJson: _numericFromJson) this.temperature, @JsonKey(name: 'weight_g') this.weightG, @JsonKey(name: 'height_cm', fromJson: _numericFromJson) this.heightCm, @JsonKey(name: 'duration_min') this.durationMin, this.memo, @JsonKey(name: 'created_at') required this.createdAt, @JsonKey(name: 'updated_at') this.updatedAt});
   factory _BabyLog.fromJson(Map<String, dynamic> json) => _$BabyLogFromJson(json);
 
 @override final  String id;
@@ -229,9 +235,15 @@ class _BabyLog implements BabyLog {
 @override@JsonKey(name: 'log_type') final  BabyLogType logType;
 @override@JsonKey(name: 'logged_at') final  DateTime loggedAt;
 @override@JsonKey(name: 'logged_by') final  String loggedBy;
-@override@JsonKey(name: 'feeding_type') final  FeedingType? feedingType;
+// enum drift 防御 (#158): DB が feeding_type ENUM に将来値を足し Flutter が
+// 未追随の間、未知値で `$enumDecodeNullable` が ArgumentError を投げ、
+// fetchTodayLogs がダッシュボード全体を AsyncError に倒す (#147 と同クラス)。
+// 未知値は null へ退化させ、getLogSummary の「型 null の授乳」経路で穏当に
+// 劣化させる。log_type (required 判別子) は退化不能ゆえ対象外・厳格維持。
+@override@JsonKey(name: 'feeding_type', unknownEnumValue: JsonKey.nullForUndefinedEnumValue) final  FeedingType? feedingType;
 @override@JsonKey(name: 'amount_ml') final  int? amountMl;
-@override@JsonKey(name: 'diaper_type') final  DiaperType? diaperType;
+// feeding_type と同じ enum drift 防御 (#158)。未知の diaper_type → null。
+@override@JsonKey(name: 'diaper_type', unknownEnumValue: JsonKey.nullForUndefinedEnumValue) final  DiaperType? diaperType;
 @override@JsonKey(name: 'ended_at') final  DateTime? endedAt;
 @override@JsonKey(fromJson: _numericFromJson) final  double? temperature;
 @override@JsonKey(name: 'weight_g') final  int? weightG;
@@ -277,7 +289,7 @@ abstract mixin class _$BabyLogCopyWith<$Res> implements $BabyLogCopyWith<$Res> {
   factory _$BabyLogCopyWith(_BabyLog value, $Res Function(_BabyLog) _then) = __$BabyLogCopyWithImpl;
 @override @useResult
 $Res call({
- String id,@JsonKey(name: 'household_id') String householdId,@JsonKey(name: 'log_type') BabyLogType logType,@JsonKey(name: 'logged_at') DateTime loggedAt,@JsonKey(name: 'logged_by') String loggedBy,@JsonKey(name: 'feeding_type') FeedingType? feedingType,@JsonKey(name: 'amount_ml') int? amountMl,@JsonKey(name: 'diaper_type') DiaperType? diaperType,@JsonKey(name: 'ended_at') DateTime? endedAt,@JsonKey(fromJson: _numericFromJson) double? temperature,@JsonKey(name: 'weight_g') int? weightG,@JsonKey(name: 'height_cm', fromJson: _numericFromJson) double? heightCm,@JsonKey(name: 'duration_min') int? durationMin, String? memo,@JsonKey(name: 'created_at') DateTime createdAt,@JsonKey(name: 'updated_at') DateTime? updatedAt
+ String id,@JsonKey(name: 'household_id') String householdId,@JsonKey(name: 'log_type') BabyLogType logType,@JsonKey(name: 'logged_at') DateTime loggedAt,@JsonKey(name: 'logged_by') String loggedBy,@JsonKey(name: 'feeding_type', unknownEnumValue: JsonKey.nullForUndefinedEnumValue) FeedingType? feedingType,@JsonKey(name: 'amount_ml') int? amountMl,@JsonKey(name: 'diaper_type', unknownEnumValue: JsonKey.nullForUndefinedEnumValue) DiaperType? diaperType,@JsonKey(name: 'ended_at') DateTime? endedAt,@JsonKey(fromJson: _numericFromJson) double? temperature,@JsonKey(name: 'weight_g') int? weightG,@JsonKey(name: 'height_cm', fromJson: _numericFromJson) double? heightCm,@JsonKey(name: 'duration_min') int? durationMin, String? memo,@JsonKey(name: 'created_at') DateTime createdAt,@JsonKey(name: 'updated_at') DateTime? updatedAt
 });
 
 

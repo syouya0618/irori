@@ -38,8 +38,11 @@ class AggregationLogInput {
   /// `baby_logs` の 9 列 row (`src/app/api/baby-report/route.ts:55-57` の
   /// SELECT) から復元する。
   ///
-  /// - ENUM 列は DB 値文字列を厳密 decode する。契約外の値は `ArgumentError`
-  ///   (既存 `BabyLog.fromJson` の `$enumDecode` と同じ硬さ — 握り潰さない)。
+  /// - `log_type` は required 判別子ゆえ厳密 decode し、契約外の値は
+  ///   `ArgumentError` (握り潰さない)。
+  /// - `feeding_type` / `diaper_type` は enum drift 防御 (#158) で未知値を null へ
+  ///   退化させる (`_decodeEnumOrNull`)。DB が将来 ENUM に値を足し Flutter が未追随
+  ///   でも集計を倒さない。BabyLog 側の `unknownEnumValue` 退化と挙動を揃える。
   /// - `temperature` / `height_cm` は Postgres `numeric` 列で、PostgREST が
   ///   引用符付き文字列を返す場合がある (`baby_log.dart:6-21` と同 quirk)
   ///   ため num / String 双方を許容する。
@@ -47,17 +50,11 @@ class AggregationLogInput {
     return AggregationLogInput(
       logType: _decodeEnum(_logTypeFromDb, json['log_type'], 'log_type'),
       loggedAt: json['logged_at'] as String,
-      feedingType: json['feeding_type'] == null
-          ? null
-          : _decodeEnum(
-              _feedingTypeFromDb,
-              json['feeding_type'],
-              'feeding_type',
-            ),
+      // feeding_type / diaper_type は未知値 → null 退化 (#158)。null (未記録) も
+      // 未知値も等しく null になる。
+      feedingType: _decodeEnumOrNull(_feedingTypeFromDb, json['feeding_type']),
       amountMl: json['amount_ml'] as int?,
-      diaperType: json['diaper_type'] == null
-          ? null
-          : _decodeEnum(_diaperTypeFromDb, json['diaper_type'], 'diaper_type'),
+      diaperType: _decodeEnumOrNull(_diaperTypeFromDb, json['diaper_type']),
       endedAt: json['ended_at'] as String?,
       temperature: _numericFromJson(json['temperature']),
       weightG: json['weight_g'] as int?,
@@ -174,8 +171,10 @@ DailyFeedingSummary _feedingDay(
       }
     } else if (type == FeedingType.pumped) {
       // 搾乳は母乳を哺乳瓶で与える volumetric な授乳。ミルクとは別バケットで
-      // 回数・総量を集計する (原典 `:146-153`)。enum 全5値を網羅するので
-      // breast+bottle+solid+pumped === totalCount が保たれる。
+      // 回数・総量を集計する (原典 `:146-153`)。既知 5 値は各バケットへ排他的に
+      // 振り分けるため breast+bottle+solid+pumped === totalCount。ただし enum drift
+      // 防御 (#158) で未知/未記録の feeding_type は null となりどのバケットにも
+      // 該当しないため、そうしたログを含む日は和 < totalCount になりうる。
       pumpedCount++;
       final amountMl = log.amountMl;
       if (amountMl != null && amountMl > 0) {
@@ -479,13 +478,26 @@ double? _numericFromJson(Object? value) {
   return null;
 }
 
-/// DB ENUM 文字列 → Dart enum の厳密 decode。
+/// DB ENUM 文字列 → Dart enum の厳密 decode。log_type (required 判別子) 用。
+/// 契約外の値は握り潰さず ArgumentError を投げる。
 T _decodeEnum<T>(Map<String, T> table, Object? value, String column) {
   final decoded = table[value];
   if (decoded == null) {
     throw ArgumentError.value(value, column, '契約外の ENUM 値');
   }
   return decoded;
+}
+
+/// nullable ENUM 列 (feeding_type / diaper_type) の tolerant decode。
+///
+/// enum drift 防御 (#158): 未知値は throw せず null へ退化させる。DB が将来
+/// これらの ENUM に値を足し Flutter が未追随でも、`_decodeEnum` の ArgumentError で
+/// レポート集計 (generateBabyReportForPeriod) を倒さない (#147 と同クラスの第2
+/// クラッシュパス回避)。null (未記録) も未知値も等しく null になる。BabyLog 側の
+/// `unknownEnumValue: JsonKey.nullForUndefinedEnumValue` と同じ退化を集計経路にも
+/// 揃える。log_type は判別子ゆえ退化不能で `_decodeEnum` の厳格判定を維持する。
+T? _decodeEnumOrNull<T>(Map<String, T> table, Object? value) {
+  return table[value];
 }
 
 /// `baby_logs.log_type` の DB 値 → enum 対応 (`baby_log.dart` `@JsonValue` と同一)。

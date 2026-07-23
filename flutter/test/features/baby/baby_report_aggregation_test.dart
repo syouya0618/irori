@@ -594,7 +594,7 @@ void main() {
       expect(log.heightCm, 58.5);
     });
 
-    test('契約外の ENUM 値は ArgumentError (握り潰さない)', () {
+    test('契約外の log_type は ArgumentError (判別子ゆえ握り潰さない)', () {
       expect(
         () => AggregationLogInput.fromJson(const {
           'log_type': 'bath',
@@ -603,5 +603,37 @@ void main() {
         throwsArgumentError,
       );
     });
+
+    test(
+      '未知の feeding_type/diaper_type は throw せず null に退化し集計を生かす (#158 enum drift 防御)',
+      () {
+        // #147 と同じクラスの第2クラッシュパス。将来 DB が feeding_type ENUM に
+        // 新値を足し Flutter が未追随の間、_decodeEnum が ArgumentError を投げて
+        // レポート集計 (generateBabyReportForPeriod) を倒していた。未知値は null へ
+        // 退化させ集計を生かす。log_type は判別子ゆえ厳格維持 (上の 'bath' ケース)。
+        final json = <String, dynamic>{
+          'log_type': 'feeding',
+          'logged_at': '2026-04-11T01:00:00+00:00',
+          'feeding_type': 'formula_fortified', // DB が将来足しうる未知値
+          'amount_ml': 100,
+          'diaper_type': 'leak', // おむつも同じ脆弱性 (未知値 → null)
+        };
+        expect(() => AggregationLogInput.fromJson(json), returnsNormally);
+        final input = AggregationLogInput.fromJson(json);
+        expect(input.feedingType, isNull);
+        expect(input.diaperType, isNull);
+        expect(input.amountMl, 100);
+
+        // 集計経路も倒れず、未知種別は null 同様 totalCount のみに数える
+        // (種別 if 連鎖はどのバケットにも該当しない)。
+        final result = aggregateFeedings([input], _start, _end);
+        expect(result, hasLength(1));
+        expect(result[0].totalCount, 1);
+        expect(result[0].breastCount, 0);
+        expect(result[0].bottleCount, 0);
+        expect(result[0].pumpedCount, 0);
+        expect(result[0].solidCount, 0);
+      },
+    );
   });
 }
