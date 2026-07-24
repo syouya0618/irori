@@ -12,9 +12,17 @@ _BabyLog _$BabyLogFromJson(Map<String, dynamic> json) => _BabyLog(
   logType: $enumDecode(_$BabyLogTypeEnumMap, json['log_type']),
   loggedAt: DateTime.parse(json['logged_at'] as String),
   loggedBy: json['logged_by'] as String,
-  feedingType: $enumDecodeNullable(_$FeedingTypeEnumMap, json['feeding_type']),
+  feedingType: $enumDecodeNullable(
+    _$FeedingTypeEnumMap,
+    json['feeding_type'],
+    unknownValue: JsonKey.nullForUndefinedEnumValue,
+  ),
   amountMl: (json['amount_ml'] as num?)?.toInt(),
-  diaperType: $enumDecodeNullable(_$DiaperTypeEnumMap, json['diaper_type']),
+  diaperType: $enumDecodeNullable(
+    _$DiaperTypeEnumMap,
+    json['diaper_type'],
+    unknownValue: JsonKey.nullForUndefinedEnumValue,
+  ),
   endedAt: json['ended_at'] == null
       ? null
       : DateTime.parse(json['ended_at'] as String),

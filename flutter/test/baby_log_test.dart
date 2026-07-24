@@ -129,6 +129,35 @@ void main() {
       expect(log.amountMl, 80);
     });
 
+    test(
+      '未知の feeding_type/diaper_type は throw せず null に退化する (#158 enum drift 防御)',
+      () {
+        // #147 と同じクラスの潜在バグ: 将来 DB の feeding_type / diaper_type ENUM に
+        // 新値が追加され Flutter が未追随の間、BabyLog.fromJson が未知 ENUM 値で
+        // ArgumentError を投げ、fetchTodayLogs がダッシュボード全体を AsyncError に
+        // 倒す。未知値は null へ退化させ、既存の「型 null の授乳/おむつ」表示経路
+        // (getLogSummary) で穏当に劣化させる。log_type は判別子ゆえ対象外 (required)。
+        final json = <String, dynamic>{
+          'id': 'log-drift',
+          'household_id': 'hh-1',
+          'log_type': 'feeding',
+          'logged_at': '2026-08-01T03:00:00+00:00',
+          'logged_by': 'user-1',
+          'feeding_type': 'formula_fortified', // DB が将来足しうる未知値
+          'amount_ml': 100,
+          'diaper_type': 'leak', // おむつも同じ脆弱性 (未知値 → null)
+          'created_at': '2026-08-01T03:00:01+00:00',
+        };
+
+        expect(() => BabyLog.fromJson(json), returnsNormally);
+        final log = BabyLog.fromJson(json);
+        expect(log.logType, BabyLogType.feeding);
+        expect(log.feedingType, isNull); // 未知 → null 退化 (throw しない)
+        expect(log.diaperType, isNull); // diaper_type も同じ扱い
+        expect(log.amountMl, 100); // 他フィールドは無事
+      },
+    );
+
     test('全 log_type enum が JsonValue でマッピングされている', () {
       BabyLog parse(String type) => BabyLog.fromJson(<String, dynamic>{
         'id': 'x',
