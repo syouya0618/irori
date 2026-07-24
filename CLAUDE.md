@@ -74,6 +74,7 @@ src/
 - **pdfmake v0.3.7: `setFonts()` はモジュールスコープで1回のみ**: リクエストごとに呼ぶと並行リクエストで競合リスク
 - **SECURITY DEFINER 関数には `SET search_path = public` 必須**: `auth.users` トリガーから呼ばれると `search_path=auth` で狂う
 - **`ALTER TYPE ADD VALUE` と CHECK 制約は別マイグレーションに分離**: 同一トランザクション内で新 ENUM 値を CHECK 制約で参照すると `unsafe use of new value` エラー
+- **Flutter の DB ENUM 由来 nullable フィールドは未知値で throw させない（enum drift 防御）**: DB の ENUM（`feeding_type`/`diaper_type` 等）は Flutter デプロイと独立に値が増えうる。未追随の間、`json_serializable` の `$enumDecodeNullable` や手書き decode が未知値で `ArgumentError` を投げ、`fromJson` を await する fetch がダッシュボード全体を `AsyncError` に倒す（#147/#158）。**対処**: nullable enum は `@JsonKey(unknownEnumValue: JsonKey.nullForUndefinedEnumValue)`（生成コード）＋手書き経路は「未知→null」で退化。sentinel enum 追加は全 exhaustive switch の網羅漏れで再クラッシュするため避ける。判別子（`log_type`）は required ゆえ厳格 throw 維持。既存 `ItemCategory.fromDbValue`（未知→`otherDaily`）と同流儀
 - **`cookies()` + `NextResponse.redirect()` で Cookie 未伝播**: `createServerClient` でレスポンスに直接書き込む
 
 ### Next.js / Supabase 共通
