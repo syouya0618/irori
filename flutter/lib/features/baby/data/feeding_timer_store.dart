@@ -85,6 +85,11 @@ String _feedingTypeValue(FeedingType type) {
       return 'bottle';
     case FeedingType.solid:
       return 'solid';
+    // pumped は量入力の授乳でタイマー対象ではないが、exhaustive switch のため網羅する
+    // (この store には breast 系のみ保存される想定。_feedingTypeFromValue は default→null で
+    // 未知値を安全に破棄するため、万一保存されても復元時に破損扱いで捨てられる)。
+    case FeedingType.pumped:
+      return 'pumped';
   }
 }
 

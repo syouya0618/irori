@@ -573,7 +573,12 @@ final babyRepositoryProvider = Provider<BabyRepository>((ref) {
 });
 
 bool _allowsAmountMl(FeedingType type) {
-  return type == FeedingType.bottle || type == FeedingType.solid;
+  // 搾乳(pumped)も量(ml)を持つ授乳 (web `AMOUNT_FEEDING_TYPES` と一致)。
+  // これを欠くと、web で作成した搾乳ログを Flutter で編集した際に amount_ml を
+  // null 化してデータ欠損させる (updateFeeding の門番)。
+  return type == FeedingType.bottle ||
+      type == FeedingType.solid ||
+      type == FeedingType.pumped;
 }
 
 String? _nullableMemo(String? memo) {
@@ -656,6 +661,8 @@ String _feedingTypeValue(FeedingType type) {
       return 'bottle';
     case FeedingType.solid:
       return 'solid';
+    case FeedingType.pumped:
+      return 'pumped';
   }
 }
 

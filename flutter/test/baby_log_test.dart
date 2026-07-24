@@ -107,6 +107,28 @@ void main() {
       expect(log.updatedAt, isNull);
     });
 
+    test('搾乳(pumped) feeding_type でも throw せず復元される (#147 回帰)', () {
+      // DB の feeding_type ENUM に pumped が追加済み (migration 20260721000001)。
+      // web で搾乳記録を1件でも作ると Flutter の BabyLog.fromJson が未知 ENUM 値で
+      // throw し、fetchTodayLogs がダッシュボード全体を AsyncError に倒していた。
+      final json = <String, dynamic>{
+        'id': 'log-pumped',
+        'household_id': 'hh-1',
+        'log_type': 'feeding',
+        'logged_at': '2026-07-22T03:00:00+00:00',
+        'logged_by': 'user-1',
+        'feeding_type': 'pumped',
+        'amount_ml': 80,
+        'created_at': '2026-07-22T03:00:01+00:00',
+      };
+
+      expect(() => BabyLog.fromJson(json), returnsNormally);
+      final log = BabyLog.fromJson(json);
+      expect(log.logType, BabyLogType.feeding);
+      expect(log.feedingType, FeedingType.pumped);
+      expect(log.amountMl, 80);
+    });
+
     test('全 log_type enum が JsonValue でマッピングされている', () {
       BabyLog parse(String type) => BabyLog.fromJson(<String, dynamic>{
         'id': 'x',

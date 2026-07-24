@@ -62,6 +62,7 @@ const _$FeedingTypeEnumMap = {
   FeedingType.breastRight: 'breast_right',
   FeedingType.bottle: 'bottle',
   FeedingType.solid: 'solid',
+  FeedingType.pumped: 'pumped',
 };
 
 const _$DiaperTypeEnumMap = {

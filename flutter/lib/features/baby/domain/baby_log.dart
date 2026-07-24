@@ -41,6 +41,11 @@ enum BabyLogType {
 }
 
 /// 授乳タイプ (`feeding_type` ENUM)。`log_type == feeding` 以外では null。
+///
+/// `pumped` (搾乳) は母乳を哺乳瓶で与える volumetric な授乳。DB migration
+/// `20260721000001_baby_feeding_pumped_enum.sql` (PR #139) で追加され、web は
+/// ミルクとは独立バケットで集計する。web `src/lib/types/database.ts` の enum 順
+/// に合わせ pumped を末尾に置く (#147)。
 enum FeedingType {
   @JsonValue('breast_left')
   breastLeft,
@@ -50,6 +55,8 @@ enum FeedingType {
   bottle,
   @JsonValue('solid')
   solid,
+  @JsonValue('pumped')
+  pumped,
 }
 
 /// おむつタイプ (`diaper_type` ENUM)。`log_type == diaper` 以外では null。

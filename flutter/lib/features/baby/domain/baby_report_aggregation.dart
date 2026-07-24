@@ -102,8 +102,13 @@ typedef DailyFeedingSummary = ({
   int breastCount,
   int bottleCount,
   int solidCount,
+  // 搾乳(pumped)。母乳/ミルク/離乳食とは独立に集計する (原典 `pumpedCount`)。
+  int pumpedCount,
   int totalBottleMl,
   int? avgBottleMl,
+  // 搾乳の総量・平均(ml)。ミルクとは別バケット (原典 `totalPumpedMl`/`avgPumpedMl`)。
+  int totalPumpedMl,
+  int? avgPumpedMl,
 });
 
 /// 日別睡眠サマリー。原典 `DailySleepSummary` (`baby-log-aggregation.ts:28-32`)。
@@ -153,7 +158,9 @@ DailyFeedingSummary _feedingDay(
   var breastCount = 0;
   var bottleCount = 0;
   var solidCount = 0;
+  var pumpedCount = 0;
   var totalBottleMl = 0;
+  var totalPumpedMl = 0;
 
   for (final log in dayLogs) {
     final type = log.feedingType;
@@ -164,6 +171,15 @@ DailyFeedingSummary _feedingDay(
       final amountMl = log.amountMl;
       if (amountMl != null && amountMl > 0) {
         totalBottleMl += amountMl;
+      }
+    } else if (type == FeedingType.pumped) {
+      // 搾乳は母乳を哺乳瓶で与える volumetric な授乳。ミルクとは別バケットで
+      // 回数・総量を集計する (原典 `:146-153`)。enum 全5値を網羅するので
+      // breast+bottle+solid+pumped === totalCount が保たれる。
+      pumpedCount++;
+      final amountMl = log.amountMl;
+      if (amountMl != null && amountMl > 0) {
+        totalPumpedMl += amountMl;
       }
     } else if (type == FeedingType.solid) {
       solidCount++;
@@ -176,9 +192,14 @@ DailyFeedingSummary _feedingDay(
     breastCount: breastCount,
     bottleCount: bottleCount,
     solidCount: solidCount,
+    pumpedCount: pumpedCount,
     totalBottleMl: totalBottleMl,
     avgBottleMl: bottleCount > 0
         ? _jsMathRound(totalBottleMl / bottleCount)
+        : null,
+    totalPumpedMl: totalPumpedMl,
+    avgPumpedMl: pumpedCount > 0
+        ? _jsMathRound(totalPumpedMl / pumpedCount)
         : null,
   );
 }
@@ -483,6 +504,7 @@ const Map<String, FeedingType> _feedingTypeFromDb = {
   'breast_right': FeedingType.breastRight,
   'bottle': FeedingType.bottle,
   'solid': FeedingType.solid,
+  'pumped': FeedingType.pumped,
 };
 
 /// `diaper_type` の DB 値 → enum 対応。
