@@ -333,14 +333,16 @@ describe("BabyDashboard / Realtime → 週間サマリー反映", () => {
     expect(dayTen).not.toBe("4/10: 0分")
   })
 
-  it("unmount で supabase.removeChannel が呼ばれる", () => {
+  it("unmount で全 Realtime channel の supabase.removeChannel が呼ばれる", () => {
     const { unmount } = render(<BabyDashboard {...defaultProps()} />)
 
     expect(mockState.removeChannelMock).not.toHaveBeenCalled()
 
     unmount()
 
-    expect(mockState.removeChannelMock).toHaveBeenCalledTimes(1)
+    // dashboard は baby_logs と baby_diaries の 2 channel を購読する（issue #155）。
+    // どちらも cleanup で removeChannel されること。
+    expect(mockState.removeChannelMock).toHaveBeenCalledTimes(2)
   })
 
   it("UPDATE branch b (週外→週内へ logged_at 移動) で weeklyLogs に取り込まれる", () => {

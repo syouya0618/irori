@@ -1,0 +1,16 @@
+-- ============================================================
+-- baby_diaries を Realtime publication に追加する（issue #155）。
+--
+-- 背景: PR #154 で育児日記を baby_logs/memo から専用テーブル baby_diaries へ
+--       移行したが、publication 未登録のため配偶者の日記編集がライブ反映されない
+--       回帰が起きていた（旧 memo ログ時代は baby_logs の Realtime に乗っていた）。
+--
+-- REPLICA IDENTITY FULL は付けない（calendar_events / baby_logs と同流儀）:
+--   Supabase docs: "You can't filter Delete events when tracking Postgres Changes."
+--   "When RLS is enabled and replica identity is set to full, the old record
+--    contains only the primary key(s)."
+--   → household_id フィルタ付き購読では DELETE(空保存)が配信されないため、
+--     dashboard 側は INSERT/UPDATE のみ購読で反映し、DELETE の回収は
+--     date-nav refetch + visibilitychange/focus refetch で担保する（issue #91/#92）。
+-- ============================================================
+ALTER PUBLICATION supabase_realtime ADD TABLE baby_diaries;

@@ -281,6 +281,88 @@ export function BabyDashboard({
     }
   }, [householdId])
 
+  // 育児日記（1日1本）の Realtime 購読（issue #155）。baby_logs とは別 channel で
+  // 分離し、購読ブロックの blast radius を最小化する。
+  // INSERT/UPDATE のみ反映する: household_id フィルタ付き購読では DELETE の old が
+  // PK のみで配信されない（migration 20260723000001 / calendar_events と同制約）。
+  // DELETE（配偶者の空保存）は date-nav refetch と下の visibilitychange refetch で回収する。
+  useEffect(() => {
+    const supabase = createClient()
+    const channel = supabase
+      .channel("baby_diaries")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "baby_diaries",
+          filter: `household_id=eq.${householdId}`,
+        },
+        (payload) => {
+          logRealtimeEvent("baby_diaries", payload)
+          if (
+            payload.eventType === "INSERT" ||
+            payload.eventType === "UPDATE"
+          ) {
+            const next = payload.new as BabyDiaryData
+            // 選択日と一致する日記だけ反映する（selectedDate は deps 外のため ref 読み）。
+            // diary_date は DATE 列で Realtime は "YYYY-MM-DD" を配信するが、万一
+            // 時刻付き（"...T00:00:00"）で来ても guard が silent 全滅しないよう
+            // 先頭10文字で比較する（mock では検出不能な wire フォーマット境界の保険。
+            // DATE 列ゆえ toJstDateString の timestamptz 変換は使わない）。
+            // `?.` は diary_date 欠落の payload（本番の channel 分離下では届かないが
+            // 防御）を安全に no-op にする。
+            if (next.diary_date?.slice(0, 10) !== selectedDateRef.current) return
+            setDiary(next)
+          }
+          // DELETE は配信されない（上記）。refetch 経路で回収する。
+        },
+      )
+      .subscribe((status, err) => {
+        logRealtimeStatus("baby_diaries", status, err)
+      })
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [householdId])
+
+  // タブ復帰時に選択日の日記を再取得し、DELETE 非配信（配偶者の空保存）を回収する
+  // （calendar use-month-events と同流儀。issue #91/#92/#155）。
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return
+      const supabase = createClient()
+      const date = selectedDateRef.current
+      void supabase
+        .from("baby_diaries")
+        .select("id, diary_date, content, updated_at")
+        .eq("household_id", householdId)
+        .eq("diary_date", date)
+        .maybeSingle()
+        .then(({ data, error }) => {
+          if (error) {
+            logSupabaseError("baby", "diary visibility refetch failed", error, {
+              householdId,
+              date,
+            })
+            // 同一日の取り直しゆえ、失敗時は現在の本文を保持する（date-nav の
+            // fail-to-empty とは異なり cross-date stale の危険が無い）。
+            return
+          }
+          // refetch 中に日付が変わっていたら反映しない（往復中の stale 反映防止）。
+          if (selectedDateRef.current !== date) return
+          setDiary(data ?? null)
+        })
+    }
+    document.addEventListener("visibilitychange", onVisible)
+    window.addEventListener("focus", onVisible)
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible)
+      window.removeEventListener("focus", onVisible)
+    }
+  }, [householdId])
+
   // Fetch logs when navigating to a different date (skip initial mount — initialLogs covers it)
   const initialDateRef = useRef(initialDate)
   useEffect(() => {
