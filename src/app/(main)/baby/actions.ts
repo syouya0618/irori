@@ -31,6 +31,32 @@ function validateCreateLoggedAt(loggedAt?: string | null): string | null {
   return validateLogTime(loggedAt)
 }
 
+// 母乳サイクル行（feeding_type: 'breast'）の左右吸わせ回数を検証する。
+// DB CHECK chk_breast_counts_required（supabase/migrations/20260726100002）のミラー:
+// 両方必須・整数・各 0..20・合計 >= 1。recordFeeding / updateLog で共有する。
+const BREAST_COUNTS_ERROR =
+  "左右の回数は0〜20回・合計1回以上で指定してください"
+
+function validateBreastCounts(
+  leftCount: number | null | undefined,
+  rightCount: number | null | undefined,
+): string | null {
+  if (
+    leftCount == null ||
+    rightCount == null ||
+    !Number.isInteger(leftCount) ||
+    !Number.isInteger(rightCount) ||
+    leftCount < 0 ||
+    leftCount > 20 ||
+    rightCount < 0 ||
+    rightCount > 20 ||
+    leftCount + rightCount < 1
+  ) {
+    return BREAST_COUNTS_ERROR
+  }
+  return null
+}
+
 interface RecordFeedingInput {
   feedingType: FeedingType
   amountMl?: number | null
@@ -39,6 +65,15 @@ interface RecordFeedingInput {
    * （両列を1経路で書き drift を防ぐ）。母乳/ミルク等の時間なし記録では省略する。
    */
   durationSec?: number | null
+  /**
+   * 母乳サイクル（feedingType: 'breast'）の左吸わせ回数。0..20、右と合計 >= 1。
+   * DB CHECK chk_breast_counts_required（supabase/migrations/20260726100002）を
+   * サーバ側でミラー検証する。feedingType が 'breast' 以外の時は指定不可
+   * （chk_breast_counts_only_breast のミラー）。
+   */
+  breastLeftCount?: number | null
+  /** 母乳サイクル（feedingType: 'breast'）の右吸わせ回数。制約は breastLeftCount と同じ。 */
+  breastRightCount?: number | null
   /** 記録時刻（ISO 8601）。未指定時は DB の now() 既定に依存する。 */
   loggedAt?: string
   memo?: string
@@ -78,6 +113,19 @@ export async function recordFeeding(input: RecordFeedingInput) {
   const timeError = validateCreateLoggedAt(input.loggedAt)
   if (timeError) return { error: timeError, id: null }
 
+  // breast_left_count / breast_right_count の検証（DB CHECK
+  // chk_breast_counts_only_breast / chk_breast_counts_required のミラー）。
+  if (input.feedingType === "breast") {
+    const countsError = validateBreastCounts(
+      input.breastLeftCount,
+      input.breastRightCount,
+    )
+    if (countsError) return { error: countsError, id: null }
+  } else if (input.breastLeftCount != null || input.breastRightCount != null) {
+    // chk_breast_counts_only_breast のミラー: breast 以外は counts を持てない
+    return { error: "この授乳タイプには左右の回数を指定できません", id: null }
+  }
+
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error, id: null }
   const { supabase, userId, householdId } = result.context
@@ -94,6 +142,11 @@ export async function recordFeeding(input: RecordFeedingInput) {
       // 秒を source of truth に、分は後方互換のため round で併記（1経路で両列を書く）
       duration_sec: durationSec,
       duration_min: deriveDurationMinFromSec(durationSec),
+      // breast 以外は上で拒否済みゆえ常に null（chk_breast_counts_only_breast のミラー）
+      breast_left_count:
+        input.feedingType === "breast" ? input.breastLeftCount ?? null : null,
+      breast_right_count:
+        input.feedingType === "breast" ? input.breastRightCount ?? null : null,
       // 未指定時は logged_at を送らず DB の now() 既定に委ねる（従来挙動）
       ...(input.loggedAt != null && { logged_at: input.loggedAt }),
       memo: input.memo || null,
@@ -342,6 +395,14 @@ export async function updateLog(
      * drift を生むため廃止）。null は「時間なしの授乳」= 両列 null。
      */
     durationSec?: number | null
+    /**
+     * 母乳サイクル（feedingType: 'breast'）の左右吸わせ回数。feedingType が
+     * 'breast' の時のみ必須（recordFeeding と同じ検証）。feedingType を
+     * 'breast' 以外へ変更する時は無視され、常に null で上書きされる
+     * （chk_breast_counts_only_breast のミラー。amount_ml の null 化と同じ規約）。
+     */
+    breastLeftCount?: number | null
+    breastRightCount?: number | null
     diaperType?: DiaperType
     endedAt?: string | null
     temperature?: number | null
@@ -365,6 +426,18 @@ export async function updateLog(
     ) {
       return { error: "授乳時間は1秒〜180分の範囲で指定してください" }
     }
+  }
+
+  // breast_left_count / breast_right_count の検証（DB CHECK chk_breast_counts_required
+  // のミラー）。feedingType='breast' への変更時のみ必須。'breast' 以外への変更時は
+  // payload 側で強制 null 化するためここでは検証しない（クライアントの送り忘れ/
+  // 消し忘れをエラーにせず、常に null で DB CHECK 違反を防ぐ）。
+  if (updates.feedingType === "breast") {
+    const countsError = validateBreastCounts(
+      updates.breastLeftCount,
+      updates.breastRightCount,
+    )
+    if (countsError) return { error: countsError }
   }
 
   // 未来時刻の拒否（+5 分の時計ずれ許容）。auth 前に純関数で弾く（memoError と同順）。
@@ -415,6 +488,13 @@ export async function updateLog(
       ...(updates.loggedAt !== undefined && { logged_at: updates.loggedAt }),
       ...(updates.feedingType !== undefined && {
         feeding_type: updates.feedingType,
+        // chk_breast_counts_only_breast のミラー: 'breast' 以外へ変更する時は
+        // 必ず counts を null 化する（クライアントの送り忘れ/消し忘れで DB CHECK
+        // 違反にしない）。'breast' への変更時は上の検証済み値をそのまま書く。
+        breast_left_count:
+          updates.feedingType === "breast" ? updates.breastLeftCount : null,
+        breast_right_count:
+          updates.feedingType === "breast" ? updates.breastRightCount : null,
       }),
       ...(updates.amountMl !== undefined && { amount_ml: updates.amountMl }),
       ...(updates.durationSec !== undefined && {

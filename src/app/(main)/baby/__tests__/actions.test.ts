@@ -460,6 +460,202 @@ describe("updateLog の授乳時間（durationSec）更新", () => {
   )
 })
 
+describe("recordFeeding の breast_left_count / breast_right_count（母乳サイクル）", () => {
+  it("breast + 妥当な counts は insert payload に breast_left_count/right_count を書く", async () => {
+    const { client, insert } = makeSupabase({
+      data: { id: "log-1" },
+      error: null,
+    })
+    setContext(client)
+    const result = await recordFeeding({
+      feedingType: "breast",
+      breastLeftCount: 2,
+      breastRightCount: 3,
+    })
+    expect(result.error).toBeNull()
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ breast_left_count: 2, breast_right_count: 3 }),
+    )
+  })
+
+  it("breast + 片側 0 の妥当な counts は 0 のまま insert する（falsy 判定で null 化しない）", async () => {
+    const { client, insert } = makeSupabase({
+      data: { id: "log-3" },
+      error: null,
+    })
+    setContext(client)
+    const result = await recordFeeding({
+      feedingType: "breast",
+      breastLeftCount: 0,
+      breastRightCount: 3,
+    })
+    expect(result.error).toBeNull()
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ breast_left_count: 0, breast_right_count: 3 }),
+    )
+  })
+
+  it.each([
+    [undefined, undefined],
+    [null, null],
+    [21, 0],
+    [0, 21],
+    [0, 0],
+    [1.5, 0],
+    [-1, 5],
+  ])(
+    "breast + 不正な counts(%s, %s) は日本語エラーで DB 到達しない",
+    async (left, right) => {
+      const { client, insert } = makeSupabase({
+        data: { id: "x" },
+        error: null,
+      })
+      setContext(client)
+      const result = await recordFeeding({
+        feedingType: "breast",
+        breastLeftCount: left as number | null | undefined,
+        breastRightCount: right as number | null | undefined,
+      })
+      expect(result.error).toBe(
+        "左右の回数は0〜20回・合計1回以上で指定してください",
+      )
+      expect(result.id).toBeNull()
+      expect(insert).not.toHaveBeenCalled()
+    },
+  )
+
+  it("breast 以外で counts を指定するとエラー（DB CHECK chk_breast_counts_only_breast のミラー）", async () => {
+    const { client, insert } = makeSupabase({
+      data: { id: "x" },
+      error: null,
+    })
+    setContext(client)
+    const result = await recordFeeding({
+      feedingType: "bottle",
+      breastLeftCount: 1,
+      breastRightCount: 0,
+    })
+    expect(result.error).toBe("この授乳タイプには左右の回数を指定できません")
+    expect(result.id).toBeNull()
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("breast 以外で counts 未指定は素通りし breast_left_count/right_count は null で insert する", async () => {
+    const { client, insert } = makeSupabase({
+      data: { id: "log-2" },
+      error: null,
+    })
+    setContext(client)
+    const result = await recordFeeding({ feedingType: "bottle" })
+    expect(result.error).toBeNull()
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        breast_left_count: null,
+        breast_right_count: null,
+      }),
+    )
+  })
+})
+
+describe("updateLog の breast_left_count / breast_right_count（母乳サイクル）", () => {
+  /** update().eq().eq().select("id").single() を模した fake client（payload 検査用）。 */
+  function makeCapturedUpdate() {
+    const single = vi
+      .fn()
+      .mockResolvedValue({ data: { id: "log-1" }, error: null })
+    const select = vi.fn(() => ({ single }))
+    const eq2 = vi.fn(() => ({ select }))
+    const eq1 = vi.fn(() => ({ eq: eq2 }))
+    const update = vi.fn((_payload: Record<string, unknown>) => ({ eq: eq1 }))
+    const from = vi.fn(() => ({ update }))
+    return { client: { from }, update }
+  }
+
+  it("feedingType='breast' + 妥当な counts は payload に書く", async () => {
+    const { client, update } = makeCapturedUpdate()
+    setContext(client)
+    const result = await updateLog("log-1", {
+      feedingType: "breast",
+      breastLeftCount: 4,
+      breastRightCount: 5,
+    })
+    expect(result.error).toBeNull()
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        feeding_type: "breast",
+        breast_left_count: 4,
+        breast_right_count: 5,
+      }),
+    )
+  })
+
+  it("feedingType='breast' + 片側 0 の妥当な counts は 0 のまま payload に書く（falsy 判定で null 化しない）", async () => {
+    const { client, update } = makeCapturedUpdate()
+    setContext(client)
+    const result = await updateLog("log-1", {
+      feedingType: "breast",
+      breastLeftCount: 0,
+      breastRightCount: 1,
+    })
+    expect(result.error).toBeNull()
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        feeding_type: "breast",
+        breast_left_count: 0,
+        breast_right_count: 1,
+      }),
+    )
+  })
+
+  it("feedingType を bottle へ変更すると breast_left_count/right_count を null 化する（送り忘れ/消し忘れ防御）", async () => {
+    const { client, update } = makeCapturedUpdate()
+    setContext(client)
+    const result = await updateLog("log-1", { feedingType: "bottle" })
+    expect(result.error).toBeNull()
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        feeding_type: "bottle",
+        breast_left_count: null,
+        breast_right_count: null,
+      }),
+    )
+  })
+
+  it("feedingType='breast' + counts 未指定はエラーで update しない", async () => {
+    const { client, update } = makeCapturedUpdate()
+    setContext(client)
+    const result = await updateLog("log-1", { feedingType: "breast" })
+    expect(result.error).toBe(
+      "左右の回数は0〜20回・合計1回以上で指定してください",
+    )
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it("feedingType='breast' + 範囲外の counts はエラーで update しない", async () => {
+    const { client, update } = makeCapturedUpdate()
+    setContext(client)
+    const result = await updateLog("log-1", {
+      feedingType: "breast",
+      breastLeftCount: 21,
+      breastRightCount: 0,
+    })
+    expect(result.error).toBe(
+      "左右の回数は0〜20回・合計1回以上で指定してください",
+    )
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it("feedingType 未指定なら breast_left_count/right_count 列に触れない", async () => {
+    const { client, update } = makeCapturedUpdate()
+    setContext(client)
+    const result = await updateLog("log-1", { memo: "hi" })
+    expect(result.error).toBeNull()
+    const payload = update.mock.calls[0][0] as Record<string, unknown>
+    expect(payload).not.toHaveProperty("breast_left_count")
+    expect(payload).not.toHaveProperty("breast_right_count")
+  })
+})
+
 describe("upsertBabyDiary（育児日記・1日1本）", () => {
   function makeUpsertSupabase(upsertResult: { data: unknown; error: unknown }) {
     const single = vi.fn().mockResolvedValue(upsertResult)
