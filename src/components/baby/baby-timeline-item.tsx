@@ -12,6 +12,7 @@ import {
 import {
   getFeedingTypeLabel,
   getDiaperTypeLabel,
+  formatBreastCounts,
   minutesBetween,
   formatElapsedMinutes,
   formatDurationSec,
@@ -38,6 +39,16 @@ function getLogSummary(log: BabyLogData): string {
       if (!log.feeding_type) return "授乳"
       const label = getFeedingTypeLabel(log.feeding_type)
       const parts = [label]
+      // 母乳サイクル（'breast'）は左右の吸わせ回数を「母乳 左2・右1 12分30秒」の形で添える。
+      // formatBreastCounts は内訳なし（両側 0/null）で "" を返す契約ゆえ、空文字を
+      // push すると join(" ") で「母乳  12分30秒」と二重空白の間延びした行になる。
+      if (log.feeding_type === "breast") {
+        const counts = formatBreastCounts(
+          log.breast_left_count,
+          log.breast_right_count,
+        )
+        if (counts) parts.push(counts)
+      }
       if (log.amount_ml != null) parts.push(`${log.amount_ml}ml`)
       // 秒精度があれば「M分S秒」で表示、無ければ従来の分表示にフォールバック
       if (log.duration_sec != null) parts.push(formatDurationSec(log.duration_sec))

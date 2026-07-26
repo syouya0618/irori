@@ -28,6 +28,10 @@ const baseProps = {
     totalSleepMinutes: 0,
     peeCount: 0,
     poopCount: 0,
+    breastCycleCount: 0,
+    bottleCount: 0,
+    pumpedCount: 0,
+    solidCount: 0,
   },
 }
 
@@ -39,6 +43,8 @@ function makeFeedingLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
     logged_by: "user-1",
     feeding_type: "bottle",
     amount_ml: 120,
+    breast_left_count: null,
+    breast_right_count: null,
     diaper_type: null,
     ended_at: null,
     temperature: null,
@@ -60,6 +66,8 @@ function makeSleepLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
     logged_by: "user-1",
     feeding_type: null,
     amount_ml: null,
+    breast_left_count: null,
+    breast_right_count: null,
     diaper_type: null,
     ended_at: null,
     temperature: null,
@@ -74,28 +82,116 @@ function makeSleepLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
 }
 
 describe("BabySummaryBar 今日のまとめ", () => {
-  it("今日の授乳回数・合計睡眠・おむつ内訳(おしっこ/うんち)をひと目で表示する", () => {
+  it("今日の授乳内訳・合計睡眠・おむつ内訳(おしっこ/うんち)をひと目で表示する", () => {
     render(
       <BabySummaryBar
         {...baseProps}
         todayCounts={{
+          // 授乳は種別内訳の排他分割（母乳1 + ミルク1 === feedingCount 2）
           feedingCount: 2,
           diaperCount: 3,
           sleepCount: 1,
           totalSleepMinutes: 90,
           peeCount: 2, // pee 1件 + both 1件
           poopCount: 1, // poop 0件 + both 1件
+          breastCycleCount: 1,
+          bottleCount: 1,
+          pumpedCount: 0,
+          solidCount: 0,
         }}
       />,
     )
     const summary = screen.getByLabelText("今日のまとめ")
-    expect(within(summary).getByText("2回")).toBeInTheDocument() // 授乳
+    // 授乳は合算「2回」ではなく種別内訳で表示する（母乳サイクル数が
+    // ミルク/搾乳と混ざって「N回」に化ける欠陥の回帰防止）
+    expect(within(summary).getByText("母乳1・ミルク1")).toBeInTheDocument()
+    expect(within(summary).queryByText("2回")).not.toBeInTheDocument()
     expect(within(summary).getByText("1時間30分")).toBeInTheDocument() // 睡眠
     // おむつは合算値ではなく「おしっこ/うんち」の2値内訳で表示する
     expect(
       within(summary).getByText("おしっこ2・うんち1"),
     ).toBeInTheDocument()
     expect(within(summary).queryByText("3回")).not.toBeInTheDocument()
+  })
+
+  it("同日に母乳1・ミルク1・搾乳1がある日は「母乳1・ミルク1・搾乳1」で、合計3回とは表示しない", () => {
+    render(
+      <BabySummaryBar
+        {...baseProps}
+        todayCounts={{
+          feedingCount: 3,
+          // 「3回」が授乳の合算表示でないことを一意に示すため、おむつは 3 以外にする
+          diaperCount: 2,
+          sleepCount: 0,
+          totalSleepMinutes: 0,
+          peeCount: 1,
+          poopCount: 1,
+          breastCycleCount: 1,
+          bottleCount: 1,
+          pumpedCount: 1,
+          solidCount: 0,
+        }}
+      />,
+    )
+    const summary = screen.getByLabelText("今日のまとめ")
+    expect(
+      within(summary).getByText("母乳1・ミルク1・搾乳1"),
+    ).toBeInTheDocument()
+    // 母乳サイクル数が bottle/pumped と混ざって「3回」に化けていないこと
+    expect(within(summary).queryByText("3回")).not.toBeInTheDocument()
+  })
+
+  it("離乳食も含む4種類そろった日は非ゼロを「・」で全て連結する", () => {
+    render(
+      <BabySummaryBar
+        {...baseProps}
+        todayCounts={{
+          feedingCount: 12,
+          diaperCount: 0,
+          sleepCount: 0,
+          totalSleepMinutes: 0,
+          peeCount: 0,
+          poopCount: 0,
+          breastCycleCount: 8,
+          bottleCount: 2,
+          pumpedCount: 1,
+          solidCount: 1,
+        }}
+      />,
+    )
+    const summary = screen.getByLabelText("今日のまとめ")
+    expect(
+      within(summary).getByText("母乳8・ミルク2・搾乳1・離乳食1"),
+    ).toBeInTheDocument()
+  })
+
+  it("授乳が1件もない日は「0回」と表示する", () => {
+    render(<BabySummaryBar {...baseProps} />)
+    const summary = screen.getByLabelText("今日のまとめ")
+    expect(within(summary).getByText("0回")).toBeInTheDocument()
+  })
+
+  it("feeding_type が null の行しかない日（#159 の未知値 null 退化）は合算回数へフォールバックする", () => {
+    // 内訳が全ゼロでも授乳行が存在する日に「0回」と嘘をつかないための退避路。
+    render(
+      <BabySummaryBar
+        {...baseProps}
+        todayCounts={{
+          feedingCount: 2,
+          diaperCount: 0,
+          sleepCount: 0,
+          totalSleepMinutes: 0,
+          peeCount: 0,
+          poopCount: 0,
+          breastCycleCount: 0,
+          bottleCount: 0,
+          pumpedCount: 0,
+          solidCount: 0,
+        }}
+      />,
+    )
+    const summary = screen.getByLabelText("今日のまとめ")
+    expect(within(summary).getByText("2回")).toBeInTheDocument()
   })
 
   it("記録ゼロの日は睡眠を 0分 と表示する", () => {
@@ -126,6 +222,10 @@ describe("BabySummaryBar 今日のまとめ", () => {
           totalSleepMinutes: 0,
           peeCount: 1,
           poopCount: 2,
+          breastCycleCount: 0,
+          bottleCount: 0,
+          pumpedCount: 0,
+          solidCount: 0,
         }}
       />,
     )
