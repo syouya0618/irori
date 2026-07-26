@@ -173,7 +173,7 @@ describe("BabyLogFormSheet の記録時刻の編集・指定（タスクB）", (
       />,
     )
     // logged_at 2026-07-18T12:00:00+09:00 → "12:00"
-    expect((screen.getByLabelText("時刻") as HTMLInputElement).value).toBe(
+    expect((screen.getByLabelText("開始時刻") as HTMLInputElement).value).toBe(
       "12:00",
     )
   })
@@ -188,7 +188,7 @@ describe("BabyLogFormSheet の記録時刻の編集・指定（タスクB）", (
         log={bottleFeedingLog()}
       />,
     )
-    fireEvent.change(screen.getByLabelText("時刻"), {
+    fireEvent.change(screen.getByLabelText("開始時刻"), {
       target: { value: "13:30" },
     })
     fireEvent.click(screen.getByRole("button", { name: "更新する" }))
@@ -215,7 +215,7 @@ describe("BabyLogFormSheet の記録時刻の編集・指定（タスクB）", (
         })}
       />,
     )
-    fireEvent.change(screen.getByLabelText("時刻"), {
+    fireEvent.change(screen.getByLabelText("開始時刻"), {
       target: { value: "11:00" },
     })
     fireEvent.click(screen.getByRole("button", { name: "更新する" }))
@@ -260,10 +260,10 @@ describe("BabyLogFormSheet の記録時刻の編集・指定（タスクB）", (
       />,
     )
     // seed は "12:00"。一度変えてから元に戻す
-    fireEvent.change(screen.getByLabelText("時刻"), {
+    fireEvent.change(screen.getByLabelText("開始時刻"), {
       target: { value: "13:30" },
     })
-    fireEvent.change(screen.getByLabelText("時刻"), {
+    fireEvent.change(screen.getByLabelText("開始時刻"), {
       target: { value: "12:00" },
     })
     fireEvent.click(screen.getByRole("button", { name: "更新する" }))
@@ -312,7 +312,7 @@ describe("BabyLogFormSheet の記録時刻の編集・指定（タスクB）", (
         onLogRecorded={onLogRecorded}
       />,
     )
-    fireEvent.change(screen.getByLabelText("時刻"), {
+    fireEvent.change(screen.getByLabelText("開始時刻"), {
       target: { value: "00:01" },
     })
     fireEvent.click(screen.getByRole("button", { name: "記録する" }))

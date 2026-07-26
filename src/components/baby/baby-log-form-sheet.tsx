@@ -519,9 +519,14 @@ export function BabyLogFormSheet({
         </SheetHeader>
 
         <div className="flex flex-col gap-4 overflow-y-auto px-4 pb-2">
-          {/* 記録時刻（全タイプ共通・HH:mm/JST）。日付はそのログの日付を維持する */}
+          {/* 記録時刻（全タイプ共通・HH:mm/JST）。日付はそのログの日付を維持する。
+              授乳のみ「開始時刻」と明示する: 授乳行の logged_at は開始時刻セマンティクス
+              （backfill 20260726100003 で統一）ゆえ、無表示だと終了時刻を入れる人が現れ、
+              「移行後に生まれた終了セマンティクス行」は backfill でも検知できない */}
           <div className="space-y-1.5">
-            <Label htmlFor="log-time">時刻</Label>
+            <Label htmlFor="log-time">
+              {logType === "feeding" ? "開始時刻" : "時刻"}
+            </Label>
             <Input
               id="log-time"
               type="time"
