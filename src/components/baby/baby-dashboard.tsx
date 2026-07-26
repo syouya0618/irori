@@ -31,6 +31,7 @@ import {
 } from "@/lib/domain/baby-log-aggregation"
 import { sleepOverlapMinutesForDate } from "@/lib/domain/baby-sleep-overlap"
 import { findLastPumped } from "@/lib/domain/baby-pumping"
+import { BABY_LOG_COLUMNS } from "@/lib/domain/baby-log-columns"
 import type { BabyLogData, BabyDiaryData } from "@/lib/types/baby"
 import type { BabyLogType, FeedingType } from "@/lib/types/database"
 
@@ -377,9 +378,7 @@ export function BabyDashboard({
 
     supabase
       .from("baby_logs")
-      .select(
-        "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at",
-      )
+      .select(BABY_LOG_COLUMNS)
       .eq("household_id", householdId)
       .gte("logged_at", dayStart)
       .lt("logged_at", `${nextDay}T00:00:00+09:00`)
@@ -410,9 +409,7 @@ export function BabyDashboard({
     // 別 prop のため logs のマージ経路（mergeDateNavLogs / admission guard）は不変。
     supabase
       .from("baby_logs")
-      .select(
-        "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at",
-      )
+      .select(BABY_LOG_COLUMNS)
       .eq("household_id", householdId)
       .eq("log_type", "sleep")
       .lt("logged_at", dayStart)

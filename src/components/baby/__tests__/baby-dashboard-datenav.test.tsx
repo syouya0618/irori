@@ -140,6 +140,8 @@ function makeLog(
     logged_by: "user-1",
     feeding_type: null,
     amount_ml: null,
+    breast_left_count: null,
+    breast_right_count: null,
     diaper_type: null,
     ended_at: null,
     temperature: null,

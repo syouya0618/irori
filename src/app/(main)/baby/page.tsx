@@ -2,6 +2,7 @@ import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { BabyDashboard } from "@/components/baby/baby-dashboard"
 import { PUMPING_INTERVAL_DEFAULT } from "@/lib/domain/baby-pumping"
+import { BABY_LOG_COLUMNS } from "@/lib/domain/baby-log-columns"
 import { todayJstString, shiftYmd } from "@/lib/utils/date-jst"
 
 export default async function BabyPage() {
@@ -30,9 +31,7 @@ export default async function BabyPage() {
   ] = await Promise.all([
       supabase
         .from("baby_logs")
-        .select(
-          "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at",
-        )
+        .select(BABY_LOG_COLUMNS)
         .eq("household_id", householdId)
         .gte("logged_at", todayStart)
         .lt("logged_at", tomorrowStart)
@@ -52,9 +51,7 @@ export default async function BabyPage() {
       // idx_one_active_sleep（20260410000001_baby_logs.sql）により高々 1 件。
       supabase
         .from("baby_logs")
-        .select(
-          "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at",
-        )
+        .select(BABY_LOG_COLUMNS)
         .eq("household_id", householdId)
         .eq("log_type", "sleep")
         .is("ended_at", null)
@@ -68,9 +65,7 @@ export default async function BabyPage() {
       // 寄与しない（完了セッションのみ集計）ため、ここは ended_at 非 null に限定して二重取得を避ける。
       supabase
         .from("baby_logs")
-        .select(
-          "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at",
-        )
+        .select(BABY_LOG_COLUMNS)
         .eq("household_id", householdId)
         .eq("log_type", "sleep")
         .lt("logged_at", todayStart)
@@ -78,9 +73,7 @@ export default async function BabyPage() {
         .order("logged_at", { ascending: false }),
       supabase
         .from("baby_logs")
-        .select(
-          "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at",
-        )
+        .select(BABY_LOG_COLUMNS)
         .eq("household_id", householdId)
         .lt("logged_at", tomorrowStart)
         .or(
@@ -95,9 +88,7 @@ export default async function BabyPage() {
       // 成長曲線用: 成長ログを古い順に全件（低頻度データ・1000 未満想定、順序を昇順で決定化）
       supabase
         .from("baby_logs")
-        .select(
-          "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at",
-        )
+        .select(BABY_LOG_COLUMNS)
         .eq("household_id", householdId)
         .eq("log_type", "growth")
         .order("logged_at", { ascending: true }),

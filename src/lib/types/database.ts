@@ -40,7 +40,11 @@ export type BabyLogType =
   | "growth"
   | "memo"
 export type FeedingType =
+  /** 母乳サイクル（左右の吸わせ回数を breast_left_count/right_count に持つ1行） */
+  | "breast"
+  /** 移行前の片側行（過去データ専用・新規記録では使わない） */
   | "breast_left"
+  /** 移行前の片側行（過去データ専用・新規記録では使わない） */
   | "breast_right"
   | "bottle"
   | "solid"
@@ -382,6 +386,10 @@ export interface Database {
           logged_by: string
           feeding_type: FeedingType | null
           amount_ml: number | null
+          /** 母乳サイクルで左を吸わせた回数（feeding_type='breast' の行のみ非 NULL・0..20） */
+          breast_left_count: number | null
+          /** 母乳サイクルで右を吸わせた回数（feeding_type='breast' の行のみ非 NULL・0..20） */
+          breast_right_count: number | null
           diaper_type: DiaperType | null
           ended_at: string | null
           temperature: number | null
@@ -401,6 +409,8 @@ export interface Database {
           logged_by: string
           feeding_type?: FeedingType | null
           amount_ml?: number | null
+          breast_left_count?: number | null
+          breast_right_count?: number | null
           diaper_type?: DiaperType | null
           ended_at?: string | null
           temperature?: number | null
@@ -415,6 +425,8 @@ export interface Database {
           logged_at?: string
           feeding_type?: FeedingType | null
           amount_ml?: number | null
+          breast_left_count?: number | null
+          breast_right_count?: number | null
           diaper_type?: DiaperType | null
           ended_at?: string | null
           temperature?: number | null

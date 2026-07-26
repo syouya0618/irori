@@ -7,6 +7,13 @@ export interface BabyLogData {
   logged_by: string
   feeding_type: FeedingType | null
   amount_ml: number | null
+  /**
+   * 母乳サイクルで左を吸わせた回数。`feeding_type='breast'` の行のみ非 NULL。
+   * DB CHECK（chk_breast_counts_required / chk_breast_counts_only_breast）と対。
+   */
+  breast_left_count: number | null
+  /** 母乳サイクルで右を吸わせた回数（同上） */
+  breast_right_count: number | null
   diaper_type: DiaperType | null
   ended_at: string | null
   temperature: number | null
