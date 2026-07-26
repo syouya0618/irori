@@ -61,9 +61,16 @@ export function deriveDurationMinFromSec(
   return Math.round(durationSec / 60)
 }
 
-/** 授乳時間（duration）を持ちうる授乳タイプか（タイマー計測の対象 = 母乳のみ）。 */
-export function allowsDuration(type: "breast_left" | "breast_right" | "bottle" | "solid" | "pumped"): boolean {
-  return type === "breast_left" || type === "breast_right"
+/**
+ * 授乳時間（duration）を持ちうる授乳タイプか（タイマー計測の対象 = 母乳のみ）。
+ *
+ * 引数は `FeedingType` ではなく**手書きの union** にしてある（enum drift 検出器）。
+ * DB の feeding_type に値が増えたら tsc がここで落ち、「その新種別は時間を持つのか」を
+ * 明示的に決めさせる。`FeedingType` へ広げると新値が黙って false に落ちるため広げるな。
+ */
+export function allowsDuration(type: "breast" | "breast_left" | "breast_right" | "bottle" | "solid" | "pumped"): boolean {
+  // 'breast' はサイクル行（タイマー計測の本体）、breast_left/right は移行前の片側行
+  return type === "breast" || type === "breast_left" || type === "breast_right"
 }
 
 /**

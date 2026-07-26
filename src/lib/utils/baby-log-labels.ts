@@ -10,6 +10,9 @@ const logTypeLabels: Record<BabyLogType, string> = {
 }
 
 const feedingTypeLabels: Record<FeedingType, string> = {
+  // 母乳サイクル行。左右の内訳は formatBreastCounts で別に添える
+  breast: "母乳",
+  // 移行前の片側行（過去データ専用）。既存タイムラインの表示を変えないため据え置く
   breast_left: "左",
   breast_right: "右",
   bottle: "ミルク",
@@ -33,6 +36,24 @@ export function getFeedingTypeLabel(type: FeedingType): string {
 
 export function getDiaperTypeLabel(type: DiaperType): string {
   return diaperTypeLabels[type]
+}
+
+/**
+ * 母乳サイクルの左右の吸わせ回数を「左2・右1」へ整形する。
+ *
+ * 0 の側は省略する（左2・右0 → "左2"）。「右0」は情報量ゼロの雑音で、片側だけ
+ * 吸わせた回のタイムラインを読みづらくするため。両側 0/null は空文字を返し、
+ * 呼び出し側が「添える内訳が無い」を空判定できるようにする（breast 以外の行を
+ * そのまま渡しても壊れない = #159 の未知値 null 退化と同じ流儀の多層防御）。
+ */
+export function formatBreastCounts(
+  left: number | null,
+  right: number | null,
+): string {
+  const parts: string[] = []
+  if (left != null && left > 0) parts.push(`左${left}`)
+  if (right != null && right > 0) parts.push(`右${right}`)
+  return parts.join("・")
 }
 
 /**

@@ -97,6 +97,13 @@ describe("allowsDuration（時間を持ちうる授乳タイプ）", () => {
     expect(allowsDuration("solid")).toBe(false)
     expect(allowsDuration("pumped")).toBe(false)
   })
+
+  it("母乳サイクル（breast）も true（タイマー計測の対象そのもの）", () => {
+    // 'breast' はタイマーで計測する母乳サイクル行ゆえ duration を持つ。
+    // 引数の union は enum drift 検出器（新 enum 値の追加時に tsc を落として
+    // 判断を強制する）なので、値を足す時は必ずこの真偽を決めること。
+    expect(allowsDuration("breast")).toBe(true)
+  })
 })
 
 describe("parseFeedingDurationInput（分・秒入力 → duration_sec）", () => {
