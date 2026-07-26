@@ -639,12 +639,14 @@ function CountStepper({
         >
           <Minus size={18} />
         </button>
-        <span
+        {/* output は暗黙で role="status" ゆえ、増減が支援技術へも読み上げられる
+            （編集シートの BreastCountStepper と要素種別まで揃える） */}
+        <output
           aria-label={`${label}の回数`}
           className="w-8 text-center text-2xl font-bold tabular-nums"
         >
           {value}
-        </span>
+        </output>
         <button
           type="button"
           aria-label={`${label}の回数を1増やす`}

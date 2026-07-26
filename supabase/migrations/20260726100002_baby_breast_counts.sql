@@ -27,12 +27,15 @@ ALTER TABLE baby_logs ADD COLUMN IF NOT EXISTS breast_right_count SMALLINT;
 -- **fail-loud に拒否**され、Flutter 側にエラーが返る（#159 の未知 enum 値の
 -- null 退化＝読み取り側の防御と対になる、書き込み側の防御）。
 
--- counts を持てるのは breast 行だけ（bottle 等への化けを拒否する向き）
+-- counts を持てるのは breast 行だけ（bottle 等への化けを拒否する向き）。
+-- `IS NOT DISTINCT FROM` にするのは NULL 穴を塞ぐため: `feeding_type = 'breast'` だと
+-- feeding_type IS NULL の行（diaper/memo 等）に counts が付いても式が NULL に評価され
+-- CHECK を素通りする（Postgres の CHECK は NULL を許容と扱う）。
 ALTER TABLE baby_logs DROP CONSTRAINT IF EXISTS chk_breast_counts_only_breast;
 ALTER TABLE baby_logs ADD CONSTRAINT chk_breast_counts_only_breast
   CHECK (
     (breast_left_count IS NULL AND breast_right_count IS NULL)
-    OR feeding_type = 'breast'
+    OR feeding_type IS NOT DISTINCT FROM 'breast'
   );
 
 -- breast 行は counts を必ず持ち、範囲内で合計 1 以上（counts 欠落を拒否する向き）

@@ -400,6 +400,10 @@ export async function updateLog(
      * 'breast' の時のみ必須（recordFeeding と同じ検証）。feedingType を
      * 'breast' 以外へ変更する時は無視され、常に null で上書きされる
      * （chk_breast_counts_only_breast のミラー。amount_ml の null 化と同じ規約）。
+     *
+     * ⚠️ counts は feedingType と**対でしか反映されない**: feedingType 未指定で
+     * counts だけ送っても検証も書き込みもされない（編集シートは feeding 編集時に
+     * 必ず feedingType を送る前提。「回数だけ直す」導線を足すならこの契約を先に直せ）。
      */
     breastLeftCount?: number | null
     breastRightCount?: number | null

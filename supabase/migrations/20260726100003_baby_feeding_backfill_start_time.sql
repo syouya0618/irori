@@ -16,6 +16,15 @@
 --   ずらして**新たな不整合を作る**。母乳の計測タイマーを通った行だけが対象。
 --   duration が両方 NULL の行は巻き戻す幅が無いため対象外（そのまま = 開始時刻扱い）。
 --
+-- ②' さらに logged_at = created_at（無編集のタイマー行）に限定する理由
+--   母乳行でも「logged_at が終了時刻」と言えるのはタイマーが now() 既定で insert した
+--   行だけ。編集シートからは (a) 手で選んだ時刻での母乳行の新規作成（#151）、
+--   (b) 時刻の事後編集、が可能で、これらの logged_at はユーザーが決めた時刻であって
+--   終了時刻とは限らない（開始時刻のつもりで直した行を巻き戻すと二重補正になる）。
+--   タイマー行は logged_at / created_at がとも DEFAULT now()（同一トランザクション内で
+--   同値）ゆえ厳密一致し、時刻を明示・編集した行は分単位入力 vs マイクロ秒精度で
+--   一致し得ない。この述語が「一度も時刻を触っていないタイマー行」を正確に選ぶ。
+--
 -- ③ 副作用: JST の日付境界を跨ぐ行がある
 --   巻き戻し幅は最大 3 時間（chk_duration_sec ≤ 10800 秒 / chk_duration_min ≤ 180 分）。
 --   例えば 00:20 JST に記録された 25 分の授乳は前日 23:55 JST へ移る。つまり
@@ -33,8 +42,11 @@
 --     WHERE log_type = 'feeding'
 --       AND feeding_type IN ('breast_left', 'breast_right')
 --       AND (duration_sec IS NOT NULL OR duration_min IS NOT NULL)
+--       AND logged_at + make_interval(secs => COALESCE(duration_sec, duration_min * 60)) = created_at
 --       AND created_at < '<このマイグレーションの適用時刻>';
 --
+--   `logged_at + duration = created_at` は本 UPDATE の適用後にだけ成り立つ関係
+--   （適用前は logged_at = created_at）ゆえ、補正済みの行を正確に選び戻せる。
 --   created_at で切るのは、適用後に追加された行を巻き戻さないため（updated_at は
 --   この UPDATE 自身がトリガで書き換えるので判別に使えない）。
 --
@@ -47,4 +59,6 @@ UPDATE baby_logs
 SET logged_at = logged_at - make_interval(secs => COALESCE(duration_sec, duration_min * 60))
 WHERE log_type = 'feeding'
   AND feeding_type IN ('breast_left', 'breast_right')
-  AND (duration_sec IS NOT NULL OR duration_min IS NOT NULL);
+  AND (duration_sec IS NOT NULL OR duration_min IS NOT NULL)
+  -- 無編集のタイマー行のみ（②' 参照）。時刻を明示・編集した行は巻き戻さない
+  AND logged_at = created_at;
