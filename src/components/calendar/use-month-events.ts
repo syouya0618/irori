@@ -14,6 +14,7 @@ import {
   gridRangeOf,
   type CalendarEventLite,
 } from "@/lib/domain/calendar-grid"
+import { CALENDAR_EVENT_COLUMNS } from "@/lib/domain/calendar-event-columns"
 import { todayJstString } from "@/lib/utils/date-jst"
 import type { CalendarEventSource } from "@/lib/types/database"
 
@@ -29,8 +30,9 @@ export interface CalendarEventRecord extends CalendarEventLite {
   series_id: string | null
 }
 
-const EVENT_COLUMNS =
-  "id, title, memo, is_all_day, start_date, end_date, start_at, end_at, source, series_id"
+// SELECT カラムは中立モジュール（@/lib/domain/calendar-event-columns）に置く。
+// "use client" のこのファイルから値を re-export すると Server Component 側で
+// client reference に化けて実行時に壊れるため、ここでは import して使うだけ。
 
 interface UseMonthEventsArgs {
   initialEvents: CalendarEventRecord[]
@@ -75,7 +77,7 @@ export function useMonthEvents({
       const { gridStart, gridEnd } = gridRangeOf(targetMonthFirst)
       const { data, error } = await supabase
         .from("calendar_events")
-        .select(EVENT_COLUMNS)
+        .select(CALENDAR_EVENT_COLUMNS)
         .eq("household_id", householdId)
         .lte("start_date", gridEnd) // 重なり判定: start_date <= gridEnd
         .gte("end_date", gridStart) //           AND end_date >= gridStart

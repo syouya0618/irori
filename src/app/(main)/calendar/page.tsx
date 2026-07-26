@@ -2,6 +2,7 @@ import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { CalendarView } from "@/components/calendar/calendar-view"
 import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
+import { CALENDAR_EVENT_COLUMNS } from "@/lib/domain/calendar-event-columns"
 import { currentMonthFirstJst, gridRangeOf } from "@/lib/domain/calendar-grid"
 
 export default async function CalendarPage() {
@@ -14,9 +15,7 @@ export default async function CalendarPage() {
 
   const { data: events, error } = await supabase
     .from("calendar_events")
-    .select(
-      "id, title, memo, is_all_day, start_date, end_date, start_at, end_at, source, series_id",
-    )
+    .select(CALENDAR_EVENT_COLUMNS)
     .eq("household_id", householdId)
     .lte("start_date", gridEnd) // 重なり判定: start_date <= gridEnd
     .gte("end_date", gridStart) //           AND end_date >= gridStart
