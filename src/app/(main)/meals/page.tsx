@@ -2,10 +2,8 @@ import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { MealWeekView } from "@/components/meals/meal-week-view"
 import { UpcomingEventsCard } from "@/components/meals/upcoming-events-card"
-import {
-  EVENT_COLUMNS,
-  type CalendarEventRecord,
-} from "@/components/calendar/use-month-events"
+import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
+import { CALENDAR_EVENT_COLUMNS } from "@/lib/domain/calendar-event-columns"
 import {
   currentWeekRangeJst,
   shiftYmd,
@@ -46,7 +44,7 @@ export default async function MealsPage() {
   const today = todayJstString()
   const { data: upcomingEvents, error: upcomingError } = await supabase
     .from("calendar_events")
-    .select(EVENT_COLUMNS)
+    .select(CALENDAR_EVENT_COLUMNS)
     .eq("household_id", householdId)
     .gte("end_date", today) // 重なり判定: end_date >= 今日
     .lte("start_date", shiftYmd(today, 1)) //          AND start_date <= 明日

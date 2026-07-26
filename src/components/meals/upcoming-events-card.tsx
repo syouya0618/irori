@@ -5,10 +5,8 @@ import Link from "next/link"
 import { CalendarDays } from "lucide-react"
 
 import { agendaTimeDisplay } from "@/components/calendar/calendar-agenda"
-import {
-  EVENT_COLUMNS,
-  type CalendarEventRecord,
-} from "@/components/calendar/use-month-events"
+import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
+import { CALENDAR_EVENT_COLUMNS } from "@/lib/domain/calendar-event-columns"
 import { eventsForDate } from "@/lib/domain/calendar-grid"
 import { createClient } from "@/lib/supabase/client"
 import { logSupabaseError } from "@/lib/supabase/log-error"
@@ -58,7 +56,7 @@ export function UpcomingEventsCard({
     const supabase = createClient()
     const { data, error } = await supabase
       .from("calendar_events")
-      .select(EVENT_COLUMNS)
+      .select(CALENDAR_EVENT_COLUMNS)
       .eq("household_id", householdId)
       .gte("end_date", nextToday) // 重なり判定: end_date >= 今日
       .lte("start_date", nextTomorrow) //          AND start_date <= 明日
