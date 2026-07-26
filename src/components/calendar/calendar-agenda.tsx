@@ -14,7 +14,7 @@ interface CalendarAgendaProps {
 }
 
 /** アジェンダ時刻セルの表示。primary=1段目, secondary=任意の2段目。 */
-interface AgendaTimeDisplay {
+export interface AgendaTimeDisplay {
   primary: string
   secondary?: string
 }
@@ -32,7 +32,7 @@ interface AgendaTimeDisplay {
  * JST 日(toJstDateString)を用いる。eventsForDate が start_date <= selectedDate を
  * 保証するため、開始判定は「= selectedDate」か「< selectedDate」の二択で網羅する。
  */
-function agendaTimeDisplay(
+export function agendaTimeDisplay(
   e: CalendarEventRecord,
   selectedDate: string,
 ): AgendaTimeDisplay {

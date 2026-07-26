@@ -29,7 +29,8 @@ export interface CalendarEventRecord extends CalendarEventLite {
   series_id: string | null
 }
 
-const EVENT_COLUMNS =
+/** CalendarEventRecord を満たす SELECT カラム。別画面の予定取得でも共有する。 */
+export const EVENT_COLUMNS =
   "id, title, memo, is_all_day, start_date, end_date, start_at, end_at, source, series_id"
 
 interface UseMonthEventsArgs {
