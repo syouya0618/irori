@@ -6,8 +6,8 @@ import { adminClient, loginViaMagicLink } from "./fixtures/auth"
  * 母乳サイクル記録 E2E（feeding_type='breast' + 左右の吸わせ回数）。
  *
  * login → 世帯作成 → /baby → 授乳クイックアクション「左」→ タイマーシート
- * → 「手動入力」へ切替 → 左の回数を +1（左2）→ 1 分を選択 → 記録する
- * → タイムラインに「母乳 左2 1分」→ 今日のまとめの授乳チップに「母乳1」
+ * → 「手動入力」へ切替 → 左の回数を +1（左2）→ 左 1 分を選択 → 記録する
+ * → タイムラインに「母乳 左2回1分」→ 今日のまとめの授乳チップに「母乳1」
  * → 記録行をタップ → 編集シートに左右回数ステッパーが seed 済みで出る
  *
  * ## なぜ DB 断面まで見るか（UI だけでは核心が検証できない）
@@ -132,6 +132,8 @@ interface BreastRow {
   feeding_type: string | null
   breast_left_count: number | null
   breast_right_count: number | null
+  breast_left_sec: number | null
+  breast_right_sec: number | null
   duration_sec: number | null
   duration_min: number | null
   logged_at: string
@@ -151,7 +153,7 @@ async function waitForBreastRow(householdId: string): Promise<BreastRow> {
     const { data, error } = await admin
       .from("baby_logs")
       .select(
-        "feeding_type, breast_left_count, breast_right_count, duration_sec, duration_min, logged_at"
+        "feeding_type, breast_left_count, breast_right_count, breast_left_sec, breast_right_sec, duration_sec, duration_min, logged_at"
       )
       .eq("household_id", householdId)
       .eq("log_type", "feeding")
@@ -216,10 +218,12 @@ test("母乳サイクル: 手動入力で左2回を記録 → タイムライン
   await expect(leftCount).toHaveText("2")
   await expect(rightCount).toHaveText("0")
 
-  // ── 4. 授乳時間（分）を選択 → 記録する ──────────────────────────────
+  // ── 4. 授乳時間（左の分）を選択 → 記録する ──────────────────────────
+  // 手動入力は左右別ピッカー。開始側（左）の既定 5:00 を上書きし、右は 0:00 のまま
   await openSheet
-    .getByLabel("分", { exact: true })
+    .getByLabel("左の分", { exact: true })
     .selectOption(String(MANUAL_MINUTES))
+  await openSheet.getByLabel("左の秒", { exact: true }).selectOption("0")
 
   // 深夜跨ぎガード（定数コメント参照）。prologue で時間が経つため、判定は
   // 「記録クリックの直前」で行う（テスト開始時の判定では窓がずれる）。
@@ -234,7 +238,7 @@ test("母乳サイクル: 手動入力で左2回を記録 → タイムライン
   // 内訳つきトースト。閉じ括弧まで含めて一致させることで、深夜跨ぎ分岐
   // （「…（左2・1分／前日の記録として保存）」）と取り違えない。
   await expect(
-    page.getByText(`授乳を記録しました（左2・${MANUAL_MINUTES}分）`)
+    page.getByText(`授乳を記録しました（左2回${MANUAL_MINUTES}分）`)
   ).toBeVisible({ timeout: 15_000 })
   const afterMs = Date.now()
 
@@ -243,6 +247,9 @@ test("母乳サイクル: 手動入力で左2回を記録 → タイムライン
   expect(row.feeding_type).toBe("breast")
   expect(row.breast_left_count).toBe(2)
   expect(row.breast_right_count).toBe(0)
+  // 左右別秒（chk_breast_side_sec_total: duration_sec = 左 + 右 の等式）
+  expect(row.breast_left_sec).toBe(MANUAL_DURATION_SEC)
+  expect(row.breast_right_sec).toBe(0)
   expect(row.duration_sec).toBe(MANUAL_DURATION_SEC)
   // duration_min は duration_sec からの派生（後方互換列）
   expect(row.duration_min).toBe(MANUAL_MINUTES)
@@ -289,13 +296,16 @@ test("母乳サイクル: 手動入力で左2回を記録 → タイムライン
   // ステッパーは DB の値で seed される（0 を falsy 扱いして 1 に化けない）
   await expect(openSheet.locator('[aria-label="左の回数"]')).toHaveText("2")
   await expect(openSheet.locator('[aria-label="右の回数"]')).toHaveText("0")
-  // 記録した授乳時間も編集入力へ seed される（duration_sec の往復）
-  await expect(openSheet.getByLabel("時間（分）", { exact: true })).toHaveValue(
+  // sides を持つ行は左右それぞれの時間入力へ seed される（合計欄は出さない —
+  // 合計だけの編集はサーバが fail-loud で拒否する契約）
+  await expect(openSheet.getByLabel("左の分", { exact: true })).toHaveValue(
     String(MANUAL_MINUTES)
   )
-  await expect(openSheet.getByLabel("時間（秒）", { exact: true })).toHaveValue(
-    "0"
-  )
+  await expect(openSheet.getByLabel("左の秒", { exact: true })).toHaveValue("0")
+  await expect(openSheet.getByLabel("右の分", { exact: true })).toHaveValue("0")
+  await expect(
+    openSheet.getByLabel("時間（分）", { exact: true })
+  ).toHaveCount(0)
 
   // ── 9. teardown は fixtures/test.ts の approvedUser が世帯ごと削除 ──
 })
