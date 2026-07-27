@@ -311,6 +311,28 @@ describe("FeedingTimer 手動入力モード（分・秒 + 左右回数）", () 
     expect(screen.getByLabelText("左の回数")).toHaveTextContent("1")
   })
 
+  it("上限は 20: 19 から + で 20 に到達でき、20 で + が disabled になる（MAX_BREAST_COUNT ドリフトの回帰固定）", () => {
+    // 「20 で増えない」だけの検証だと、上限定数が 5 へ壊れても disabled のまま全緑で
+    // 生き残る（ミューテーション実測 M24 — 上から近づく形は上限値を識別できない）。
+    // 19 で押せる→20 に到達→disabled、と下から挟んで上限が 20 であることを固定する。
+    seedTimerState({
+      startedAt: STARTED_5MIN_AGO,
+      feedingType: "breast_left",
+      leftCount: 19,
+      rightCount: 0,
+    })
+    renderTimer({ initialFeedingType: "breast_left" })
+    fireEvent.click(screen.getByRole("button", { name: "手動入力" }))
+
+    // 復元 clamp（restoreCycle）が 19 を保持していること自体も上限 20 の証左
+    expect(screen.getByLabelText("左の回数")).toHaveTextContent("19")
+    const plus = screen.getByRole("button", { name: "左の回数を1増やす" })
+    expect(plus).not.toBeDisabled()
+    fireEvent.click(plus)
+    expect(screen.getByLabelText("左の回数")).toHaveTextContent("20")
+    expect(plus).toBeDisabled()
+  })
+
   it("分・秒を選んで記録すると秒精度・母乳サイクル・開始時刻で recordFeeding に渡る", async () => {
     recordFeeding.mockResolvedValueOnce({ error: null, id: "m-1" })
     openManual("breast_right")

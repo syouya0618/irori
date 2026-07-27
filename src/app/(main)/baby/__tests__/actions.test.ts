@@ -524,6 +524,22 @@ describe("recordFeeding の breast_left_count / breast_right_count（母乳サ�
     },
   )
 
+  it("breast + 境界値 counts(20, 20) は受理される（緑側の回帰固定・pgTAP baby_breast_counts (7) と対）", async () => {
+    // 拒否側（21）だけだと `> 20` を `>= 20` へ壊す変異が全緑で生き残る
+    // （ミューテーション実測 M01）。境界の通る側を固定して両側から挟む。
+    const { client, insert } = makeSupabase({ data: { id: "b20" }, error: null })
+    setContext(client)
+    const result = await recordFeeding({
+      feedingType: "breast",
+      breastLeftCount: 20,
+      breastRightCount: 20,
+    })
+    expect(result.error).toBeNull()
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ breast_left_count: 20, breast_right_count: 20 }),
+    )
+  })
+
   it("breast 以外で counts を指定するとエラー（DB CHECK chk_breast_counts_only_breast のミラー）", async () => {
     const { client, insert } = makeSupabase({
       data: { id: "x" },
