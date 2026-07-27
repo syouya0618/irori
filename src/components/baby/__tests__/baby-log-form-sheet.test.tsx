@@ -658,6 +658,24 @@ describe("BabyLogFormSheet の母乳サイクル（feeding_type='breast'）", ()
     expect(screen.getByLabelText("右の回数").textContent).toBe("20")
   })
 
+  it("上限は 20: 19 から + で 20 に到達でき、20 で + が disabled になる（BREAST_COUNT_MAX ドリフトの回帰固定）", () => {
+    // 上の「20 超へ動かせない」は上から近づく形ゆえ、上限定数が 5 へ壊れても
+    // disabled のまま全緑で生き残る（ミューテーション実測 M25）。下から挟む。
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastCycleLog({ breast_left_count: 19, breast_right_count: 0 })}
+      />,
+    )
+    const plus = screen.getByRole("button", { name: "左の回数を1増やす" })
+    expect(plus).not.toBeDisabled()
+    fireEvent.click(plus)
+    expect(screen.getByLabelText("左の回数").textContent).toBe("20")
+    expect(plus).toBeDisabled()
+  })
+
   it("左右とも 0 はクライアントで拒否し updateLog を呼ばない（合計1回以上）", async () => {
     mockedUpdateLog.mockResolvedValue({ error: null })
     render(
