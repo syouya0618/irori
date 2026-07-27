@@ -69,6 +69,35 @@ export function formatDurationSec(rawSeconds: number): string {
   return `${s}秒`
 }
 
+/**
+ * 母乳サイクルの左右別「回数+時間」表示（例: 左2回7分30秒・右1回5分）。
+ * sides（breast_left_sec/right_sec）を持つ行のタイムライン表示に使う。
+ * 合計は併記しない（左右の和と決まっており二重表示は密度を壊す）。
+ *
+ * - 0 秒の側は時間を省略（左1回）
+ * - 0回0秒の側はその側ごと省略
+ * - 回数 0 で時間だけある側は時間のみ（通常発生しないが防御）
+ * - null は 0 扱い（旧行混在の防御）
+ */
+export function formatBreastSideBreakdown(
+  leftCount: number | null,
+  rightCount: number | null,
+  leftSec: number | null,
+  rightSec: number | null,
+): string {
+  const side = (label: string, count: number | null, sec: number | null) => {
+    const c = count ?? 0
+    const s = sec ?? 0
+    if (c <= 0 && s <= 0) return ""
+    const time = s > 0 ? formatDurationSec(s) : ""
+    const times = c > 0 ? `${c}回` : ""
+    return `${label}${times}${time}`
+  }
+  return [side("左", leftCount, leftSec), side("右", rightCount, rightSec)]
+    .filter(Boolean)
+    .join("・")
+}
+
 export function formatElapsedMinutes(rawMinutes: number): string {
   const minutes = Math.max(0, rawMinutes)
   if (minutes < 60) return `${minutes}分`

@@ -127,22 +127,22 @@ describe("FeedingTimer 永久ローディング防止", () => {
 })
 
 describe("FeedingTimer の stint 自動カウント（母乳サイクル）", () => {
-  it("開始側を1回で seed する（左開始なら 左1）", () => {
+  it("開始側を1回で seed する（左開始なら 左1回）", () => {
     renderTimer({ initialFeedingType: "breast_left" })
-    expect(screen.getByText("左1")).toBeInTheDocument()
+    expect(screen.getByText(/左1回 \d\d:\d\d・右0回 \d\d:\d\d/)).toBeInTheDocument()
   })
 
-  it("開始側を1回で seed する（右開始なら 右1）", () => {
+  it("開始側を1回で seed する（右開始なら 右1回）", () => {
     renderTimer({ initialFeedingType: "breast_right" })
-    expect(screen.getByText("右1")).toBeInTheDocument()
+    expect(screen.getByText(/左0回 \d\d:\d\d・右1回 \d\d:\d\d/)).toBeInTheDocument()
   })
 
   it("反対側のタップでその側のカウントが増え、現在側が切り替わる", () => {
     renderTimer({ initialFeedingType: "breast_left" })
     fireEvent.click(screen.getByRole("button", { name: "右" }))
-    expect(screen.getByText("左1・右1")).toBeInTheDocument()
+    expect(screen.getByText(/左1回 .+・右1回 /)).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "左" }))
-    expect(screen.getByText("左2・右1")).toBeInTheDocument()
+    expect(screen.getByText(/左2回 .+・右1回 /)).toBeInTheDocument()
   })
 
   it("同じ側の再タップでは stint が増えない（no-op）", async () => {
@@ -153,7 +153,7 @@ describe("FeedingTimer の stint 自動カウント（母乳サイクル）", ()
     fireEvent.click(right)
     fireEvent.click(right)
     // 連続タップで右が 3 回に水増しされない
-    expect(screen.getByText("左1・右1")).toBeInTheDocument()
+    expect(screen.getByText(/左1回 .+・右1回 /)).toBeInTheDocument()
 
     fireEvent.click(stopButton())
     await waitFor(() => expect(recordFeeding).toHaveBeenCalled())
@@ -237,7 +237,7 @@ describe("FeedingTimer の localStorage 復元", () => {
 
     // 復元されず 00:00 から開始し、カウントも initialFeedingType の seed に戻る
     expect(screen.getByText("00:00")).toBeInTheDocument()
-    expect(screen.getByText("左1")).toBeInTheDocument()
+    expect(screen.getByText(/左1回 00:00・右0回 00:00/)).toBeInTheDocument()
     expect(savedTimerState().startedAt).toBe(FIXED_NOW_ISO)
   })
 
@@ -263,6 +263,106 @@ describe("FeedingTimer の localStorage 復元", () => {
   })
 })
 
+describe("FeedingTimer の左右別授乳時間（stint banking）", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ now: FIXED_NOW, toFake: ["Date"] })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it("切替のたびに前の側へ経過を banking し、停止で sides を送る（durationSec は送らない）", async () => {
+    recordFeeding.mockResolvedValueOnce({ error: null, id: "bank-1" })
+    renderTimer({ initialFeedingType: "breast_left" })
+    // 開始から 5 分後に右へ切替（左へ 300 秒 banking）
+    vi.setSystemTime(new Date(FIXED_NOW.getTime() + 300_000))
+    fireEvent.click(screen.getByRole("button", { name: "右" }))
+    // さらに 200 秒後に停止（右へ 200 秒 banking）
+    vi.setSystemTime(new Date(FIXED_NOW.getTime() + 500_000))
+    fireEvent.click(stopButton())
+
+    await waitFor(() => expect(recordFeeding).toHaveBeenCalled())
+    expect(recordFeeding).toHaveBeenCalledWith({
+      feedingType: "breast",
+      breastLeftCount: 1,
+      breastRightCount: 1,
+      breastLeftSec: 300,
+      breastRightSec: 200,
+      loggedAt: FIXED_NOW_ISO,
+    })
+  })
+
+  it("切替で banked した側の時間が画面に出る（左1回 05:00）", () => {
+    renderTimer({ initialFeedingType: "breast_left" })
+    vi.setSystemTime(new Date(FIXED_NOW.getTime() + 300_000))
+    fireEvent.click(screen.getByRole("button", { name: "右" }))
+    expect(screen.getByText(/左1回 05:00/)).toBeInTheDocument()
+  })
+
+  it("切替ごとに leftSec/rightSec/sideSince を localStorage へ保存する", () => {
+    renderTimer({ initialFeedingType: "breast_left" })
+    vi.setSystemTime(new Date(FIXED_NOW.getTime() + 300_000))
+    fireEvent.click(screen.getByRole("button", { name: "右" }))
+    const saved = savedTimerState()
+    expect(saved.leftSec).toBe(300)
+    expect(saved.rightSec).toBe(0)
+    expect(saved.sideSince).toBe(
+      new Date(FIXED_NOW.getTime() + 300_000).toISOString(),
+    )
+  })
+
+  it("新形式の復元は sideSince から banking を継続する（閉じていた区間は現在側へ帰属）", async () => {
+    // 5 分前開始・右側・左に 60 秒 banked・右は 2 分前から継続中
+    seedTimerState({
+      startedAt: STARTED_5MIN_AGO,
+      feedingType: "breast_right",
+      leftCount: 1,
+      rightCount: 1,
+      leftSec: 60,
+      rightSec: 0,
+      sideSince: new Date(FIXED_NOW.getTime() - 120_000).toISOString(),
+    })
+    recordFeeding.mockResolvedValueOnce({ error: null, id: "bank-2" })
+    renderTimer({ initialFeedingType: "breast_left" })
+    fireEvent.click(stopButton())
+
+    await waitFor(() => expect(recordFeeding).toHaveBeenCalled())
+    expect(recordFeeding).toHaveBeenCalledWith({
+      feedingType: "breast",
+      breastLeftCount: 1,
+      breastRightCount: 1,
+      breastLeftSec: 60,
+      breastRightSec: 120,
+      loggedAt: STARTED_5MIN_AGO,
+    })
+  })
+
+  it("旧形式（sideSince なし）の復元は粘着的に sides を持たず、切替しても localStorage に sec を書かない", async () => {
+    // 過去の配分が復元不能なサイクルは途中から banking を始めない（嘘の配分を作らない）。
+    // 保存も旧形式のまま = 再度開いても sidesUnknown が維持される（粘着）。
+    seedTimerState({
+      startedAt: STARTED_5MIN_AGO,
+      feedingType: "breast_left",
+      leftCount: 1,
+      rightCount: 0,
+    })
+    renderTimer({ initialFeedingType: "breast_left" })
+    fireEvent.click(screen.getByRole("button", { name: "右" }))
+    const saved = savedTimerState()
+    expect(saved.leftSec).toBeUndefined()
+    expect(saved.sideSince).toBeUndefined()
+    expect(saved.rightCount).toBe(1)
+
+    // 停止は従来どおり durationSec（合計のみ）で記録される
+    recordFeeding.mockResolvedValueOnce({ error: null, id: "bank-3" })
+    fireEvent.click(stopButton())
+    await waitFor(() => expect(recordFeeding).toHaveBeenCalled())
+    const payload = recordFeeding.mock.calls[0][0]
+    expect(payload.breastLeftSec).toBeUndefined()
+    expect(payload.durationSec).toBe(300)
+  })
+})
+
 describe("FeedingTimer 手動入力モード（分・秒 + 左右回数）", () => {
   beforeEach(() => {
     vi.useFakeTimers({ now: FIXED_NOW, toFake: ["Date"] })
@@ -280,10 +380,12 @@ describe("FeedingTimer 手動入力モード（分・秒 + 左右回数）", () 
     return screen.getByRole("button", { name: /記録する|記録中/ })
   }
 
-  it("手動入力に切り替えると分・秒セレクトと記録ボタンが出る", () => {
+  it("手動入力に切り替えると左右それぞれの分・秒セレクトと記録ボタンが出る", () => {
     openManual()
-    expect(screen.getByLabelText("分")).toBeInTheDocument()
-    expect(screen.getByLabelText("秒")).toBeInTheDocument()
+    expect(screen.getByLabelText("左の分")).toBeInTheDocument()
+    expect(screen.getByLabelText("左の秒")).toBeInTheDocument()
+    expect(screen.getByLabelText("右の分")).toBeInTheDocument()
+    expect(screen.getByLabelText("右の秒")).toBeInTheDocument()
     expect(recordButton()).toBeInTheDocument()
     // タイマーの停止ボタンは手動入力中は出ない
     expect(
@@ -291,11 +393,13 @@ describe("FeedingTimer 手動入力モード（分・秒 + 左右回数）", () 
     ).not.toBeInTheDocument()
   })
 
-  it("分の選択肢は0〜60分（サイクル合計は片側15分を超える）", () => {
+  it("分の選択肢は左右とも0〜60分", () => {
     openManual()
-    const minSelect = screen.getByLabelText("分") as HTMLSelectElement
-    expect(minSelect.options).toHaveLength(61)
-    expect(minSelect.options[60].value).toBe("60")
+    for (const label of ["左の分", "右の分"]) {
+      const minSelect = screen.getByLabelText(label) as HTMLSelectElement
+      expect(minSelect.options).toHaveLength(61)
+      expect(minSelect.options[60].value).toBe("60")
+    }
   })
 
   it("左右回数のステッパーで回数を増減できる（既定は開始側1・反対0）", () => {
@@ -333,12 +437,14 @@ describe("FeedingTimer 手動入力モード（分・秒 + 左右回数）", () 
     expect(plus).toBeDisabled()
   })
 
-  it("分・秒を選んで記録すると秒精度・母乳サイクル・開始時刻で recordFeeding に渡る", async () => {
+  it("左右の分・秒を選んで記録すると sides で recordFeeding に渡る（合計はサーバ導出・durationSec は送らない）", async () => {
     recordFeeding.mockResolvedValueOnce({ error: null, id: "m-1" })
     openManual("breast_right")
-    // 2分40秒 = 160秒（秒精度をそのまま保存）
-    fireEvent.change(screen.getByLabelText("分"), { target: { value: "2" } })
-    fireEvent.change(screen.getByLabelText("秒"), { target: { value: "40" } })
+    // 右 2分40秒 = 160秒・左 1分 = 60秒（開始側=右の既定 5:00 を上書き）
+    fireEvent.change(screen.getByLabelText("右の分"), { target: { value: "2" } })
+    fireEvent.change(screen.getByLabelText("右の秒"), { target: { value: "40" } })
+    fireEvent.change(screen.getByLabelText("左の分"), { target: { value: "1" } })
+    fireEvent.change(screen.getByLabelText("左の秒"), { target: { value: "0" } })
     fireEvent.click(recordButton())
 
     await waitFor(() => expect(recordFeeding).toHaveBeenCalled())
@@ -346,27 +452,25 @@ describe("FeedingTimer 手動入力モード（分・秒 + 左右回数）", () 
       feedingType: "breast",
       breastLeftCount: 0,
       breastRightCount: 1,
-      durationSec: 160,
-      // logged_at は「記録時刻 − 授乳時間」= サイクル開始時刻
-      loggedAt: new Date(FIXED_NOW.getTime() - 160_000).toISOString(),
+      breastLeftSec: 60,
+      breastRightSec: 160,
+      // logged_at は「記録時刻 − 授乳時間(左+右)」= サイクル開始時刻
+      loggedAt: new Date(FIXED_NOW.getTime() - 220_000).toISOString(),
     })
   })
 
-  it("60分を超える選択は60分（3600秒）に丸める", async () => {
-    recordFeeding.mockResolvedValueOnce({ error: null, id: "m-2" })
-    openManual()
-    fireEvent.change(screen.getByLabelText("分"), { target: { value: "60" } })
-    fireEvent.change(screen.getByLabelText("秒"), { target: { value: "45" } })
-    fireEvent.click(recordButton())
-
-    await waitFor(() => expect(recordFeeding).toHaveBeenCalled())
-    expect(recordFeeding.mock.calls[0][0]).toMatchObject({ durationSec: 3600 })
+  it("既定は開始側 5:00・反対側 0:00", () => {
+    openManual("breast_left")
+    expect((screen.getByLabelText("左の分") as HTMLSelectElement).value).toBe("5")
+    expect((screen.getByLabelText("左の秒") as HTMLSelectElement).value).toBe("0")
+    expect((screen.getByLabelText("右の分") as HTMLSelectElement).value).toBe("0")
+    expect((screen.getByLabelText("右の秒") as HTMLSelectElement).value).toBe("0")
   })
 
-  it("0分0秒では記録せずエラートーストを出す", () => {
+  it("左右とも0分0秒では記録せずエラートーストを出す", () => {
     openManual()
-    fireEvent.change(screen.getByLabelText("分"), { target: { value: "0" } })
-    fireEvent.change(screen.getByLabelText("秒"), { target: { value: "0" } })
+    fireEvent.change(screen.getByLabelText("左の分"), { target: { value: "0" } })
+    fireEvent.change(screen.getByLabelText("左の秒"), { target: { value: "0" } })
     fireEvent.click(recordButton())
 
     expect(toast.error).toHaveBeenCalledWith("授乳時間を選んでください")

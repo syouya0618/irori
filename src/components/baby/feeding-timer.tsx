@@ -13,6 +13,7 @@ import { Loader2, Square, Check, Minus, Plus } from "lucide-react"
 import { toast } from "sonner"
 import { recordFeeding } from "@/app/(main)/baby/actions"
 import { clampFeedingDurationSec } from "@/lib/domain"
+import { resolveBreastSideSeconds } from "@/lib/domain/feeding"
 import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
 import { useWakeLock } from "@/lib/hooks/use-wake-lock"
 import { useNow } from "@/lib/hooks/use-now"
@@ -20,6 +21,7 @@ import { segmentCn } from "@/lib/utils/segment-cn"
 import {
   formatDurationSec,
   formatBreastCounts,
+  formatBreastSideBreakdown,
 } from "@/lib/utils/baby-log-labels"
 import { toJstDateString, todayJstString } from "@/lib/utils/date-jst"
 import type { FeedingType } from "@/lib/types/database"
@@ -64,6 +66,18 @@ interface CycleState {
   side: BreastSide
   leftCount: number
   rightCount: number
+  /** 側ごとの確定済み積算秒（現在側の走行分は含まない）。sidesUnknown 時は常に 0。 */
+  leftSec: number
+  rightSec: number
+  /** 現在側を吸わせ始めた時刻(ISO)。live 表示と banking の基点。 */
+  sideSince: string
+  /**
+   * 旧形式 localStorage（切替時刻なし）から復元したサイクル。過去の左右配分は
+   * 原理的に復元できないため、このサイクルは sides を記録せず合計のみで保存する
+   * （途中から banking を始めると未帰属分が抜けた嘘の配分になる）。保存も旧形式の
+   * まま行い、開き直しても sidesUnknown が維持される（粘着）。
+   */
+  sidesUnknown: boolean
 }
 
 interface TimerState {
@@ -76,6 +90,10 @@ interface TimerState {
   /** counts を持たない旧形式が localStorage に残っているため optional。 */
   leftCount?: number
   rightCount?: number
+  /** 左右別秒（さらに新しい形式）。無ければ sidesUnknown として復元する。 */
+  leftSec?: number
+  rightSec?: number
+  sideSince?: string
 }
 
 function formatTimer(seconds: number): string {
@@ -99,12 +117,23 @@ function normalizeSide(type: FeedingType): BreastSide {
 }
 
 /** 開始側を 1 回で seed した初期サイクル（左開始なら 左1・右0）。 */
-function seedCycle(side: BreastSide): CycleState {
+function seedCycle(side: BreastSide, sideSinceIso: string): CycleState {
   return {
     side,
     leftCount: side === "breast_left" ? 1 : 0,
     rightCount: side === "breast_right" ? 1 : 0,
+    leftSec: 0,
+    rightSec: 0,
+    sideSince: sideSinceIso,
+    sidesUnknown: false,
   }
+}
+
+/** sideSince から現在までの経過秒（banking の量）。不正な ISO は 0 として扱う。 */
+function elapsedSinceSideStart(sideSinceIso: string): number {
+  const since = new Date(sideSinceIso).getTime()
+  if (Number.isNaN(since)) return 0
+  return Math.max(0, Math.round((Date.now() - since) / 1000))
 }
 
 function clampCount(value: number): number {
@@ -127,10 +156,49 @@ function normalizeStoredCount(value: unknown): number | null {
  */
 function restoreCycle(state: TimerState): CycleState {
   const side = normalizeSide(state.feedingType)
+  const nowIso = new Date().toISOString()
   const left = normalizeStoredCount(state.leftCount)
   const right = normalizeStoredCount(state.rightCount)
-  if (left === null || right === null || left + right < 1) return seedCycle(side)
-  return { side, leftCount: left, rightCount: right }
+  const counts =
+    left === null || right === null || left + right < 1
+      ? seedCycle(side, nowIso)
+      : { leftCount: left, rightCount: right }
+
+  // 左右別秒の復元。leftSec/rightSec が非負整数・sideSince が妥当な ISO の
+  // 3点セットが揃わなければ sidesUnknown（粘着 — CycleState の docstring 参照）。
+  const leftSec =
+    Number.isInteger(state.leftSec) && (state.leftSec as number) >= 0
+      ? (state.leftSec as number)
+      : null
+  const rightSec =
+    Number.isInteger(state.rightSec) && (state.rightSec as number) >= 0
+      ? (state.rightSec as number)
+      : null
+  const sideSinceValid =
+    typeof state.sideSince === "string" &&
+    !Number.isNaN(new Date(state.sideSince).getTime())
+  if (leftSec === null || rightSec === null || !sideSinceValid) {
+    return {
+      side,
+      leftCount: counts.leftCount,
+      rightCount: counts.rightCount,
+      leftSec: 0,
+      rightSec: 0,
+      sideSince: nowIso,
+      sidesUnknown: true,
+    }
+  }
+  // sideSince は保存値を引き継ぐ: 閉じていた区間も現在側の授乳が続いていたと
+  // みなして banking する（切替はタップでしか起きないため正しい帰属）。
+  return {
+    side,
+    leftCount: counts.leftCount,
+    rightCount: counts.rightCount,
+    leftSec,
+    rightSec,
+    sideSince: state.sideSince as string,
+    sidesUnknown: false,
+  }
 }
 
 function persistTimerState(startedAt: Date, cycle: CycleState) {
@@ -139,20 +207,17 @@ function persistTimerState(startedAt: Date, cycle: CycleState) {
     feedingType: cycle.side,
     leftCount: cycle.leftCount,
     rightCount: cycle.rightCount,
+    // sidesUnknown のサイクルは秒情報を保存しない（旧形式のまま）= 開き直しても
+    // sidesUnknown が復元される粘着性の実装。書けば「途中からの配分」が本物に見えてしまう
+    ...(cycle.sidesUnknown
+      ? {}
+      : {
+          leftSec: cycle.leftSec,
+          rightSec: cycle.rightSec,
+          sideSince: cycle.sideSince,
+        }),
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-}
-
-/**
- * 手動入力の分・秒を保存用の秒数へ変換する。
- * 60 分（3600 秒）を上限にクランプする（秒精度をそのまま保持）。
- */
-function manualDurationSec(minutes: number, seconds: number): number {
-  const totalSeconds = Math.min(
-    minutes * 60 + seconds,
-    MANUAL_MAX_MINUTES * 60,
-  )
-  return clampFeedingDurationSec(totalSeconds)
 }
 
 interface FeedingTimerProps {
@@ -183,15 +248,17 @@ export function FeedingTimer({
   onPrevDayLogRecorded,
 }: FeedingTimerProps) {
   const [cycle, setCycle] = useState<CycleState>(() =>
-    seedCycle(normalizeSide(initialFeedingType)),
+    seedCycle(normalizeSide(initialFeedingType), new Date().toISOString()),
   )
   const [startedAt, setStartedAt] = useState<Date | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const isSavingRef = useRef(false)
   // 授乳時間の入力方式。タイマー（既定）と手動入力（分・秒）を切り替える。
   const [mode, setMode] = useState<TimerMode>("timer")
-  const [manualMin, setManualMin] = useState(DEFAULT_MANUAL_MINUTES)
-  const [manualSec, setManualSec] = useState(0)
+  const [manualLeftMin, setManualLeftMin] = useState(DEFAULT_MANUAL_MINUTES)
+  const [manualLeftSec, setManualLeftSec] = useState(0)
+  const [manualRightMin, setManualRightMin] = useState(0)
+  const [manualRightSec, setManualRightSec] = useState(0)
   // タイマーが実際に走るのは timer モードの時だけ（手動入力中は tick / wake lock 不要）
   const timerRunning = open && mode === "timer" && !!startedAt
   const now = useNow(1000, timerRunning)
@@ -208,10 +275,14 @@ export function FeedingTimer({
     if (initializedRef.current) return
     initializedRef.current = true
 
-    // 開くたびにタイマー方式・手動入力の既定へ戻す（前回 manual のまま開かない）
+    // 開くたびにタイマー方式・手動入力の既定へ戻す（前回 manual のまま開かない）。
+    // 手動入力の既定は開始側 5:00・反対側 0:00。
     setMode("timer")
-    setManualMin(DEFAULT_MANUAL_MINUTES)
-    setManualSec(0)
+    const startSide = normalizeSide(initialFeedingType)
+    setManualLeftMin(startSide === "breast_left" ? DEFAULT_MANUAL_MINUTES : 0)
+    setManualLeftSec(0)
+    setManualRightMin(startSide === "breast_right" ? DEFAULT_MANUAL_MINUTES : 0)
+    setManualRightSec(0)
 
     // Try to restore from localStorage (stale タイマーは破棄)
     try {
@@ -232,9 +303,9 @@ export function FeedingTimer({
       localStorage.removeItem(STORAGE_KEY)
     }
 
-    // Start new timer（開始側を 1 回で seed する）
+    // Start new timer（開始側を 1 回で seed し、banking の基点も開始時刻に置く）
     const start = new Date()
-    const seeded = seedCycle(normalizeSide(initialFeedingType))
+    const seeded = seedCycle(normalizeSide(initialFeedingType), start.toISOString())
     setStartedAt(start)
     setCycle(seeded)
     persistTimerState(start, seeded)
@@ -247,7 +318,10 @@ export function FeedingTimer({
    */
   function handleSideTap(next: BreastSide) {
     if (cycle.side === next) return
+    // 離れる側へ経過を banking する（sidesUnknown のサイクルは配分を持たないため加算しない）
+    const banked = cycle.sidesUnknown ? 0 : elapsedSinceSideStart(cycle.sideSince)
     const bumped: CycleState = {
+      ...cycle,
       side: next,
       leftCount:
         next === "breast_left"
@@ -257,9 +331,14 @@ export function FeedingTimer({
         next === "breast_right"
           ? clampCount(cycle.rightCount + 1)
           : cycle.rightCount,
+      leftSec:
+        cycle.side === "breast_left" ? cycle.leftSec + banked : cycle.leftSec,
+      rightSec:
+        cycle.side === "breast_right" ? cycle.rightSec + banked : cycle.rightSec,
+      sideSince: new Date().toISOString(),
     }
     setCycle(bumped)
-    // アプリを閉じても回数が消えないよう、切替ごとに保存する
+    // アプリを閉じても回数・左右時間が消えないよう、切替ごとに保存する
     if (startedAt) persistTimerState(startedAt, bumped)
   }
 
@@ -277,6 +356,18 @@ export function FeedingTimer({
     ? Math.max(0, Math.floor((now.getTime() - startedAt.getTime()) / 1000))
     : 0
 
+  // 表示用の側ごと経過（banked + 現在側の走行分）。sidesUnknown は配分を持たない。
+  const liveSideSec = cycle.sidesUnknown
+    ? 0
+    : Math.max(
+        0,
+        Math.floor((now.getTime() - new Date(cycle.sideSince).getTime()) / 1000),
+      )
+  const leftDisplaySec =
+    cycle.leftSec + (cycle.side === "breast_left" ? liveSideSec : 0)
+  const rightDisplaySec =
+    cycle.rightSec + (cycle.side === "breast_right" ? liveSideSec : 0)
+
   // タイマー停止・手動記録の共通保存経路。母乳は「1 回の授乳 = 1 行」の母乳サイクル
   // （feeding_type='breast'）として左右の回数つきで記録し、durationSec（秒精度）で
   // 保存する（duration_min はサーバ側で round 併記）。通信断 reject を握って永久
@@ -285,8 +376,19 @@ export function FeedingTimer({
   // loggedAt はサイクルの**開始時刻**（終了時刻ではない）。タイマーは開始時刻、
   // 手動入力は「記録時刻 − 授乳時間」を渡す。過去行も backfill migration
   // （20260726100003_baby_feeding_backfill_start_time）で開始基準へ揃えてある。
-  async function saveFeeding(durationSec: number, loggedAt: string) {
+  async function saveFeeding(params: {
+    loggedAt: string
+    /** sidesUnknown（旧形式復元）のサイクル: 合計のみで保存する */
+    durationSec?: number
+    /** 左右別秒（resolveBreastSideSeconds 通過済み）。合計はサーバが導出する */
+    sides?: { leftSec: number; rightSec: number }
+  }) {
     if (isSavingRef.current) return
+    const { loggedAt, sides } = params
+    // 表示・楽観行用の合計。sides ありなら左右の和（サーバの導出と同じ値になる）
+    const durationSec = sides
+      ? sides.leftSec + sides.rightSec
+      : params.durationSec ?? 0
 
     const { leftCount, rightCount } = cycle
     // 合計 0 のサイクル行は「授乳していない行」ゆえサーバ検証と DB CHECK
@@ -306,7 +408,11 @@ export function FeedingTimer({
         feedingType: "breast",
         breastLeftCount: leftCount,
         breastRightCount: rightCount,
-        durationSec,
+        // sides あり → 合計はサーバ導出（durationSec の同時指定はサーバが拒否する契約）。
+        // sides なし（sidesUnknown）→ 従来どおり合計のみ
+        ...(sides
+          ? { breastLeftSec: sides.leftSec, breastRightSec: sides.rightSec }
+          : { durationSec }),
         loggedAt,
       })
     } catch (err) {
@@ -354,6 +460,8 @@ export function FeedingTimer({
         feedingType: "breast",
         breastLeftCount: leftCount,
         breastRightCount: rightCount,
+        breastLeftSec: sides?.leftSec ?? null,
+        breastRightSec: sides?.rightSec ?? null,
         durationSec,
         loggedAt,
       })
@@ -372,12 +480,16 @@ export function FeedingTimer({
     // 内訳（左2・右1）と時間を添えて「何が記録されたか」を確認できるようにする。
     // 日跨ぎで append を見送った時は必ず前日保存を明示する — 無言でスキップすると
     // 「記録されていない」と誤解して再タップし、二重記録になる。
-    const detail = [
-      formatBreastCounts(leftCount, rightCount),
-      formatDurationSec(durationSec),
-    ]
-      .filter(Boolean)
-      .join("・")
+    const detail = sides
+      ? formatBreastSideBreakdown(
+          leftCount,
+          rightCount,
+          sides.leftSec,
+          sides.rightSec,
+        )
+      : [formatBreastCounts(leftCount, rightCount), formatDurationSec(durationSec)]
+          .filter(Boolean)
+          .join("・")
     toast.success(
       isSameJstDay
         ? `授乳を記録しました（${detail}）`
@@ -390,26 +502,43 @@ export function FeedingTimer({
     // startedAt が無いのは「記録成功 → 親が閉じるまで」の一瞬だけ。開始時刻が
     // 無いまま now を代用すると logged_at の意味（開始時刻）が壊れるため記録しない。
     if (!startedAt) return
-    void saveFeeding(
-      clampFeedingDurationSec(elapsedSeconds),
-      startedAt.toISOString(),
+    if (cycle.sidesUnknown) {
+      // 旧形式から復元したサイクル: 配分は復元不能ゆえ合計のみで保存（従来形）
+      void saveFeeding({
+        durationSec: clampFeedingDurationSec(elapsedSeconds),
+        loggedAt: startedAt.toISOString(),
+      })
+      return
+    }
+    // 現在側の走行分を banking してから左右別に正規化する。
+    // **合計を clamp してはならない**（duration_sec は左右の和で導出される —
+    // resolveBreastSideSeconds の docstring 参照。合計 clamp は等式 CHECK と衝突し
+    // 記録が恒久失敗する）。上限超過は resolve が側ごとに比例縮小する。
+    const banked = elapsedSinceSideStart(cycle.sideSince)
+    const sides = resolveBreastSideSeconds(
+      cycle.leftSec + (cycle.side === "breast_left" ? banked : 0),
+      cycle.rightSec + (cycle.side === "breast_right" ? banked : 0),
+      cycle.side,
     )
+    void saveFeeding({ sides, loggedAt: startedAt.toISOString() })
   }
 
   function handleManualRecord() {
-    const totalSeconds = manualMin * 60 + manualSec
-    // clamp 前の生値で 0 を弾く（clampFeedingDurationSec は 0 を 1 秒へ持ち上げるため、
-    // clamp 後に判定すると「時間未選択」を無音で 1 秒として記録してしまう）
-    if (totalSeconds <= 0) {
+    const leftTotal = manualLeftMin * 60 + manualLeftSec
+    const rightTotal = manualRightMin * 60 + manualRightSec
+    // resolve 前の生値で 0 を弾く（resolveBreastSideSeconds は 0 を 1 秒へ持ち上げる
+    // 救済を持つため、後に判定すると「時間未選択」を無音で 1 秒として記録してしまう）
+    if (leftTotal + rightTotal <= 0) {
       toast.error("授乳時間を選んでください")
       return
     }
-    const durationSec = manualDurationSec(manualMin, manualSec)
-    // 手動入力の logged_at はサイクル開始時刻 = 記録時刻 − 授乳時間
-    void saveFeeding(
-      durationSec,
-      new Date(Date.now() - durationSec * 1000).toISOString(),
-    )
+    const sides = resolveBreastSideSeconds(leftTotal, rightTotal, cycle.side)
+    const total = sides.leftSec + sides.rightSec
+    // 手動入力の logged_at はサイクル開始時刻 = 記録時刻 − 授乳時間(左+右)
+    void saveFeeding({
+      sides,
+      loggedAt: new Date(Date.now() - total * 1000).toISOString(),
+    })
   }
 
   function handleCancel() {
@@ -494,9 +623,12 @@ export function FeedingTimer({
                   吸わせた回数
                 </span>
                 {/* 手動入力で両側 0 にしてから timer へ戻ると空になるため 0回 と出す
-                    （反対側をタップすればその側が 1 になり復帰できる） */}
+                    （反対側をタップすればその側が 1 になり復帰できる）。
+                    sidesUnknown（旧形式復元）は配分を持たないため回数のみ。 */}
                 <span className="text-lg font-semibold tabular-nums">
-                  {countsLabel || "0回"}
+                  {cycle.sidesUnknown
+                    ? countsLabel || "0回"
+                    : `左${cycle.leftCount}回 ${formatTimer(leftDisplaySec)}・右${cycle.rightCount}回 ${formatTimer(rightDisplaySec)}`}
                 </span>
               </div>
 
@@ -538,53 +670,27 @@ export function FeedingTimer({
                 />
               </div>
 
-              {/* 分・秒ピッカー（60分まで） */}
-              <div className="flex items-end justify-center gap-3">
-                <div className="flex flex-col items-center gap-1">
-                  <label
-                    htmlFor="manual-min"
-                    className="text-xs font-medium text-muted-foreground"
-                  >
-                    分
-                  </label>
-                  <select
-                    id="manual-min"
-                    value={manualMin}
-                    onChange={(e) => setManualMin(Number(e.target.value))}
-                    disabled={isSaving}
-                    className="min-h-11 rounded-lg border bg-background px-4 text-2xl font-bold tabular-nums transition-colors duration-200 disabled:opacity-50"
-                  >
-                    {MANUAL_MINUTE_OPTIONS.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <span className="pb-2 text-2xl font-bold text-muted-foreground">
-                  :
-                </span>
-                <div className="flex flex-col items-center gap-1">
-                  <label
-                    htmlFor="manual-sec"
-                    className="text-xs font-medium text-muted-foreground"
-                  >
-                    秒
-                  </label>
-                  <select
-                    id="manual-sec"
-                    value={manualSec}
-                    onChange={(e) => setManualSec(Number(e.target.value))}
-                    disabled={isSaving}
-                    className="min-h-11 rounded-lg border bg-background px-4 text-2xl font-bold tabular-nums transition-colors duration-200 disabled:opacity-50"
-                  >
-                    {MANUAL_SECOND_OPTIONS.map((s) => (
-                      <option key={s} value={s}>
-                        {String(s).padStart(2, "0")}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              {/* 左右それぞれの分・秒ピッカー（各 0〜60 分）。回数と同じく
+                  左右で別々に記録する（duration_sec はサーバが左右の和から導出） */}
+              <div className="flex w-full flex-col items-center gap-3">
+                <ManualSidePicker
+                  label="左"
+                  idPrefix="manual-left"
+                  min={manualLeftMin}
+                  sec={manualLeftSec}
+                  onMinChange={setManualLeftMin}
+                  onSecChange={setManualLeftSec}
+                  disabled={isSaving}
+                />
+                <ManualSidePicker
+                  label="右"
+                  idPrefix="manual-right"
+                  min={manualRightMin}
+                  sec={manualRightSec}
+                  onMinChange={setManualRightMin}
+                  onSecChange={setManualRightSec}
+                  disabled={isSaving}
+                />
               </div>
 
               {/* 記録ボタン */}
@@ -670,6 +776,72 @@ function CountStepper({
           <Plus size={18} />
         </button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * 手動入力モードの片側（左 or 右）の分・秒ピッカー。
+ * ラベルは「左の分」等（sr-only）で支援技術とテストの両方から一意に引ける。
+ * タッチターゲットは 44px 以上（min-h-11）。
+ */
+function ManualSidePicker({
+  label,
+  idPrefix,
+  min,
+  sec,
+  onMinChange,
+  onSecChange,
+  disabled,
+}: {
+  label: string
+  idPrefix: string
+  min: number
+  sec: number
+  onMinChange: (v: number) => void
+  onSecChange: (v: number) => void
+  disabled: boolean
+}) {
+  const selectCn =
+    "min-h-11 rounded-lg border bg-background px-3 text-xl font-bold tabular-nums transition-colors duration-200 disabled:opacity-50"
+  return (
+    <div className="flex items-center justify-center gap-2">
+      <span className="w-6 shrink-0 text-sm font-medium text-muted-foreground">
+        {label}
+      </span>
+      <label htmlFor={`${idPrefix}-min`} className="sr-only">
+        {label}の分
+      </label>
+      <select
+        id={`${idPrefix}-min`}
+        value={min}
+        onChange={(e) => onMinChange(Number(e.target.value))}
+        disabled={disabled}
+        className={selectCn}
+      >
+        {MANUAL_MINUTE_OPTIONS.map((m) => (
+          <option key={m} value={m}>
+            {m}
+          </option>
+        ))}
+      </select>
+      <span className="text-xl font-bold text-muted-foreground">:</span>
+      <label htmlFor={`${idPrefix}-sec`} className="sr-only">
+        {label}の秒
+      </label>
+      <select
+        id={`${idPrefix}-sec`}
+        value={sec}
+        onChange={(e) => onSecChange(Number(e.target.value))}
+        disabled={disabled}
+        className={selectCn}
+      >
+        {MANUAL_SECOND_OPTIONS.map((v) => (
+          <option key={v} value={v}>
+            {String(v).padStart(2, "0")}
+          </option>
+        ))}
+      </select>
     </div>
   )
 }

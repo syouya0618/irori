@@ -14,6 +14,14 @@ export interface BabyLogData {
   breast_left_count: number | null
   /** 母乳サイクルで右を吸わせた回数（同上） */
   breast_right_count: number | null
+  /**
+   * 母乳サイクルで左を吸わせた秒数。両 sides セットか両方 NULL（旧サイクル行は
+   * NULL = 合計のみ保持）。セット時は duration_sec = 左 + 右 が CHECK で強制される
+   * （chk_breast_side_sec_total）。
+   */
+  breast_left_sec: number | null
+  /** 母乳サイクルで右を吸わせた秒数（同上） */
+  breast_right_sec: number | null
   diaper_type: DiaperType | null
   ended_at: string | null
   temperature: number | null

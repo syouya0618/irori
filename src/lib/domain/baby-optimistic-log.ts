@@ -37,6 +37,12 @@ export interface BuildOptimisticLogParams {
   breastLeftCount?: number | null
   /** 母乳サイクルで右を吸わせた回数（同上） */
   breastRightCount?: number | null
+  /**
+   * 母乳サイクルの左右別秒数（両方渡すか両方省略 — DB CHECK chk_breast_side_sec_pair
+   * のミラー）。0 は有効値ゆえ `??` で拾い null に化けさせない。
+   */
+  breastLeftSec?: number | null
+  breastRightSec?: number | null
   diaperType?: DiaperType | null
   endedAt?: string | null
   temperature?: number | null
@@ -60,6 +66,8 @@ export function buildOptimisticLog(
     amount_ml: params.amountMl ?? null,
     breast_left_count: params.breastLeftCount ?? null,
     breast_right_count: params.breastRightCount ?? null,
+    breast_left_sec: params.breastLeftSec ?? null,
+    breast_right_sec: params.breastRightSec ?? null,
     diaper_type: params.diaperType ?? null,
     ended_at: params.endedAt ?? null,
     temperature: params.temperature ?? null,

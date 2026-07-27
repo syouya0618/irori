@@ -7,7 +7,7 @@
 -- 適用されるため superuser で検証する（calendar_events_rls.sql と同流儀）。
 -- 期待 SQLSTATE は 23514 = check_violation。
 BEGIN;
-SELECT plan(15);
+SELECT plan(23);
 
 -- ── seed(superuser) ───────────────────────────────────────────
 INSERT INTO households (id, name) VALUES
@@ -148,6 +148,59 @@ SELECT is(
   (SELECT logged_at FROM baby_logs WHERE id = 'aaaaaaaa-0000-0000-0000-000000000004'),
   '2026-07-20 07:00:00+09'::timestamptz,
   'backfill: duration なし行は不変'
+);
+
+-- ══ 左右別の授乳時間 breast_left_sec / breast_right_sec（20260727100001） ══
+-- 設計: 両方セットか両方 NULL・各 0..10800・duration_sec は常に左右の和
+-- （合計との二重真値源を作らない）。旧サイクル行は両方 NULL のまま合法（合計のみ保持）。
+
+-- (16) sides を持てるのは breast 行だけ
+SELECT throws_ok(
+  $$ INSERT INTO baby_logs (household_id, log_type, logged_by, feeding_type, amount_ml, breast_left_sec, breast_right_sec, duration_sec, duration_min)
+     VALUES ('11111111-1111-1111-1111-111111111111', 'feeding', '22222222-2222-2222-2222-222222222222', 'bottle', 100, 60, 60, 120, 2) $$,
+  '23514', NULL, 'CHECK: bottle 行に左右時間は付けられない'
+);
+-- (17) NULL 穴の封鎖（feeding_type IS NULL の行に sides）
+SELECT throws_ok(
+  $$ INSERT INTO baby_logs (household_id, log_type, logged_by, diaper_type, breast_left_sec, breast_right_sec)
+     VALUES ('11111111-1111-1111-1111-111111111111', 'diaper', '22222222-2222-2222-2222-222222222222', 'pee', 60, 60) $$,
+  '23514', NULL, 'CHECK: feeding_type NULL の行に左右時間は付けられない（NULL 穴の封鎖）'
+);
+-- (18) 片方だけは不可（両方セットか両方 NULL）
+SELECT throws_ok(
+  $$ INSERT INTO baby_logs (household_id, log_type, logged_by, feeding_type, breast_left_count, breast_right_count, breast_left_sec, duration_sec, duration_min)
+     VALUES ('11111111-1111-1111-1111-111111111111', 'feeding', '22222222-2222-2222-2222-222222222222', 'breast', 1, 0, 300, 300, 5) $$,
+  '23514', NULL, 'CHECK: 左右時間は両方セットか両方 NULL'
+);
+-- (19) sides あり・duration_sec NULL は拒否（IS NOT DISTINCT FROM — 等式 CHECK の NULL 穴封鎖）
+SELECT throws_ok(
+  $$ INSERT INTO baby_logs (household_id, log_type, logged_by, feeding_type, breast_left_count, breast_right_count, breast_left_sec, breast_right_sec)
+     VALUES ('11111111-1111-1111-1111-111111111111', 'feeding', '22222222-2222-2222-2222-222222222222', 'breast', 1, 1, 300, 200) $$,
+  '23514', NULL, 'CHECK: 左右時間があるのに合計 NULL は拒否（等式 CHECK の NULL 穴封鎖）'
+);
+-- (20) 合計との不一致は拒否（二重真値源の禁止）
+SELECT throws_ok(
+  $$ INSERT INTO baby_logs (household_id, log_type, logged_by, feeding_type, breast_left_count, breast_right_count, breast_left_sec, breast_right_sec, duration_sec, duration_min)
+     VALUES ('11111111-1111-1111-1111-111111111111', 'feeding', '22222222-2222-2222-2222-222222222222', 'breast', 1, 1, 300, 200, 501, 8) $$,
+  '23514', NULL, 'CHECK: duration_sec ≠ 左+右 は拒否'
+);
+-- (21) 合計一致は通る（緑側）
+SELECT lives_ok(
+  $$ INSERT INTO baby_logs (household_id, log_type, logged_by, feeding_type, breast_left_count, breast_right_count, breast_left_sec, breast_right_sec, duration_sec, duration_min)
+     VALUES ('11111111-1111-1111-1111-111111111111', 'feeding', '22222222-2222-2222-2222-222222222222', 'breast', 2, 1, 450, 300, 750, 13) $$,
+  'CHECK: 左右時間 + 合計一致は通る'
+);
+-- (22) 片側 10800 超は拒否
+SELECT throws_ok(
+  $$ INSERT INTO baby_logs (household_id, log_type, logged_by, feeding_type, breast_left_count, breast_right_count, breast_left_sec, breast_right_sec, duration_sec, duration_min)
+     VALUES ('11111111-1111-1111-1111-111111111111', 'feeding', '22222222-2222-2222-2222-222222222222', 'breast', 1, 0, 10801, 0, 10801, 180) $$,
+  '23514', NULL, 'CHECK: 片側 10801 秒は拒否（上限 10800）'
+);
+-- (23) 旧サイクル行の形（sides NULL・合計のみ）は引き続き合法（退化の保持）
+SELECT lives_ok(
+  $$ INSERT INTO baby_logs (household_id, log_type, logged_by, feeding_type, breast_left_count, breast_right_count, duration_sec, duration_min)
+     VALUES ('11111111-1111-1111-1111-111111111111', 'feeding', '22222222-2222-2222-2222-222222222222', 'breast', 1, 1, 600, 10) $$,
+  'CHECK: sides NULL + 合計のみの旧形サイクル行は合法'
 );
 
 SELECT * FROM finish();

@@ -390,6 +390,10 @@ export interface Database {
           breast_left_count: number | null
           /** 母乳サイクルで右を吸わせた回数（feeding_type='breast' の行のみ非 NULL・0..20） */
           breast_right_count: number | null
+          /** 母乳サイクルの左の授乳秒数（両 sides セット or 両 NULL・duration_sec = 左+右） */
+          breast_left_sec: number | null
+          /** 母乳サイクルの右の授乳秒数（同上） */
+          breast_right_sec: number | null
           diaper_type: DiaperType | null
           ended_at: string | null
           temperature: number | null
@@ -411,6 +415,8 @@ export interface Database {
           amount_ml?: number | null
           breast_left_count?: number | null
           breast_right_count?: number | null
+          breast_left_sec?: number | null
+          breast_right_sec?: number | null
           diaper_type?: DiaperType | null
           ended_at?: string | null
           temperature?: number | null
@@ -427,6 +433,8 @@ export interface Database {
           amount_ml?: number | null
           breast_left_count?: number | null
           breast_right_count?: number | null
+          breast_left_sec?: number | null
+          breast_right_sec?: number | null
           diaper_type?: DiaperType | null
           ended_at?: string | null
           temperature?: number | null

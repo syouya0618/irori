@@ -147,3 +147,35 @@ describe("buildOptimisticLog (B-03)", () => {
     expect(log.breast_right_count).toBeNull()
   })
 })
+
+describe("buildOptimisticLog: 左右別授乳時間（sides）", () => {
+  it("breastLeftSec/RightSec を透過し、0 を null に化けさせない", () => {
+    const log = buildOptimisticLog({
+      id: "s1",
+      logType: "feeding",
+      loggedBy: "u1",
+      feedingType: "breast",
+      breastLeftCount: 1,
+      breastRightCount: 0,
+      breastLeftSec: 300,
+      breastRightSec: 0,
+      durationSec: 300,
+    })
+    expect(log.breast_left_sec).toBe(300)
+    expect(log.breast_right_sec).toBe(0)
+  })
+
+  it("未指定なら null（sides を持たない旧形サイクル行）", () => {
+    const log = buildOptimisticLog({
+      id: "s2",
+      logType: "feeding",
+      loggedBy: "u1",
+      feedingType: "breast",
+      breastLeftCount: 1,
+      breastRightCount: 0,
+      durationSec: 300,
+    })
+    expect(log.breast_left_sec).toBeNull()
+    expect(log.breast_right_sec).toBeNull()
+  })
+})

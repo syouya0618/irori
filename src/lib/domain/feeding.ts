@@ -50,6 +50,47 @@ export function clampFeedingDurationSec(elapsedSeconds: number): number {
 }
 
 /**
+ * 母乳サイクルの左右別秒を DB CHECK（chk_breast_side_sec_total）が受理する形へ
+ * 正規化する純関数。**合計を clamp してはならない** — duration_sec は常に
+ * 「左右の和」で導出され（等式 CHECK）、合計側を丸めると和と食い違って記録が
+ * 恒久失敗する（走行中タイマーは上限を持たず 3h 超が現実的に到達する —
+ * clampFeedingDurationSec の docstring 参照）。ゆえに clamp は**側ごと**に行う:
+ *
+ * - 非有限値・負数は 0 へ（NaN が wire に乗って CHECK をすり抜けない）
+ * - 合計が FEEDING_DURATION_SEC_MAX を超えたら側ごとに比例縮小し、丸め残差を
+ *   大きい側へ寄せて**和を厳密に上限へ一致**させる
+ * - 合計 0 は現在側へ 1 秒（即停止でも記録が通る下端救済 —
+ *   clampFeedingDurationSec の下限 1 と同方針。タイマー恒久スタックの防止）
+ */
+export function resolveBreastSideSeconds(
+  leftSec: number,
+  rightSec: number,
+  currentSide: "breast_left" | "breast_right",
+): { leftSec: number; rightSec: number } {
+  const sanitize = (v: number) =>
+    Number.isFinite(v) ? Math.max(0, Math.round(v)) : 0
+  let left = sanitize(leftSec)
+  let right = sanitize(rightSec)
+  const total = left + right
+  if (total < 1) {
+    return currentSide === "breast_left"
+      ? { leftSec: 1, rightSec: 0 }
+      : { leftSec: 0, rightSec: 1 }
+  }
+  if (total > FEEDING_DURATION_SEC_MAX) {
+    // 小さい側を floor で比例縮小し、残差を大きい側へ（和 = 上限 を厳密に保つ）
+    if (left >= right) {
+      right = Math.floor((right * FEEDING_DURATION_SEC_MAX) / total)
+      left = FEEDING_DURATION_SEC_MAX - right
+    } else {
+      left = Math.floor((left * FEEDING_DURATION_SEC_MAX) / total)
+      right = FEEDING_DURATION_SEC_MAX - left
+    }
+  }
+  return { leftSec: left, rightSec: right }
+}
+
+/**
  * duration_sec から後方互換の duration_min（分丸め）を導出する単一の源。
  * サーバの記録（recordFeeding）と楽観 append（buildOptimisticLog）で共有し、
  * 両列の drift を防ぐ。null は「時間なしの授乳」を意味し duration_min も null。

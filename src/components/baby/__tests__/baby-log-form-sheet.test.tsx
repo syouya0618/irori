@@ -43,6 +43,8 @@ function bottleFeedingLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
     amount_ml: 80,
     breast_left_count: null,
     breast_right_count: null,
+    breast_left_sec: null,
+    breast_right_sec: null,
     diaper_type: null,
     ended_at: null,
     temperature: null,
@@ -674,6 +676,95 @@ describe("BabyLogFormSheet の母乳サイクル（feeding_type='breast'）", ()
     fireEvent.click(plus)
     expect(screen.getByLabelText("左の回数").textContent).toBe("20")
     expect(plus).toBeDisabled()
+  })
+
+  it("sides を持つ行は左右それぞれの時間入力が出て、合計の時間欄は出ない", () => {
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastCycleLog({
+          breast_left_count: 2,
+          breast_right_count: 1,
+          breast_left_sec: 450,
+          breast_right_sec: 300,
+          duration_sec: 750,
+          duration_min: 13,
+        })}
+      />,
+    )
+    expect((screen.getByLabelText("左の分") as HTMLInputElement).value).toBe("7")
+    expect((screen.getByLabelText("左の秒") as HTMLInputElement).value).toBe("30")
+    expect((screen.getByLabelText("右の分") as HTMLInputElement).value).toBe("5")
+    expect((screen.getByLabelText("右の秒") as HTMLInputElement).value).toBe("0")
+    // 合計だけの編集は updateLog が fail-loud で拒否する契約ゆえ、入口自体を出さない
+    expect(screen.queryByLabelText("時間（分）")).not.toBeInTheDocument()
+  })
+
+  it("sides を持つ行の保存は breastLeftSec/RightSec を送り durationSec を送らない（合計はサーバ導出）", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastCycleLog({
+          breast_left_count: 2,
+          breast_right_count: 1,
+          breast_left_sec: 450,
+          breast_right_sec: 300,
+          duration_sec: 750,
+          duration_min: 13,
+        })}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText("左の分"), { target: { value: "8" } })
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
+    const updates = mockedUpdateLog.mock.calls[0][1] as Record<string, unknown>
+    expect(updates.breastLeftSec).toBe(510)
+    expect(updates.breastRightSec).toBe(300)
+    expect(updates).not.toHaveProperty("durationSec")
+  })
+
+  it("sides を持つ行で左右とも 0分0秒 は拒否し updateLog を呼ばない", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastCycleLog({
+          breast_left_count: 1,
+          breast_right_count: 0,
+          breast_left_sec: 60,
+          breast_right_sec: 0,
+          duration_sec: 60,
+          duration_min: 1,
+        })}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText("左の分"), { target: { value: "0" } })
+    fireEvent.change(screen.getByLabelText("左の秒"), { target: { value: "0" } })
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+
+    expect(mockedToast.error).toHaveBeenCalledWith("授乳時間を選んでください")
+    expect(mockedUpdateLog).not.toHaveBeenCalled()
+  })
+
+  it("sides を持たない旧サイクル行は従来の合計時間欄のまま", () => {
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastCycleLog({ duration_sec: 600, duration_min: 10 })}
+      />,
+    )
+    expect(screen.getByLabelText("時間（分）")).toBeInTheDocument()
+    expect(screen.queryByLabelText("左の分")).not.toBeInTheDocument()
   })
 
   it("左右とも 0 はクライアントで拒否し updateLog を呼ばない（合計1回以上）", async () => {

@@ -197,6 +197,23 @@ export function BabyLogFormSheet({
   const [durSecInput, setDurSecInput] = useState(() =>
     seededDurationSec != null ? String(seededDurationSec % 60) : "",
   )
+  // 左右別授乳時間（sides）を持つ行か。**不変の prop から導く**（state から導くと
+  // 種別切替で入力欄が消えて跳ねる — feedingTypeOptions と同じ理由）。sides を持つ行は
+  // 左右それぞれで時間を編集し、合計はサーバ導出（合計だけの編集は updateLog が
+  // fail-loud で拒否する契約ゆえ、合計欄そのものを出さない）。
+  const hasSides = log?.breast_left_sec != null
+  const [sideLeftMin, setSideLeftMin] = useState(() =>
+    hasSides ? String(Math.floor((log!.breast_left_sec as number) / 60)) : "",
+  )
+  const [sideLeftSec, setSideLeftSec] = useState(() =>
+    hasSides ? String((log!.breast_left_sec as number) % 60) : "",
+  )
+  const [sideRightMin, setSideRightMin] = useState(() =>
+    hasSides ? String(Math.floor((log!.breast_right_sec as number) / 60)) : "",
+  )
+  const [sideRightSec, setSideRightSec] = useState(() =>
+    hasSides ? String((log!.breast_right_sec as number) % 60) : "",
+  )
   const [diaperType, setDiaperType] = useState<DiaperType>(log?.diaper_type ?? "pee")
   const [temperature, setTemperature] = useState(log?.temperature?.toString() ?? "")
   const [weightG, setWeightG] = useState(log?.weight_g?.toString() ?? "")
@@ -419,7 +436,23 @@ export function BabyLogFormSheet({
             updates.breastLeftCount = counts.left
             updates.breastRightCount = counts.right
           }
-          if (allowsDuration(feedingType)) {
+          if (hasSides && feedingType === "breast") {
+            // sides を持つ行は左右それぞれを送り、合計はサーバが導出する
+            // （durationSec は送らない — 同時指定はサーバが拒否する契約）。
+            const left = parseBreastSideDuration(sideLeftMin, sideLeftSec)
+            const right = parseBreastSideDuration(sideRightMin, sideRightSec)
+            const sideError = left.error ?? right.error
+            if (sideError) {
+              toast.error(sideError)
+              return
+            }
+            if (left.value + right.value < 1) {
+              toast.error("授乳時間を選んでください")
+              return
+            }
+            updates.breastLeftSec = left.value
+            updates.breastRightSec = right.value
+          } else if (allowsDuration(feedingType)) {
             // dirty 時のみ送る（未変更の保存で旧行の時間を無言に書き換えない）。
             const seedMin =
               seededDurationSec != null
@@ -580,9 +613,35 @@ export function BabyLogFormSheet({
                 </div>
               )}
 
+              {/* 左右別授乳時間の編集（sides を持つサイクル行のみ）。合計欄は出さない
+                  — 合計だけの編集は updateLog が fail-loud で拒否する契約。 */}
+              {log && hasSides && feedingType === "breast" && (
+                <div className="space-y-1.5">
+                  <Label>時間（左右それぞれ）</Label>
+                  <BreastSideDurationInput
+                    label="左"
+                    idPrefix="side-left"
+                    min={sideLeftMin}
+                    sec={sideLeftSec}
+                    onMinChange={setSideLeftMin}
+                    onSecChange={setSideLeftSec}
+                    disabled={isPending}
+                  />
+                  <BreastSideDurationInput
+                    label="右"
+                    idPrefix="side-right"
+                    min={sideRightMin}
+                    sec={sideRightSec}
+                    onMinChange={setSideRightMin}
+                    onSecChange={setSideRightSec}
+                    disabled={isPending}
+                  />
+                </div>
+              )}
+
               {/* 授乳時間の編集（母乳のみ・編集モードのみ）。タイマー記録の
                   「何分間行ったか」をあとから直せるようにする。 */}
-              {log && allowsDuration(feedingType) && (
+              {log && !(hasSides && feedingType === "breast") && allowsDuration(feedingType) && (
                 <div className="space-y-1.5">
                   <Label htmlFor="duration-min">時間（分・秒）</Label>
                   <div className="flex items-center gap-2">
@@ -879,6 +938,86 @@ function BreastCountStepper({
           <Plus size={18} />
         </button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * 左右別授乳時間の片側入力を秒へ変換する。空欄は 0（片側だけ授乳した行を表せる）。
+ * 範囲は DB CHECK chk_breast_side_sec_total の 0..10800 のミラー（分 0..180・秒 0..59）。
+ */
+function parseBreastSideDuration(
+  minStr: string,
+  secStr: string,
+): { value: number; error: string | null } {
+  const min = minStr.trim() === "" ? 0 : Number(minStr)
+  const sec = secStr.trim() === "" ? 0 : Number(secStr)
+  if (
+    !Number.isInteger(min) ||
+    !Number.isInteger(sec) ||
+    min < 0 ||
+    min > 180 ||
+    sec < 0 ||
+    sec > 59
+  ) {
+    return { value: 0, error: "授乳時間は0〜180分・0〜59秒で入力してください" }
+  }
+  const total = min * 60 + sec
+  if (total > 10800) {
+    return { value: 0, error: "授乳時間は片側180分以内で入力してください" }
+  }
+  return { value: total, error: null }
+}
+
+/** 左右別授乳時間の片側（分・秒）入力。aria 名は「左の分」等で一意に引ける。 */
+function BreastSideDurationInput({
+  label,
+  idPrefix,
+  min,
+  sec,
+  onMinChange,
+  onSecChange,
+  disabled,
+}: {
+  label: string
+  idPrefix: string
+  min: string
+  sec: string
+  onMinChange: (v: string) => void
+  onSecChange: (v: string) => void
+  disabled: boolean
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-6 shrink-0 text-sm font-medium text-muted-foreground">
+        {label}
+      </span>
+      <Input
+        id={`${idPrefix}-min`}
+        type="number"
+        inputMode="numeric"
+        min={0}
+        max={180}
+        aria-label={`${label}の分`}
+        value={min}
+        onChange={(e) => onMinChange(e.target.value)}
+        disabled={disabled}
+        className="min-h-11 rounded-lg"
+      />
+      <span className="shrink-0 text-sm text-muted-foreground">分</span>
+      <Input
+        id={`${idPrefix}-sec`}
+        type="number"
+        inputMode="numeric"
+        min={0}
+        max={59}
+        aria-label={`${label}の秒`}
+        value={sec}
+        onChange={(e) => onSecChange(e.target.value)}
+        disabled={disabled}
+        className="min-h-11 rounded-lg"
+      />
+      <span className="shrink-0 text-sm text-muted-foreground">秒</span>
     </div>
   )
 }

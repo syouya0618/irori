@@ -209,3 +209,35 @@ describe("BabyTimelineItem のメモ表示（複数行・改行反映）", () =>
     expect(note.textContent).toBe("よく飲んだ\nご機嫌")
   })
 })
+
+describe("BabyTimelineItem: 左右別授乳時間（sides）を持つサイクル行", () => {
+  it("母乳 左2回7分30秒・右1回5分 の形で表示し、合計は併記しない", () => {
+    const log = {
+      id: "s1",
+      log_type: "feeding",
+      logged_at: "2026-07-27T10:00:00+09:00",
+      logged_by: "u1",
+      feeding_type: "breast",
+      amount_ml: null,
+      breast_left_count: 2,
+      breast_right_count: 1,
+      breast_left_sec: 450,
+      breast_right_sec: 300,
+      diaper_type: null,
+      ended_at: null,
+      temperature: null,
+      weight_g: null,
+      height_cm: null,
+      duration_min: 13,
+      duration_sec: 750,
+      memo: null,
+      created_at: "2026-07-27T10:12:30+09:00",
+    } as BabyLogData
+    render(<BabyTimelineItem log={log} onEdit={() => {}} />)
+    expect(
+      screen.getByText("母乳 左2回7分30秒・右1回5分"),
+    ).toBeInTheDocument()
+    // 合計（12分30秒）は左右の和と自明ゆえ併記しない
+    expect(screen.queryByText(/12分30秒/)).not.toBeInTheDocument()
+  })
+})
