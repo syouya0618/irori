@@ -22,6 +22,8 @@ const COMPLETE: BabyLogData = {
   amount_ml: null,
   breast_left_count: null,
   breast_right_count: null,
+  breast_left_sec: null,
+  breast_right_sec: null,
   diaper_type: null,
   ended_at: null,
   temperature: null,
