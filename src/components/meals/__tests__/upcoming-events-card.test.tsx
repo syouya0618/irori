@@ -17,6 +17,7 @@ import { act } from "react"
 import type { ViFn } from "@/test-utils/supabase-realtime-mock"
 import { setRefetchData } from "@/test-utils/supabase-realtime-mock"
 import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
+import { shiftYmd, todayJstString } from "@/lib/utils/date-jst"
 
 const mockState = vi.hoisted(() => ({
   listeners: [] as Array<(payload: unknown) => void>,
@@ -41,8 +42,12 @@ vi.mock("@/lib/supabase/client", async () => {
 
 import { UpcomingEventsCard } from "../upcoming-events-card"
 
-const TODAY = "2026-07-26"
-const TOMORROW = "2026-07-27"
+// 実時計から導出する（固定リテラル禁止）。コンポーネントの refetch 経路は
+// todayJstString()（実時計）で「今日」を再計算するため、日付を固定すると
+// 翌日以降「タブ復帰で refetch」テストが恒常的に落ちる（2026-07-27 に実際に発生）。
+const TODAY = todayJstString()
+const TOMORROW = shiftYmd(TODAY, 1)
+const YESTERDAY = shiftYmd(TODAY, -1)
 
 /** 時刻付き予定。start_at/end_at は ISO（UTC 表記）で渡す。 */
 function timedEvent(
@@ -176,9 +181,9 @@ describe("UpcomingEventsCard", () => {
           timedEvent({
             id: "c1",
             title: "旅行",
-            start_date: "2026-07-25", // 前日開始
+            start_date: YESTERDAY, // 前日開始
             end_date: TODAY,
-            start_at: "2026-07-25T09:00:00Z",
+            start_at: `${YESTERDAY}T09:00:00Z`,
             end_at: null, // 継続中扱いフォールバック
           }),
         ]}
