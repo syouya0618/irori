@@ -10,6 +10,7 @@ import type { BabyLogData } from "@/lib/types/baby"
 vi.mock("@/app/(main)/baby/actions", () => ({
   updateLog: vi.fn(),
   deleteLog: vi.fn(),
+  recordFeeding: vi.fn(),
   recordTemperature: vi.fn(),
   recordGrowth: vi.fn(),
   recordMemo: vi.fn(),
@@ -17,9 +18,10 @@ vi.mock("@/app/(main)/baby/actions", () => ({
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 import { BabyLogFormSheet } from "../baby-log-form-sheet"
-import { recordMemo, deleteLog } from "@/app/(main)/baby/actions"
+import { recordMemo, recordFeeding, deleteLog } from "@/app/(main)/baby/actions"
 
 const mockedRecordMemo = vi.mocked(recordMemo)
+const mockedRecordFeeding = vi.mocked(recordFeeding)
 const mockedDeleteLog = vi.mocked(deleteLog)
 
 const memoLog: BabyLogData = {
@@ -29,6 +31,8 @@ const memoLog: BabyLogData = {
   logged_by: "u1",
   feeding_type: null,
   amount_ml: null,
+  breast_left_count: null,
+  breast_right_count: null,
   diaper_type: null,
   ended_at: null,
   temperature: null,
@@ -72,6 +76,37 @@ describe("BabyLogFormSheet の楽観 append/remove (B-03)", () => {
     expect(log.log_type).toBe("memo")
     expect(log.memo).toBe("ミルク多め")
     expect(log.logged_by).toBe("u1")
+  })
+
+  it("母乳サイクル作成成功で onLogRecorded に左右の回数入りの行を渡す", async () => {
+    // counts を楽観行へ乗せ忘れると、Realtime が上書きするまで
+    // タイムラインが「母乳」だけ（内訳なし）で表示されてしまう。
+    mockedRecordFeeding.mockResolvedValue({ error: null, id: "breast-created" })
+    const onLogRecorded = vi.fn<(log: BabyLogData) => void>()
+    render(
+      <BabyLogFormSheet
+        open
+        onOpenChange={vi.fn()}
+        log={null}
+        createLogType="feeding"
+        createFeedingType="breast"
+        userId="u1"
+        onLogRecorded={onLogRecorded}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "右の回数を1増やす" }))
+    fireEvent.click(screen.getByRole("button", { name: "右の回数を1増やす" }))
+    fireEvent.click(screen.getByRole("button", { name: "記録する" }))
+
+    await waitFor(() => expect(onLogRecorded).toHaveBeenCalledTimes(1))
+    const log = onLogRecorded.mock.calls[0][0]
+    expect(log.id).toBe("breast-created")
+    expect(log.log_type).toBe("feeding")
+    expect(log.feeding_type).toBe("breast")
+    expect(log.breast_left_count).toBe(1)
+    expect(log.breast_right_count).toBe(2)
+    expect(log.amount_ml).toBeNull()
   })
 
   it("削除成功で onLogRemoved に対象 id を渡す", async () => {

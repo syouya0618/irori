@@ -22,6 +22,8 @@ function makeLog(
     logged_by: "user-1",
     feeding_type: null,
     amount_ml: null,
+    breast_left_count: null,
+    breast_right_count: null,
     diaper_type: null,
     ended_at: null,
     temperature: null,
@@ -88,8 +90,8 @@ describe("deriveDashboardSummary / activeSleep フォールバック (B-01)", ()
     expect(activeSleep).toBeNull()
   })
 
-  it("忠実抽出の回帰: lastFeeding / derivedLastSleepEndedAt は降順 logs の先頭一致（最新）を返す", () => {
-    // logs は logged_at 降順前提（サーバクエリ・Realtime 挿入とも降順維持）
+  it("忠実抽出の回帰: 降順 logs では lastFeeding（logged_at 比較）/ derivedLastSleepEndedAt（先頭一致）とも最新を返す", () => {
+    // 降順入力では両導出とも「最新」で一致する（lastFeeding の順序非依存化は P2 の describe で固定）
     const logs = [
       makeLog({
         id: "feed-new",
@@ -131,6 +133,89 @@ describe("deriveDashboardSummary / activeSleep フォールバック (B-01)", ()
     expect(result.activeSleep).toEqual(crossMidnightSleep)
     expect(result.lastFeeding).toBeNull()
     expect(result.derivedLastSleepEndedAt).toBeNull()
+  })
+})
+
+describe("deriveDashboardSummary / lastFeeding の順序非依存（批判レビュー P2）", () => {
+  it("楽観 prepend で降順が崩れた logs でも、lastFeeding は logged_at が最新の授乳行", () => {
+    // タイマーの楽観 append は loggedAt=開始時刻（過去）の行を無条件で先頭 prepend する。
+    // 先頭一致だと「タイマー中に記録したミルク」より古いサイクル行を最終授乳に選んでしまう。
+    const logs = [
+      makeLog({
+        id: "feed-cycle-optimistic",
+        log_type: "feeding",
+        logged_at: "2026-07-18T12:00:00+09:00", // サイクル開始（prepend されて先頭に居る）
+        feeding_type: "breast",
+      }),
+      makeLog({
+        id: "feed-milk",
+        log_type: "feeding",
+        logged_at: "2026-07-18T12:10:00+09:00", // タイマー走行中に記録されたミルク（より新しい）
+        feeding_type: "bottle",
+      }),
+    ]
+
+    const { lastFeeding } = deriveDashboardSummary(logs, null)
+
+    expect(lastFeeding?.id).toBe("feed-milk")
+  })
+
+  it("ISO 表記が混在（'Z' と '+00:00'）しても文字列でなく時刻で比較する", () => {
+    // 楽観行は toISOString() の "Z"、サーバ行は "+00:00"。文字列比較は 'Z'(0x5A) > '5'(0x35)
+    // ゆえ古い "Z" 行が新しい "+00:00" 行に勝ってしまう。epoch 比較のみが正しい。
+    const logs = [
+      makeLog({
+        id: "older-z",
+        log_type: "feeding",
+        logged_at: "2026-07-18T03:00:00.000Z",
+        feeding_type: "breast",
+      }),
+      makeLog({
+        id: "newer-offset",
+        log_type: "feeding",
+        logged_at: "2026-07-18T03:10:00.123456+00:00",
+        feeding_type: "bottle",
+      }),
+    ]
+
+    expect(deriveDashboardSummary(logs, null).lastFeeding?.id).toBe(
+      "newer-offset",
+    )
+  })
+})
+
+describe("deriveDashboardSummary / lastFeeding フォールバック（批判レビュー P3）", () => {
+  // 深夜跨ぎサイクル: 開始時刻セマンティクスにより前日行になり、当日窓の logs に現れない
+  const prevDayFeeding = makeLog({
+    id: "feed-prev-day",
+    log_type: "feeding",
+    logged_at: "2026-07-17T23:50:00+09:00",
+    feeding_type: "breast",
+  })
+
+  it("選択日の logs に授乳が無ければ fallback を使う（深夜跨ぎ直後の「---」防止）", () => {
+    const { lastFeeding } = deriveDashboardSummary([], null, prevDayFeeding)
+
+    expect(lastFeeding?.id).toBe("feed-prev-day")
+  })
+
+  it("logs に授乳が有ればローカル導出が優先（fallback は使わない）", () => {
+    const logs = [
+      makeLog({
+        id: "feed-today",
+        log_type: "feeding",
+        logged_at: "2026-07-18T07:00:00+09:00",
+        feeding_type: "breast",
+      }),
+    ]
+
+    expect(
+      deriveDashboardSummary(logs, null, prevDayFeeding).lastFeeding?.id,
+    ).toBe("feed-today")
+  })
+
+  it("fallback 未指定（従来呼び出し）は従来どおり null", () => {
+    expect(deriveDashboardSummary([], null).lastFeeding).toBeNull()
   })
 })
 

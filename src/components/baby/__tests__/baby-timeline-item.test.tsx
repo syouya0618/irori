@@ -74,6 +74,94 @@ describe("BabyTimelineItem の授乳時間表示（秒精度）", () => {
   })
 })
 
+describe("BabyTimelineItem の母乳サイクル表示（feeding_type='breast'）", () => {
+  // 注意: 上の feedingLog() は `as BabyLogData` cast を持つ（既存の temperature_c 等の
+  // 名前ズレを通してしまう）。ゆえに counts は明示フィールド名で渡し、期待値も
+  // **完全一致**で固定する — 正規表現の部分一致だと「内訳が出ていない」バグを
+  // 通してしまうため（例: parts に空文字が混ざった `母乳  12分30秒`）。
+  it("左右の回数と授乳時間を「母乳 左2・右1 12分30秒」の1行で表示する", () => {
+    render(
+      <BabyTimelineItem
+        log={feedingLog({
+          feeding_type: "breast",
+          breast_left_count: 2,
+          breast_right_count: 1,
+          duration_sec: 750,
+          duration_min: 13,
+        })}
+        onEdit={vi.fn()}
+      />,
+    )
+    expect(screen.getByText("母乳 左2・右1 12分30秒")).toBeInTheDocument()
+  })
+
+  it("片側だけ吸わせた回（左0・右2）は 0 の側を省いて「母乳 右2 …」と表示する", () => {
+    render(
+      <BabyTimelineItem
+        log={feedingLog({
+          feeding_type: "breast",
+          breast_left_count: 0,
+          breast_right_count: 2,
+          duration_sec: 300,
+          duration_min: 5,
+        })}
+        onEdit={vi.fn()}
+      />,
+    )
+    expect(screen.getByText("母乳 右2 5分")).toBeInTheDocument()
+  })
+
+  it("時間なしの母乳サイクルは「母乳 左1」だけを表示する", () => {
+    render(
+      <BabyTimelineItem
+        log={feedingLog({
+          feeding_type: "breast",
+          breast_left_count: 1,
+          breast_right_count: 0,
+          duration_sec: null,
+          duration_min: null,
+        })}
+        onEdit={vi.fn()}
+      />,
+    )
+    expect(screen.getByText("母乳 左1")).toBeInTheDocument()
+  })
+
+  it("counts が両方 0/null の壊れた行でも余分な空白を挟まず「母乳」だけを表示する", () => {
+    // formatBreastCounts は内訳なしで "" を返す契約ゆえ、そのまま join すると
+    // 「母乳  3分」のように二重空白が出る。空文字は push しないことを固定する。
+    render(
+      <BabyTimelineItem
+        log={feedingLog({
+          feeding_type: "breast",
+          breast_left_count: null,
+          breast_right_count: null,
+          duration_sec: 180,
+          duration_min: 3,
+        })}
+        onEdit={vi.fn()}
+      />,
+    )
+    expect(screen.getByText("母乳 3分")).toBeInTheDocument()
+  })
+
+  it("移行前の片側行（breast_left）は従来どおり「左 …」表示のまま（回帰）", () => {
+    render(
+      <BabyTimelineItem
+        log={feedingLog({
+          feeding_type: "breast_left",
+          breast_left_count: null,
+          breast_right_count: null,
+          duration_sec: 300,
+          duration_min: 5,
+        })}
+        onEdit={vi.fn()}
+      />,
+    )
+    expect(screen.getByText("左 5分")).toBeInTheDocument()
+  })
+})
+
 describe("BabyTimelineItem のメモ表示（複数行・改行反映）", () => {
   it("メモログは全文を whitespace-pre-wrap で表示し改行を保持する", () => {
     render(

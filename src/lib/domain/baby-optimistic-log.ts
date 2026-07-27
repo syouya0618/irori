@@ -29,6 +29,14 @@ export interface BuildOptimisticLogParams {
   loggedAt?: string
   feedingType?: FeedingType | null
   amountMl?: number | null
+  /**
+   * 母乳サイクルで左を吸わせた回数（feedingType='breast' の時のみ渡す）。
+   * 片側 0 は falsy だが `??` で拾うため 0 が null に化けない
+   * （null に化けると DB の chk_breast_counts_required に弾かれ乖離する）。
+   */
+  breastLeftCount?: number | null
+  /** 母乳サイクルで右を吸わせた回数（同上） */
+  breastRightCount?: number | null
   diaperType?: DiaperType | null
   endedAt?: string | null
   temperature?: number | null
@@ -50,6 +58,8 @@ export function buildOptimisticLog(
     logged_by: params.loggedBy,
     feeding_type: params.feedingType ?? null,
     amount_ml: params.amountMl ?? null,
+    breast_left_count: params.breastLeftCount ?? null,
+    breast_right_count: params.breastRightCount ?? null,
     diaper_type: params.diaperType ?? null,
     ended_at: params.endedAt ?? null,
     temperature: params.temperature ?? null,

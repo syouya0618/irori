@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
-import { Loader2, Trash2 } from "lucide-react"
+import { Loader2, Trash2, Minus, Plus } from "lucide-react"
 import { toast } from "sonner"
 import {
   updateLog,
@@ -47,20 +47,64 @@ import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
 import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
 import type { BabyLogData } from "@/lib/types/baby"
 
-const FEEDING_TYPES: FeedingType[] = [
-  "breast_left",
-  "breast_right",
-  "bottle",
-  "solid",
-  "pumped",
-]
+// 新規記録で選べる授乳タイプ。母乳は 'breast'（左右の吸わせ回数を持つサイクル 1 行）へ
+// 統一し、移行前の片側行 breast_left / breast_right は過去データ専用ゆえ並べない
+// （6 択にすると 1 行の flex に収まらず「離乳食」が潰れて 44px タッチも崩れる）。
+const FEEDING_TYPES: FeedingType[] = ["breast", "bottle", "solid", "pumped"]
+
+/**
+ * 種類ボタンに並べる授乳タイプ。移行前の片側行（breast_left / breast_right）を
+ * 編集する時だけ、その行の種別を先頭に足す — さもなくば「どれも選択されていない」
+ * 編集画面になり、種別を触っていないのに保存で別種別へ化けたように見える。
+ *
+ * 判定は**不変の prop**（log?.feeding_type ?? createFeedingType）から導くこと。
+ * feedingType state から導くと母乳を選んだ瞬間に「左」ボタンが消えて列が横に跳ねる。
+ * create 側も見るのは、呼び出し側が createFeedingType に片側行を渡した時に
+ * 「選択中の種別に対応するボタンが無い（どれも highlight されない）」状態を作らないため。
+ */
+function feedingTypeOptions(
+  logFeedingType: FeedingType | null | undefined,
+): FeedingType[] {
+  if (logFeedingType === "breast_left" || logFeedingType === "breast_right") {
+    return [logFeedingType, ...FEEDING_TYPES]
+  }
+  return FEEDING_TYPES
+}
+
 const DIAPER_TYPES: DiaperType[] = ["pee", "poop", "both"]
 
-// 量（ml）を伴う授乳タイプ。母乳（左/右）は量を測らないため除外する。
+// 量（ml）を伴う授乳タイプ。母乳（サイクル/片側とも）は量を測らないため除外する。
 const AMOUNT_FEEDING_TYPES: FeedingType[] = ["bottle", "solid", "pumped"]
 
 function allowsAmount(type: FeedingType): boolean {
   return AMOUNT_FEEDING_TYPES.includes(type)
+}
+
+// 母乳サイクルの左右回数の上限（DB CHECK chk_breast_counts_required の 0..20 と対）。
+const BREAST_COUNT_MAX = 20
+// 合計 0 の拒否文言。サーバ（actions.ts の BREAST_COUNTS_ERROR）と同じ規約だが、
+// "use server" ファイルは関数以外を export できない（Turbopack がビルドで落ちる。
+// しかも tsc では検出できない）ため定数は共有せず、ここに置く。
+const BREAST_COUNTS_ERROR = "左右の回数は合計1回以上で指定してください"
+
+// 回数を DB CHECK と同じ 0..20 の整数へ丸める。NaN は「最保守値 = 0」へ倒す
+// （Math.min/max は NaN を素通しし、そのまま送ると DB CHECK 違反で保存が落ちる）。
+function clampBreastCount(n: number): number {
+  if (!Number.isFinite(n)) return 0
+  return Math.min(BREAST_COUNT_MAX, Math.max(0, Math.round(n)))
+}
+
+/**
+ * 保存に使う左右回数を確定する。'breast' 以外は null（counts を持てない
+ * = DB CHECK chk_breast_counts_only_breast のミラー）。
+ */
+function resolveBreastCounts(
+  type: FeedingType,
+  left: number,
+  right: number,
+): { left: number; right: number } | null {
+  if (type !== "breast") return null
+  return { left: clampBreastCount(left), right: clampBreastCount(right) }
 }
 
 // 搾乳・ミルク等の量をワンタップで入れるプリセット（10mL刻み・10〜100mL）。
@@ -131,6 +175,15 @@ export function BabyLogFormSheet({
     log?.feeding_type ?? createFeedingType ?? "bottle",
   )
   const [amountMl, setAmountMl] = useState(log?.amount_ml?.toString() ?? "")
+  // 母乳サイクルの左右の吸わせ回数。既存行からは `??` で seed する — 0 は falsy だが
+  // 有効値（片側だけ吸わせた回）ゆえ `||` で既定 1 に化けさせると DB と乖離する。
+  // 他種別からの切替・新規記録は「左1・右0」を既定にする（片側から始める最頻ケース）。
+  const [breastLeftCount, setBreastLeftCount] = useState(
+    log?.breast_left_count ?? 1,
+  )
+  const [breastRightCount, setBreastRightCount] = useState(
+    log?.breast_right_count ?? 0,
+  )
   // 授乳時間の編集入力（分・秒）。seed は duration_sec を優先し、#140 以前の旧行
   // （duration_min のみ・sec null）は min*60 で補完する — さもなくば旧行の編集保存で
   // 時間が silent に消える。dirty 判定（seed と同値なら durationSec を送らない）は
@@ -200,9 +253,22 @@ export function BabyLogFormSheet({
             const amt = allowsAmount(feedingType)
               ? parseAmountMl(amountMl)
               : null
+            // 母乳サイクルは左右回数が必須（DB CHECK chk_breast_counts_required）。
+            // counts なし・合計 0 で送るとサーバが 100% 弾くため、往復前に潰す。
+            const counts = resolveBreastCounts(
+              feedingType,
+              breastLeftCount,
+              breastRightCount,
+            )
+            if (counts && counts.left + counts.right < 1) {
+              toast.error(BREAST_COUNTS_ERROR)
+              return
+            }
             result = await recordFeeding({
               feedingType,
               amountMl: amt,
+              breastLeftCount: counts?.left ?? null,
+              breastRightCount: counts?.right ?? null,
               loggedAt,
               memo: memo || undefined,
             })
@@ -214,6 +280,10 @@ export function BabyLogFormSheet({
                 loggedAt,
                 feedingType,
                 amountMl: amt,
+                // 楽観行にも counts を乗せる。落とすと Realtime が上書きするまで
+                // タイムラインが「母乳」だけ（内訳なし）で表示されてしまう。
+                breastLeftCount: counts?.left ?? null,
+                breastRightCount: counts?.right ?? null,
                 memo: memo || null,
               })
             break
@@ -333,6 +403,22 @@ export function BabyLogFormSheet({
           updates.amountMl = allowsAmount(feedingType)
             ? parseAmountMl(amountMl)
             : null
+          // 母乳サイクルの左右回数。'breast' 以外へ切替えた時は**送らない** —
+          // updateLog が feedingType の変更に連動して必ず null 化するため
+          // （chk_breast_counts_only_breast のミラー。amount の null 化と同じ規約）。
+          const counts = resolveBreastCounts(
+            feedingType,
+            breastLeftCount,
+            breastRightCount,
+          )
+          if (counts) {
+            if (counts.left + counts.right < 1) {
+              toast.error(BREAST_COUNTS_ERROR)
+              return
+            }
+            updates.breastLeftCount = counts.left
+            updates.breastRightCount = counts.right
+          }
           if (allowsDuration(feedingType)) {
             // dirty 時のみ送る（未変更の保存で旧行の時間を無言に書き換えない）。
             const seedMin =
@@ -433,9 +519,14 @@ export function BabyLogFormSheet({
         </SheetHeader>
 
         <div className="flex flex-col gap-4 overflow-y-auto px-4 pb-2">
-          {/* 記録時刻（全タイプ共通・HH:mm/JST）。日付はそのログの日付を維持する */}
+          {/* 記録時刻（全タイプ共通・HH:mm/JST）。日付はそのログの日付を維持する。
+              授乳のみ「開始時刻」と明示する: 授乳行の logged_at は開始時刻セマンティクス
+              （backfill 20260726100003 で統一）ゆえ、無表示だと終了時刻を入れる人が現れ、
+              「移行後に生まれた終了セマンティクス行」は backfill でも検知できない */}
           <div className="space-y-1.5">
-            <Label htmlFor="log-time">時刻</Label>
+            <Label htmlFor="log-time">
+              {logType === "feeding" ? "開始時刻" : "時刻"}
+            </Label>
             <Input
               id="log-time"
               type="time"
@@ -452,7 +543,9 @@ export function BabyLogFormSheet({
               <div className="space-y-1.5">
                 <Label>種類</Label>
                 <div className="flex gap-1.5">
-                  {FEEDING_TYPES.map((type) => (
+                  {feedingTypeOptions(
+                    log?.feeding_type ?? createFeedingType,
+                  ).map((type) => (
                     <button
                       key={type}
                       type="button"
@@ -464,6 +557,28 @@ export function BabyLogFormSheet({
                   ))}
                 </div>
               </div>
+
+              {/* 母乳サイクルの左右の吸わせ回数（'breast' のみ）。1 サイクルを 1 行で
+                  記録するため「左に何回・右に何回吸わせたか」をここで数える。 */}
+              {feedingType === "breast" && (
+                <div className="space-y-1.5">
+                  <Label>左右の回数</Label>
+                  <div className="flex w-full gap-3">
+                    <BreastCountStepper
+                      label="左"
+                      value={breastLeftCount}
+                      onChange={setBreastLeftCount}
+                      disabled={isPending}
+                    />
+                    <BreastCountStepper
+                      label="右"
+                      value={breastRightCount}
+                      onChange={setBreastRightCount}
+                      disabled={isPending}
+                    />
+                  </div>
+                </div>
+              )}
 
               {/* 授乳時間の編集（母乳のみ・編集モードのみ）。タイマー記録の
                   「何分間行ったか」をあとから直せるようにする。 */}
@@ -707,5 +822,63 @@ export function BabyLogFormSheet({
         </SheetFooter>
       </SheetContent>
     </Sheet>
+  )
+}
+
+/**
+ * 母乳サイクルの片側（左 or 右）の回数ステッパー。
+ *
+ * 授乳中の片手操作を前提に、自由入力ではなく ±ボタン（44px）で数える。値は
+ * clampBreastCount で 0..20 に丸めたうえ、境界ではボタン自体も disabled にする
+ * （表示と送信値が食い違わないようにする二重化）。
+ *
+ * 見た目と aria 名は `feeding-timer.tsx` の `CountStepper`（タイマー保存時の同機能）に
+ * 揃えてある。同じ「左右の回数」を数える操作が記録直後と編集で別物に見えないように
+ * するため — 触る時は両方を揃えて直すこと（共通化は timer 側の担当と重なるため保留）。
+ */
+function BreastCountStepper({
+  label,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string
+  value: number
+  onChange: (next: number) => void
+  disabled: boolean
+}) {
+  const buttonCn =
+    "flex min-h-11 min-w-11 items-center justify-center rounded-xl border bg-background transition-colors duration-200 hover:bg-muted active:bg-muted disabled:opacity-50"
+  return (
+    <div className="flex flex-1 flex-col items-center gap-1">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          aria-label={`${label}の回数を1減らす`}
+          onClick={() => onChange(clampBreastCount(value - 1))}
+          disabled={disabled || value <= 0}
+          className={buttonCn}
+        >
+          <Minus size={18} />
+        </button>
+        {/* output は暗黙で role="status" ゆえ、増減が支援技術へも読み上げられる */}
+        <output
+          aria-label={`${label}の回数`}
+          className="w-8 text-center text-2xl font-bold tabular-nums"
+        >
+          {value}
+        </output>
+        <button
+          type="button"
+          aria-label={`${label}の回数を1増やす`}
+          onClick={() => onChange(clampBreastCount(value + 1))}
+          disabled={disabled || value >= BREAST_COUNT_MAX}
+          className={buttonCn}
+        >
+          <Plus size={18} />
+        </button>
+      </div>
+    </div>
   )
 }

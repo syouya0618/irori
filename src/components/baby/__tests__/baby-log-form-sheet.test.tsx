@@ -41,6 +41,8 @@ function bottleFeedingLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
     logged_by: "user-1",
     feeding_type: "bottle",
     amount_ml: 80,
+    breast_left_count: null,
+    breast_right_count: null,
     diaper_type: null,
     ended_at: null,
     temperature: null,
@@ -171,7 +173,7 @@ describe("BabyLogFormSheet の記録時刻の編集・指定（タスクB）", (
       />,
     )
     // logged_at 2026-07-18T12:00:00+09:00 → "12:00"
-    expect((screen.getByLabelText("時刻") as HTMLInputElement).value).toBe(
+    expect((screen.getByLabelText("開始時刻") as HTMLInputElement).value).toBe(
       "12:00",
     )
   })
@@ -186,7 +188,7 @@ describe("BabyLogFormSheet の記録時刻の編集・指定（タスクB）", (
         log={bottleFeedingLog()}
       />,
     )
-    fireEvent.change(screen.getByLabelText("時刻"), {
+    fireEvent.change(screen.getByLabelText("開始時刻"), {
       target: { value: "13:30" },
     })
     fireEvent.click(screen.getByRole("button", { name: "更新する" }))
@@ -213,7 +215,7 @@ describe("BabyLogFormSheet の記録時刻の編集・指定（タスクB）", (
         })}
       />,
     )
-    fireEvent.change(screen.getByLabelText("時刻"), {
+    fireEvent.change(screen.getByLabelText("開始時刻"), {
       target: { value: "11:00" },
     })
     fireEvent.click(screen.getByRole("button", { name: "更新する" }))
@@ -258,10 +260,10 @@ describe("BabyLogFormSheet の記録時刻の編集・指定（タスクB）", (
       />,
     )
     // seed は "12:00"。一度変えてから元に戻す
-    fireEvent.change(screen.getByLabelText("時刻"), {
+    fireEvent.change(screen.getByLabelText("開始時刻"), {
       target: { value: "13:30" },
     })
-    fireEvent.change(screen.getByLabelText("時刻"), {
+    fireEvent.change(screen.getByLabelText("開始時刻"), {
       target: { value: "12:00" },
     })
     fireEvent.click(screen.getByRole("button", { name: "更新する" }))
@@ -310,7 +312,7 @@ describe("BabyLogFormSheet の記録時刻の編集・指定（タスクB）", (
         onLogRecorded={onLogRecorded}
       />,
     )
-    fireEvent.change(screen.getByLabelText("時刻"), {
+    fireEvent.change(screen.getByLabelText("開始時刻"), {
       target: { value: "00:01" },
     })
     fireEvent.click(screen.getByRole("button", { name: "記録する" }))
@@ -565,5 +567,268 @@ describe("BabyLogFormSheet の授乳時間（duration）編集", () => {
       />,
     )
     expect(screen.queryByLabelText("時間（分）")).toBeNull()
+  })
+})
+
+describe("BabyLogFormSheet の母乳サイクル（feeding_type='breast'）", () => {
+  function breastCycleLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
+    return bottleFeedingLog({
+      feeding_type: "breast",
+      amount_ml: null,
+      breast_left_count: 2,
+      breast_right_count: 1,
+      duration_sec: 750,
+      duration_min: 13,
+      ...overrides,
+    })
+  }
+
+  it("種類に「母乳」が並び、選ぶと左右の回数ステッパーが出て量欄は出ない", () => {
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={null}
+        createLogType="feeding"
+        createFeedingType="bottle"
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "母乳" }))
+    // 他種別から母乳へ切替えた既定は 左1・右0
+    expect(screen.getByLabelText("左の回数").textContent).toBe("1")
+    expect(screen.getByLabelText("右の回数").textContent).toBe("0")
+    // 母乳は量を測らない
+    expect(screen.queryByLabelText("量 (ml)")).toBeNull()
+  })
+
+  it("既存の母乳サイクル行は左右の回数を row から seed する（左0 が 1 に化けない）", () => {
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastCycleLog({ breast_left_count: 0, breast_right_count: 3 })}
+      />,
+    )
+    // 0 は falsy だが有効値ゆえ既定 1 で上書きしてはならない（?? での seed）
+    expect(screen.getByLabelText("左の回数").textContent).toBe("0")
+    expect(screen.getByLabelText("右の回数").textContent).toBe("3")
+  })
+
+  it("+ / − ボタンで回数が増減し、更新すると breastLeftCount/RightCount が updateLog に渡る", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastCycleLog()}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "左の回数を1増やす" }))
+    fireEvent.click(screen.getByRole("button", { name: "右の回数を1減らす" }))
+    expect(screen.getByLabelText("左の回数").textContent).toBe("3")
+    expect(screen.getByLabelText("右の回数").textContent).toBe("0")
+
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
+    expect(mockedUpdateLog).toHaveBeenCalledWith(
+      "log-1",
+      expect.objectContaining({
+        feedingType: "breast",
+        breastLeftCount: 3,
+        breastRightCount: 0,
+      }),
+    )
+  })
+
+  it("回数は 0 未満・20 超へ動かせない（DB CHECK 0..20 のクライアント側 clamp）", () => {
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastCycleLog({ breast_left_count: 0, breast_right_count: 20 })}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "左の回数を1減らす" }))
+    fireEvent.click(screen.getByRole("button", { name: "右の回数を1増やす" }))
+    expect(screen.getByLabelText("左の回数").textContent).toBe("0")
+    expect(screen.getByLabelText("右の回数").textContent).toBe("20")
+  })
+
+  it("左右とも 0 はクライアントで拒否し updateLog を呼ばない（合計1回以上）", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastCycleLog({ breast_left_count: 1, breast_right_count: 0 })}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "左の回数を1減らす" }))
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+
+    await waitFor(() =>
+      expect(mockedToast.error).toHaveBeenCalledWith(
+        expect.stringContaining("合計1回以上"),
+      ),
+    )
+    expect(mockedUpdateLog).not.toHaveBeenCalled()
+  })
+
+  it("母乳からミルクへ切替えると回数欄が消え、counts を送らない（サーバが null 化する）", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastCycleLog()}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "ミルク" }))
+    expect(screen.queryByLabelText("左の回数")).toBeNull()
+
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
+    const updates = mockedUpdateLog.mock.calls[0][1]
+    expect(updates.feedingType).toBe("bottle")
+    expect(updates).not.toHaveProperty("breastLeftCount")
+    expect(updates).not.toHaveProperty("breastRightCount")
+  })
+
+  it("ミルクから母乳へ切替えて更新すると既定の 左1・右0 が送られる", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={bottleFeedingLog()}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "母乳" }))
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
+    expect(mockedUpdateLog).toHaveBeenCalledWith(
+      "log-1",
+      expect.objectContaining({
+        feedingType: "breast",
+        breastLeftCount: 1,
+        breastRightCount: 0,
+      }),
+    )
+  })
+
+  it("新規記録は種類に「左」「右」を出さない（移行前の片側行は過去データ専用）", () => {
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={null}
+        createLogType="feeding"
+        createFeedingType="bottle"
+      />,
+    )
+    expect(screen.queryByRole("button", { name: "左" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "右" })).toBeNull()
+  })
+
+  it("移行前の片側行（breast_left）の編集では「左」が選択済みで出て、そのまま round-trip する", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={bottleFeedingLog({
+          feeding_type: "breast_left",
+          amount_ml: null,
+          duration_sec: 300,
+          duration_min: 5,
+        })}
+      />,
+    )
+    // 過去行の種別が消えると「何も選択されていない」編集画面になるため出し続ける
+    const legacy = screen.getByRole("button", { name: "左" })
+    expect(legacy).toHaveClass("bg-primary")
+    // 片側行は counts を持たないため回数欄は出さない
+    expect(screen.queryByLabelText("左の回数")).toBeNull()
+
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
+    const updates = mockedUpdateLog.mock.calls[0][1]
+    expect(updates.feedingType).toBe("breast_left")
+    expect(updates).not.toHaveProperty("breastLeftCount")
+  })
+
+  it("母乳サイクルは時間（分・秒）も編集できる", () => {
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastCycleLog()}
+      />,
+    )
+    expect(
+      (screen.getByLabelText("時間（分）") as HTMLInputElement).value,
+    ).toBe("12")
+    expect(
+      (screen.getByLabelText("時間（秒）") as HTMLInputElement).value,
+    ).toBe("30")
+  })
+
+  it("作成: 母乳サイクルを記録すると recordFeeding に breast + 左右の回数が渡る", async () => {
+    mockedRecordFeeding.mockResolvedValue({ error: null, id: "feed-breast" })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={null}
+        createLogType="feeding"
+        createFeedingType="breast"
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "右の回数を1増やす" }))
+    fireEvent.click(screen.getByRole("button", { name: "記録する" }))
+
+    await waitFor(() => expect(mockedRecordFeeding).toHaveBeenCalled())
+    expect(mockedRecordFeeding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        feedingType: "breast",
+        amountMl: null,
+        breastLeftCount: 1,
+        breastRightCount: 1,
+      }),
+    )
+  })
+
+  it("作成: 左右とも 0 なら recordFeeding を呼ばずクライアントで拒否する", async () => {
+    mockedRecordFeeding.mockResolvedValue({ error: null, id: "feed-x" })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={null}
+        createLogType="feeding"
+        createFeedingType="breast"
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "左の回数を1減らす" }))
+    fireEvent.click(screen.getByRole("button", { name: "記録する" }))
+
+    await waitFor(() =>
+      expect(mockedToast.error).toHaveBeenCalledWith(
+        expect.stringContaining("合計1回以上"),
+      ),
+    )
+    expect(mockedRecordFeeding).not.toHaveBeenCalled()
   })
 })

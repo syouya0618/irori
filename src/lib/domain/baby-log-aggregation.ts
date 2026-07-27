@@ -20,6 +20,19 @@ export interface AggregationLogInput {
   height_cm: number | null
 }
 
+/**
+ * 母乳系の授乳種別か。'breast'（サイクル行）と、移行前の片側行
+ * breast_left / breast_right を同じバケットへ集約する。
+ *
+ * 片側行は本来「1サイクルの片側」だが、DB にサイクル境界の情報が無く復元できない
+ * ため 1 行 = 1 回として近似する。移行後は 'breast' のみが生成される。
+ */
+function isBreastFeedingType(type: FeedingType | null): boolean {
+  return (
+    type === "breast" || type === "breast_left" || type === "breast_right"
+  )
+}
+
 export interface DailyFeedingSummary {
   date: string
   totalCount: number
@@ -136,7 +149,9 @@ export function aggregateFeedings(
     let totalPumpedMl = 0
 
     for (const log of dayLogs) {
-      if (log.feeding_type === "breast_left" || log.feeding_type === "breast_right") {
+      if (isBreastFeedingType(log.feeding_type)) {
+        // 'breast' はサイクル行（1行 = 1回の授乳）。移行前の片側行
+        // breast_left/breast_right も同じバケットへ集約する（→ isBreastFeedingType）。
         breastCount++
       } else if (log.feeding_type === "bottle") {
         bottleCount++
@@ -146,7 +161,8 @@ export function aggregateFeedings(
       } else if (log.feeding_type === "pumped") {
         // 搾乳は母乳を哺乳瓶で与える volumetric な授乳。ミルクとは別バケットで
         // 回数・総量を集計する（PDF レポートで独立列として表示するため）。
-        // enum 全5値を網羅するので breast+bottle+solid+pumped === totalCount が保たれる。
+        // enum 全6値（breast / breast_left / breast_right / bottle / solid / pumped）を
+        // 網羅するので breast+bottle+solid+pumped === totalCount が保たれる。
         pumpedCount++
         if (log.amount_ml != null && log.amount_ml > 0) {
           totalPumpedMl += log.amount_ml
@@ -331,6 +347,21 @@ export interface TodayCounts {
   peeCount: number
   /** うんち（poop + both）の当日回数 */
   poopCount: number
+  /**
+   * 母乳サイクルの当日回数（feeding_type が 'breast' / 'breast_left' /
+   * 'breast_right' の行数）。
+   *
+   * 移行前の片側行は「1サイクルの片側」ゆえ本来 2 行で 1 サイクルだが、DB に
+   * サイクル境界の情報が無く復元できないため 1 行 = 1 回として**近似**する
+   * （移行日を挟む日だけ回数が実際より多く出うる。移行後の日は正確）。
+   */
+  breastCycleCount: number
+  /** ミルク（bottle）の当日回数 */
+  bottleCount: number
+  /** 搾乳（pumped）の当日回数 */
+  pumpedCount: number
+  /** 離乳食（solid）の当日回数 */
+  solidCount: number
 }
 
 /**
@@ -343,6 +374,12 @@ export interface TodayCounts {
  * - diaper はさらに `diaper_type` で pee/poop の内訳（peeCount/poopCount）も
  *   同時に集計する。both は pee/poop 双方に加算するため（aggregateDiapers と
  *   同じ規約）、`peeCount + poopCount` は `diaperCount` を超えうる。
+ * - feeding は `feeding_type` で種別内訳（breastCycleCount / bottleCount /
+ *   pumpedCount / solidCount）も集計する。こちらは diaper と違い**排他分割**で、
+ *   `breastCycleCount + bottleCount + pumpedCount + solidCount === feedingCount`
+ *   が成り立つ（feeding_type が null の行を除く）。母乳サイクル数を bottle/pumped/
+ *   solid と混ぜて「授乳 N 回」と見せていた欠陥を分離するために足した内訳ゆえ、
+ *   この排他性はテストで固定してある。
  *
  * 入力に「前日開始・当日終了の日跨ぎ睡眠（overlapLogs）」を混ぜてよい。sleep は
  * 按分され、feeding/diaper は `date` フィルタで弾かれるため二重計上しない
@@ -352,7 +389,7 @@ export interface TodayCounts {
 export function summarizeTodayCounts(
   logs: Pick<
     AggregationLogInput,
-    "log_type" | "logged_at" | "ended_at" | "diaper_type"
+    "log_type" | "logged_at" | "ended_at" | "diaper_type" | "feeding_type"
   >[],
   date: string,
 ): TodayCounts {
@@ -362,10 +399,23 @@ export function summarizeTodayCounts(
   let totalSleepMinutes = 0
   let peeCount = 0
   let poopCount = 0
+  let breastCycleCount = 0
+  let bottleCount = 0
+  let pumpedCount = 0
+  let solidCount = 0
 
   for (const log of logs) {
     if (log.log_type === "feeding") {
-      if (toJstDateString(log.logged_at) === date) feedingCount++
+      if (toJstDateString(log.logged_at) === date) {
+        feedingCount++
+        // 種別内訳は排他分割（aggregateFeedings と同じバケット定義）。
+        // feeding_type が null の行はどのバケットにも入らない（DB の chk_feeding では
+        // 起こらないが、未知 enum 値の null 退化 #159 で届きうるため素通しさせる）。
+        if (isBreastFeedingType(log.feeding_type)) breastCycleCount++
+        else if (log.feeding_type === "bottle") bottleCount++
+        else if (log.feeding_type === "pumped") pumpedCount++
+        else if (log.feeding_type === "solid") solidCount++
+      }
     } else if (log.log_type === "diaper") {
       if (toJstDateString(log.logged_at) === date) {
         diaperCount++
@@ -397,6 +447,10 @@ export function summarizeTodayCounts(
     totalSleepMinutes,
     peeCount,
     poopCount,
+    breastCycleCount,
+    bottleCount,
+    pumpedCount,
+    solidCount,
   }
 }
 

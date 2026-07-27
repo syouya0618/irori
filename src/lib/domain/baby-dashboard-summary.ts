@@ -9,7 +9,7 @@ export interface BabyDashboardSummary {
 
 /**
  * BabyDashboard のまとめ表示（アクティブ睡眠・最終授乳・最後の睡眠終了時刻）を
- * 選択日の logs（logged_at 降順前提）から 1 パスで導出する純関数。
+ * 選択日の logs から 1 パスで導出する純関数。
  *
  * B-01（日跨ぎアクティブ睡眠の袋小路）対応:
  * 前夜に開始し未終了のままの睡眠は「選択日の logs」に現れない
@@ -19,24 +19,48 @@ export interface BabyDashboardSummary {
  * ローカル導出が優先（Realtime に反応する）で、fallback は補完のみ。
  * UNIQUE 部分 index idx_one_active_sleep により未終了睡眠は世帯あたり
  * 高々 1 件のため、両者が同時に別の睡眠を指すことはない。
+ *
+ * lastFeeding は**配列順に依存せず** logged_at（epoch 比較）が最新の授乳行を選ぶ
+ * （批判レビュー P2）: 楽観 append（appendLog / Realtime INSERT）は無条件の先頭
+ * prepend で、タイマー由来の行は loggedAt=開始時刻（過去）を持つため、降順不変条件は
+ * 供給側で保証されない。先頭一致だと「タイマー中に記録したミルク」より古いサイクル行が
+ * 最終授乳になり、経過表示がリロードまで古い値に張り付く。文字列比較でなく epoch
+ * 比較なのは、楽観行（toISOString の "Z"）とサーバ行（"+00:00"）の表記混在で
+ * 辞書順が時刻順と食い違うため。sleep 系 2 フィールドは従来どおり先頭一致
+ * （降順前提）— activeSleep は高々 1 件ゆえ順序非依存、derivedLastSleepEndedAt の
+ * 順序前提は本 PR で供給側が変わっておらず既存挙動を維持する。
+ *
+ * `lastFeedingFallback`（批判レビュー P3）: logged_at の開始時刻化により、深夜を
+ * 跨いだサイクルは前日行になり当日窓の logs に現れない。当日に授乳が無い間
+ * 「最終授乳 ---」に落ちないよう、サーバで別途取得した「今日より前の最後の授乳」
+ * で補完する。ローカル導出が優先（当日行は常に fallback より新しい）。
  */
 export function deriveDashboardSummary(
   logs: BabyLogData[],
   activeSleepFallback: BabyLogData | null,
+  lastFeedingFallback: BabyLogData | null = null,
 ): BabyDashboardSummary {
   let activeSleep: BabyLogData | undefined
   let lastFeeding: BabyLogData | undefined
+  let lastFeedingEpoch = Number.NEGATIVE_INFINITY
   let derivedLastSleepEndedAt: string | null = null
   for (const l of logs) {
     if (!activeSleep && l.log_type === "sleep" && !l.ended_at)
       activeSleep = l
     if (!derivedLastSleepEndedAt && l.log_type === "sleep" && l.ended_at)
       derivedLastSleepEndedAt = l.ended_at
-    if (!lastFeeding && l.log_type === "feeding") lastFeeding = l
+    if (l.log_type === "feeding") {
+      const epoch = new Date(l.logged_at).getTime()
+      // 不正 ISO（NaN）は比較に負けて選ばれない（NaN > x は常に false）
+      if (epoch > lastFeedingEpoch) {
+        lastFeeding = l
+        lastFeedingEpoch = epoch
+      }
+    }
   }
   return {
     activeSleep: activeSleep ?? activeSleepFallback,
-    lastFeeding: lastFeeding ?? null,
+    lastFeeding: lastFeeding ?? lastFeedingFallback ?? null,
     derivedLastSleepEndedAt,
   }
 }

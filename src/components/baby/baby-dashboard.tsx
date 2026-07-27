@@ -31,6 +31,7 @@ import {
 } from "@/lib/domain/baby-log-aggregation"
 import { sleepOverlapMinutesForDate } from "@/lib/domain/baby-sleep-overlap"
 import { findLastPumped } from "@/lib/domain/baby-pumping"
+import { BABY_LOG_COLUMNS } from "@/lib/domain/baby-log-columns"
 import type { BabyLogData, BabyDiaryData } from "@/lib/types/baby"
 import type { BabyLogType, FeedingType } from "@/lib/types/database"
 
@@ -50,6 +51,12 @@ interface BabyDashboardProps {
   initialDiary: BabyDiaryData | null
   lastSleepEndedAt: string | null
   activeSleepFallback: BabyLogData | null
+  /**
+   * 今日より前の最後の授乳（批判レビュー P3）。深夜跨ぎサイクル（開始時刻が前日）は
+   * 今日窓の logs に現れないため、当日に授乳が無い間の「最終授乳」表示を補完する。
+   * isToday の時のみ使う（過去日のまとめへ漏らすと別日の時刻を表示してしまう）。
+   */
+  lastFeedingFallback: BabyLogData | null
   babyName: string | null
   babyBirthDate: string | null
   /** 搾乳間隔（分）。次の搾乳の目安の算出に使う（設定で変更可能） */
@@ -80,6 +87,7 @@ export function BabyDashboard({
   initialDiary,
   lastSleepEndedAt,
   activeSleepFallback,
+  lastFeedingFallback,
   babyName,
   babyBirthDate,
   pumpingIntervalMin,
@@ -112,6 +120,11 @@ export function BabyDashboard({
   // （Realtime 不達 #92 でもトグルが「睡眠中」へ戻らない）。
   const [serverActiveSleep, setServerActiveSleep] =
     useState<BabyLogData | null>(activeSleepFallback)
+  // 「今日より前の最後の授乳」フォールバック（P3）。state 保持にするのは、深夜跨ぎ
+  // サイクルの記録直後（timeline へは入場できない）に FeedingTimer からこの値を
+  // 即時更新するため（さもなくばリロードまで最終授乳が旧値/「---」に留まる）。
+  const [serverLastFeeding, setServerLastFeeding] =
+    useState<BabyLogData | null>(lastFeedingFallback)
   const now = useNow(60_000)
 
   const today = todayJstString()
@@ -377,9 +390,7 @@ export function BabyDashboard({
 
     supabase
       .from("baby_logs")
-      .select(
-        "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at",
-      )
+      .select(BABY_LOG_COLUMNS)
       .eq("household_id", householdId)
       .gte("logged_at", dayStart)
       .lt("logged_at", `${nextDay}T00:00:00+09:00`)
@@ -410,9 +421,7 @@ export function BabyDashboard({
     // 別 prop のため logs のマージ経路（mergeDateNavLogs / admission guard）は不変。
     supabase
       .from("baby_logs")
-      .select(
-        "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at",
-      )
+      .select(BABY_LOG_COLUMNS)
       .eq("household_id", householdId)
       .eq("log_type", "sleep")
       .lt("logged_at", dayStart)
@@ -468,10 +477,18 @@ export function BabyDashboard({
 
   // Derive summary in a single pass
   // （B-01: 導出は純関数へ抽出。前夜開始の未終了睡眠は logs に現れないため
-  //   サーバフォールバック serverActiveSleep で補完する）
+  //   サーバフォールバック serverActiveSleep で補完する。P3: 授乳も同型 —
+  //   深夜跨ぎサイクルは前日行になり logs に現れないため serverLastFeeding で補完。
+  //   ただし今日表示の時のみ。過去日は「その日の授乳」を表示する契約ゆえ、
+  //   別日の fallback を混ぜると過去日のまとめに嘘の時刻が出る）
   const { activeSleep, lastFeeding, derivedLastSleepEndedAt } = useMemo(
-    () => deriveDashboardSummary(logs, serverActiveSleep),
-    [logs, serverActiveSleep],
+    () =>
+      deriveDashboardSummary(
+        logs,
+        serverActiveSleep,
+        isToday ? serverLastFeeding : null,
+      ),
+    [logs, serverActiveSleep, serverLastFeeding, isToday],
   )
 
   // 次の搾乳の目安: 選択日の logs から最後の搾乳を導出（サマリバーで isToday 時のみ表示）
@@ -653,6 +670,18 @@ export function BabyDashboard({
         initialFeedingType={timerFeedingType}
         userId={userId}
         onLogRecorded={appendLog}
+        onPrevDayLogRecorded={(log) =>
+          // 深夜跨ぎサイクル（前日行）は timeline へ入れず、最終授乳 fallback のみ
+          // 即時更新する（P3）。より新しい既存 fallback を古い行で上書きしない防御付き
+          // （実運用では新記録が常に最新だが、比較は epoch で行い表記混在に耐える）。
+          setServerLastFeeding((prev) =>
+            prev &&
+            new Date(prev.logged_at).getTime() >
+              new Date(log.logged_at).getTime()
+              ? prev
+              : log,
+          )
+        }
       />
     </div>
   )

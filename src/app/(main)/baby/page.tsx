@@ -2,6 +2,7 @@ import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { BabyDashboard } from "@/components/baby/baby-dashboard"
 import { PUMPING_INTERVAL_DEFAULT } from "@/lib/domain/baby-pumping"
+import { BABY_LOG_COLUMNS } from "@/lib/domain/baby-log-columns"
 import { todayJstString, shiftYmd } from "@/lib/utils/date-jst"
 
 export default async function BabyPage() {
@@ -27,12 +28,11 @@ export default async function BabyPage() {
     { data: household, error: householdError },
     { data: growthLogs, error: growthLogsError },
     { data: todayDiary, error: diaryError },
+    { data: lastFeedingData, error: lastFeedingError },
   ] = await Promise.all([
       supabase
         .from("baby_logs")
-        .select(
-          "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at",
-        )
+        .select(BABY_LOG_COLUMNS)
         .eq("household_id", householdId)
         .gte("logged_at", todayStart)
         .lt("logged_at", tomorrowStart)
@@ -52,9 +52,7 @@ export default async function BabyPage() {
       // idx_one_active_sleep（20260410000001_baby_logs.sql）により高々 1 件。
       supabase
         .from("baby_logs")
-        .select(
-          "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at",
-        )
+        .select(BABY_LOG_COLUMNS)
         .eq("household_id", householdId)
         .eq("log_type", "sleep")
         .is("ended_at", null)
@@ -68,9 +66,7 @@ export default async function BabyPage() {
       // 寄与しない（完了セッションのみ集計）ため、ここは ended_at 非 null に限定して二重取得を避ける。
       supabase
         .from("baby_logs")
-        .select(
-          "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at",
-        )
+        .select(BABY_LOG_COLUMNS)
         .eq("household_id", householdId)
         .eq("log_type", "sleep")
         .lt("logged_at", todayStart)
@@ -78,9 +74,7 @@ export default async function BabyPage() {
         .order("logged_at", { ascending: false }),
       supabase
         .from("baby_logs")
-        .select(
-          "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at",
-        )
+        .select(BABY_LOG_COLUMNS)
         .eq("household_id", householdId)
         .lt("logged_at", tomorrowStart)
         .or(
@@ -95,9 +89,7 @@ export default async function BabyPage() {
       // 成長曲線用: 成長ログを古い順に全件（低頻度データ・1000 未満想定、順序を昇順で決定化）
       supabase
         .from("baby_logs")
-        .select(
-          "id, log_type, logged_at, logged_by, feeding_type, amount_ml, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at",
-        )
+        .select(BABY_LOG_COLUMNS)
         .eq("household_id", householdId)
         .eq("log_type", "growth")
         .order("logged_at", { ascending: true }),
@@ -107,6 +99,19 @@ export default async function BabyPage() {
         .select("id, diary_date, content, updated_at")
         .eq("household_id", householdId)
         .eq("diary_date", todayJst)
+        .maybeSingle(),
+      // 今日より前の最後の授乳（批判レビュー P3: 最終授乳フォールバック）。
+      // logged_at の開始時刻セマンティクスにより、深夜を跨いだサイクルは前日行に
+      // なって今日窓の logs に現れない。当日にまだ授乳が無い間「最終授乳 ---」へ
+      // 落ちないよう、B-01 の未終了睡眠と同型のフォールバックとして渡す。
+      supabase
+        .from("baby_logs")
+        .select(BABY_LOG_COLUMNS)
+        .eq("household_id", householdId)
+        .eq("log_type", "feeding")
+        .lt("logged_at", todayStart)
+        .order("logged_at", { ascending: false })
+        .limit(1)
         .maybeSingle(),
     ])
 
@@ -158,6 +163,12 @@ export default async function BabyPage() {
     })
   }
 
+  if (lastFeedingError) {
+    logSupabaseError("baby", "last feeding lookup failed", lastFeedingError, {
+      householdId,
+    })
+  }
+
   return (
     <BabyDashboard
       initialLogs={logs ?? []}
@@ -170,6 +181,7 @@ export default async function BabyPage() {
       initialDiary={todayDiary ?? null}
       lastSleepEndedAt={lastSleepData?.ended_at ?? null}
       activeSleepFallback={activeSleepData ?? null}
+      lastFeedingFallback={lastFeedingData ?? null}
       babyName={household?.baby_name ?? null}
       babyBirthDate={household?.baby_birth_date ?? null}
       pumpingIntervalMin={

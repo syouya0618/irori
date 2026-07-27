@@ -101,4 +101,49 @@ describe("buildOptimisticLog (B-03)", () => {
     })
     expect(log.amount_ml).toBe(0)
   })
+
+  it("breast: 左右の吸わせ回数を反映する（母乳サイクル行）", () => {
+    const log = buildOptimisticLog({
+      id: "b1",
+      logType: "feeding",
+      loggedBy: "u1",
+      feedingType: "breast",
+      breastLeftCount: 2,
+      breastRightCount: 1,
+      durationSec: 900,
+    })
+    expect(log.feeding_type).toBe("breast")
+    expect(log.breast_left_count).toBe(2)
+    expect(log.breast_right_count).toBe(1)
+    expect(log.duration_sec).toBe(900)
+    // サイクル行は amount_ml を持たない（DB chk_amount_ml と同じ契約）
+    expect(log.amount_ml).toBeNull()
+  })
+
+  it("breast: 片側 0 も falsy に潰さず 0 を保持する", () => {
+    // 「左2・右0」の 0 が null に化けると DB の chk_breast_counts_required
+    // （左右とも NOT NULL）に弾かれ、楽観 append と DB 実体が乖離する
+    const log = buildOptimisticLog({
+      id: "b2",
+      logType: "feeding",
+      loggedBy: "u1",
+      feedingType: "breast",
+      breastLeftCount: 2,
+      breastRightCount: 0,
+    })
+    expect(log.breast_left_count).toBe(2)
+    expect(log.breast_right_count).toBe(0)
+  })
+
+  it("breast 以外の行では左右回数は null（未指定時の既定）", () => {
+    const log = buildOptimisticLog({
+      id: "b3",
+      logType: "feeding",
+      loggedBy: "u1",
+      feedingType: "bottle",
+      amountMl: 120,
+    })
+    expect(log.breast_left_count).toBeNull()
+    expect(log.breast_right_count).toBeNull()
+  })
 })

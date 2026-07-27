@@ -7,6 +7,27 @@ import { computeNextPumping } from "@/lib/domain/baby-pumping"
 import type { TodayCounts } from "@/lib/domain/baby-log-aggregation"
 import type { BabyLogData } from "@/lib/types/baby"
 
+/**
+ * 授乳チップの値を種別内訳（母乳8・ミルク2・搾乳1・離乳食1）へ整形する。
+ *
+ * **なぜ合算「N回」をやめたか**: 母乳サイクル数を bottle/pumped/solid と混ぜて
+ * 「授乳 N 回」と見せると、「母乳を何回あげたか」が読めない（混合数に化ける）。
+ * おむつチップの「おしっこ2・うんち1」と同じ流儀で非ゼロのみを「・」で連結する。
+ *
+ * 全ゼロのときは `feedingCount` へ退避する: 記録のない日は 0 なので「0回」になり、
+ * feeding 行はあるのに内訳が立たない日（`feeding_type` が未知 enum 値で null 退化
+ * した #159 の経路）にだけ合算回数が出る — 行があるのに「0回」と嘘をつかないため。
+ */
+function formatFeedingBreakdown(counts: TodayCounts): string {
+  const parts: string[] = []
+  if (counts.breastCycleCount > 0) parts.push(`母乳${counts.breastCycleCount}`)
+  if (counts.bottleCount > 0) parts.push(`ミルク${counts.bottleCount}`)
+  if (counts.pumpedCount > 0) parts.push(`搾乳${counts.pumpedCount}`)
+  if (counts.solidCount > 0) parts.push(`離乳食${counts.solidCount}`)
+  if (parts.length > 0) return parts.join("・")
+  return `${counts.feedingCount}回`
+}
+
 interface BabySummaryBarProps {
   lastFeeding: BabyLogData | null
   /** 最後の搾乳（feeding_type='pumped'）。次の搾乳の目安の起点に使う */
@@ -72,7 +93,7 @@ export function BabySummaryBar({
         <TodayStat
           icon={<Milk size={14} className="text-amber-600 dark:text-amber-400" />}
           label="授乳"
-          value={`${todayCounts.feedingCount}回`}
+          value={formatFeedingBreakdown(todayCounts)}
         />
         <div className="h-8 w-px bg-border" aria-hidden="true" />
         <TodayStat
@@ -194,12 +215,16 @@ function TodayStat({
   value: string
 }) {
   return (
-    <div className="flex flex-col items-center gap-0.5">
+    // 授乳・おむつの値は複合表示（母乳8・ミルク2 / おしっこ2・うんち1）ゆえ、
+    // 3 チップ横並びだと text-sm では狭い端末で行が溢れる。値を text-xs に落とし、
+    // さらに min-w-0 を置いて flex アイテムが縮める（= 溢れた最悪ケースは
+    // カードを横に破らず 2 行へ折り返す）ようにする。whitespace-nowrap は付けない。
+    <div className="flex min-w-0 flex-col items-center gap-0.5 text-center">
       <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
         {icon}
         <span>{label}</span>
       </div>
-      <span className="text-sm font-semibold tabular-nums">{value}</span>
+      <span className="text-xs font-semibold tabular-nums">{value}</span>
     </div>
   )
 }

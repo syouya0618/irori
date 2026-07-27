@@ -87,6 +87,59 @@ describe("aggregateFeedings", () => {
     expect(result[0].avgPumpedMl).toBe(50) // round(100 / 2)
   })
 
+  it("母乳サイクル行（breast）も breastCount に数える", () => {
+    // 集計は feeding_type のみを見る（左右の吸わせ回数は AggregationLogInput に
+    // 含めない ─ 回数集計に寄与しないため型の面を広げない）
+    const logs = [
+      mkLog("feeding", 2, { feeding_type: "breast" }),
+      mkLog("feeding", 3, { feeding_type: "breast" }),
+    ]
+    const result = aggregateFeedings(logs, START, END)
+    expect(result).toHaveLength(1)
+    // サイクル行は「左右の吸わせ回数」に関わらず 1 回の授乳ゆえ、行数がそのまま回数
+    expect(result[0].totalCount).toBe(2)
+    expect(result[0].breastCount).toBe(2)
+    expect(result[0].bottleCount).toBe(0)
+    expect(result[0].pumpedCount).toBe(0)
+    expect(result[0].solidCount).toBe(0)
+  })
+
+  it("breast と過去データの片側行が混在しても内訳合計 === totalCount を保つ", () => {
+    // enum 全6値の網羅性（breast+bottle+solid+pumped === totalCount）の回帰防止。
+    // 'breast' を分岐に足し忘れると内訳合計が totalCount を下回り無音欠落する。
+    const logs = [
+      mkLog("feeding", 1, { feeding_type: "breast" }),
+      mkLog("feeding", 2, { feeding_type: "breast_left" }), // 移行前の片側行
+      mkLog("feeding", 3, { feeding_type: "breast_right" }), // 移行前の片側行
+      mkLog("feeding", 4, { feeding_type: "bottle", amount_ml: 100 }),
+      mkLog("feeding", 5, { feeding_type: "pumped", amount_ml: 60 }),
+      mkLog("feeding", 6, { feeding_type: "solid" }),
+    ]
+    const result = aggregateFeedings(logs, START, END)
+    expect(result).toHaveLength(1)
+    const day = result[0]
+    expect(day.totalCount).toBe(6)
+    expect(day.breastCount).toBe(3) // breast 1 + breast_left 1 + breast_right 1
+    expect(day.bottleCount).toBe(1)
+    expect(day.pumpedCount).toBe(1)
+    expect(day.solidCount).toBe(1)
+    expect(
+      day.breastCount + day.bottleCount + day.pumpedCount + day.solidCount,
+    ).toBe(day.totalCount)
+  })
+
+  it("breast 行は amount_ml を持たないためミルク/搾乳の量集計に混ざらない", () => {
+    const logs = [
+      mkLog("feeding", 2, { feeding_type: "breast" }),
+      mkLog("feeding", 3, { feeding_type: "bottle", amount_ml: 100 }),
+    ]
+    const result = aggregateFeedings(logs, START, END)
+    expect(result[0].totalBottleMl).toBe(100)
+    expect(result[0].avgBottleMl).toBe(100)
+    expect(result[0].totalPumpedMl).toBe(0)
+    expect(result[0].avgPumpedMl).toBeNull()
+  })
+
   it("搾乳が無い日は pumpedCount 0・avgPumpedMl は null", () => {
     const logs = [mkLog("feeding", 2, { feeding_type: "bottle", amount_ml: 100 })]
     const result = aggregateFeedings(logs, START, END)
@@ -430,6 +483,10 @@ describe("summarizeTodayCounts", () => {
       totalSleepMinutes: 0,
       peeCount: 0,
       poopCount: 0,
+      breastCycleCount: 0,
+      bottleCount: 0,
+      pumpedCount: 0,
+      solidCount: 0,
     })
   })
 
@@ -453,6 +510,11 @@ describe("summarizeTodayCounts", () => {
       totalSleepMinutes: 90,
       peeCount: 1,
       poopCount: 0,
+      // 内訳: breast_left 1件（母乳系）+ bottle 1件
+      breastCycleCount: 1,
+      bottleCount: 1,
+      pumpedCount: 0,
+      solidCount: 0,
     })
   })
 
@@ -465,6 +527,10 @@ describe("summarizeTodayCounts", () => {
       totalSleepMinutes: 0,
       peeCount: 0,
       poopCount: 0,
+      breastCycleCount: 0,
+      bottleCount: 0,
+      pumpedCount: 0,
+      solidCount: 0,
     })
   })
 
@@ -472,13 +538,14 @@ describe("summarizeTodayCounts", () => {
     // B-02 core: 前日開始の overlap 睡眠を入力に合流させても当日分（390分）のみ数える。
     const logs: Pick<
       AggregationLogInput,
-      "log_type" | "logged_at" | "ended_at" | "diaper_type"
+      "log_type" | "logged_at" | "ended_at" | "diaper_type" | "feeding_type"
     >[] = [
       {
         log_type: "sleep",
         logged_at: "2026-04-11T22:00:00+09:00",
         ended_at: "2026-04-12T06:30:00+09:00",
         diaper_type: null,
+        feeding_type: null,
       },
     ]
     // 翌日（2026-04-12）視点: 00:00→06:30 = 390分
@@ -496,25 +563,28 @@ describe("summarizeTodayCounts", () => {
   it("feeding/diaper も date 当日分のみ数える（前日ログは混ぜても加算しない）", () => {
     const logs: Pick<
       AggregationLogInput,
-      "log_type" | "logged_at" | "ended_at" | "diaper_type"
+      "log_type" | "logged_at" | "ended_at" | "diaper_type" | "feeding_type"
     >[] = [
       {
         log_type: "feeding",
         logged_at: "2026-04-11T08:00:00+09:00",
         ended_at: null,
         diaper_type: null,
+        feeding_type: "bottle",
       },
       {
         log_type: "feeding",
         logged_at: "2026-04-10T23:00:00+09:00",
         ended_at: null,
         diaper_type: null,
+        feeding_type: "bottle",
       }, // 前日
       {
         log_type: "diaper",
         logged_at: "2026-04-11T09:00:00+09:00",
         ended_at: null,
         diaper_type: "poop",
+        feeding_type: null,
       },
       // 前日の diaper（pee）は date フィルタで弾かれ peeCount に加算されない
       {
@@ -522,6 +592,7 @@ describe("summarizeTodayCounts", () => {
         logged_at: "2026-04-10T09:00:00+09:00",
         ended_at: null,
         diaper_type: "pee",
+        feeding_type: null,
       },
     ]
     expect(summarizeTodayCounts(logs, "2026-04-11")).toMatchObject({
@@ -552,6 +623,84 @@ describe("summarizeTodayCounts", () => {
       peeCount: 1,
       poopCount: 1,
     })
+  })
+
+  it("pumped/bottle/breast が同日に混在しても breastCycleCount は母乳系のみ数える", () => {
+    // 回帰防止: 「授乳 N 回」チップが母乳・ミルク・搾乳・離乳食を混ぜた合計を
+    // 母乳回数として見せていた欠陥。種別内訳は feedingCount を排他分割する。
+    const logs = [
+      mkLog("feeding", 1, { feeding_type: "breast" }),
+      mkLog("feeding", 2, { feeding_type: "breast" }),
+      mkLog("feeding", 3, { feeding_type: "bottle", amount_ml: 120 }),
+      mkLog("feeding", 4, { feeding_type: "pumped", amount_ml: 60 }),
+      mkLog("feeding", 5, { feeding_type: "pumped", amount_ml: 40 }),
+      mkLog("feeding", 6, { feeding_type: "solid" }),
+    ]
+    const counts = summarizeTodayCounts(logs, TODAY)
+    expect(counts.feedingCount).toBe(6)
+    expect(counts.breastCycleCount).toBe(2)
+    expect(counts.bottleCount).toBe(1)
+    expect(counts.pumpedCount).toBe(2)
+    expect(counts.solidCount).toBe(1)
+    // 内訳は feedingCount を排他分割する（どの種別も他バケットへ二重計上しない）
+    expect(
+      counts.breastCycleCount +
+        counts.bottleCount +
+        counts.pumpedCount +
+        counts.solidCount,
+    ).toBe(counts.feedingCount)
+  })
+
+  it("移行前の片側行（breast_left/breast_right）も breastCycleCount に近似計上する", () => {
+    const logs = [
+      mkLog("feeding", 1, { feeding_type: "breast" }),
+      mkLog("feeding", 2, { feeding_type: "breast_left" }),
+      mkLog("feeding", 3, { feeding_type: "breast_right" }),
+      mkLog("feeding", 4, { feeding_type: "bottle", amount_ml: 100 }),
+    ]
+    const counts = summarizeTodayCounts(logs, TODAY)
+    // 片側行は本来「1サイクルの片側」だが、サイクル境界を復元できないため1行=1回で近似
+    expect(counts.breastCycleCount).toBe(3)
+    expect(counts.bottleCount).toBe(1)
+    expect(counts.feedingCount).toBe(4)
+  })
+
+  it("種別内訳も date 当日分のみ数える（前日の breast 行は加算しない）", () => {
+    const logs: Pick<
+      AggregationLogInput,
+      "log_type" | "logged_at" | "ended_at" | "diaper_type" | "feeding_type"
+    >[] = [
+      {
+        log_type: "feeding",
+        logged_at: "2026-04-11T08:00:00+09:00",
+        ended_at: null,
+        diaper_type: null,
+        feeding_type: "breast",
+      },
+      {
+        log_type: "feeding",
+        logged_at: "2026-04-10T23:00:00+09:00",
+        ended_at: null,
+        diaper_type: null,
+        feeding_type: "breast",
+      }, // 前日
+    ]
+    expect(summarizeTodayCounts(logs, "2026-04-11")).toMatchObject({
+      feedingCount: 1,
+      breastCycleCount: 1,
+    })
+  })
+
+  it("feeding_type が null の授乳行は種別内訳に入らない（feedingCount のみ増える）", () => {
+    // DB の chk_feeding で feeding 行の feeding_type は NOT NULL だが、
+    // 未知 enum 値の null 退化（#159）で null が届きうるため多層防御を固定する。
+    const logs = [mkLog("feeding", 1, { feeding_type: null })]
+    const counts = summarizeTodayCounts(logs, TODAY)
+    expect(counts.feedingCount).toBe(1)
+    expect(counts.breastCycleCount).toBe(0)
+    expect(counts.bottleCount).toBe(0)
+    expect(counts.pumpedCount).toBe(0)
+    expect(counts.solidCount).toBe(0)
   })
 })
 

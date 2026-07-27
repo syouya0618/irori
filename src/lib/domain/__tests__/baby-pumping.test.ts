@@ -17,6 +17,8 @@ function mkLog(overrides: Partial<BabyLogData>): BabyLogData {
     logged_by: "u1",
     feeding_type: "pumped",
     amount_ml: 60,
+    breast_left_count: null,
+    breast_right_count: null,
     diaper_type: null,
     ended_at: null,
     temperature: null,
