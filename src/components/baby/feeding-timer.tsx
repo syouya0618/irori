@@ -166,6 +166,12 @@ interface FeedingTimerProps {
    * JST で前日）の行は呼ばない — 詳細は saveFeeding のコメント。
    */
   onLogRecorded?: (log: BabyLogData) => void
+  /**
+   * 深夜跨ぎで onLogRecorded を見送った行を親へ渡す（批判レビュー P3）。
+   * timeline（当日窓の logs）には入れられないが、「最終授乳」の fallback を
+   * この行で即時更新しないと、記録直後にチップが「---」へ落ちる。
+   */
+  onPrevDayLogRecorded?: (log: BabyLogData) => void
 }
 
 export function FeedingTimer({
@@ -174,6 +180,7 @@ export function FeedingTimer({
   initialFeedingType,
   userId,
   onLogRecorded,
+  onPrevDayLogRecorded,
 }: FeedingTimerProps) {
   const [cycle, setCycle] = useState<CycleState>(() =>
     seedCycle(normalizeSide(initialFeedingType)),
@@ -339,19 +346,25 @@ export function FeedingTimer({
     const isSameJstDay = toJstDateString(loggedAt) === todayJstString()
 
     // B-03: 返却 id で楽観 append（Realtime を待たず timeline/回数を即時更新）
-    if (result.id && isSameJstDay) {
-      onLogRecorded?.(
-        buildOptimisticLog({
-          id: result.id,
-          logType: "feeding",
-          loggedBy: userId,
-          feedingType: "breast",
-          breastLeftCount: leftCount,
-          breastRightCount: rightCount,
-          durationSec,
-          loggedAt,
-        }),
-      )
+    if (result.id) {
+      const optimisticLog = buildOptimisticLog({
+        id: result.id,
+        logType: "feeding",
+        loggedBy: userId,
+        feedingType: "breast",
+        breastLeftCount: leftCount,
+        breastRightCount: rightCount,
+        durationSec,
+        loggedAt,
+      })
+      if (isSameJstDay) {
+        onLogRecorded?.(optimisticLog)
+      } else {
+        // 前日行は timeline へ入れられない（入場条件違反）が、「最終授乳」の
+        // fallback は更新する — さもなくば記録直後にチップが「---」へ落ち、
+        // 前日保存トーストと合わせても「消えた」印象を残す（P3）。
+        onPrevDayLogRecorded?.(optimisticLog)
+      }
     }
 
     localStorage.removeItem(STORAGE_KEY)

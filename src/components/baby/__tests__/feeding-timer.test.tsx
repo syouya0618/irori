@@ -57,6 +57,7 @@ function renderTimer(
     initialFeedingType?: FeedingType
     onOpenChange?: () => void
     onLogRecorded?: (log: unknown) => void
+    onPrevDayLogRecorded?: (log: unknown) => void
   } = {},
 ) {
   return render(
@@ -66,6 +67,7 @@ function renderTimer(
       initialFeedingType={props.initialFeedingType ?? "breast_left"}
       userId="u1"
       onLogRecorded={props.onLogRecorded}
+      onPrevDayLogRecorded={props.onPrevDayLogRecorded}
     />,
   )
 }
@@ -399,6 +401,58 @@ describe("FeedingTimer の深夜跨ぎ（前日の記録として保存）", () 
     expect(toast.success).toHaveBeenCalledWith(
       expect.stringContaining("前日の記録として保存"),
     )
+  })
+
+  it("開始が前日のサイクルは onPrevDayLogRecorded へ渡す（最終授乳 fallback の即時更新・P3）", async () => {
+    // timeline へは入れない（上のテスト）が、「最終授乳」まで見えなくなると
+    // 記録直後に「---」へ落ちる。fallback 更新用の別コールバックで渡すことを固定する。
+    seedTimerState({
+      startedAt: PREV_DAY_STARTED_AT,
+      feedingType: "breast_left",
+      leftCount: 1,
+      rightCount: 1,
+    })
+    recordFeeding.mockResolvedValueOnce({ error: null, id: "cross-2" })
+    const onLogRecorded = vi.fn()
+    const onPrevDayLogRecorded = vi.fn()
+    renderTimer({
+      initialFeedingType: "breast_left",
+      onLogRecorded,
+      onPrevDayLogRecorded,
+    })
+
+    fireEvent.click(stopButton())
+    await waitFor(() => expect(onPrevDayLogRecorded).toHaveBeenCalledTimes(1))
+
+    const log = onPrevDayLogRecorded.mock.calls[0][0] as {
+      id: string
+      logged_at: string
+      feeding_type: string
+    }
+    expect(log.id).toBe("cross-2")
+    expect(log.logged_at).toBe(PREV_DAY_STARTED_AT)
+    expect(log.feeding_type).toBe("breast")
+    expect(onLogRecorded).not.toHaveBeenCalled()
+  })
+
+  it("開始が当日なら onPrevDayLogRecorded は呼ばない（positive/negative の対）", async () => {
+    const sameDayStartedAt = new Date(
+      MIDNIGHT_NOW.getTime() - 5 * 60_000,
+    ).toISOString()
+    seedTimerState({
+      startedAt: sameDayStartedAt,
+      feedingType: "breast_left",
+      leftCount: 1,
+      rightCount: 0,
+    })
+    recordFeeding.mockResolvedValueOnce({ error: null, id: "same-2" })
+    const onPrevDayLogRecorded = vi.fn()
+    renderTimer({ initialFeedingType: "breast_left", onPrevDayLogRecorded })
+
+    fireEvent.click(stopButton())
+    await waitFor(() => expect(toast.success).toHaveBeenCalled())
+
+    expect(onPrevDayLogRecorded).not.toHaveBeenCalled()
   })
 
   it("同じ時計でも開始が当日（JST）なら従来どおり楽観 append する（positive control）", async () => {

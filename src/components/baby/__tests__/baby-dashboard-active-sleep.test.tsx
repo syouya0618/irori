@@ -115,6 +115,7 @@ function defaultProps(
     initialDiary: null,
     lastSleepEndedAt: null,
     activeSleepFallback: null,
+    lastFeedingFallback: null,
     babyName: null,
     babyBirthDate: null,
     pumpingIntervalMin: 180,

@@ -16,14 +16,22 @@
 --   ずらして**新たな不整合を作る**。母乳の計測タイマーを通った行だけが対象。
 --   duration が両方 NULL の行は巻き戻す幅が無いため対象外（そのまま = 開始時刻扱い）。
 --
--- ②' さらに logged_at = created_at（無編集のタイマー行）に限定する理由
---   母乳行でも「logged_at が終了時刻」と言えるのはタイマーが now() 既定で insert した
---   行だけ。編集シートからは (a) 手で選んだ時刻での母乳行の新規作成（#151）、
---   (b) 時刻の事後編集、が可能で、これらの logged_at はユーザーが決めた時刻であって
---   終了時刻とは限らない（開始時刻のつもりで直した行を巻き戻すと二重補正になる）。
---   タイマー行は logged_at / created_at がとも DEFAULT now()（同一トランザクション内で
---   同値）ゆえ厳密一致し、時刻を明示・編集した行は分単位入力 vs マイクロ秒精度で
---   一致し得ない。この述語が「一度も時刻を触っていないタイマー行」を正確に選ぶ。
+-- ②' さらに logged_at = created_at に限定する理由（この述語が選ぶものを正確に）
+--   この述語が選ぶのは「INSERT 時に logged_at を明示送信しなかった行」である
+--   （logged_at / created_at はとも DEFAULT now() = 同一トランザクション内で同値。
+--   時刻を明示・編集した行は分単位入力 vs マイクロ秒精度で一致し得ず除外される）。
+--   該当するのは:
+--   (a) タイマー行 — logged_at = 保存時 now() = 終了時刻。duration ぶんの巻き戻しが
+--       そのまま開始時刻になる（本補正の主目的）。
+--   (b) 旧・手動入力モードの行 — logged_at = 保存時 now()。「保存時刻 − duration」への
+--       変換は、新コードの手動入力（feeding-timer.tsx handleManualRecord）が同じ入力に
+--       書く値と同一定義ゆえ、含めることで新旧の意味が揃う（含めるのが正しい）。
+--   (c) 理論上の偽陽性 — クイック記録行を後から母乳種別+授乳時間へ編集し、時刻欄を
+--       触らなかった行（duration 編集は #153 = 2026-07-22 以降のみ可能な狭いクラス）。
+--       この行の logged_at はタップ時刻であり巻き戻しは近似になるが、変換は
+--       created_at + duration から完全可逆（④の逆写像で戻せる）。
+--   適用前に対象行を確認する場合は同じ WHERE の SELECT を実行すること（PR 本文参照）。
+--   除外される行（時刻を明示・編集済み）は、ユーザーが決めた時刻をそのまま尊重する。
 --
 -- ③ 副作用: JST の日付境界を跨ぐ行がある
 --   巻き戻し幅は最大 3 時間（chk_duration_sec ≤ 10800 秒 / chk_duration_min ≤ 180 分）。
@@ -60,5 +68,5 @@ SET logged_at = logged_at - make_interval(secs => COALESCE(duration_sec, duratio
 WHERE log_type = 'feeding'
   AND feeding_type IN ('breast_left', 'breast_right')
   AND (duration_sec IS NOT NULL OR duration_min IS NOT NULL)
-  -- 無編集のタイマー行のみ（②' 参照）。時刻を明示・編集した行は巻き戻さない
+  -- logged_at を明示送信しなかった行のみ（②' 参照）。時刻を明示・編集した行は巻き戻さない
   AND logged_at = created_at;
