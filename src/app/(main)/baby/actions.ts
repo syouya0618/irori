@@ -37,6 +37,38 @@ function validateCreateLoggedAt(loggedAt?: string | null): string | null {
 const BREAST_COUNTS_ERROR =
   "左右の回数は0〜20回・合計1回以上で指定してください"
 
+// 母乳サイクル行の左右別授乳時間を検証する。DB CHECK（chk_breast_side_sec_pair /
+// chk_breast_side_sec_total — supabase/migrations/20260727100001）のミラー:
+// 両方指定・整数・各 0..10800・合計 >= 1。duration_sec はサーバが左右の和から
+// 導出する（クライアントの合計送信を信用しない・二重真値源の禁止）。
+const BREAST_SIDES_ERROR =
+  "左右の授乳時間は両方・各0〜180分・合計1秒以上で指定してください"
+const BREAST_SIDES_WITH_TOTAL_ERROR =
+  "左右の時間があるときは合計時間は指定できません（合計は自動計算されます）"
+const BREAST_SIDES_TYPE_ERROR = "この授乳タイプには左右の時間を指定できません"
+const BREAST_SIDES_TOTAL_ONLY_ERROR =
+  "左右の時間を持つ記録は、左右それぞれの時間で編集してください"
+
+function validateBreastSideSeconds(
+  leftSec: number | null | undefined,
+  rightSec: number | null | undefined,
+): string | null {
+  if (
+    leftSec == null ||
+    rightSec == null ||
+    !Number.isInteger(leftSec) ||
+    !Number.isInteger(rightSec) ||
+    leftSec < 0 ||
+    leftSec > 10800 ||
+    rightSec < 0 ||
+    rightSec > 10800 ||
+    leftSec + rightSec < 1
+  ) {
+    return BREAST_SIDES_ERROR
+  }
+  return null
+}
+
 function validateBreastCounts(
   leftCount: number | null | undefined,
   rightCount: number | null | undefined,
@@ -74,6 +106,15 @@ interface RecordFeedingInput {
   breastLeftCount?: number | null
   /** 母乳サイクル（feedingType: 'breast'）の右吸わせ回数。制約は breastLeftCount と同じ。 */
   breastRightCount?: number | null
+  /**
+   * 母乳サイクルの左の授乳秒数。指定時は右と両方必須（各 0..10800・合計 >= 1）で、
+   * **durationSec は指定不可 — duration_sec/min はサーバが左右の和から導出する**
+   * （chk_breast_side_sec_total の等式と二重真値源を防ぐ1経路書込）。
+   * 未指定（両方なし）は sides を持たない従来形（合計のみ）で記録される。
+   */
+  breastLeftSec?: number | null
+  /** 母乳サイクルの右の授乳秒数（制約は breastLeftSec と同じ）。 */
+  breastRightSec?: number | null
   /** 記録時刻（ISO 8601）。未指定時は DB の now() 既定に依存する。 */
   loggedAt?: string
   memo?: string
@@ -126,11 +167,32 @@ export async function recordFeeding(input: RecordFeedingInput) {
     return { error: "この授乳タイプには左右の回数を指定できません", id: null }
   }
 
+  // 左右別の授乳時間（sides）。指定時は合計をサーバ導出する（二重真値源の禁止）。
+  const hasSides =
+    input.breastLeftSec != null || input.breastRightSec != null
+  if (hasSides) {
+    if (input.feedingType !== "breast") {
+      return { error: BREAST_SIDES_TYPE_ERROR, id: null }
+    }
+    if (input.durationSec != null) {
+      return { error: BREAST_SIDES_WITH_TOTAL_ERROR, id: null }
+    }
+    const sidesError = validateBreastSideSeconds(
+      input.breastLeftSec,
+      input.breastRightSec,
+    )
+    if (sidesError) return { error: sidesError, id: null }
+  }
+
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error, id: null }
   const { supabase, userId, householdId } = result.context
 
-  const durationSec = input.durationSec ?? null
+  // sides あり → duration_sec は左右の和（chk_breast_side_sec_total の等式）。
+  // sides なし → 従来どおりクライアントの durationSec（母乳以外・旧形サイクル）。
+  const durationSec = hasSides
+    ? input.breastLeftSec! + input.breastRightSec!
+    : input.durationSec ?? null
   const { data, error } = await supabase
     .from("baby_logs")
     .insert({
@@ -147,6 +209,8 @@ export async function recordFeeding(input: RecordFeedingInput) {
         input.feedingType === "breast" ? input.breastLeftCount ?? null : null,
       breast_right_count:
         input.feedingType === "breast" ? input.breastRightCount ?? null : null,
+      breast_left_sec: hasSides ? input.breastLeftSec ?? null : null,
+      breast_right_sec: hasSides ? input.breastRightSec ?? null : null,
       // 未指定時は logged_at を送らず DB の now() 既定に委ねる（従来挙動）
       ...(input.loggedAt != null && { logged_at: input.loggedAt }),
       memo: input.memo || null,
@@ -396,6 +460,16 @@ export async function updateLog(
      */
     durationSec?: number | null
     /**
+     * 母乳サイクルの左右別授乳時間（秒）。指定時は両方必須（各 0..10800・合計 >= 1）
+     * かつ feedingType='breast' 必須で、**durationSec は同時指定不可** —
+     * duration_sec/min はサーバが左右の和から導出する（chk_breast_side_sec_total の
+     * 等式・二重真値源の禁止）。sides を持つ既存行への durationSec 単独編集は
+     * fail-loud で拒否される（無音で sides を捨てない）。feedingType を 'breast'
+     * 以外へ変更すると counts と同様に常に null で上書きされる。
+     */
+    breastLeftSec?: number | null
+    breastRightSec?: number | null
+    /**
      * 母乳サイクル（feedingType: 'breast'）の左右吸わせ回数。feedingType が
      * 'breast' の時のみ必須（recordFeeding と同じ検証）。feedingType を
      * 'breast' 以外へ変更する時は無視され、常に null で上書きされる
@@ -444,6 +518,23 @@ export async function updateLog(
     if (countsError) return { error: countsError }
   }
 
+  // 左右別の授乳時間（sides）。counts と違い、誤経路を無音 no-op にせず fail-loud にする。
+  const sidesPresent =
+    updates.breastLeftSec !== undefined || updates.breastRightSec !== undefined
+  if (sidesPresent) {
+    if (updates.feedingType !== "breast") {
+      return { error: BREAST_SIDES_TYPE_ERROR }
+    }
+    if (updates.durationSec !== undefined) {
+      return { error: BREAST_SIDES_WITH_TOTAL_ERROR }
+    }
+    const sidesError = validateBreastSideSeconds(
+      updates.breastLeftSec,
+      updates.breastRightSec,
+    )
+    if (sidesError) return { error: sidesError }
+  }
+
   // 未来時刻の拒否（+5 分の時計ずれ許容）。auth 前に純関数で弾く（memoError と同順）。
   // クライアント検証と同一の validateLogTime を共有し判定を一致させる。
   if (updates.loggedAt !== undefined) {
@@ -455,13 +546,19 @@ export async function updateLog(
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
 
-  // sleep ログの logged_at ≤ ended_at 整合をサーバで担保する。クライアント送信値ではなく
-  // 実 DB の ended_at と突き合わせる（sleepOverlapMinutesForDate が負 overlap で壊れるのを防ぐ）。
-  // loggedAt を変更する時のみ既存行の log_type / ended_at を取得して検証する。
-  if (updates.loggedAt !== undefined) {
+  // 既存行を読む必要があるのは:
+  // (a) loggedAt 変更 — sleep の logged_at ≤ ended_at 整合を実 DB の ended_at と
+  //     突き合わせる（クライアント送信値を信用しない）
+  // (b) durationSec 単独編集（sides なし）— 既存行が sides を持つなら fail-loud で拒否
+  //     （合計だけ書き換えると chk_breast_side_sec_total の等式違反で生の Postgres
+  //     エラーになるか、無音で sides を捨てるかの二択になるため、手前で明示的に拒む）
+  const needsExistingRow =
+    updates.loggedAt !== undefined ||
+    (updates.durationSec !== undefined && !sidesPresent)
+  if (needsExistingRow) {
     const { data: existing, error: fetchError } = await supabase
       .from("baby_logs")
-      .select("log_type, ended_at")
+      .select("log_type, ended_at, breast_left_sec")
       .eq("id", logId)
       .eq("household_id", householdId)
       .maybeSingle()
@@ -475,12 +572,19 @@ export async function updateLog(
     if (!existing) {
       return { error: "ログの更新に失敗しました。" }
     }
-    if (existing.log_type === "sleep") {
+    if (updates.loggedAt !== undefined && existing.log_type === "sleep") {
       // endedAt も同時変更されるなら新値、そうでなければ既存値と突き合わせる。
       const effectiveEndedAt =
         updates.endedAt !== undefined ? updates.endedAt : existing.ended_at
       const orderError = validateSleepOrder(updates.loggedAt, effectiveEndedAt)
       if (orderError) return { error: orderError }
+    }
+    if (
+      updates.durationSec !== undefined &&
+      !sidesPresent &&
+      existing.breast_left_sec != null
+    ) {
+      return { error: BREAST_SIDES_TOTAL_ONLY_ERROR }
     }
   }
 
@@ -499,6 +603,23 @@ export async function updateLog(
           updates.feedingType === "breast" ? updates.breastLeftCount : null,
         breast_right_count:
           updates.feedingType === "breast" ? updates.breastRightCount : null,
+      }),
+      // sides の null 化は種別変更時のみ（'breast' のまま sides 未指定の編集 —
+      // 旧形サイクル行の合計編集など — では sides 列に触れない）
+      ...(updates.feedingType !== undefined &&
+        updates.feedingType !== "breast" && {
+          breast_left_sec: null,
+          breast_right_sec: null,
+        }),
+      // sides 指定時は合計をサーバ導出（validateBreastSideSeconds 通過済み・
+      // durationSec の同時指定は上で拒否済み → duration_sec の書込はこの1経路のみ）
+      ...(sidesPresent && {
+        breast_left_sec: updates.breastLeftSec,
+        breast_right_sec: updates.breastRightSec,
+        duration_sec: updates.breastLeftSec! + updates.breastRightSec!,
+        duration_min: deriveDurationMinFromSec(
+          updates.breastLeftSec! + updates.breastRightSec!,
+        ),
       }),
       ...(updates.amountMl !== undefined && { amount_ml: updates.amountMl }),
       ...(updates.durationSec !== undefined && {

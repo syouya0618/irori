@@ -410,7 +410,16 @@ describe("updateLog の授乳時間（durationSec）更新", () => {
     const eq2 = vi.fn(() => ({ select }))
     const eq1 = vi.fn(() => ({ eq: eq2 }))
     const update = vi.fn((_payload: Record<string, unknown>) => ({ eq: eq1 }))
-    const from = vi.fn(() => ({ update }))
+    // durationSec 単独編集は既存行を pre-fetch する（sides を持つ行の合計だけ編集を
+    // fail-loud で拒むため）。ここでは sides 無しの行を返す = 従来経路が通る前提。
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: { log_type: "feeding", ended_at: null, breast_left_sec: null },
+      error: null,
+    })
+    const fetchEq2 = vi.fn(() => ({ maybeSingle }))
+    const fetchEq1 = vi.fn(() => ({ eq: fetchEq2 }))
+    const fetchSelect = vi.fn(() => ({ eq: fetchEq1 }))
+    const from = vi.fn(() => ({ update, select: fetchSelect }))
     return { client: { from }, update }
   }
 
@@ -755,5 +764,220 @@ describe("upsertBabyDiary（育児日記・1日1本）", () => {
     const result = await upsertBabyDiary("2026-07-20", "本文")
     expect(result.error).toBe("日記の保存に失敗しました。もう一度お試しください。")
     expect(result.diary).toBeNull()
+  })
+})
+
+describe("recordFeeding: 左右別の授乳時間（breastLeftSec / breastRightSec）", () => {
+  it("sides + counts で記録すると duration_sec/min はサーバが左右の和から導出する（単一の書込経路）", async () => {
+    const { client, insert } = makeSupabase({ data: { id: "s-1" }, error: null })
+    setContext(client)
+    const result = await recordFeeding({
+      feedingType: "breast",
+      breastLeftCount: 2,
+      breastRightCount: 1,
+      breastLeftSec: 450,
+      breastRightSec: 300,
+    })
+    expect(result.error).toBeNull()
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        breast_left_sec: 450,
+        breast_right_sec: 300,
+        duration_sec: 750,
+        duration_min: 13,
+      }),
+    )
+  })
+
+  it("片側 0 秒は有効値として保持される（falsy で null に化けない）", async () => {
+    const { client, insert } = makeSupabase({ data: { id: "s-2" }, error: null })
+    setContext(client)
+    await recordFeeding({
+      feedingType: "breast",
+      breastLeftCount: 1,
+      breastRightCount: 0,
+      breastLeftSec: 300,
+      breastRightSec: 0,
+    })
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        breast_left_sec: 300,
+        breast_right_sec: 0,
+        duration_sec: 300,
+      }),
+    )
+  })
+
+  it("sides と durationSec の同時指定はエラー（合計の二重真値源を禁止）", async () => {
+    const { client, insert } = makeSupabase({ data: { id: "x" }, error: null })
+    setContext(client)
+    const result = await recordFeeding({
+      feedingType: "breast",
+      breastLeftCount: 1,
+      breastRightCount: 0,
+      breastLeftSec: 300,
+      breastRightSec: 0,
+      durationSec: 300,
+    })
+    expect(result.error).toBe(
+      "左右の時間があるときは合計時間は指定できません（合計は自動計算されます）",
+    )
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [300, undefined],
+    [undefined, 300],
+    [10801, 0],
+    [0, 10801],
+    [0, 0],
+    [1.5, 300],
+    [-1, 300],
+  ])(
+    "不正な sides(%s, %s) は日本語エラーで DB 到達しない",
+    async (left, right) => {
+      const { client, insert } = makeSupabase({ data: { id: "x" }, error: null })
+      setContext(client)
+      const result = await recordFeeding({
+        feedingType: "breast",
+        breastLeftCount: 1,
+        breastRightCount: 1,
+        breastLeftSec: left as number | undefined,
+        breastRightSec: right as number | undefined,
+      })
+      expect(result.error).toBe(
+        "左右の授乳時間は両方・各0〜180分・合計1秒以上で指定してください",
+      )
+      expect(insert).not.toHaveBeenCalled()
+    },
+  )
+
+  it("breast 以外で sides を指定するとエラー（chk_breast_side_sec_only_breast のミラー）", async () => {
+    const { client, insert } = makeSupabase({ data: { id: "x" }, error: null })
+    setContext(client)
+    const result = await recordFeeding({
+      feedingType: "bottle",
+      breastLeftSec: 300,
+      breastRightSec: 0,
+    })
+    expect(result.error).toBe("この授乳タイプには左右の時間を指定できません")
+    expect(insert).not.toHaveBeenCalled()
+  })
+})
+
+describe("updateLog: 左右別の授乳時間", () => {
+  it("sides pair + feedingType='breast' で合計をサーバ導出して書き込む", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      { data: null, error: null },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    const result = await updateLog("log-1", {
+      feedingType: "breast",
+      breastLeftCount: 2,
+      breastRightCount: 1,
+      breastLeftSec: 400,
+      breastRightSec: 200,
+    })
+    expect(result.error).toBeNull()
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        breast_left_sec: 400,
+        breast_right_sec: 200,
+        duration_sec: 600,
+        duration_min: 10,
+      }),
+    )
+  })
+
+  it("sides と durationSec の同時指定はエラー", async () => {
+    const { client } = makeUpdateSupabaseWithFetch(
+      { data: null, error: null },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    const result = await updateLog("log-1", {
+      feedingType: "breast",
+      breastLeftCount: 1,
+      breastRightCount: 0,
+      breastLeftSec: 300,
+      breastRightSec: 0,
+      durationSec: 300,
+    })
+    expect(result.error).toBe(
+      "左右の時間があるときは合計時間は指定できません（合計は自動計算されます）",
+    )
+  })
+
+  it("feedingType が breast 以外なのに sides が来たらエラー（無音 no-op を作らない）", async () => {
+    const { client } = makeUpdateSupabaseWithFetch(
+      { data: null, error: null },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    const result = await updateLog("log-1", {
+      feedingType: "bottle",
+      breastLeftSec: 300,
+      breastRightSec: 0,
+    })
+    expect(result.error).toBe("この授乳タイプには左右の時間を指定できません")
+  })
+
+  it("sides を持つ行への durationSec 単独編集は fail-loud で拒否（無音で sides を捨てない）", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      {
+        data: { log_type: "feeding", ended_at: null, breast_left_sec: 300 },
+        error: null,
+      },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    const result = await updateLog("log-1", {
+      feedingType: "breast",
+      breastLeftCount: 1,
+      breastRightCount: 1,
+      durationSec: 500,
+    })
+    expect(result.error).toBe(
+      "左右の時間を持つ記録は、左右それぞれの時間で編集してください",
+    )
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it("sides を持たない行への durationSec 単独編集は従来どおり通る", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      {
+        data: { log_type: "feeding", ended_at: null, breast_left_sec: null },
+        error: null,
+      },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    const result = await updateLog("log-1", {
+      feedingType: "breast",
+      breastLeftCount: 1,
+      breastRightCount: 1,
+      durationSec: 500,
+    })
+    expect(result.error).toBeNull()
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ duration_sec: 500, duration_min: 8 }),
+    )
+  })
+
+  it("breast 以外へ種別変更すると sides も強制 null 化される（counts と同じ規約）", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      { data: null, error: null },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    const result = await updateLog("log-1", { feedingType: "bottle" })
+    expect(result.error).toBeNull()
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        breast_left_sec: null,
+        breast_right_sec: null,
+      }),
+    )
   })
 })
