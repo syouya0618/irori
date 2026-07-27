@@ -11,6 +11,7 @@ import { describe, it, expect } from "vitest"
 import {
   formatElapsedMinutes,
   formatBreastCounts,
+  formatBreastSideBreakdown,
   getFeedingTypeLabel,
 } from "@/lib/utils/baby-log-labels"
 
@@ -86,5 +87,29 @@ describe("getFeedingTypeLabel: breast（母乳サイクル）", () => {
   it("過去データの片側行ラベルは変えない（breast_left=左 / breast_right=右）", () => {
     expect(getFeedingTypeLabel("breast_left")).toBe("左")
     expect(getFeedingTypeLabel("breast_right")).toBe("右")
+  })
+})
+
+describe("formatBreastSideBreakdown（左右別の回数+時間表示）", () => {
+  it("両側あり: 左2回7分30秒・右1回5分", () => {
+    expect(formatBreastSideBreakdown(2, 1, 450, 300)).toBe(
+      "左2回7分30秒・右1回5分",
+    )
+  })
+
+  it("回数のみの側（0秒）は時間を省略する", () => {
+    expect(formatBreastSideBreakdown(1, 1, 0, 300)).toBe("左1回・右1回5分")
+  })
+
+  it("片側 0回0秒はその側ごと省略する", () => {
+    expect(formatBreastSideBreakdown(2, 0, 600, 0)).toBe("左2回10分")
+  })
+
+  it("回数 0 だが時間がある側は時間だけ出す（防御: 通常は発生しない組合せ）", () => {
+    expect(formatBreastSideBreakdown(0, 1, 120, 300)).toBe("左2分・右1回5分")
+  })
+
+  it("null は 0 として扱う（旧行の混在防御）", () => {
+    expect(formatBreastSideBreakdown(null, 1, null, 300)).toBe("右1回5分")
   })
 })

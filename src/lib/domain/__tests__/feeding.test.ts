@@ -10,6 +10,7 @@
 
 import { describe, it, expect } from "vitest"
 import {
+  resolveBreastSideSeconds,
   clampFeedingDuration,
   clampFeedingDurationSec,
   deriveDurationMinFromSec,
@@ -137,5 +138,77 @@ describe("parseFeedingDurationInput（分・秒入力 → duration_sec）", () =
     expect(parseFeedingDurationInput("-1", "0").error).toBeTruthy()
     expect(parseFeedingDurationInput("1.5", "0").error).toBeTruthy()
     expect(parseFeedingDurationInput("abc", "0").error).toBeTruthy()
+  })
+})
+
+describe("resolveBreastSideSeconds（左右別秒の正規化 — 和の等式を守る側ごと clamp）", () => {
+  it("範囲内はそのまま通す（整数へ丸め）", () => {
+    expect(resolveBreastSideSeconds(300, 200, "breast_left")).toEqual({
+      leftSec: 300,
+      rightSec: 200,
+    })
+    expect(resolveBreastSideSeconds(300.4, 200.6, "breast_left")).toEqual({
+      leftSec: 300,
+      rightSec: 201,
+    })
+  })
+
+  it("合計 0 は現在側へ 1 秒（即停止でも記録が通る下端救済 — clampFeedingDurationSec と同方針）", () => {
+    expect(resolveBreastSideSeconds(0, 0, "breast_left")).toEqual({
+      leftSec: 1,
+      rightSec: 0,
+    })
+    expect(resolveBreastSideSeconds(0, 0, "breast_right")).toEqual({
+      leftSec: 0,
+      rightSec: 1,
+    })
+  })
+
+  it("合計が 10800 を超えたら側ごとに比例縮小し、和を厳密に 10800 へ（合計 clamp は等式 CHECK と衝突するため禁止）", () => {
+    // 片側のみ超過
+    expect(resolveBreastSideSeconds(12000, 0, "breast_left")).toEqual({
+      leftSec: 10800,
+      rightSec: 0,
+    })
+    // 混合: 8000+4000=12000 → 小さい側 floor(4000*10800/12000)=3600、残差は大きい側へ
+    const r = resolveBreastSideSeconds(8000, 4000, "breast_left")
+    expect(r).toEqual({ leftSec: 7200, rightSec: 3600 })
+    expect(r.leftSec + r.rightSec).toBe(10800)
+  })
+
+  it("非有限値・負数は 0 へ倒す（NaN が DB CHECK をすり抜けない）", () => {
+    expect(resolveBreastSideSeconds(Number.NaN, 500, "breast_left")).toEqual({
+      leftSec: 0,
+      rightSec: 500,
+    })
+    expect(resolveBreastSideSeconds(-5, 300, "breast_left")).toEqual({
+      leftSec: 0,
+      rightSec: 300,
+    })
+    // 両方非有限 → 下端救済で現在側 1 秒
+    expect(
+      resolveBreastSideSeconds(Number.NaN, Number.POSITIVE_INFINITY, "breast_right"),
+    ).toEqual({ leftSec: 0, rightSec: 1 })
+  })
+
+  it("性質: どの入力でも 1 <= 和 <= 10800（記録が恒久失敗しない）", () => {
+    const cases: Array<[number, number]> = [
+      [0, 0],
+      [1, 0],
+      [5400, 5400],
+      [10800, 1],
+      [99999, 99999],
+      [Number.NaN, -100],
+    ]
+    for (const [l, rr] of cases) {
+      const { leftSec, rightSec } = resolveBreastSideSeconds(l, rr, "breast_left")
+      const sum = leftSec + rightSec
+      expect(sum).toBeGreaterThanOrEqual(1)
+      expect(sum).toBeLessThanOrEqual(10800)
+      expect(Number.isInteger(leftSec)).toBe(true)
+      expect(Number.isInteger(rightSec)).toBe(true)
+      expect(leftSec).toBeGreaterThanOrEqual(0)
+      expect(rightSec).toBeGreaterThanOrEqual(0)
+    }
   })
 })
