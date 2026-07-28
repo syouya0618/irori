@@ -23,7 +23,6 @@ export interface BabyLogData {
   /** 母乳サイクルで右を吸わせた秒数（同上） */
   breast_right_sec: number | null
   diaper_type: DiaperType | null
-  ended_at: string | null
   temperature: number | null
   weight_g: number | null
   height_cm: number | null

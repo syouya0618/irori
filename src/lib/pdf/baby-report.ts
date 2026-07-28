@@ -1,9 +1,7 @@
 import path from "node:path"
 import type { TDocumentDefinitions, Content, TableCell } from "pdfmake/interfaces"
-import { formatElapsedMinutes } from "@/lib/utils/baby-log-labels"
 import type {
   DailyFeedingSummary,
-  DailySleepSummary,
   DailyDiaperSummary,
   TemperatureRecord,
   GrowthRecord,
@@ -16,7 +14,6 @@ export interface BabyReportInput {
   startDate: string
   endDate: string
   feedings: DailyFeedingSummary[]
-  sleep: DailySleepSummary[]
   diapers: DailyDiaperSummary[]
   temperatures: TemperatureRecord[]
   growth: GrowthRecord[]
@@ -123,9 +120,6 @@ export async function generateBabyReport(input: BabyReportInput): Promise<Buffer
       } as Content,
       ...buildTable("授乳記録", ["日付", "合計", "母乳", "ミルク", "搾乳", "離乳食", "ミルク平均(ml)", "搾乳平均(ml)"], ["auto", "auto", "auto", "auto", "auto", "auto", "*", "*"],
         input.feedings.map((f) => [shortDate(f.date), f.totalCount, f.breastCount, f.bottleCount, f.pumpedCount, f.solidCount, f.avgBottleMl ?? "-", f.avgPumpedMl ?? "-"]),
-      ),
-      ...buildTable("睡眠記録", ["日付", "合計時間", "回数"], ["auto", "*", "auto"],
-        input.sleep.map((s) => [shortDate(s.date), formatElapsedMinutes(s.totalMinutes), s.sessionCount]),
       ),
       ...buildTable("おむつ記録", ["日付", "合計", "おしっこ", "うんち", "両方"], ["auto", "auto", "auto", "auto", "*"],
         input.diapers.map((d) => [shortDate(d.date), d.totalCount, d.peeCount, d.poopCount, d.bothCount]),

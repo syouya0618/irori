@@ -9,27 +9,25 @@
  *   これを anchor に DOM クエリして反映を検証
  *
  * issue #16 の検証要件カバレッジ:
- * - INSERT/UPDATE/DELETE payload 受信時の weeklyLogs state 整合 → 1, 2, 3, 8, 9
+ * - INSERT/UPDATE/DELETE payload 受信時の weeklyLogs state 整合 → 1, 2, 3, 4, 7, 8
  * - ID のみ payload で来る DELETE ブランチ → 3
- * - isRelevantToCurrentWeek の sleep cross-week 分岐 → 6
- * - 真夜中跨ぎ時の today ref 更新と週ウィンドウシフト → 10
+ * - 真夜中跨ぎ時の today ref 更新と週ウィンドウシフト → 9
  *
  * 検証対象:
  * 1. 当日 feeding INSERT → 週間サマリー授乳が 0回 → 1回
  * 2. 当日 feeding UPDATE (branch a: belongsToWeek && exists) → 件数不変
  * 3. 当日 diaper DELETE → 件数 -1（payload.old が { id } のみ）
- * 4. 別日付（週内）の sleep INSERT → 週間サマリー反映
+ * 4. 別日付（週内・selectedDate 範囲外）の feeding INSERT → 週間サマリーに反映
  * 5. 週外の feeding INSERT → 無変化
- * 6. sleep cross-week INSERT → isRelevantToCurrentWeek の越境分岐で weeklyLogs に取り込み
- * 7. unmount で supabase.removeChannel が呼ばれる
- * 8. UPDATE branch b (belongsToWeek && !exists) → 週外→週内移動で weeklyLogs に追加
- * 9. UPDATE branch c (!belongsToWeek && exists) → 週内→週外移動で weeklyLogs から除外
- * 10. 真夜中跨ぎで useNow setInterval が発火 → today/weeklyStart の ref が前進し
+ * 6. unmount で supabase.removeChannel が呼ばれる
+ * 7. UPDATE branch b (belongsToWeek && !exists) → 週外→週内移動で weeklyLogs に追加
+ * 8. UPDATE branch c (!belongsToWeek && exists) → 週内→週外移動で weeklyLogs から除外
+ * 9. 真夜中跨ぎで useNow setInterval が発火 → today/weeklyStart の ref が前進し
  *     chart labels が ["4/10",..,"4/16"] → ["4/11",..,"4/17"] へシフト
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest"
-import { render, screen, cleanup, within } from "@testing-library/react"
+import { render, screen, cleanup } from "@testing-library/react"
 import { act } from "react"
 import type { BabyLogData } from "@/lib/types/baby"
 import type {
@@ -88,7 +86,6 @@ const baseLog = {
   breast_left_sec: null,
   breast_right_sec: null,
   diaper_type: null,
-  ended_at: null,
   temperature: null,
   weight_g: null,
   height_cm: null,
@@ -112,15 +109,12 @@ function defaultProps(
 ): Parameters<typeof BabyDashboard>[0] {
   return {
     initialLogs: [],
-    initialOverlapLogs: [],
     initialWeeklyLogs: [],
     initialGrowthLogs: [],
     householdId: "h1",
     userId: "u1",
     initialDate: TODAY,
     initialDiary: null,
-    lastSleepEndedAt: null,
-    activeSleepFallback: null,
     lastFeedingFallback: null,
     babyName: null,
     babyBirthDate: null,
@@ -254,29 +248,31 @@ describe("BabyDashboard / Realtime → 週間サマリー反映", () => {
     expect(chartTitles("直近7日のおむつ交換回数")).toContain(`4/16: 0回`)
   })
 
-  it("別日付（週内・selectedDate 範囲外）の sleep INSERT は週間サマリーに反映", () => {
+  it("別日付（週内・selectedDate 範囲外）の feeding INSERT は週間サマリーに反映", () => {
     render(<BabyDashboard {...defaultProps()} />)
 
-    expect(chartTitles("直近7日の睡眠時間")).toContain(`4/15: 0分`)
+    expect(chartTitles("直近7日の授乳回数")).toContain(`4/15: 0回`)
 
     act(() => {
       emit(
         makePayload(
           "INSERT",
           makeLog({
-            id: "log-sleep-1",
-            log_type: "sleep",
-            // 昨日 22:00 開始、23:30 終了 = 90 分
+            id: "log-feed-yesterday",
+            log_type: "feeding",
+            feeding_type: "bottle",
+            // 昨日（週内だが selectedDate=4/16 の窓外）
             logged_at: "2026-04-15T22:00:00+09:00",
-            ended_at: "2026-04-15T23:30:00+09:00",
-            duration_min: 90,
+            amount_ml: 100,
           }),
         ),
       )
     })
 
-    // 昨日の睡眠が 1時間30分 に反映される
-    expect(chartTitles("直近7日の睡眠時間")).toContain(`4/15: 1時間30分`)
+    // weeklyLogs（週窓）へは入るが logs（選択日窓）へは入らない分岐の回帰。
+    // isRelevantToCurrentWeek は selectedDate ではなく週窓で判定するため、
+    // 選択日の外でも週間サマリーには載る。
+    expect(chartTitles("直近7日の授乳回数")).toContain(`4/15: 1回`)
   })
 
   it("週外の feeding INSERT は週間サマリーに影響しない", () => {
@@ -305,37 +301,6 @@ describe("BabyDashboard / Realtime → 週間サマリー反映", () => {
     // 7 件のまま、全て 0回 のまま
     expect(afterTitles).toEqual(beforeTitles)
     expect(afterTitles.every((t) => t.endsWith(": 0回"))).toBe(true)
-  })
-
-  it("sleep cross-week INSERT（週前日に開始・週初日に終了）は isRelevantToCurrentWeek の越境分岐で weeklyLogs に取り込まれる", () => {
-    render(<BabyDashboard {...defaultProps()} />)
-
-    // 4/8 18:00 開始 → 4/10 06:00 終了 = 36 時間 = 2160 分。
-    // logged_at の日付（4/8）は週外。
-    // 但し sleep + ended_at あり、かつ sleepEndMs(4/10 06:00) > weekStartMs(4/10 00:00)、
-    // sleepStartMs(4/8 18:00) < weekEndMs(4/17 00:00) なので isRelevantToCurrentWeek=true
-    act(() => {
-      emit(
-        makePayload(
-          "INSERT",
-          makeLog({
-            id: "log-sleep-cross",
-            log_type: "sleep",
-            logged_at: "2026-04-08T18:00:00+09:00",
-            ended_at: "2026-04-10T06:00:00+09:00",
-            duration_min: 2160,
-          }),
-        ),
-      )
-    })
-
-    // 週内に取り込まれたことの実証として、睡眠の totals が >0 になる。
-    // buildBabyWeeklySummary は cross-week ログを「週内重複時間のみ」に切る
-    // 挙動なので、4/10 の睡眠時間が >0 で現れることを確認する。
-    const sleepTitles = chartTitles("直近7日の睡眠時間")
-    const dayTen = sleepTitles.find((t) => t.startsWith("4/10:"))
-    expect(dayTen).toBeDefined()
-    expect(dayTen).not.toBe("4/10: 0分")
   })
 
   it("unmount で全 Realtime channel の supabase.removeChannel が呼ばれる", () => {
@@ -395,45 +360,13 @@ describe("BabyDashboard / Realtime → 週間サマリー反映", () => {
       emit(
         makePayload("UPDATE", {
           ...original,
-          logged_at: "2026-04-08T10:00:00+09:00", // 週外（cross-week 救済対象外: feeding は ended_at を持たない）
+          logged_at: "2026-04-08T10:00:00+09:00", // 週外
         }),
       )
     })
 
     // 週外移動で belongsToWeek=false かつ exists=true → 除外
     expect(chartTitles("直近7日の授乳回数")).toContain("4/15: 0回")
-  })
-
-  it("前夜開始の睡眠を UPDATE で終了すると、今日のまとめの睡眠が overlapLogs 経由で反映される（B-02: 3面同値の live 経路）", () => {
-    render(<BabyDashboard {...defaultProps()} />)
-
-    // 初期: 今日のまとめの睡眠は 0分（overlapLogs 空）
-    expect(
-      within(screen.getByLabelText("今日のまとめ")).getByText("0分"),
-    ).toBeInTheDocument()
-
-    act(() => {
-      emit(
-        makePayload(
-          "UPDATE",
-          makeLog({
-            id: "log-overnight",
-            log_type: "sleep",
-            // 昨日 22:00 開始 → 今朝 06:30 終了。TODAY=4/16 の当日窓に 6時間30分=390分。
-            logged_at: "2026-04-15T22:00:00+09:00",
-            ended_at: "2026-04-16T06:30:00+09:00",
-            duration_min: 510,
-          }),
-        ),
-      )
-    })
-
-    // overlapLogs に取り込まれ、summarizeTodayCounts が当日分 390分 を按分計上する
-    expect(
-      within(screen.getByLabelText("今日のまとめ")).getByText("6時間30分"),
-    ).toBeInTheDocument()
-    // 週間サマリー（4/15 側）にも同睡眠が反映され、3面同値が live で成立
-    expect(chartTitles("直近7日の睡眠時間")).toContain("4/15: 2時間")
   })
 
   it("真夜中跨ぎ: useNow の interval が発火し today/weeklyStart の ref が前進、chart labels がシフトする", () => {

@@ -8,10 +8,7 @@ import {
   FEEDING_DURATION_SEC_MIN,
   FEEDING_DURATION_SEC_MAX,
 } from "@/lib/domain/feeding"
-import {
-  validateLogTime,
-  validateSleepOrder,
-} from "@/lib/domain/baby-log-time"
+import { validateLogTime } from "@/lib/domain/baby-log-time"
 import { todayJstString } from "@/lib/utils/date-jst"
 import type { FeedingType, DiaperType } from "@/lib/types/database"
 
@@ -267,74 +264,6 @@ export async function recordDiaper(input: RecordDiaperInput) {
   return { error: null, id: data.id }
 }
 
-export async function startSleep(loggedAt?: string) {
-  const timeError = validateCreateLoggedAt(loggedAt)
-  if (timeError) return { error: timeError, id: null }
-
-  const result = await getAuthContext()
-  if (result.error !== null) return { error: result.error, id: null }
-  const { supabase, userId, householdId } = result.context
-
-  // B-03: 楽観 append 用に作成した睡眠ログの id を返す（.select("id").single()）。
-  // 既存の 23505（既に睡眠中）分岐は不変 — insert 競合時は error に 23505 が入る。
-  const { data, error } = await supabase
-    .from("baby_logs")
-    .insert({
-      household_id: householdId,
-      log_type: "sleep",
-      logged_by: userId,
-      ...(loggedAt != null && { logged_at: loggedAt }),
-    })
-    .select("id")
-    .single()
-
-  if (error) {
-    // 23505 は「既に睡眠中」= UNIQUE 制約による正常系ゆえログ対象外。
-    if (error.code === "23505") {
-      return { error: "既に睡眠中のセッションがあります。", id: null }
-    }
-    logSupabaseError("baby", "睡眠の開始に失敗", error, { userId, householdId })
-    return { error: "睡眠の記録に失敗しました。", id: null }
-  }
-  if (!data) {
-    console.error("[baby] 睡眠の開始: 行が返らず", { userId, householdId })
-    return { error: "睡眠の記録に失敗しました。", id: null }
-  }
-
-  revalidatePath("/baby")
-  return { error: null, id: data.id }
-}
-
-export async function endSleep(logId: string) {
-  const result = await getAuthContext()
-  if (result.error !== null) return { error: result.error }
-  const { supabase, householdId } = result.context
-
-  const { data, error } = await supabase
-    .from("baby_logs")
-    .update({ ended_at: new Date().toISOString() })
-    .eq("id", logId)
-    .eq("household_id", householdId)
-    .is("ended_at", null)
-    .select("id")
-    .single()
-
-  // PGRST116 は .single() の「該当行なし」= アクティブな睡眠が無い正常系ゆえ
-  // ログ対象外。それ以外の error は真の失敗として構造化ログに残す。
-  if (error) {
-    if (error.code !== "PGRST116") {
-      logSupabaseError("baby", "睡眠の終了に失敗", error, { logId, householdId })
-    }
-    return { error: "アクティブな睡眠セッションが見つかりません。" }
-  }
-  if (!data) {
-    return { error: "アクティブな睡眠セッションが見つかりません。" }
-  }
-
-  revalidatePath("/baby")
-  return { error: null }
-}
-
 export async function recordTemperature(input: RecordTemperatureInput) {
   const memoError = validateMemoLength(input.memo)
   if (memoError) return { error: memoError, id: null }
@@ -482,7 +411,6 @@ export async function updateLog(
     breastLeftCount?: number | null
     breastRightCount?: number | null
     diaperType?: DiaperType
-    endedAt?: string | null
     temperature?: number | null
     weightG?: number | null
     heightCm?: number | null
@@ -546,19 +474,15 @@ export async function updateLog(
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
 
-  // 既存行を読む必要があるのは:
-  // (a) loggedAt 変更 — sleep の logged_at ≤ ended_at 整合を実 DB の ended_at と
-  //     突き合わせる（クライアント送信値を信用しない）
-  // (b) durationSec 単独編集（sides なし）— 既存行が sides を持つなら fail-loud で拒否
-  //     （合計だけ書き換えると chk_breast_side_sec_total の等式違反で生の Postgres
-  //     エラーになるか、無音で sides を捨てるかの二択になるため、手前で明示的に拒む）
-  const needsExistingRow =
-    updates.loggedAt !== undefined ||
-    (updates.durationSec !== undefined && !sidesPresent)
+  // 既存行を読む必要があるのは durationSec 単独編集（sides なし）のときのみ —
+  // 既存行が sides を持つなら fail-loud で拒否する（合計だけ書き換えると
+  // chk_breast_side_sec_total の等式違反で生の Postgres エラーになるか、
+  // 無音で sides を捨てるかの二択になるため、手前で明示的に拒む）。
+  const needsExistingRow = updates.durationSec !== undefined && !sidesPresent
   if (needsExistingRow) {
     const { data: existing, error: fetchError } = await supabase
       .from("baby_logs")
-      .select("log_type, ended_at, breast_left_sec")
+      .select("breast_left_sec")
       .eq("id", logId)
       .eq("household_id", householdId)
       .maybeSingle()
@@ -572,18 +496,7 @@ export async function updateLog(
     if (!existing) {
       return { error: "ログの更新に失敗しました。" }
     }
-    if (updates.loggedAt !== undefined && existing.log_type === "sleep") {
-      // endedAt も同時変更されるなら新値、そうでなければ既存値と突き合わせる。
-      const effectiveEndedAt =
-        updates.endedAt !== undefined ? updates.endedAt : existing.ended_at
-      const orderError = validateSleepOrder(updates.loggedAt, effectiveEndedAt)
-      if (orderError) return { error: orderError }
-    }
-    if (
-      updates.durationSec !== undefined &&
-      !sidesPresent &&
-      existing.breast_left_sec != null
-    ) {
+    if (existing.breast_left_sec != null) {
       return { error: BREAST_SIDES_TOTAL_ONLY_ERROR }
     }
   }
@@ -629,7 +542,6 @@ export async function updateLog(
       ...(updates.diaperType !== undefined && {
         diaper_type: updates.diaperType,
       }),
-      ...(updates.endedAt !== undefined && { ended_at: updates.endedAt }),
       ...(updates.temperature !== undefined && {
         temperature: updates.temperature,
       }),

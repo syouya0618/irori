@@ -116,15 +116,12 @@ function defaultProps(
 ): Parameters<typeof BabyDashboard>[0] {
   return {
     initialLogs: [],
-    initialOverlapLogs: [],
     initialWeeklyLogs: [],
     initialGrowthLogs: [],
     householdId: "h1",
     userId: "u1",
     initialDate: TODAY,
     initialDiary: null,
-    lastSleepEndedAt: null,
-    activeSleepFallback: null,
     lastFeedingFallback: null,
     babyName: null,
     babyBirthDate: null,
