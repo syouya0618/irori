@@ -1,6 +1,7 @@
 import { cache } from "react"
 import { createClient } from "@/lib/supabase/server"
 import { logSupabaseError } from "@/lib/supabase/log-error"
+import { getVerifiedUserId } from "@/lib/supabase/verified-user"
 
 export type AuthContext = {
   supabase: Awaited<ReturnType<typeof createClient>>
@@ -18,25 +19,29 @@ export const getAuthContext = cache(
     | { error: null; reason: null; context: AuthContext }
   > => {
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user)
+
+    // 認証判定は getVerifiedUserId に集約する（proxy と同じ関数を使うことで
+    // 層をまたぐ判定の食い違い＝無限リダイレクトを構造的に防ぐ）。
+    const userId = await getVerifiedUserId(supabase, "auth-context")
+
+    if (!userId)
       return { error: "認証されていません", reason: "unauthenticated", context: null }
 
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select("household_id")
-      .eq("id", user.id)
+      .eq("id", userId)
       .single()
 
     if (profileError) {
       logSupabaseError("auth-context", "profile lookup failed", profileError, {
-        userId: user.id,
+        userId,
       })
     }
 
     if (!profile?.household_id)
       return { error: "世帯が設定されていません", reason: "no-household", context: null }
 
-    return { error: null, reason: null, context: { supabase, userId: user.id, householdId: profile.household_id } }
+    return { error: null, reason: null, context: { supabase, userId, householdId: profile.household_id } }
   },
 )

@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr"
 import { NextResponse, type NextRequest } from "next/server"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { getAppOrigin } from "@/lib/utils/app-origin"
+import { getVerifiedUserId } from "@/lib/supabase/verified-user"
 
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -27,10 +28,9 @@ export async function proxy(request: NextRequest) {
     }
   )
 
-  // getUser() でサーバー側トークン検証（getSession()は改ざん可能で非推奨）
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  // 認証判定は getVerifiedUserId に集約する（proxy とページで別方式を使うと
+  // 判定が食い違い無限リダイレクトになる — 詳細と根拠は同ファイルの注記を参照）。
+  const userId = await getVerifiedUserId(supabase, "proxy")
 
   const { pathname } = request.nextUrl
 
@@ -40,7 +40,7 @@ export async function proxy(request: NextRequest) {
   const isPendingRoute = pathname === "/pending-approval"
 
   // ── 未認証 ──
-  if (!user) {
+  if (!userId) {
     // public / invite 以外 → /login
     if (!isPublicRoute && !isInviteRoute) {
       // nextUrl は loopback host を localhost に正規化するため (issue #16)、
@@ -60,12 +60,12 @@ export async function proxy(request: NextRequest) {
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("is_approved")
-    .eq("id", user.id)
+    .eq("id", userId)
     .single()
 
   if (profileError) {
     logSupabaseError("proxy", "profile lookup failed", profileError, {
-      userId: user.id,
+      userId,
       pathname,
     })
   }

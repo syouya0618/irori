@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
 import { logSupabaseError } from "@/lib/supabase/log-error"
+import { getVerifiedUserId } from "@/lib/supabase/verified-user"
 import { InviteAcceptForm } from "./invite-accept-form"
 
 function InviteError({ title, description }: { title: string; description: string }) {
@@ -24,11 +25,10 @@ export default async function InvitePage({
   const { token } = await params
   const supabase = await createClient()
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  // proxy と同じ判定源を使う（別方式にすると食い違いで無限リダイレクトになる）
+  const userId = await getVerifiedUserId(supabase, "invite")
 
-  if (!user) {
+  if (!userId) {
     redirect(`/login?returnTo=/invite/${token}`)
   }
 
@@ -37,20 +37,20 @@ export default async function InvitePage({
     { data: profile, error: profileError },
     { data: invitations, error: invitationsError },
   ] = await Promise.all([
-    supabase.from("profiles").select("household_id").eq("id", user.id).single(),
+    supabase.from("profiles").select("household_id").eq("id", userId).single(),
     supabase.rpc("get_invitation_by_token", { invite_token: token }),
   ])
 
   if (profileError) {
     logSupabaseError("invite", "profile lookup failed", profileError, {
-      userId: user.id,
+      userId,
     })
   }
 
   // token は secret なので構造化ログには含めない (userId のみ)。
   if (invitationsError) {
     logSupabaseError("invite", "invitation lookup failed", invitationsError, {
-      userId: user.id,
+      userId,
     })
   }
 
