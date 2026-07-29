@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
 import { logSupabaseError } from "@/lib/supabase/log-error"
+import { getVerifiedUser } from "@/lib/supabase/verified-user"
 import { PUMPING_INTERVAL_DEFAULT } from "@/lib/domain/baby-pumping"
 import { SettingsContent } from "./settings-content"
 
@@ -8,22 +9,23 @@ export default async function SettingsPage() {
   const supabase = await createClient()
 
   // layout でも認証チェック済みだが、settings は独自に再フェッチするため
-  // DB error 経路を個別に防御する
-  const { data: { user } } = await supabase.auth.getUser()
+  // DB error 経路を個別に防御する。判定源は proxy と同じ（食い違い＝無限リダイレクト）。
+  const verified = await getVerifiedUser(supabase, "settings")
 
-  if (!user) {
+  if (!verified) {
     redirect("/login")
   }
+  const { userId, email } = verified
 
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("id, display_name, avatar_url, household_id, role, default_page")
-    .eq("id", user.id)
+    .eq("id", userId)
     .single()
 
   if (profileError) {
     logSupabaseError("settings", "profile lookup failed", profileError, {
-      userId: user.id,
+      userId,
     })
   }
 
@@ -85,7 +87,7 @@ export default async function SettingsPage() {
         pumpingIntervalMin:
           household?.pumping_interval_min ?? PUMPING_INTERVAL_DEFAULT,
       }}
-      email={user.email ?? ""}
+      email={email ?? ""}
       pendingUsers={pendingUsers}
     />
   )
