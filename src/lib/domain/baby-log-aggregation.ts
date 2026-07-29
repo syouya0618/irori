@@ -2,9 +2,7 @@ import {
   toJstDateString,
   formatTimeJst,
   daysBetweenYmd,
-  shiftYmd,
 } from "@/lib/utils/date-jst"
-import { sleepOverlapMinutesForDate } from "./baby-sleep-overlap"
 import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
 
 /** 集計に必要な最小ログ型 */
@@ -14,7 +12,6 @@ export interface AggregationLogInput {
   feeding_type: FeedingType | null
   amount_ml: number | null
   diaper_type: DiaperType | null
-  ended_at: string | null
   temperature: number | null
   weight_g: number | null
   height_cm: number | null
@@ -46,12 +43,6 @@ export interface DailyFeedingSummary {
   /** 搾乳の総量・平均（ml）。ミルクとは別に持つ */
   totalPumpedMl: number
   avgPumpedMl: number | null
-}
-
-export interface DailySleepSummary {
-  date: string
-  totalMinutes: number
-  sessionCount: number
 }
 
 export interface DailyDiaperSummary {
@@ -187,45 +178,6 @@ export function aggregateFeedings(
   })
 }
 
-/**
- * 睡眠を JST 日別に按分集計する（AUDIT-019/067/072 / B-02）。
- *
- * 「開始日へ全量計上」ではなく、共通ヘルパ `sleepOverlapMinutesForDate` で各日の
- * 当日窓と交差する分だけを計上する。これにより日跨ぎ睡眠が開始日・終了日へ正しく
- * 分割され、週間サマリー・今日のまとめと per-day 値が一致する。集計開始日より前に
- * 始まった睡眠でも、範囲内に重なる部分は計上する（窓端 = AUDIT-067）。
- * 完了睡眠が 1 分以上重なる日のみを結果に含める。
- */
-export function aggregateSleep(
-  logs: AggregationLogInput[],
-  startDate: string,
-  endDate: string,
-): DailySleepSummary[] {
-  const sleeps = logs.filter((l) => l.log_type === "sleep")
-  const result: DailySleepSummary[] = []
-
-  for (let date = startDate; date <= endDate; date = shiftYmd(date, 1)) {
-    let totalMinutes = 0
-    let sessionCount = 0
-
-    for (const log of sleeps) {
-      const overlap = sleepOverlapMinutesForDate(
-        log.logged_at,
-        log.ended_at,
-        date,
-      )
-      if (overlap > 0) {
-        totalMinutes += overlap
-        sessionCount++
-      }
-    }
-
-    if (sessionCount > 0) result.push({ date, totalMinutes, sessionCount })
-  }
-
-  return result
-}
-
 export function aggregateDiapers(
   logs: AggregationLogInput[],
   startDate: string,
@@ -341,8 +293,6 @@ export function buildGrowthSeries(
 export interface TodayCounts {
   feedingCount: number
   diaperCount: number
-  sleepCount: number
-  totalSleepMinutes: number
   /** おしっこ（pee + both）の当日回数 */
   peeCount: number
   /** うんち（poop + both）の当日回数 */
@@ -365,12 +315,10 @@ export interface TodayCounts {
 }
 
 /**
- * 「今日の状況ひと目化」用の、指定 JST 日付 `date` の集計（B-02 / I-11）。
+ * 「今日の状況ひと目化」用の、指定 JST 日付 `date` の集計。
  *
  * 契約は全種別で「`date` 当日分のみ数える」に統一する:
  * - feeding / diaper は `toJstDateString(logged_at) === date` のもののみ計上。
- * - sleep は共通ヘルパ `sleepOverlapMinutesForDate` で当日窓に按分し、重なりが
- *   1 分以上ある完了セッションのみ回数・時間に含める（未完了は 0）。
  * - diaper はさらに `diaper_type` で pee/poop の内訳（peeCount/poopCount）も
  *   同時に集計する。both は pee/poop 双方に加算するため（aggregateDiapers と
  *   同じ規約）、`peeCount + poopCount` は `diaperCount` を超えうる。
@@ -381,22 +329,18 @@ export interface TodayCounts {
  *   solid と混ぜて「授乳 N 回」と見せていた欠陥を分離するために足した内訳ゆえ、
  *   この排他性はテストで固定してある。
  *
- * 入力に「前日開始・当日終了の日跨ぎ睡眠（overlapLogs）」を混ぜてよい。sleep は
- * 按分され、feeding/diaper は `date` フィルタで弾かれるため二重計上しない
- * （overlapLogs は sleep のみを供給する前提）。この date フィルタにより、
- * 週間サマリー・PDF 集計と per-day 睡眠値が一致する（3面同値）。
+ * 入力は選択日の logs をそのまま渡してよい（`date` に属さない行は date フィルタで
+ * 弾かれるため、前後日の行が混ざっても二重計上しない）。
  */
 export function summarizeTodayCounts(
   logs: Pick<
     AggregationLogInput,
-    "log_type" | "logged_at" | "ended_at" | "diaper_type" | "feeding_type"
+    "log_type" | "logged_at" | "diaper_type" | "feeding_type"
   >[],
   date: string,
 ): TodayCounts {
   let feedingCount = 0
   let diaperCount = 0
-  let sleepCount = 0
-  let totalSleepMinutes = 0
   let peeCount = 0
   let poopCount = 0
   let breastCycleCount = 0
@@ -427,24 +371,12 @@ export function summarizeTodayCounts(
           poopCount++
         }
       }
-    } else if (log.log_type === "sleep") {
-      const overlap = sleepOverlapMinutesForDate(
-        log.logged_at,
-        log.ended_at,
-        date,
-      )
-      if (overlap > 0) {
-        sleepCount++
-        totalSleepMinutes += overlap
-      }
     }
   }
 
   return {
     feedingCount,
     diaperCount,
-    sleepCount,
-    totalSleepMinutes,
     peeCount,
     poopCount,
     breastCycleCount,

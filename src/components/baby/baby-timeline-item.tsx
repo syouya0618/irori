@@ -14,14 +14,16 @@ import {
   getDiaperTypeLabel,
   formatBreastCounts,
   formatBreastSideBreakdown,
-  minutesBetween,
-  formatElapsedMinutes,
   formatDurationSec,
 } from "@/lib/utils/baby-log-labels"
 import { formatTimeJst } from "@/lib/utils/date-jst"
 import type { BabyLogData } from "@/lib/types/baby"
 import type { BabyLogType } from "@/lib/types/database"
 
+// `sleep` は記録導線ごと廃止した旧種別だが、DB の ENUM 値としては残る
+// （Postgres は ENUM 値を削除できない）。`Record<BabyLogType, …>` の網羅性のため、
+// および万一の残存行で `config.icon` が undefined 参照になってダッシュボードごと
+// 落ちる enum drift（#147/#158 と同型）を避けるため、退化形の定義だけ残す。
 const logTypeConfig: Record<
   BabyLogType,
   { icon: typeof Milk; bg: string; text: string }
@@ -71,12 +73,9 @@ function getLogSummary(log: BabyLogData): string {
     }
     case "diaper":
       return log.diaper_type ? getDiaperTypeLabel(log.diaper_type) : "おむつ"
+    // 廃止済みの旧種別（上の logTypeConfig と同じ理由で退化形のみ残す）
     case "sleep":
-      if (log.ended_at) {
-        const mins = minutesBetween(log.logged_at, log.ended_at)
-        return formatElapsedMinutes(mins)
-      }
-      return "睡眠中..."
+      return "睡眠"
     case "temperature":
       return log.temperature != null ? `${log.temperature}℃` : "体温"
     case "growth": {

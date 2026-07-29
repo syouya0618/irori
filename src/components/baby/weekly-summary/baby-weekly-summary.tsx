@@ -1,6 +1,5 @@
-import { Droplets, Milk, Moon } from "lucide-react"
+import { Droplets, Milk } from "lucide-react"
 import { BarChart } from "@/components/baby/charts/bar-chart"
-import { formatElapsedMinutes } from "@/lib/utils/baby-log-labels"
 import {
   WEEKLY_CHART_BASELINE,
   totalBabyWeeklySummary,
@@ -68,10 +67,6 @@ export function BabyWeeklySummary({
     label: labels[index],
     value: day.diaperCount,
   }))
-  const sleepData = days.map((day, index) => ({
-    label: labels[index],
-    value: day.sleepMinutes,
-  }))
 
   return (
     <section className="flex flex-col gap-2">
@@ -80,18 +75,12 @@ export function BabyWeeklySummary({
       </h2>
 
       <div className="glass rounded-2xl p-4 shadow-lg shadow-black/[0.04]">
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <StatHeader
             icon={Milk}
             label="授乳"
             value={countLabel(totals.feedingCount)}
             toneClassName="bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-          />
-          <StatHeader
-            icon={Moon}
-            label="睡眠"
-            value={formatElapsedMinutes(totals.sleepMinutes)}
-            toneClassName="bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
           />
           <StatHeader
             icon={Droplets}
@@ -115,22 +104,6 @@ export function BabyWeeklySummary({
               maxValue={WEEKLY_CHART_BASELINE.feedingCount}
               barColorClassName="text-amber-500 dark:text-amber-300"
               valueFormatter={countLabel}
-            />
-          </div>
-
-          <div>
-            <div className="mb-1 flex items-center justify-between text-xs">
-              <span className="font-medium">睡眠</span>
-              <span className="font-mono text-muted-foreground">
-                {formatElapsedMinutes(totals.sleepMinutes)}
-              </span>
-            </div>
-            <BarChart
-              ariaLabel="直近7日の睡眠時間"
-              data={sleepData}
-              maxValue={WEEKLY_CHART_BASELINE.sleepMinutes}
-              barColorClassName="text-violet-500 dark:text-violet-300"
-              valueFormatter={formatElapsedMinutes}
             />
           </div>
 

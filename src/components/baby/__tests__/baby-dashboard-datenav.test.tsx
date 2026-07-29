@@ -98,7 +98,7 @@ vi.mock("@/lib/supabase/client", async () => {
             return q
           },
           // 育児日記の選択日 refetch（maybeSingle 終端）。このテスト群では日記
-          // クエリは解決せず放置する（logs/overlap のアサーションに影響しない）。
+          // クエリは解決せず放置する（logs のアサーションに影響しない）。
           maybeSingle: () => q,
           then: (
             onF: (value: FetchResult) => unknown,
@@ -145,7 +145,6 @@ function makeLog(
     breast_left_sec: null,
     breast_right_sec: null,
     diaper_type: null,
-    ended_at: null,
     temperature: null,
     weight_g: null,
     height_cm: null,
@@ -162,15 +161,12 @@ function defaultProps(
 ): Parameters<typeof BabyDashboard>[0] {
   return {
     initialLogs: [],
-    initialOverlapLogs: [],
     initialWeeklyLogs: [],
     initialGrowthLogs: [],
     householdId: "h1",
     userId: "u1",
     initialDate: TODAY,
     initialDiary: null,
-    lastSleepEndedAt: null,
-    activeSleepFallback: null,
     lastFeedingFallback: null,
     babyName: null,
     babyBirthDate: null,
@@ -190,9 +186,8 @@ function goPrevDay() {
 
 /**
  * in-flight の fetch を全て解決する（microtask を flush）。
- * B-02 で日付ナビ refetch が logs + overlap 睡眠の 2 本になったため、同一結果で
- * 両方を解決する（logs 側の error/merge 検証はそのまま成立。overlap 側は同結果を
- * 受けても本テストの assert には無害）。
+ * 日付ナビ refetch は logs + 育児日記の 2 本ゆえ、同一結果で両方を解決する
+ * （logs 側の error/merge 検証はそのまま成立する）。
  */
 async function resolvePendingFetch(result: FetchResult) {
   const pendings = mockState.pendingFetches.splice(0)
@@ -326,7 +321,7 @@ describe("BabyDashboard / 日付ナビの育児日記 refetch（W-1: fail-to-emp
     expect(screen.getByText("今日の日記本文")).toBeInTheDocument()
 
     goPrevDay()
-    // logs / overlap / diary の3クエリを同一 error で解決する。
+    // logs / diary の2クエリを同一 error で解決する。
     // logs 側の toast は既存テストで検証済み。本テストの本命は日記の挙動。
     await resolvePendingFetch({
       data: null,

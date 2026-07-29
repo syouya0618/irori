@@ -35,6 +35,12 @@ export type InviteStatus = "pending" | "accepted" | "expired"
 export type BabyLogType =
   | "feeding"
   | "diaper"
+  /**
+   * 睡眠機能は撤去済み（20260728100001_drop_baby_sleep.sql）。新規に書かれることは
+   * 二度とないが、Postgres は ENUM ラベルを削除できず baby_log_type からは
+   * 'sleep' が消えない。DB→TS の enum drift（#147/#158）で
+   * `logTypeConfig[log_type]` が undefined になるのを避けるため union には残す。
+   */
   | "sleep"
   | "temperature"
   | "growth"
@@ -395,7 +401,6 @@ export interface Database {
           /** 母乳サイクルの右の授乳秒数（同上） */
           breast_right_sec: number | null
           diaper_type: DiaperType | null
-          ended_at: string | null
           temperature: number | null
           weight_g: number | null
           height_cm: number | null
@@ -418,7 +423,6 @@ export interface Database {
           breast_left_sec?: number | null
           breast_right_sec?: number | null
           diaper_type?: DiaperType | null
-          ended_at?: string | null
           temperature?: number | null
           weight_g?: number | null
           height_cm?: number | null
@@ -436,7 +440,6 @@ export interface Database {
           breast_left_sec?: number | null
           breast_right_sec?: number | null
           diaper_type?: DiaperType | null
-          ended_at?: string | null
           temperature?: number | null
           weight_g?: number | null
           height_cm?: number | null

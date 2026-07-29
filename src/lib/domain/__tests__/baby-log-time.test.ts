@@ -2,10 +2,8 @@ import { describe, it, expect } from "vitest"
 import {
   jstDateTimeToIso,
   validateLogTime,
-  validateSleepOrder,
   FUTURE_LOG_TIME_ERROR,
   INVALID_LOG_TIME_ERROR,
-  SLEEP_START_AFTER_END_ERROR,
 } from "../baby-log-time"
 
 describe("jstDateTimeToIso", () => {
@@ -61,34 +59,5 @@ describe("validateLogTime", () => {
     expect(validateLogTime("2026-07-08T16:00:00Z", midnightNow)).toBe(
       FUTURE_LOG_TIME_ERROR,
     )
-  })
-})
-
-describe("validateSleepOrder", () => {
-  it("ended_at=null（睡眠中）は制約なし（null）", () => {
-    expect(validateSleepOrder("2026-07-09T10:00:00Z", null)).toBeNull()
-  })
-
-  it("logged_at < ended_at は妥当（null）", () => {
-    expect(
-      validateSleepOrder("2026-07-09T10:00:00Z", "2026-07-09T11:00:00Z"),
-    ).toBeNull()
-  })
-
-  it("logged_at == ended_at は許容（overlap 0 で無害）", () => {
-    expect(
-      validateSleepOrder("2026-07-09T10:00:00Z", "2026-07-09T10:00:00Z"),
-    ).toBeNull()
-  })
-
-  it("logged_at > ended_at は拒否（負 overlap の防止）", () => {
-    expect(
-      validateSleepOrder("2026-07-09T12:00:00Z", "2026-07-09T11:00:00Z"),
-    ).toBe(SLEEP_START_AFTER_END_ERROR)
-  })
-
-  it("不正日時(NaN)は null（別バリデーションに委ねる）", () => {
-    expect(validateSleepOrder("bad", "2026-07-09T11:00:00Z")).toBeNull()
-    expect(validateSleepOrder("2026-07-09T11:00:00Z", "bad")).toBeNull()
   })
 })

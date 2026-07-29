@@ -3,6 +3,10 @@ import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
 const logTypeLabels: Record<BabyLogType, string> = {
   feeding: "授乳",
   diaper: "おむつ",
+  // `sleep` は記録導線ごと廃止した旧種別。Postgres は ENUM 値を削除できず
+  // baby_log_type からは消えないため、`Record<BabyLogType, …>` の網羅性と、
+  // 万一の残存行で undefined ラベルにならない退化のため定義だけ残す
+  // （baby-timeline-item.tsx の logTypeConfig と同じ流儀）。
   sleep: "睡眠",
   temperature: "体温",
   growth: "成長記録",

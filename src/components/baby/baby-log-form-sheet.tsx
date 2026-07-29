@@ -400,7 +400,7 @@ export function BabyLogFormSheet({
         // 時刻を触った時のみ loggedAt を送る。量やメモだけの編集で既存 logged_at の秒が
         // HH:mm 丸めで無言に失われるのを防ぐ（updateLog は未指定なら logged_at を変更しない）。
         // seed と同値（変更→元に戻した場合含む）なら送らず、時刻検証もスキップしてよい
-        // — 既存記録の時刻はそのまま妥当。sleep の logged_at ≤ ended_at 整合はサーバ Action 側で拒否する。
+        // — 既存記録の時刻はそのまま妥当。
         if (timeHm !== seedTimeHm) {
           const loggedAt = jstDateTimeToIso(logDate, timeHm)
           if (!loggedAt) {

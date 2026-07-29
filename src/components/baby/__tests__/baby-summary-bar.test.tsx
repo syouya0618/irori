@@ -17,15 +17,11 @@ const baseProps = {
   lastFeeding: null,
   lastPumped: null,
   pumpingIntervalMin: 180,
-  activeSleep: null,
-  lastSleepEndedAt: null,
   now: NOW,
   date: TODAY,
   todayCounts: {
     feedingCount: 0,
     diaperCount: 0,
-    sleepCount: 0,
-    totalSleepMinutes: 0,
     peeCount: 0,
     poopCount: 0,
     breastCycleCount: 0,
@@ -48,7 +44,6 @@ function makeFeedingLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
     breast_left_sec: null,
     breast_right_sec: null,
     diaper_type: null,
-    ended_at: null,
     temperature: null,
     weight_g: null,
     height_cm: null,
@@ -60,33 +55,8 @@ function makeFeedingLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
   }
 }
 
-function makeSleepLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
-  return {
-    id: "log-2",
-    log_type: "sleep",
-    logged_at: "2026-04-05T06:00:00+09:00",
-    logged_by: "user-1",
-    feeding_type: null,
-    amount_ml: null,
-    breast_left_count: null,
-    breast_right_count: null,
-    breast_left_sec: null,
-    breast_right_sec: null,
-    diaper_type: null,
-    ended_at: null,
-    temperature: null,
-    weight_g: null,
-    height_cm: null,
-    duration_min: null,
-    duration_sec: null,
-    memo: null,
-    created_at: "2026-04-05T06:00:00+09:00",
-    ...overrides,
-  }
-}
-
 describe("BabySummaryBar 今日のまとめ", () => {
-  it("今日の授乳内訳・合計睡眠・おむつ内訳(おしっこ/うんち)をひと目で表示する", () => {
+  it("今日の授乳内訳・おむつ内訳(おしっこ/うんち)をひと目で表示する", () => {
     render(
       <BabySummaryBar
         {...baseProps}
@@ -94,8 +64,6 @@ describe("BabySummaryBar 今日のまとめ", () => {
           // 授乳は種別内訳の排他分割（母乳1 + ミルク1 === feedingCount 2）
           feedingCount: 2,
           diaperCount: 3,
-          sleepCount: 1,
-          totalSleepMinutes: 90,
           peeCount: 2, // pee 1件 + both 1件
           poopCount: 1, // poop 0件 + both 1件
           breastCycleCount: 1,
@@ -110,7 +78,6 @@ describe("BabySummaryBar 今日のまとめ", () => {
     // ミルク/搾乳と混ざって「N回」に化ける欠陥の回帰防止）
     expect(within(summary).getByText("母乳1・ミルク1")).toBeInTheDocument()
     expect(within(summary).queryByText("2回")).not.toBeInTheDocument()
-    expect(within(summary).getByText("1時間30分")).toBeInTheDocument() // 睡眠
     // おむつは合算値ではなく「おしっこ/うんち」の2値内訳で表示する
     expect(
       within(summary).getByText("おしっこ2・うんち1"),
@@ -126,8 +93,6 @@ describe("BabySummaryBar 今日のまとめ", () => {
           feedingCount: 3,
           // 「3回」が授乳の合算表示でないことを一意に示すため、おむつは 3 以外にする
           diaperCount: 2,
-          sleepCount: 0,
-          totalSleepMinutes: 0,
           peeCount: 1,
           poopCount: 1,
           breastCycleCount: 1,
@@ -152,8 +117,6 @@ describe("BabySummaryBar 今日のまとめ", () => {
         todayCounts={{
           feedingCount: 12,
           diaperCount: 0,
-          sleepCount: 0,
-          totalSleepMinutes: 0,
           peeCount: 0,
           poopCount: 0,
           breastCycleCount: 8,
@@ -183,8 +146,6 @@ describe("BabySummaryBar 今日のまとめ", () => {
         todayCounts={{
           feedingCount: 2,
           diaperCount: 0,
-          sleepCount: 0,
-          totalSleepMinutes: 0,
           peeCount: 0,
           poopCount: 0,
           breastCycleCount: 0,
@@ -196,12 +157,6 @@ describe("BabySummaryBar 今日のまとめ", () => {
     )
     const summary = screen.getByLabelText("今日のまとめ")
     expect(within(summary).getByText("2回")).toBeInTheDocument()
-  })
-
-  it("記録ゼロの日は睡眠を 0分 と表示する", () => {
-    render(<BabySummaryBar {...baseProps} />)
-    const summary = screen.getByLabelText("今日のまとめ")
-    expect(within(summary).getByText("0分")).toBeInTheDocument()
   })
 
   it("おむつ0件のとき、今日のまとめは「おしっこ0・うんち0」、直近カードは「---」", () => {
@@ -222,8 +177,6 @@ describe("BabySummaryBar 今日のまとめ", () => {
         todayCounts={{
           feedingCount: 0,
           diaperCount: 2,
-          sleepCount: 0,
-          totalSleepMinutes: 0,
           peeCount: 1,
           poopCount: 2,
           breastCycleCount: 0,
@@ -270,19 +223,6 @@ describe("BabySummaryBar 今日のまとめ", () => {
     expect(
       screen.getByText(formatTimeJst(PAST_FEEDING_LOGGED_AT)),
     ).toBeInTheDocument()
-  })
-
-  it("過去日では睡眠中カードの経過表示も出ない（非表示）", () => {
-    render(
-      <BabySummaryBar
-        {...baseProps}
-        date={PAST_DATE}
-        activeSleep={makeSleepLog()}
-      />,
-    )
-    // ラベル（睡眠中）自体は残るが、経過時間（時間表記）は出ない
-    expect(screen.getByText("睡眠中")).toBeInTheDocument()
-    expect(screen.queryByText(/\d+時間/)).not.toBeInTheDocument()
   })
 })
 

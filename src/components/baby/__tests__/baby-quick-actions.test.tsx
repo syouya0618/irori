@@ -11,8 +11,6 @@ import { BabyQuickActions } from "../baby-quick-actions"
 import {
   recordFeeding,
   recordDiaper,
-  startSleep,
-  endSleep,
   deleteLog,
 } from "@/app/(main)/baby/actions"
 import { toast } from "sonner"
@@ -22,43 +20,14 @@ import type { FeedingType } from "@/lib/types/database"
 vi.mock("@/app/(main)/baby/actions", () => ({
   recordFeeding: vi.fn(),
   recordDiaper: vi.fn(),
-  startSleep: vi.fn(),
-  endSleep: vi.fn(),
   deleteLog: vi.fn(),
 }))
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const mockedRecordFeeding = vi.mocked(recordFeeding)
 const mockedRecordDiaper = vi.mocked(recordDiaper)
-const mockedStartSleep = vi.mocked(startSleep)
-const mockedEndSleep = vi.mocked(endSleep)
 const mockedDeleteLog = vi.mocked(deleteLog)
 const mockedToast = vi.mocked(toast)
-
-function activeSleepLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
-  return {
-    id: "sleep-1",
-    log_type: "sleep",
-    logged_at: "2026-07-19T08:30:00Z",
-    logged_by: "user-1",
-    feeding_type: null,
-    amount_ml: null,
-    breast_left_count: null,
-    breast_right_count: null,
-    breast_left_sec: null,
-    breast_right_sec: null,
-    diaper_type: null,
-    ended_at: null,
-    temperature: null,
-    weight_g: null,
-    height_cm: null,
-    duration_min: null,
-    duration_sec: null,
-    memo: null,
-    created_at: "2026-07-19T08:30:00Z",
-    ...overrides,
-  }
-}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -87,8 +56,6 @@ describe("BabyQuickActions の通信断 reject 握り（B-07）", () => {
     render(
       <BabyQuickActions
         userId="u1"
-        activeSleep={null}
-        now={new Date()}
         onCreateLog={() => {}}
         onStartTimer={() => {}}
         onCreateFeeding={() => {}}
@@ -106,53 +73,12 @@ describe("BabyQuickActions の通信断 reject 握り（B-07）", () => {
     render(
       <BabyQuickActions
         userId="u1"
-        activeSleep={null}
-        now={new Date()}
         onCreateLog={() => {}}
         onStartTimer={() => {}}
         onCreateFeeding={() => {}}
       />,
     )
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
-    await waitFor(() =>
-      expect(mockedToast.error).toHaveBeenCalledWith(OFFLINE_MESSAGE),
-    )
-    expect(mockedToast.success).not.toHaveBeenCalled()
-  })
-
-  it("睡眠開始（ねんね）が reject → 圏外トースト", async () => {
-    mockedStartSleep.mockRejectedValue(new Error("network down"))
-    render(
-      <BabyQuickActions
-        userId="u1"
-        activeSleep={null}
-        now={new Date()}
-        onCreateLog={() => {}}
-        onStartTimer={() => {}}
-        onCreateFeeding={() => {}}
-      />,
-    )
-    fireEvent.click(screen.getByRole("button", { name: "ねんね" }))
-    await waitFor(() =>
-      expect(mockedToast.error).toHaveBeenCalledWith(OFFLINE_MESSAGE),
-    )
-    expect(mockedToast.success).not.toHaveBeenCalled()
-  })
-
-  it("睡眠終了（起こす）が reject → 圏外トースト", async () => {
-    mockedEndSleep.mockRejectedValue(new Error("network down"))
-    // logged_at 08:30 / now 10:00 = 90 分経過 → トグルの表示名は「1時間30分」
-    render(
-      <BabyQuickActions
-        userId="u1"
-        activeSleep={activeSleepLog()}
-        now={new Date("2026-07-19T10:00:00Z")}
-        onCreateLog={() => {}}
-        onStartTimer={() => {}}
-        onCreateFeeding={() => {}}
-      />,
-    )
-    fireEvent.click(screen.getByRole("button", { name: "1時間30分" }))
     await waitFor(() =>
       expect(mockedToast.error).toHaveBeenCalledWith(OFFLINE_MESSAGE),
     )
@@ -166,8 +92,6 @@ describe("BabyQuickActions の通信断 reject 握り（B-07）", () => {
     render(
       <BabyQuickActions
         userId="u1"
-        activeSleep={null}
-        now={new Date()}
         onCreateLog={() => {}}
         onStartTimer={() => {}}
         onCreateFeeding={() => {}}
@@ -192,8 +116,6 @@ describe("BabyQuickActions の押し間違い取り消し", () => {
     mockedDeleteLog.mockResolvedValue({ error: null })
     render(
       <BabyQuickActions
-        activeSleep={null}
-        now={new Date()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -217,8 +139,6 @@ describe("BabyQuickActions の押し間違い取り消し", () => {
     mockedRecordDiaper.mockResolvedValue({ error: null, id: "log-2" })
     render(
       <BabyQuickActions
-        activeSleep={null}
-        now={new Date()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -240,8 +160,6 @@ describe("BabyQuickActions の押し間違い取り消し", () => {
     } as unknown as Awaited<ReturnType<typeof recordFeeding>>)
     render(
       <BabyQuickActions
-        activeSleep={null}
-        now={new Date()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -260,8 +178,6 @@ describe("BabyQuickActions の楽観 append (B-03)", () => {
     const onLogRecorded = vi.fn<(log: BabyLogData) => void>()
     render(
       <BabyQuickActions
-        activeSleep={null}
-        now={new Date()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -279,80 +195,12 @@ describe("BabyQuickActions の楽観 append (B-03)", () => {
     expect(log.logged_by).toBe("u1")
   })
 
-  it("睡眠開始成功で onLogRecorded に ended_at=null の sleep 行を渡す", async () => {
-    mockedStartSleep.mockResolvedValue({ error: null, id: "sleep-33" })
-    const onLogRecorded = vi.fn<(log: BabyLogData) => void>()
-    render(
-      <BabyQuickActions
-        activeSleep={null}
-        now={new Date()}
-        userId="u1"
-        onCreateLog={() => {}}
-        onStartTimer={() => {}}
-        onCreateFeeding={() => {}}
-        onLogRecorded={onLogRecorded}
-      />,
-    )
-
-    fireEvent.click(screen.getByRole("button", { name: "ねんね" }))
-    await waitFor(() => expect(onLogRecorded).toHaveBeenCalledTimes(1))
-    const log = onLogRecorded.mock.calls[0][0]
-    expect(log.id).toBe("sleep-33")
-    expect(log.log_type).toBe("sleep")
-    expect(log.ended_at).toBeNull()
-  })
-
-  it("睡眠終了成功で onSleepEnded(id, endedAt) を渡す（logs の楽観更新用）", async () => {
-    const activeSleep: BabyLogData = {
-      id: "sleep-active",
-      log_type: "sleep",
-      logged_at: "2026-07-19T00:00:00+09:00",
-      logged_by: "u1",
-      feeding_type: null,
-      amount_ml: null,
-      breast_left_count: null,
-      breast_right_count: null,
-      breast_left_sec: null,
-      breast_right_sec: null,
-      diaper_type: null,
-      ended_at: null,
-      temperature: null,
-      weight_g: null,
-      height_cm: null,
-      duration_min: null,
-      duration_sec: null,
-      memo: null,
-      created_at: "2026-07-19T00:00:00+09:00",
-    }
-    mockedEndSleep.mockResolvedValue({ error: null })
-    const onSleepEnded = vi.fn<(id: string, endedAt: string) => void>()
-    render(
-      <BabyQuickActions
-        activeSleep={activeSleep}
-        now={new Date()}
-        userId="u1"
-        onCreateLog={() => {}}
-        onStartTimer={() => {}}
-        onCreateFeeding={() => {}}
-        onSleepEnded={onSleepEnded}
-      />,
-    )
-
-    fireEvent.click(screen.getByRole("button", { name: /(時間|分|起こす)/ }))
-    await waitFor(() => expect(mockedEndSleep).toHaveBeenCalledWith("sleep-active"))
-    expect(onSleepEnded).toHaveBeenCalledTimes(1)
-    expect(onSleepEnded.mock.calls[0][0]).toBe("sleep-active")
-    expect(typeof onSleepEnded.mock.calls[0][1]).toBe("string")
-  })
-
   it("Undo 成功で onLogRemoved(id) を渡す", async () => {
     mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-77" })
     mockedDeleteLog.mockResolvedValue({ error: null })
     const onLogRemoved = vi.fn<(id: string) => void>()
     render(
       <BabyQuickActions
-        activeSleep={null}
-        now={new Date()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -373,8 +221,6 @@ describe("BabyQuickActions の搾乳導線", () => {
     const onCreateFeeding = vi.fn<(type: FeedingType) => void>()
     render(
       <BabyQuickActions
-        activeSleep={null}
-        now={new Date()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}

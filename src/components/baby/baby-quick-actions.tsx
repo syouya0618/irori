@@ -1,16 +1,13 @@
 "use client"
 
 import { useTransition } from "react"
-import { Loader2, Moon, Sun, Thermometer, Ruler, StickyNote } from "lucide-react"
+import { Thermometer, Ruler, StickyNote } from "lucide-react"
 import { toast } from "sonner"
 import {
   recordFeeding,
   recordDiaper,
-  startSleep,
-  endSleep,
   deleteLog,
 } from "@/app/(main)/baby/actions"
-import { formatElapsedMinutes, minutesBetween } from "@/lib/utils/baby-log-labels"
 import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
 import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
 import type { BabyLogData } from "@/lib/types/baby"
@@ -45,19 +42,12 @@ function toastOfflineError(context: string, err: unknown) {
 }
 
 interface BabyQuickActionsProps {
-  activeSleep: BabyLogData | null
-  now: Date
   /** 記録者（logged_by）。楽観 append 行の作成に使う（B-03） */
   userId: string
   onCreateLog: (type: BabyLogType) => void
   /** 搾乳など量ベースの授乳を create シートで開く（母乳のタイマー導線とは別） */
   onCreateFeeding: (type: FeedingType) => void
   onStartTimer: (type: FeedingType) => void
-  /**
-   * endSleep 成功時に呼ばれる（B-01: 日跨ぎフォールバックの明示クリア +
-   * B-03: logs 側の該当睡眠へ ended_at を楽観反映）。id と適用した ended_at を渡す。
-   */
-  onSleepEnded?: (id: string, endedAt: string) => void
   /**
    * 記録成功時に楽観 append する行を親へ渡す（B-03）。Realtime 単一経路を脱し、
    * #92 不達下でも timeline/回数を即時更新する。既存 echo は id 重複で吸収。
@@ -71,13 +61,10 @@ interface BabyQuickActionsProps {
 }
 
 export function BabyQuickActions({
-  activeSleep,
-  now,
   userId,
   onCreateLog,
   onCreateFeeding,
   onStartTimer,
-  onSleepEnded,
   onLogRecorded,
   onLogRemoved,
 }: BabyQuickActionsProps) {
@@ -176,52 +163,6 @@ export function BabyQuickActions({
     })
   }
 
-  function handleSleepToggle() {
-    startTransition(async () => {
-      try {
-        if (activeSleep) {
-          const result = await endSleep(activeSleep.id)
-          if (result.error) {
-            toast.error(result.error)
-            return
-          }
-          // B-01/B-03: フォールバックの明示クリア + logs 側の睡眠へ ended_at を楽観反映
-          // （Server Action 応答ベース = Realtime 不達 #92 でもトグルが「睡眠中」に張り付かない）
-          const endedAt = new Date().toISOString()
-          onSleepEnded?.(activeSleep.id, endedAt)
-          const mins = minutesBetween(activeSleep.logged_at, endedAt)
-          toast.success(`おはよう！（${formatElapsedMinutes(mins)}）`)
-        } else {
-          const result = await startSleep()
-          if (result.error) {
-            toast.error(result.error)
-            return
-          }
-          // B-03: 睡眠開始も楽観 append。serverActiveSleep（B-01・日跨ぎ用の別 state）とは
-          // 別で、同日開始の睡眠は logs に入る。deriveDashboardSummary が logs 優先ゆえ
-          // トグルが即「起こす」へ。id dedupe により echo/serverActiveSleep と二重にならない。
-          if (result.id) {
-            onLogRecorded?.(
-              buildOptimisticLog({
-                id: result.id,
-                logType: "sleep",
-                loggedBy: userId,
-                // ended_at は未設定 = アクティブ睡眠
-              }),
-            )
-          }
-          toast.success("おやすみなさい")
-        }
-      } catch (err) {
-        toastOfflineError("sleepToggle", err)
-      }
-    })
-  }
-
-  const sleepElapsed = activeSleep
-    ? minutesBetween(activeSleep.logged_at, now.toISOString())
-    : null
-
   return (
     <div className="flex flex-col gap-3">
       {/* Feeding */}
@@ -243,58 +184,22 @@ export function BabyQuickActions({
         </div>
       </div>
 
-      <div className="flex gap-3">
-        {/* Diaper */}
-        <div className="flex-1 space-y-1.5">
-          <span className="px-1 text-xs font-semibold text-muted-foreground">
-            おむつ
-          </span>
-          <div className="flex gap-1.5">
-            {DIAPER_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => handleDiaper(opt.value)}
-                disabled={isPending}
-                className="flex min-h-11 flex-1 items-center justify-center rounded-xl bg-sky-50 text-sm font-medium text-sky-800 transition-colors duration-200 hover:bg-sky-100 active:bg-sky-200 disabled:opacity-50 dark:bg-sky-900/30 dark:text-sky-200 dark:hover:bg-sky-900/50 dark:active:bg-sky-900/70"
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Sleep toggle */}
-        <div className="w-28 space-y-1.5">
-          <span className="px-1 text-xs font-semibold text-muted-foreground">
-            睡眠
-          </span>
-          <button
-            onClick={handleSleepToggle}
-            disabled={isPending}
-            className={`flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl text-sm font-medium transition-colors duration-200 disabled:opacity-50 ${
-              activeSleep
-                ? "bg-violet-100 text-violet-800 hover:bg-violet-200 active:bg-violet-300 dark:bg-violet-900/30 dark:text-violet-200 dark:hover:bg-violet-900/50 dark:active:bg-violet-900/70"
-                : "bg-emerald-50 text-emerald-800 hover:bg-emerald-100 active:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:hover:bg-emerald-900/50 dark:active:bg-emerald-900/70"
-            }`}
-          >
-            {isPending ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : activeSleep ? (
-              <>
-                <Sun size={16} />
-                <span className="font-mono text-xs">
-                  {sleepElapsed !== null
-                    ? formatElapsedMinutes(sleepElapsed)
-                    : "起こす"}
-                </span>
-              </>
-            ) : (
-              <>
-                <Moon size={16} />
-                ねんね
-              </>
-            )}
-          </button>
+      {/* Diaper */}
+      <div className="space-y-1.5">
+        <span className="px-1 text-xs font-semibold text-muted-foreground">
+          おむつ
+        </span>
+        <div className="flex gap-1.5">
+          {DIAPER_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => handleDiaper(opt.value)}
+              disabled={isPending}
+              className="flex min-h-11 flex-1 items-center justify-center rounded-xl bg-sky-50 text-sm font-medium text-sky-800 transition-colors duration-200 hover:bg-sky-100 active:bg-sky-200 disabled:opacity-50 dark:bg-sky-900/30 dark:text-sky-200 dark:hover:bg-sky-900/50 dark:active:bg-sky-900/70"
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
       </div>
 

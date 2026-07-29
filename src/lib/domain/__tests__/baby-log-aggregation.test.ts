@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest"
 import {
   aggregateFeedings,
-  aggregateSleep,
   aggregateDiapers,
   sumDiaperBreakdown,
   extractTemperatures,
@@ -29,7 +28,6 @@ function mkLog(
     feeding_type: null,
     amount_ml: null,
     diaper_type: null,
-    ended_at: null,
     temperature: null,
     weight_g: null,
     height_cm: null,
@@ -182,74 +180,6 @@ describe("aggregateFeedings", () => {
     expect(result).toHaveLength(2)
     expect(result[0].date).toBe("2026-04-10")
     expect(result[1].date).toBe("2026-04-11")
-  })
-})
-
-// ─── aggregateSleep ─────────────────────────────────────
-
-describe("aggregateSleep", () => {
-  it("空ログ → 空配列", () => {
-    expect(aggregateSleep([], START, END)).toEqual([])
-  })
-
-  it("完了した睡眠の合計時間を算出", () => {
-    const start1 = new Date("2026-04-11T00:00:00Z") // JST 09:00
-    const end1 = new Date("2026-04-11T01:30:00Z")   // JST 10:30 → 90分
-    const start2 = new Date("2026-04-11T05:00:00Z")  // JST 14:00
-    const end2 = new Date("2026-04-11T06:00:00Z")    // JST 15:00 → 60分
-
-    const logs: AggregationLogInput[] = [
-      { ...mkLog("sleep", 0), logged_at: start1.toISOString(), ended_at: end1.toISOString() },
-      { ...mkLog("sleep", 0), logged_at: start2.toISOString(), ended_at: end2.toISOString() },
-    ]
-    const result = aggregateSleep(logs, START, END)
-    expect(result).toHaveLength(1)
-    expect(result[0].totalMinutes).toBe(150)
-    expect(result[0].sessionCount).toBe(2)
-  })
-
-  it("未完了の睡眠（ended_at なし）は時間・セッション数に含めない", () => {
-    // B-02: 按分後は「完了睡眠が重なる日」のみ行を返す。未完了のみの日は行が出ない。
-    const start = new Date("2026-04-11T00:00:00Z") // JST 09:00
-    const end = new Date("2026-04-11T01:00:00Z") // JST 10:00 → 60分
-    const logs: AggregationLogInput[] = [
-      { ...mkLog("sleep", 0), logged_at: start.toISOString(), ended_at: end.toISOString() },
-      mkLog("sleep", 2), // 未完了（ended_at = null）は加算されない
-    ]
-    const result = aggregateSleep(logs, START, END)
-    expect(result).toHaveLength(1)
-    expect(result[0].totalMinutes).toBe(60)
-    expect(result[0].sessionCount).toBe(1)
-  })
-
-  it("日跨ぎ睡眠は開始日・終了日へ JST 窓で按分する（AUDIT-019/072）", () => {
-    // 2026-04-10 19:30 JST → 2026-04-11 06:30 JST（合計 660 分）
-    const logs: AggregationLogInput[] = [
-      {
-        ...mkLog("sleep", 0),
-        logged_at: "2026-04-10T19:30:00+09:00",
-        ended_at: "2026-04-11T06:30:00+09:00",
-      },
-    ]
-    const result = aggregateSleep(logs, START, END)
-    const byDate = new Map(result.map((d) => [d.date, d.totalMinutes]))
-    // 開始日は 19:30→24:00 = 270 分、終了日は 00:00→06:30 = 390 分
-    expect(byDate.get("2026-04-10")).toBe(270)
-    expect(byDate.get("2026-04-11")).toBe(390)
-  })
-
-  it("集計開始日より前に始まった睡眠も範囲内の重なりだけ計上する（AUDIT-067 窓端）", () => {
-    // START = 2026-04-04。前日 04-03 22:00 開始 → 04-04 01:30 終了（90分は窓内）
-    const logs: AggregationLogInput[] = [
-      {
-        ...mkLog("sleep", 0),
-        logged_at: "2026-04-03T22:00:00+09:00",
-        ended_at: "2026-04-04T01:30:00+09:00",
-      },
-    ]
-    const result = aggregateSleep(logs, START, END)
-    const byDate = new Map(result.map((d) => [d.date, d.totalMinutes]))
-    expect(byDate.get("2026-04-04")).toBe(90)
   })
 })
 
@@ -479,8 +409,6 @@ describe("summarizeTodayCounts", () => {
     expect(summarizeTodayCounts([], TODAY)).toEqual({
       feedingCount: 0,
       diaperCount: 0,
-      sleepCount: 0,
-      totalSleepMinutes: 0,
       peeCount: 0,
       poopCount: 0,
       breastCycleCount: 0,
@@ -490,24 +418,15 @@ describe("summarizeTodayCounts", () => {
     })
   })
 
-  it("授乳2・おむつ1(pee)・完了睡眠90分1・進行中睡眠1 を集計", () => {
+  it("授乳2・おむつ1(pee) を集計", () => {
     const logs = [
       mkLog("feeding", 1, { feeding_type: "breast_left" }),
       mkLog("feeding", 3, { feeding_type: "bottle", amount_ml: 120 }),
       mkLog("diaper", 2, { diaper_type: "pee" }),
-      // 完了睡眠: 90分（logged_at → ended_at）
-      {
-        ...mkLog("sleep", 5),
-        ended_at: new Date(BASE.getTime() - 3.5 * 3600_000).toISOString(),
-      },
-      // 進行中睡眠（ended_at なし）は睡眠時間に含めない
-      mkLog("sleep", 0),
     ]
     expect(summarizeTodayCounts(logs, TODAY)).toEqual({
       feedingCount: 2,
       diaperCount: 1,
-      sleepCount: 1,
-      totalSleepMinutes: 90,
       peeCount: 1,
       poopCount: 0,
       // 内訳: breast_left 1件（母乳系）+ bottle 1件
@@ -518,71 +437,26 @@ describe("summarizeTodayCounts", () => {
     })
   })
 
-  it("進行中睡眠のみなら睡眠回数・時間は 0", () => {
-    const logs = [mkLog("sleep", 0)]
-    expect(summarizeTodayCounts(logs, TODAY)).toEqual({
-      feedingCount: 0,
-      diaperCount: 0,
-      sleepCount: 0,
-      totalSleepMinutes: 0,
-      peeCount: 0,
-      poopCount: 0,
-      breastCycleCount: 0,
-      bottleCount: 0,
-      pumpedCount: 0,
-      solidCount: 0,
-    })
-  })
-
-  it("前夜開始の日跨ぎ睡眠は当日窓分だけ按分計上する（22:00→翌06:30 で 390分）", () => {
-    // B-02 core: 前日開始の overlap 睡眠を入力に合流させても当日分（390分）のみ数える。
-    const logs: Pick<
-      AggregationLogInput,
-      "log_type" | "logged_at" | "ended_at" | "diaper_type" | "feeding_type"
-    >[] = [
-      {
-        log_type: "sleep",
-        logged_at: "2026-04-11T22:00:00+09:00",
-        ended_at: "2026-04-12T06:30:00+09:00",
-        diaper_type: null,
-        feeding_type: null,
-      },
-    ]
-    // 翌日（2026-04-12）視点: 00:00→06:30 = 390分
-    expect(summarizeTodayCounts(logs, "2026-04-12")).toMatchObject({
-      sleepCount: 1,
-      totalSleepMinutes: 390,
-    })
-    // 開始日（2026-04-11）視点: 22:00→24:00 = 120分
-    expect(summarizeTodayCounts(logs, "2026-04-11")).toMatchObject({
-      sleepCount: 1,
-      totalSleepMinutes: 120,
-    })
-  })
-
   it("feeding/diaper も date 当日分のみ数える（前日ログは混ぜても加算しない）", () => {
     const logs: Pick<
       AggregationLogInput,
-      "log_type" | "logged_at" | "ended_at" | "diaper_type" | "feeding_type"
+      "log_type" | "logged_at" | "diaper_type" | "feeding_type"
     >[] = [
       {
         log_type: "feeding",
         logged_at: "2026-04-11T08:00:00+09:00",
-        ended_at: null,
         diaper_type: null,
         feeding_type: "bottle",
       },
       {
         log_type: "feeding",
         logged_at: "2026-04-10T23:00:00+09:00",
-        ended_at: null,
         diaper_type: null,
         feeding_type: "bottle",
       }, // 前日
       {
         log_type: "diaper",
         logged_at: "2026-04-11T09:00:00+09:00",
-        ended_at: null,
         diaper_type: "poop",
         feeding_type: null,
       },
@@ -590,7 +464,6 @@ describe("summarizeTodayCounts", () => {
       {
         log_type: "diaper",
         logged_at: "2026-04-10T09:00:00+09:00",
-        ended_at: null,
         diaper_type: "pee",
         feeding_type: null,
       },
@@ -668,19 +541,17 @@ describe("summarizeTodayCounts", () => {
   it("種別内訳も date 当日分のみ数える（前日の breast 行は加算しない）", () => {
     const logs: Pick<
       AggregationLogInput,
-      "log_type" | "logged_at" | "ended_at" | "diaper_type" | "feeding_type"
+      "log_type" | "logged_at" | "diaper_type" | "feeding_type"
     >[] = [
       {
         log_type: "feeding",
         logged_at: "2026-04-11T08:00:00+09:00",
-        ended_at: null,
         diaper_type: null,
         feeding_type: "breast",
       },
       {
         log_type: "feeding",
         logged_at: "2026-04-10T23:00:00+09:00",
-        ended_at: null,
         diaper_type: null,
         feeding_type: "breast",
       }, // 前日

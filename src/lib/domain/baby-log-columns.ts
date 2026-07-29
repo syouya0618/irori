@@ -16,4 +16,4 @@
  * ため、両者は常に対で更新すること。
  */
 export const BABY_LOG_COLUMNS =
-  "id, log_type, logged_at, logged_by, feeding_type, amount_ml, breast_left_count, breast_right_count, breast_left_sec, breast_right_sec, diaper_type, ended_at, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at"
+  "id, log_type, logged_at, logged_by, feeding_type, amount_ml, breast_left_count, breast_right_count, breast_left_sec, breast_right_sec, diaper_type, temperature, weight_g, height_cm, duration_min, duration_sec, memo, created_at"
