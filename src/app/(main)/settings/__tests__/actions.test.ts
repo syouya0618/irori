@@ -7,19 +7,40 @@ vi.mock("@/lib/supabase/auth-context", () => ({
   getAuthContext: () => getAuthContext(),
 }))
 
-import { updateBabyProfile } from "../actions"
+import {
+  updateAutoStockCategories,
+  updateBabyProfile,
+  updateDefaultPage,
+  updateProfile,
+} from "../actions"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { todayJstString, shiftYmd } from "@/lib/utils/date-jst"
 
 const mockedLog = vi.mocked(logSupabaseError)
 const HOUSEHOLD = "house-1"
 
-/** update().eq() を模した fake client（settings は select/single を挟まない）。 */
-function makeSupabase(updateResult: { error: unknown }) {
-  const eq = vi.fn().mockResolvedValue(updateResult)
+/**
+ * update().eq().select() を模した fake client。
+ *
+ * `.update()` は 0 行更新でも error: null を返すため、settings の全 update は
+ * `.select("id")` で更新行を要求する契約に揃えた。ゆえに `eq` は **thenable に
+ * しない**（`{ select }` だけを返す）。await 可能にすると実装が `.select()` を
+ * 忘れても素通りしてしまい、この mock が契約を守らせられなくなる。
+ *
+ * rows は returning される行。0 行 = 更新対象なし（RLS 拒否・別世帯）を表す。
+ */
+function makeSupabase(
+  updateResult: { error: unknown },
+  rows: Array<{ id: string }> = [{ id: HOUSEHOLD }],
+) {
+  const select = vi.fn().mockResolvedValue({
+    data: updateResult.error ? null : rows,
+    error: updateResult.error,
+  })
+  const eq = vi.fn(() => ({ select }))
   const update = vi.fn(() => ({ eq }))
   const from = vi.fn(() => ({ update }))
-  return { client: { from }, update }
+  return { client: { from }, update, select }
 }
 
 function setContext(supabase: unknown) {
@@ -150,5 +171,62 @@ describe("updateBabyProfile: 授乳間隔", () => {
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ feeding_interval_min: 180 }),
     )
+  })
+})
+
+describe("settings の update: 0 行更新を成功と偽らない", () => {
+  it("updateBabyProfile: 0 行更新（RLS 拒否・別世帯）はエラーを返す", async () => {
+    const { client, select } = makeSupabase({ error: null }, [])
+    setContext(client)
+    const result = await updateBabyProfile(form("あかり"))
+    expect(result).toEqual({ error: "赤ちゃん情報の更新に失敗しました" })
+    // .select("id") を通っていること（行数検証が実在すること）を固定する。
+    expect(select).toHaveBeenCalledWith("id")
+  })
+
+  it("updateProfile: 0 行更新はエラーを返す", async () => {
+    const { client, select } = makeSupabase({ error: null }, [])
+    setContext(client)
+    const fd = new FormData()
+    fd.set("display_name", "ホロ")
+    const result = await updateProfile(fd)
+    expect(result).toEqual({ error: "プロフィールの更新に失敗しました" })
+    expect(select).toHaveBeenCalledWith("id")
+  })
+
+  it("updateProfile: 1 行更新なら成功", async () => {
+    const { client } = makeSupabase({ error: null }, [{ id: "user-1" }])
+    setContext(client)
+    const fd = new FormData()
+    fd.set("display_name", "ホロ")
+    expect(await updateProfile(fd)).toEqual({ success: true })
+  })
+
+  it("updateDefaultPage: 0 行更新はエラーを返す", async () => {
+    const { client } = makeSupabase({ error: null }, [])
+    setContext(client)
+    expect(await updateDefaultPage("meals")).toEqual({
+      error: "設定の更新に失敗しました",
+    })
+  })
+
+  it("updateDefaultPage: 1 行更新なら成功", async () => {
+    const { client } = makeSupabase({ error: null }, [{ id: "user-1" }])
+    setContext(client)
+    expect(await updateDefaultPage("meals")).toEqual({ success: true })
+  })
+
+  it("updateAutoStockCategories: 0 行更新はエラーを返す", async () => {
+    const { client } = makeSupabase({ error: null }, [])
+    setContext(client)
+    expect(await updateAutoStockCategories(["baby"])).toEqual({
+      error: "設定の更新に失敗しました",
+    })
+  })
+
+  it("updateAutoStockCategories: 1 行更新なら成功", async () => {
+    const { client } = makeSupabase({ error: null })
+    setContext(client)
+    expect(await updateAutoStockCategories(["baby"])).toEqual({ success: true })
   })
 })

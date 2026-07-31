@@ -92,14 +92,24 @@ export async function updateStockItem(itemId: string, formData: FormData) {
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
 
-  const { error } = await supabase
+  // .update() は 0 行更新でも error: null を返す（別世帯・不在 id なら 0 行マッチ）。
+  // .select("id") で更新行を要求し、0 行を「成功」と偽らないようにする。
+  const { data, error } = await supabase
     .from("stock_items")
     .update(parsed)
     .eq("id", itemId)
     .eq("household_id", householdId)
+    .select("id")
 
   if (error) {
+    logSupabaseError("stock", "update stock item failed", error, {
+      itemId,
+      householdId,
+    })
     return { error: "在庫の更新に失敗しました" }
+  }
+  if (!data || data.length === 0) {
+    return { error: "在庫の更新に失敗しました（対象が見つかりません）" }
   }
 
   revalidatePath("/stock")
@@ -111,14 +121,26 @@ export async function deleteStockItem(itemId: string) {
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
 
-  const { error } = await supabase
+  // .delete() は 0 行削除でも error: null を返す（別世帯・不在 id なら 0 行マッチ）。
+  // .select("id") で削除行を要求し、0 行を「成功」と偽らないようにする
+  // （calendar/actions.ts の deleteCalendarEvent と同じ形）。呼び出し側の
+  // 楽観削除はこの error を見て巻き戻す。
+  const { data, error } = await supabase
     .from("stock_items")
     .delete()
     .eq("id", itemId)
     .eq("household_id", householdId)
+    .select("id")
 
   if (error) {
+    logSupabaseError("stock", "delete stock item failed", error, {
+      itemId,
+      householdId,
+    })
     return { error: "削除に失敗しました" }
+  }
+  if (!data || data.length === 0) {
+    return { error: "削除に失敗しました（既に削除されている可能性があります）" }
   }
 
   revalidatePath("/stock")

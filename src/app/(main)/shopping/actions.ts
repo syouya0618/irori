@@ -84,6 +84,10 @@ export async function toggleItem(itemId: string, isChecked: boolean) {
     .single()
 
   if (error) {
+    logSupabaseError("shopping", "toggle item failed", error, {
+      itemId,
+      householdId,
+    })
     return { error: "更新に失敗しました" }
   }
 
@@ -104,8 +108,27 @@ export async function toggleItem(itemId: string, isChecked: boolean) {
         autoStocked = true
         autoStockedName = updatedItem.name
       }
-    } catch {
-      // auto-stockの失敗はチェック操作自体には影響させない
+    } catch (e) {
+      // auto-stock の失敗はチェック操作自体には影響させない。ただし握り潰さず
+      // 構造化ログへ残す（Supabase の error は class Error を継承しない plain
+      // object ゆえ String(e) は "[object Object]" になる。個別フィールドを読む）。
+      const err = e as Partial<{
+        message: string
+        code: string
+        details: string
+        hint: string
+        status: number
+      }>
+      console.error("[shopping] auto stock threw", {
+        itemId,
+        householdId,
+        message: err?.message,
+        code: err?.code,
+        details: err?.details,
+        hint: err?.hint,
+        status: err?.status,
+        raw: err?.message ? undefined : JSON.stringify(e),
+      })
     }
   }
 
@@ -120,14 +143,27 @@ export async function deleteItem(itemId: string) {
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
 
-  const { error } = await supabase
+  // .delete() は 0 行削除でも error: null を返す（別世帯・不在 id なら 0 行マッチ）。
+  // .select("id") で削除行を要求し、0 行を「成功」と偽らないようにする
+  // （calendar/actions.ts の deleteCalendarEvent と同じ形）。呼び出し側の
+  // 楽観削除はこの error を見て巻き戻すため、ここが success を返すと
+  // 「消えたように見えて消えていない」表示が残る。
+  const { data, error } = await supabase
     .from("shopping_items")
     .delete()
     .eq("id", itemId)
     .eq("household_id", householdId)
+    .select("id")
 
   if (error) {
+    logSupabaseError("shopping", "delete item failed", error, {
+      itemId,
+      householdId,
+    })
     return { error: "削除に失敗しました" }
+  }
+  if (!data || data.length === 0) {
+    return { error: "削除に失敗しました（既に削除されている可能性があります）" }
   }
 
   revalidatePath("/shopping")
@@ -176,18 +212,30 @@ export async function clearChecked() {
   }
 
   // チェック済みアイテムを削除
-  const { error: deleteError } = await supabase
+  // .delete() は 0 行削除でも error: null を返す。上の SELECT で 1 件以上ある
+  // ことを確認済みゆえ、0 行は「RLS で弾かれた」「他端末が先に消した」等の
+  // 異常系じゃ。silent な success: true にせずエラーを返す（0 行なら UI 側も
+  // 消すものが無いため、エラー表示のほうが実態に合う）。
+  const { data: deleted, error: deleteError } = await supabase
     .from("shopping_items")
     .delete()
     .eq("household_id", householdId)
     .eq("is_checked", true)
+    .select("id")
 
   if (deleteError) {
+    logSupabaseError("shopping", "clear checked failed", deleteError, {
+      householdId,
+    })
+    return { error: "チェック済みアイテムの削除に失敗しました" }
+  }
+  if (!deleted || deleted.length === 0) {
     return { error: "チェック済みアイテムの削除に失敗しました" }
   }
 
   revalidatePath("/shopping")
-  return { success: true, count: checkedItems.length }
+  // count は実際に削除した行数を返す（事前 SELECT の件数は削除の実績ではない）。
+  return { success: true, count: deleted.length }
 }
 
 // ─── 献立から食材を生成 ──────────────────────────────────

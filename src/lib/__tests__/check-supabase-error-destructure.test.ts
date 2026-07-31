@@ -203,4 +203,129 @@ describe("check-supabase-error-destructure.py", () => {
     expect(res.status).toBe(0)
     expect(res.stdout).toContain("violation.ts")
   })
+
+  // ── pass C: 書き込み (insert/update/upsert/delete) ────────────────────
+  // 従来アンカーは `.single()` と `.(select|rpc)(` のみで、
+  // `await supabase.from(x).delete().eq(...)` は 1 件も走査されなかった。
+
+  it("ケース8: bare な書き込み statement を検出する（誰も error を受け取らない）", () => {
+    write(
+      "bare-write.ts",
+      `export async function remove(supabase: unknown, id: string) {
+  await supabase.from("meal_ingredients").delete().eq("meal_id", id)
+}
+`,
+    )
+    const res = runScript(dir, true)
+    expect(res.status).toBe(1)
+    const hits = linesFor(res.stdout, "bare-write.ts")
+    expect(hits).toHaveLength(1)
+    expect(hits[0]).toContain(".delete()")
+  })
+
+  it("ケース9: 改行チェーンの bare な書き込みも検出する", () => {
+    write(
+      "bare-write-chain.ts",
+      `export async function unlink(supabase: unknown, id: string) {
+  await supabase
+    .from("meals")
+    .update({ template_id: null })
+    .eq("template_id", id)
+}
+`,
+    )
+    const res = runScript(dir, true)
+    expect(res.status).toBe(1)
+    expect(linesFor(res.stdout, "bare-write-chain.ts")).toHaveLength(1)
+  })
+
+  it("ケース10: 書き込みで error を受け取っていれば検出しない (exit 0)", () => {
+    write(
+      "write-ok.ts",
+      `export async function remove(supabase: unknown, id: string) {
+  const { error } = await supabase
+    .from("meals")
+    .delete()
+    .eq("id", id)
+  if (error) throw error
+}
+`,
+    )
+    const res = runScript(dir, true)
+    expect(res.status).toBe(0)
+    expect(res.stdout).toContain("OK")
+  })
+
+  it("ケース11: 書き込みの destructure で error 欠落を検出する", () => {
+    write(
+      "write-no-error.ts",
+      `export async function add(supabase: unknown, row: unknown) {
+  const { data } = await supabase.from("stock_items").insert(row)
+  return data
+}
+`,
+    )
+    const res = runScript(dir, true)
+    expect(res.status).toBe(1)
+    expect(linesFor(res.stdout, "write-no-error.ts")).toHaveLength(1)
+  })
+
+  it("ケース12: 書き込み + .select() の destructure は pass B が担当し二重報告しない", () => {
+    write(
+      "write-select.ts",
+      `export async function remove(supabase: unknown, id: string) {
+  const { data } = await supabase
+    .from("shopping_items")
+    .delete()
+    .eq("id", id)
+    .select("id")
+  return data
+}
+`,
+    )
+    const res = runScript(dir, true)
+    expect(res.status).toBe(1)
+    // 違反は 1 件のみ（pass B が `.select(` 行で報告。pass C は dedup で黙る）。
+    const hits = linesFor(res.stdout, "write-select.ts")
+    expect(hits).toHaveLength(1)
+    expect(hits[0]).toContain('.select("id")')
+  })
+
+  it("ケース13: supabase ではない .delete()/.update() は誤検出しない (exit 0)", () => {
+    write(
+      "non-supabase-write.ts",
+      `export function prune(set: Set<string>, key: string) {
+  set.delete(key)
+}
+
+export async function refresh(registration: { update(): Promise<void> }) {
+  await registration.update()
+}
+`,
+    )
+    const res = runScript(dir, true)
+    expect(res.status).toBe(0)
+    expect(res.stdout).toContain("OK")
+    // 走査対象にも数えない（checked が誤検出で水増しされないこと）。
+    expect(res.stdout).toContain("(write): 0")
+  })
+
+  it("ケース14: checked は走査数を pass 別に出す（アンカー全滅の偽緑を見破る）", () => {
+    write(
+      "counted.ts",
+      `export async function mixed(supabase: unknown, id: string) {
+  const { data: a, error: aE } = await supabase.from("t").select("id")
+  const { data: b, error: bE } = await supabase.from("t").select("id").eq("id", id).single()
+  const { error: cE } = await supabase.from("t").delete().eq("id", id)
+  return [a, aE, b, bE, cE]
+}
+`,
+    )
+    const res = runScript(dir, true)
+    expect(res.status).toBe(0)
+    // write アンカーが死ねば "(write): 0" になり、この assert が赤くなる。
+    expect(res.stdout).toMatch(/checked \(single\): [1-9]/)
+    expect(res.stdout).toMatch(/\(multi-row\): [1-9]/)
+    expect(res.stdout).toMatch(/\(write\): [1-9]/)
+  })
 })

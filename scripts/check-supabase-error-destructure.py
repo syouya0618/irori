@@ -7,12 +7,33 @@ Supabase の error は class Error を継承しない plain object で、クエ�
 silent fail を作るため、`{ data, error }` で受け取り早期 log/throw すること
 (learnings.md L55, inventory-hub で 3 日間真因隠匿の事例あり)。
 
-検出対象は 2 種類:
+検出対象は 3 種類:
   A. single-row:  `.single()` / `.maybeSingle()` を含む destructure
-  B. multi-row:   `.single()` を含まない supabase 読み取り/書き込みクエリ
+  B. multi-row:   `.single()` を含まない supabase 読み取りクエリ
                   (`supabase....select(...)` または `supabase....rpc(...)`)。
                   PR #31 で baby/meals/shopping page.tsx の instance を修正したが、
                   従来この検出器は B を見逃していた (Issue #14 推奨3)。
+  C. write:       supabase 書き込みクエリ
+                  (`.insert(` / `.update(` / `.upsert(` / `.delete(`)。
+                  A/B のアンカーは `.single()` と `.(select|rpc)(` のみゆえ
+                  `await supabase.from(x).delete().eq(...)` のような
+                  **結果を誰も受け取らない書き込み**は従来 1 件も走査されなかった。
+                  C は次の 2 形を violation とする:
+                    C-1. bare statement: 代入も destructure も無く `await` するだけ
+                         (`error` を受け取る術が無い = 最も強い silent fail)
+                    C-2. destructure しているが LHS に `error` が無い
+                  `.select(` / `.rpc(` / `.single()` を鎖に含む destructure は
+                  A/B の担当ゆえ C では二重報告しない (bare statement は
+                  誰も受け取らないため `.select(` が在っても C が報告する)。
+
+## この検出器が見るもの / 見ないもの
+  見る:   「Supabase の結果から `error` を受け取っているか」だけ。
+  見ない: `.select(` を付けて 0 行を検証しているか (`.update()`/`.delete()` は
+          0 行でも `error: null` を返す)。行数検証の有無は**意味論**であり、
+          「0 行が正常」な書き込み (CASCADE と重複する子行削除、テンプレート
+          参照の一括解除など) が正当に存在するため機械的に一律強制できない。
+          0 行検証は各 action の単体テストで固定する契約とする
+          (src/app/(main)/*/__tests__/actions.test.ts)。
 
 Usage:
   scripts/check-supabase-error-destructure.py            # src/ を report-only
@@ -39,9 +60,29 @@ Verify axes:
   9. multi-row Promise.all per-element: 一部要素のみ error 欠落の場合、当該要素に
      対応する anchor 行のみ violation として検出する (LHS 全体に他要素の error
      トークンが在っても false negative を作らない)。
+ 10. write bare statement: `await supabase.from(x).delete().eq(...)` を検出。
+ 11. write false positive 防止: `set.delete(k)` / `caches.delete(k)` /
+     `registration?.update()` のように statement に `supabase` を含まないものは
+     走査対象外 (checked にも数えない)。
 
-Limitation: line-based ヒューリスティックであり完全な AST 解析ではない。supabase
-client を `supabase` 以外の名前 (例: `db`, `sb`) に alias した場合は検出できない。
+## 偽緑の検出
+各 pass の走査数を `checked (single/multi-row/write)` として必ず出力する。
+正規表現が壊れて何にもマッチしなくなっても violations は 0 件になるため、
+「0 件」が偽緑でないことは走査数でしか示せない
+(src/lib/__tests__/check-supabase-error-destructure.test.ts が write の走査数
+ 非ゼロを assert しており、アンカーが死ねばテストが赤くなる)。
+
+Limitation: line-based ヒューリスティックであり完全な AST 解析ではない。
+  - supabase client を `supabase` 以外の名前 (例: `db`, `sb`) に alias した場合は
+    検出できない。
+  - 書き込み結果を **destructure せず変数へ束縛**する形
+    (`const res = await supabase.from(x).insert(y)`) は「後で res.error を見る」
+    可能性があるため報告しない (false positive 回避のため意図的に fail-open)。
+  - `return supabase.from(x).delete()...` のように呼び出し元へ委譲する形も同様。
+  - statement が SCAN_LIMIT (30) 行を超える場合は末尾まで追えず、判定が
+    途中で打ち切られる。
+  - Promise.all 内の書き込みは要素単位ではなく destructure 全体で `error` の
+    有無を見る (A/B と違い per-element 精度は持たない)。
 """
 from __future__ import annotations
 
@@ -59,6 +100,11 @@ DATA_TOKEN_RE = re.compile(r"\bdata\b")
 PROMISE_ALL_RE = re.compile(r"Promise\.all\s*\(\s*\[")
 # multi-row anchor: supabase 読み取り (`.select(`) / rpc (`.rpc(`)。
 MULTIROW_ANCHOR_RE = re.compile(r"\.(select|rpc)\s*\(")
+# write anchor: supabase 書き込み。A/B のアンカーを含まない鎖 (delete().eq() 等) は
+# 従来 1 件も走査されなかったため、書き込み動詞そのものをアンカーにする。
+WRITE_ANCHOR_RE = re.compile(r"\.(insert|update|upsert|delete)\s*\(")
+# A/B の担当を示す鎖 (write pass の dedup 用)。
+DELEGATED_CHAIN_RE = re.compile(r"\.(select|rpc)\s*\(|\.(maybeSingle|single)\(\)")
 SUPABASE_TOKEN_RE = re.compile(r"\bsupabase\b")
 SCAN_LIMIT = 30
 
@@ -266,12 +312,97 @@ def _offset_in_rhs(
     return offset + anchor_col_in_line
 
 
-def _check_single(lines: list[str]) -> list[int]:
+def _statement_start(lines: list[str], idx: int) -> int:
     """
-    pass A: `.single()` / `.maybeSingle()` を含む destructure で `error` 欠落を検出。
-    違反した .single() 行の 0-based index リストを返す。
+    anchor 行 idx を含む statement の開始行を返す。
+
+    method chain の継続行 (`.from(...)` / `?.eq(...)`) を上へ辿り、`.` で始まらない
+    最初の行を statement の開始とみなす。`await supabase\n  .from(x)\n  .delete()`
+    のような改行チェーンで、bare statement か destructure かを弁別するために使う。
+    """
+    j = idx
+    floor = max(0, idx - SCAN_LIMIT)
+    while j > floor and lines[j].lstrip().startswith((".", "?.")):
+        j -= 1
+    return j
+
+
+def _check_write(lines: list[str]) -> tuple[list[int], int]:
+    """
+    pass C: supabase 書き込み (`.insert(`/`.update(`/`.upsert(`/`.delete(`) の
+    結果から `error` を受け取っていない箇所を検出する。
+
+    判定:
+      - statement に `supabase` 識別子が無ければ対象外 (`set.delete(k)` 等)。
+      - destructure 代入があり、その `=` が当該 statement 内にある場合:
+          * 鎖に `.select(` / `.rpc(` / `.single()` を含むなら A/B の担当ゆえ skip
+          * LHS に `error` トークンが無ければ violation
+      - destructure 代入が無い (bare statement) 場合は無条件で violation
+        (`error` を受け取る術が無いため。`.select(` が在っても同じ)。
+      - destructure ではない変数束縛 (`const res = await ...`) は fail-open で skip。
+
+    (violations の 0-based 行 index リスト, 走査した statement 数) を返す。
     """
     violations: list[int] = []
+    checked = 0
+    for idx, line in enumerate(lines):
+        if not WRITE_ANCHOR_RE.search(line):
+            continue
+
+        start = _statement_start(lines, idx)
+        end = max(idx, _find_statement_end(lines, start, -1))
+        stmt = "\n".join(lines[start : end + 1])
+
+        # false positive 防止: statement チェーンが supabase 識別子を含むことを必須。
+        if not SUPABASE_TOKEN_RE.search(stmt):
+            continue
+
+        checked += 1
+
+        block = _locate_destructure_block(lines, idx)
+        # destructure の `=` が当該 statement 内にあるものだけを「受領形」とみなす。
+        # (上方 30 行以内の無関係な `const { supabase } = result.context` に
+        #  誤って紐付けて bare statement を見逃さないための境界チェック。)
+        if block is not None and block[1] >= start:
+            block_start, eq_line, eq_pos = block
+            if DELEGATED_CHAIN_RE.search(stmt):
+                continue  # A/B の担当
+            lhs = _extract_lhs(lines, block_start, eq_line, eq_pos)
+            if ERROR_TOKEN_RE.search(lhs):
+                continue
+            violations.append(idx)
+            continue
+
+        # destructure 以外の代入 (`const res = await ...` / `return ...`) は
+        # 後段で error を読みうるため報告しない (fail-open, docstring 参照)。
+        head = lines[start]
+        if _has_assignment(head) or head.lstrip().startswith("return "):
+            continue
+
+        violations.append(idx)
+
+    return violations, checked
+
+
+def _has_assignment(line: str) -> bool:
+    """代入の `=` を含むか (`==`/`!=`/`<=`/`>=`/`=>` は代入ではない)。"""
+    cur = line.find("=")
+    while cur >= 0:
+        nxt = line[cur + 1 : cur + 2]
+        prv = line[cur - 1 : cur] if cur > 0 else ""
+        if nxt not in {"=", ">"} and prv not in {"=", "!", "<", ">"}:
+            return True
+        cur = line.find("=", cur + 1)
+    return False
+
+
+def _check_single(lines: list[str]) -> tuple[list[int], int]:
+    """
+    pass A: `.single()` / `.maybeSingle()` を含む destructure で `error` 欠落を検出。
+    (違反した .single() 行の 0-based index リスト, 走査数) を返す。
+    """
+    violations: list[int] = []
+    checked = 0
     for idx, line in enumerate(lines):
         single_match = SINGLE_RE.search(line)
         if not single_match:
@@ -304,15 +435,16 @@ def _check_single(lines: list[str]) -> list[int]:
                 if elements is not None and 0 <= position < len(elements):
                     check_target = elements[position]
 
+        checked += 1
         if ERROR_TOKEN_RE.search(check_target):
             continue
 
         violations.append(idx)
 
-    return violations
+    return violations, checked
 
 
-def _check_multirow(lines: list[str]) -> list[int]:
+def _check_multirow(lines: list[str]) -> tuple[list[int], int]:
     """
     pass B: multi-row supabase 読み取り/書き込みクエリ
     (`supabase....select(...)` / `.rpc(...)`) の destructure で `error` 欠落を検出。
@@ -324,9 +456,10 @@ def _check_multirow(lines: list[str]) -> list[int]:
         その要素は pass A の担当なので pass B はスキップする。`.single()` を含む別の
         兄弟要素が在っても、multi-row only の要素は取りこぼさない。
     Promise.all 外の単文では従来どおり statement 全体で判定する。
-    違反した anchor 行の 0-based index リストを返す。
+    (違反した anchor 行の 0-based index リスト, 走査数) を返す。
     """
     violations: list[int] = []
+    checked = 0
     for idx, line in enumerate(lines):
         anchor_match = MULTIROW_ANCHOR_RE.search(line)
         if not anchor_match:
@@ -377,16 +510,18 @@ def _check_multirow(lines: list[str]) -> list[int]:
         if SINGLE_RE.search(check_rhs):
             continue
 
+        checked += 1
         if ERROR_TOKEN_RE.search(check_lhs):
             continue
 
         violations.append(idx)
 
-    return violations
+    return violations, checked
 
 
-def check_file(path: Path) -> list[tuple[int, str]]:
-    """Return list of (line_number_1based, line_content) violations."""
+def check_file(path: Path) -> tuple[list[tuple[int, str]], dict[str, int]]:
+    """Return (violations as (line_number_1based, line_content), 走査数の内訳)."""
+    empty_counts = {"single": 0, "multirow": 0, "write": 0}
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
@@ -394,17 +529,24 @@ def check_file(path: Path) -> list[tuple[int, str]]:
         print(
             f"warning: skipped {path} ({type(e).__name__}: {e})", file=sys.stderr
         )
-        return []
+        return [], empty_counts
     lines = text.splitlines()
 
-    single_idx = _check_single(lines)
+    single_idx, single_checked = _check_single(lines)
     # pass B は要素単位で `.single()` を含む要素を自前で除外するため、
     # pass A から dedup 情報を渡す必要はない (要素単位 dedup が statement-wide skip より精密)。
-    multirow_idx = _check_multirow(lines)
+    multirow_idx, multirow_checked = _check_multirow(lines)
+    # pass C は A/B のアンカーを含む鎖を自前で除外する (bare statement を除く)。
+    write_idx, write_checked = _check_write(lines)
 
-    # 行番号順にマージ (二重報告は _check_multirow 側で既に除外済み)。
-    all_idx = sorted(set(single_idx) | set(multirow_idx))
-    return [(i + 1, lines[i].strip()) for i in all_idx]
+    # 行番号順にマージ (二重報告は _check_multirow / _check_write 側で除外済み)。
+    all_idx = sorted(set(single_idx) | set(multirow_idx) | set(write_idx))
+    counts = {
+        "single": single_checked,
+        "multirow": multirow_checked,
+        "write": write_checked,
+    }
+    return [(i + 1, lines[i].strip()) for i in all_idx], counts
 
 
 def main() -> int:
@@ -424,6 +566,7 @@ def main() -> int:
         candidates = sorted(scan_root.rglob("*"))
 
     all_violations: list[tuple[Path, int, str]] = []
+    totals = {"single": 0, "multirow": 0, "write": 0}
     for path in candidates:
         if not path.is_file():
             continue
@@ -431,33 +574,45 @@ def main() -> int:
             continue
         if "__tests__" in path.parts or path.stem.endswith(".test"):
             continue
-        for lineno, content in check_file(path):
+        violations, counts = check_file(path)
+        for key in totals:
+            totals[key] += counts[key]
+        for lineno, content in violations:
             all_violations.append((path, lineno, content))
 
-    if not all_violations:
-        print("OK: no Supabase destructures missing `error`.")
-        return 0
+    if all_violations:
+        print(
+            f"Found {len(all_violations)} Supabase query/queries "
+            "without `error` receiver:"
+        )
+        for path, lineno, content in all_violations:
+            # ROOT 配下なら相対表示、外部 (test の tmpdir 等) なら絶対のまま。
+            try:
+                display = path.relative_to(ROOT)
+            except ValueError:
+                display = path
+            print(f"  {display}:{lineno}  {content}")
 
-    print(
-        f"Found {len(all_violations)} Supabase destructure(s) "
-        "without `error` receiver:"
-    )
-    for path, lineno, content in all_violations:
-        # ROOT 配下なら相対表示、外部 (test の tmpdir 等) なら絶対のまま。
-        try:
-            display = path.relative_to(ROOT)
-        except ValueError:
-            display = path
-        print(f"  {display}:{lineno}  {content}")
+        print()
+        print(
+            "Supabase の error は class Error を継承しない plain object じゃ。"
+            "`.single()` 失敗は `data: null`、multi-row クエリ失敗は空配列、"
+            "書き込みの失敗は誰も受け取らねば完全に無音で隠匿される。"
+            "`{ data, error }`(書き込みは最低でも `{ error }`)で受け取り"
+            "構造化ログ (learnings.md L55) を出すこと。"
+        )
+    else:
+        print("OK: no Supabase queries missing `error`.")
 
+    # checked を必ず出す: 正規表現が壊れて何にもマッチしなくなっても violations は
+    # 0 件になるため、「0 件」が偽緑でないことを走査数で示す。
     print()
     print(
-        "Supabase の error は class Error を継承しない plain object じゃ。"
-        "`.single()` 失敗は `data: null`、multi-row クエリ失敗は空配列で隠匿される。"
-        "`{ data, error }` で受け取り構造化ログ (learnings.md L55) を出すこと。"
+        "checked (single): {single} / (multi-row): {multirow} / (write): {write}"
+        .format(**totals)
     )
 
-    return 1 if strict else 0
+    return 1 if (all_violations and strict) else 0
 
 
 if __name__ == "__main__":
