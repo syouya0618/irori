@@ -86,3 +86,57 @@ describe("getAuthContext: 正常系と世帯なし", () => {
     expect(r.context).toBeNull()
   })
 })
+
+/**
+ * 承認ゲートの**二層目**。一層目は proxy にあるが、規約ファイル（proxy.ts）は
+ * 置き場所を一段間違えるだけでビルドも lint も型検査も緑のまま黙って無効化されうる
+ * （過去に半年間ゲートが不稼働だった類型）。proxy が inert になった場合でも、
+ * 承認されておらぬ利用者へ世帯データの経路を開かぬことをここで固定する。
+ */
+describe("getAuthContext: 承認ゲート（二層目）", () => {
+  it("承認済みなら従来どおり context を返す", async () => {
+    getClaims.mockResolvedValue({ data: { claims: { sub: "user-1" } }, error: null })
+    profileSingle.mockResolvedValue({
+      data: { household_id: "house-1", is_approved: true },
+      error: null,
+    })
+    const r = await getAuthContext()
+    expect(r.error).toBeNull()
+    expect(r.context?.householdId).toBe("house-1")
+  })
+
+  it("承認を取り消された利用者は世帯が残っていても not-approved（context なし）", async () => {
+    // 承認取り消しでは household_id は残るため、household 判定だけでは素通りする。
+    // ここが二層目の要じゃ。
+    getClaims.mockResolvedValue({ data: { claims: { sub: "user-1" } }, error: null })
+    profileSingle.mockResolvedValue({
+      data: { household_id: "house-1", is_approved: false },
+      error: null,
+    })
+    const r = await getAuthContext()
+    expect(r.reason).toBe("not-approved")
+    expect(r.context).toBeNull()
+  })
+
+  it("未承認かつ世帯なしは no-household ではなく not-approved（proxy の分岐と揃える）", async () => {
+    // 遷移先が層ごとに食い違うと無限リダイレクトになる。proxy は未承認を
+    // /pending-approval へ送るため、承認判定を household 判定より先に置く。
+    getClaims.mockResolvedValue({ data: { claims: { sub: "user-1" } }, error: null })
+    profileSingle.mockResolvedValue({
+      data: { household_id: null, is_approved: false },
+      error: null,
+    })
+    const r = await getAuthContext()
+    expect(r.reason).toBe("not-approved")
+  })
+
+  it("is_approved が読めなかった場合は not-approved と断定しない（一過性エラーで /pending-approval へ飛ばさぬ）", async () => {
+    // lookup 失敗を「未承認」と断定すると、一過性の DB エラーで承認済みの利用者が
+    // 承認待ち画面へ落ちる。context を返さぬ点は同じ（fail-closed は保たれる）。
+    getClaims.mockResolvedValue({ data: { claims: { sub: "user-1" } }, error: null })
+    profileSingle.mockResolvedValue({ data: null, error: { message: "boom" } })
+    const r = await getAuthContext()
+    expect(r.reason).not.toBe("not-approved")
+    expect(r.context).toBeNull()
+  })
+})
