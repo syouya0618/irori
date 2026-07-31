@@ -107,6 +107,17 @@ describe("findLastNursing", () => {
     expect(findLastNursing(logs)?.id).toBe("x")
   })
 
+  it("feeding_type が null へ退化した授乳行（#147/#158 の enum drift）も起点になる", () => {
+    // 未知 ENUM 値は client 側で null へ退化する契約。ここで落とすと「実際に
+    // 飲ませた記録が目安を動かさない」＝本 issue の主訴がそのまま再発する。
+    // 判定は pumped 1 値の denylist ゆえ null は授乳側に残る、の固定。
+    const logs = [
+      mkLog({ id: "null-type", feeding_type: null, logged_at: "2026-07-21T11:00:00+09:00" }),
+      mkLog({ id: "pumped", feeding_type: "pumped", logged_at: "2026-07-21T12:00:00+09:00" }),
+    ]
+    expect(findLastNursing(logs)?.id).toBe("null-type")
+  })
+
   it("未知の feeding_type（DB ENUM 追加に TS 未追随）も授乳として数える", () => {
     // 搾乳だけを名指しで外す実装ゆえ、新種の授乳が無音で目安から漏れない
     const logs = [
