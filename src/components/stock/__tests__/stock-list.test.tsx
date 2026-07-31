@@ -25,7 +25,13 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest"
-import { render, screen, cleanup, waitFor } from "@testing-library/react"
+import {
+  render,
+  screen,
+  cleanup,
+  waitFor,
+  fireEvent,
+} from "@testing-library/react"
 import { act } from "react"
 import type { StockItemData } from "../stock-item"
 import type {
@@ -97,6 +103,7 @@ vi.mock("@/app/(main)/stock/actions", async () => {
 // Imports after vi.mock
 // ---------------------------------------------------------------------------
 import { StockList } from "../stock-list"
+import { deleteStockItem } from "@/app/(main)/stock/actions"
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -249,5 +256,63 @@ describe("StockList / Realtime inline reducer", () => {
 
     expect(screen.getByText("牛乳")).toBeInTheDocument()
     expect(screen.getByText("1件")).toBeInTheDocument()
+  })
+})
+
+/**
+ * 削除の楽観更新は「消してから server action」ゆえ、失敗したら戻さねば
+ * 画面と DB が恒久的に食い違う（shopping 側と同じ契約を在庫にも張る）。
+ */
+describe("StockList / 楽観削除の巻き戻し", () => {
+  /** 削除ボタンは 1 回目で確認状態、2 回目で実行（stock-item.tsx の 2 段構え）。 */
+  async function clickDeleteTwice(name: string): Promise<void> {
+    fireEvent.click(screen.getByRole("button", { name: `${name}を削除` }))
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: `${name}を削除（確認）` }),
+      )
+    })
+  }
+
+  it("削除失敗で行が復元される（件数表示も戻る）", async () => {
+    vi.mocked(deleteStockItem).mockResolvedValueOnce({
+      error: "削除に失敗しました",
+    })
+    const item = makeItem({ id: "stock-1", name: "玉ねぎ" })
+
+    render(<StockList {...defaultProps({ initialItems: [item] })} />)
+    await clickDeleteTwice("玉ねぎ")
+
+    expect(screen.getByText("玉ねぎ")).toBeInTheDocument()
+    expect(screen.getByText("1件")).toBeInTheDocument()
+  })
+
+  it("削除成功では復元しない（巻き戻しが常時発火していないことの対照）", async () => {
+    vi.mocked(deleteStockItem).mockResolvedValueOnce({ success: true })
+    const item = makeItem({ id: "stock-1", name: "玉ねぎ" })
+
+    render(<StockList {...defaultProps({ initialItems: [item] })} />)
+    await clickDeleteTwice("玉ねぎ")
+
+    expect(screen.queryByText("玉ねぎ")).not.toBeInTheDocument()
+    expect(screen.getByText("0件")).toBeInTheDocument()
+  })
+
+  it("復元しても並び位置は崩れない（カテゴリ内の name 昇順に戻る）", async () => {
+    vi.mocked(deleteStockItem).mockResolvedValueOnce({
+      error: "削除に失敗しました",
+    })
+    // grouped は localeCompare("ja") 順に並べ直す（あ→か→た）
+    const a = makeItem({ id: "stock-1", name: "あぶら" })
+    const b = makeItem({ id: "stock-2", name: "かつお" })
+    const c = makeItem({ id: "stock-3", name: "たまご" })
+
+    render(<StockList {...defaultProps({ initialItems: [a, b, c] })} />)
+    await clickDeleteTwice("かつお")
+
+    const names = screen
+      .getAllByText(/^(あぶら|かつお|たまご)$/)
+      .map((el) => el.textContent)
+    expect(names).toEqual(["あぶら", "かつお", "たまご"])
   })
 })

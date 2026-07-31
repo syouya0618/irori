@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { logSupabaseError } from "@/lib/supabase/log-error"
+import { useVisibilityRefetch } from "@/lib/hooks/use-visibility-refetch"
 import { logRealtimeStatus, logRealtimeEvent } from "@/lib/supabase/realtime-log"
 import { addDays, formatDateKey } from "@/lib/utils/date"
 import { todayJstString, weekStartMonday } from "@/lib/utils/date-jst"
@@ -54,6 +55,11 @@ export function useWeekMeals({
   const weekStartRef = useRef(weekStart)
   useEffect(() => { weekStartRef.current = weekStart }, [weekStart])
 
+  // fetch の世代トークンと in-flight の AbortController（fetchMeals が所有する）。
+  const fetchGenerationRef = useRef(0)
+  const abortRef = useRef<AbortController | null>(null)
+  useEffect(() => () => abortRef.current?.abort(), [])
+
   const weekDays = useMemo(() => {
     return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
   }, [weekStart])
@@ -74,6 +80,14 @@ export function useWeekMeals({
 
   const fetchMeals = useCallback(
     async (start: Date) => {
+      // 週送り連打・復帰連打で往復が重なった時、古い応答が新しい週を上書きしない
+      // よう世代トークンで捨てる（use-month-events.ts の fetchGenerationRef と同流儀）。
+      const generation = ++fetchGenerationRef.current
+      // アンマウント後の setState と in-flight 往復を畳む
+      abortRef.current?.abort()
+      const abortController = new AbortController()
+      abortRef.current = abortController
+
       setIsLoading(true)
       const supabase = createClient()
       const startStr = formatDateKey(start)
@@ -92,6 +106,13 @@ export function useWeekMeals({
         .gte("date", startStr)
         .lte("date", endStr)
         .order("date")
+        .abortSignal(abortController.signal)
+
+      // 古い世代 / abort 済みは **setMeals も setIsLoading も**触らない。
+      // data:null 分岐が temp 楽観行を掃除するため、stale な失敗を素通しすると
+      // 進行中の新しい作成が消える。isLoading も最新世代の応答だけが下ろす。
+      if (abortController.signal.aborted) return
+      if (generation !== fetchGenerationRef.current) return
 
       if (mealsError) {
         logSupabaseError("meal-week-view", "meals lookup failed", mealsError, {
@@ -247,6 +268,15 @@ export function useWeekMeals({
       supabase.removeChannel(channel)
     }
   }, [householdId, fetchMeals])
+
+  // 復帰時に自己回復する。Realtime は間欠不達（#92）で、かつフィルタ付き購読では
+  // DELETE が構造的に配信されない（配偶者が消した献立が自分の画面に残る）。
+  // 週の窓の解決（weekStartRef）と世代ガードは fetchMeals 側に残す。
+  useVisibilityRefetch(
+    useCallback(() => {
+      void fetchMeals(weekStartRef.current)
+    }, [fetchMeals]),
+  )
 
   return {
     weekStart,

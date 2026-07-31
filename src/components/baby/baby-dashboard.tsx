@@ -17,6 +17,7 @@ import { FeedingTimer } from "./feeding-timer"
 import { BabyWeeklySummary } from "./weekly-summary/baby-weekly-summary"
 import { GrowthChartSection } from "./charts/growth-chart-section"
 import { useNow } from "@/lib/hooks/use-now"
+import { useVisibilityRefetch } from "@/lib/hooks/use-visibility-refetch"
 import { todayJstString, toJstDateString, shiftYmd } from "@/lib/utils/date-jst"
 import { buildBabyWeeklySummary } from "@/lib/domain/baby-weekly-summary"
 import {
@@ -259,9 +260,9 @@ export function BabyDashboard({
 
   // タブ復帰時に選択日の日記を再取得し、DELETE 非配信（配偶者の空保存）を回収する
   // （calendar use-month-events と同流儀。issue #91/#92/#155）。
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState !== "visible") return
+  // 選択日の stale ガードは下のコールバック側に残す — フックはリスナの張り外しのみ。
+  useVisibilityRefetch(
+    useCallback(() => {
       const supabase = createClient()
       const date = selectedDateRef.current
       void supabase
@@ -284,14 +285,8 @@ export function BabyDashboard({
           if (selectedDateRef.current !== date) return
           setDiary(data ?? null)
         })
-    }
-    document.addEventListener("visibilitychange", onVisible)
-    window.addEventListener("focus", onVisible)
-    return () => {
-      document.removeEventListener("visibilitychange", onVisible)
-      window.removeEventListener("focus", onVisible)
-    }
-  }, [householdId])
+    }, [householdId]),
+  )
 
   // Fetch logs when navigating to a different date (skip initial mount — initialLogs covers it)
   const initialDateRef = useRef(initialDate)

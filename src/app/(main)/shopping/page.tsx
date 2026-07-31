@@ -1,5 +1,6 @@
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
+import { SHOPPING_ITEM_COLUMNS } from "@/lib/domain/shopping-item-columns"
 import { ShoppingList } from "@/components/shopping/shopping-list"
 
 export default async function ShoppingPage() {
@@ -11,9 +12,7 @@ export default async function ShoppingPage() {
   // 買い物アイテムを取得
   const { data: items, error: itemsError } = await supabase
     .from("shopping_items")
-    .select(
-      "id, name, quantity, category, store_type, is_checked, checked_by, checked_at, sort_order"
-    )
+    .select(SHOPPING_ITEM_COLUMNS)
     .eq("household_id", householdId)
     .order("sort_order", { ascending: true })
 

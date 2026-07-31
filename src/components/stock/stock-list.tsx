@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo, useCallback } from "react"
+import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import {
   Plus,
   Carrot,
@@ -24,6 +24,9 @@ import {
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { logRealtimeStatus, logRealtimeEvent } from "@/lib/supabase/realtime-log"
+import { logSupabaseError } from "@/lib/supabase/log-error"
+import { useVisibilityRefetch } from "@/lib/hooks/use-visibility-refetch"
+import { STOCK_ITEM_COLUMNS } from "@/lib/domain/stock-item-columns"
 import { Button } from "@/components/ui/button"
 import { checkAndAutoAddLowStock } from "@/app/(main)/stock/actions"
 import { StockItem, type StockItemData } from "./stock-item"
@@ -140,8 +143,57 @@ export function StockList({
     })
   }, [])
 
+  // ─── 復帰時 refetch ────────────────────────────────────
+  // Realtime は本番で間欠不達（#92）、かつフィルタ付き購読では DELETE が構造的に
+  // 配信されない（配偶者が消した在庫が自分の画面に残る）。復帰時 refetch が回収経路。
+  const fetchGenerationRef = useRef(0)
+  const abortRef = useRef<AbortController | null>(null)
+
+  const refetchItems = useCallback(() => {
+    const generation = ++fetchGenerationRef.current
+    abortRef.current?.abort()
+    const abortController = new AbortController()
+    abortRef.current = abortController
+
+    const supabase = createClient()
+    void supabase
+      .from("stock_items")
+      .select(STOCK_ITEM_COLUMNS)
+      .eq("household_id", householdId)
+      .order("name")
+      .abortSignal(abortController.signal)
+      .then(({ data, error }) => {
+        // abort は成功/失敗いずれの分岐にも入れない
+        if (abortController.signal.aborted) return
+        if (generation !== fetchGenerationRef.current) return
+        if (error) {
+          logSupabaseError("stock", "visibility refetch failed", error, {
+            householdId,
+          })
+          return
+        }
+        if (data) setItems(data)
+      })
+  }, [householdId])
+
+  useVisibilityRefetch(refetchItems)
+
+  // アンマウント時に in-flight を畳む（AbortController の所有はこの component）
+  useEffect(() => () => abortRef.current?.abort(), [])
+
   const handleOptimisticDelete = useCallback((id: string) => {
     setItems((prev) => prev.filter((item) => item.id !== id))
+  }, [])
+
+  /**
+   * 削除失敗時の巻き戻し。末尾へ戻しても表示位置は崩れない
+   * （grouped がカテゴリ内で name の localeCompare 順に並べ替えるため）。
+   */
+  const handleRollbackDelete = useCallback((item: StockItemData) => {
+    setItems((prev) => {
+      if (prev.some((i) => i.id === item.id)) return prev
+      return [...prev, item]
+    })
   }, [])
 
   const handleEdit = useCallback((item: StockItemData) => {
@@ -264,6 +316,7 @@ export function StockList({
                       dailyRate={consumptionRates[item.category] ?? null}
                       onEdit={handleEdit}
                       onOptimisticDelete={handleOptimisticDelete}
+                      onRollbackDelete={handleRollbackDelete}
                     />
                   ))}
                 </div>

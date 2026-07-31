@@ -15,6 +15,7 @@ import {
   type CalendarEventLite,
 } from "@/lib/domain/calendar-grid"
 import { CALENDAR_EVENT_COLUMNS } from "@/lib/domain/calendar-event-columns"
+import { useVisibilityRefetch } from "@/lib/hooks/use-visibility-refetch"
 import { todayJstString } from "@/lib/utils/date-jst"
 import type { CalendarEventSource } from "@/lib/types/database"
 
@@ -169,18 +170,13 @@ export function useMonthEvents({
   }, [householdId, refetch])
 
   // 復帰時に自己回復(配偶者の削除・Google 同期の削除を拾う。DELETE は Realtime で
-  // フィルタ配信されないため refetch が唯一の担保。issue #91/#92)
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void refetch(monthFirstRef.current)
-    }
-    document.addEventListener("visibilitychange", onVisible)
-    window.addEventListener("focus", onVisible)
-    return () => {
-      document.removeEventListener("visibilitychange", onVisible)
-      window.removeEventListener("focus", onVisible)
-    }
-  }, [refetch])
+  // フィルタ配信されないため refetch が唯一の担保。issue #91/#92)。
+  // 世代ガードは refetch 側(fetchGenerationRef)に残す — フックはリスナの張り外しのみ。
+  useVisibilityRefetch(
+    useCallback(() => {
+      void refetch(monthFirstRef.current)
+    }, [refetch]),
+  )
 
   return {
     events,

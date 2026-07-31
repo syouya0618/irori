@@ -9,6 +9,7 @@ import {
   getNextSortOrder,
   searchPurchaseHistory,
 } from "@/lib/supabase/shopping-queries"
+import { SHOPPING_ITEM_COLUMNS } from "@/lib/domain/shopping-item-columns"
 import type { ItemCategory, StoreType } from "@/lib/types/database"
 
 // ─── アイテム追加 ────────────────────────────────────────
@@ -29,22 +30,38 @@ export async function addItem(formData: FormData) {
   // sort_order は既存の最大値 + 1
   const sortOrder = await getNextSortOrder(supabase, householdId)
 
-  const { error } = await supabase.from("shopping_items").insert({
-    household_id: householdId,
-    name: name.trim(),
-    quantity,
-    category,
-    store_type: storeType,
-    created_by: userId,
-    sort_order: sortOrder,
-  })
+  // 挿入行そのものを返す。呼び出し側（AddItemForm → ShoppingList）が Realtime の
+  // INSERT を待たずに楽観挿入するため（#92 の間欠不達下では「押しても何も出ない」）。
+  // 列は SSR の初期取得と同じ SHOPPING_ITEM_COLUMNS を共有する（形の drift 防止）。
+  const { data, error } = await supabase
+    .from("shopping_items")
+    .insert({
+      household_id: householdId,
+      name: name.trim(),
+      quantity,
+      category,
+      store_type: storeType,
+      created_by: userId,
+      sort_order: sortOrder,
+    })
+    .select(SHOPPING_ITEM_COLUMNS)
+    .single()
 
+  // error と「行なし」を分離する（logSupabaseError は非 null の PostgrestError を要求）。
   if (error) {
+    logSupabaseError("shopping", "add item failed", error, {
+      userId,
+      householdId,
+    })
+    return { error: "アイテムの追加に失敗しました" }
+  }
+  if (!data) {
+    console.error("[shopping] add item returned no row", { userId, householdId })
     return { error: "アイテムの追加に失敗しました" }
   }
 
   revalidatePath("/shopping")
-  return { success: true }
+  return { success: true, item: data }
 }
 
 // ─── チェック切り替え ────────────────────────────────────

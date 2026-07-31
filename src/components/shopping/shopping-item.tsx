@@ -27,6 +27,8 @@ interface ShoppingItemProps {
   checkedByName?: string | null
   onOptimisticToggle: (id: string, isChecked: boolean) => void
   onOptimisticDelete: (id: string) => void
+  /** 削除失敗時に行を復元する（トグルの巻き戻しと同じ「直前の値へ戻す」流儀）。 */
+  onRollbackDelete: (item: ShoppingItemData) => void
 }
 
 export function ShoppingItem({
@@ -34,6 +36,7 @@ export function ShoppingItem({
   checkedByName,
   onOptimisticToggle,
   onOptimisticDelete,
+  onRollbackDelete,
 }: ShoppingItemProps) {
   const [isPending, startTransition] = useTransition()
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -77,6 +80,9 @@ export function ShoppingItem({
     startTransition(async () => {
       const result = await deleteItem(item.id)
       if (result.error) {
+        // ロールバック（トグルの巻き戻しと対称。失敗したのに行が消えたままだと
+        // 「消えたはずのものが復帰で蘇る」不整合になる）
+        onRollbackDelete(item)
         toast.error(result.error)
       }
     })

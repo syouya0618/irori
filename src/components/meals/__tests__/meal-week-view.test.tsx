@@ -334,6 +334,41 @@ describe("MealWeekView / Realtime → refetch 反映", () => {
     expect(await screen.findByText("肉じゃが")).toBeInTheDocument()
   })
 
+  it("タブ復帰 (visibilitychange) で fetchMeals が走り、配偶者の削除を回収する", async () => {
+    // Realtime のフィルタ付き購読では DELETE が構造的に配信されぬため、
+    // 「配偶者が消した献立が自分の画面に残る」の回収経路は復帰時 refetch のみ。
+    const existing = makeMeal({
+      id: "meal-1",
+      date: WEEK_START,
+      meal_type: "dinner",
+      title: "カレー",
+    })
+
+    render(<MealWeekView {...defaultProps({ initialMeals: [existing] })} />)
+    expect(screen.getByText("カレー")).toBeInTheDocument()
+
+    const fromCallsBefore = mockState.fromMock.mock.calls.length
+    // 相手が消した後の真値（空）を仕込む
+    setMockMeals([])
+
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"))
+    })
+
+    await waitFor(() => {
+      expect(mockState.fromMock.mock.calls.length).toBeGreaterThan(
+        fromCallsBefore,
+      )
+    })
+    expect(mockState.fromMock).toHaveBeenCalledWith("meals")
+    // 表示週の窓で引き直す（weekStartRef 経由）
+    expect(mockState.gteMock).toHaveBeenLastCalledWith("date", WEEK_START)
+
+    await waitFor(() => {
+      expect(screen.queryByText("カレー")).not.toBeInTheDocument()
+    })
+  })
+
   it("meal_reactions の購読が張られ、reaction イベントで fetchMeals(refetch) が走る", async () => {
     const meal = makeMeal({
       id: "meal-r",

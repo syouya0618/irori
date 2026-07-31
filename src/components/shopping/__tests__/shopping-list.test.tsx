@@ -21,7 +21,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest"
-import { render, screen, cleanup } from "@testing-library/react"
+import { render, screen, cleanup, fireEvent } from "@testing-library/react"
 import { act } from "react"
 import type { ShoppingItemData } from "../shopping-item"
 import type {
@@ -77,6 +77,7 @@ vi.mock("@/app/(main)/shopping/actions", () => ({
 // Imports after vi.mock
 // ---------------------------------------------------------------------------
 import { ShoppingList } from "../shopping-list"
+import { deleteItem } from "@/app/(main)/shopping/actions"
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -201,5 +202,63 @@ describe("ShoppingList / Realtime inline reducer", () => {
     unmount()
 
     expect(mockState.removeChannelMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * 削除の楽観更新は「消してから server action」ゆえ、失敗したら戻さねば
+ * 画面と DB が恒久的に食い違う（同ファイル内でトグルだけが巻き戻していた非対称の解消）。
+ */
+describe("ShoppingList / 楽観削除の巻き戻し", () => {
+  /** 削除ボタンは 1 回目で確認状態、2 回目で実行（shopping-item.tsx の 2 段構え）。 */
+  async function clickDeleteTwice(name: string): Promise<void> {
+    fireEvent.click(screen.getByRole("button", { name: `${name}を削除` }))
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: `${name}を削除（確認）` }),
+      )
+    })
+  }
+
+  it("削除失敗で行が復元される（残り件数も戻る）", async () => {
+    vi.mocked(deleteItem).mockResolvedValueOnce({ error: "削除に失敗しました" })
+    const item = makeItem({ id: "item-1", name: "牛乳" })
+
+    render(<ShoppingList {...defaultProps({ initialItems: [item] })} />)
+    await clickDeleteTwice("牛乳")
+
+    expect(screen.getByText("牛乳")).toBeInTheDocument()
+    expect(screen.getByText("残り 1 / 1 件")).toBeInTheDocument()
+  })
+
+  it("削除成功では復元しない（巻き戻しが常時発火していないことの対照）", async () => {
+    vi.mocked(deleteItem).mockResolvedValueOnce({ success: true })
+    const item = makeItem({ id: "item-1", name: "牛乳" })
+
+    render(<ShoppingList {...defaultProps({ initialItems: [item] })} />)
+    await clickDeleteTwice("牛乳")
+
+    expect(screen.queryByText("牛乳")).not.toBeInTheDocument()
+    expect(screen.getByText("残り 0 / 0 件")).toBeInTheDocument()
+  })
+
+  it("復元しても並び位置は崩れない（sort_order 昇順に戻る）", async () => {
+    vi.mocked(deleteItem).mockResolvedValueOnce({ error: "削除に失敗しました" })
+    const first = makeItem({ id: "item-1", name: "牛乳", sort_order: 1 })
+    const second = makeItem({ id: "item-2", name: "パン", sort_order: 2 })
+    const third = makeItem({ id: "item-3", name: "卵", sort_order: 3 })
+
+    render(
+      <ShoppingList
+        {...defaultProps({ initialItems: [first, second, third] })}
+      />,
+    )
+    // 真ん中の行を消して失敗させる → 末尾へ戻しても sort_order で再ソートされる
+    await clickDeleteTwice("パン")
+
+    const names = screen
+      .getAllByText(/^(牛乳|パン|卵)$/)
+      .map((el) => el.textContent)
+    expect(names).toEqual(["牛乳", "パン", "卵"])
   })
 })

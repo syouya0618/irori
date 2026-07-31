@@ -1,6 +1,13 @@
 "use client"
 
-import { useState, useEffect, useMemo, useTransition, useCallback } from "react"
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+  useTransition,
+  useCallback,
+} from "react"
 import {
   ChevronDown,
   ChevronRight,
@@ -25,6 +32,9 @@ import {
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { logRealtimeStatus, logRealtimeEvent } from "@/lib/supabase/realtime-log"
+import { logSupabaseError } from "@/lib/supabase/log-error"
+import { useVisibilityRefetch } from "@/lib/hooks/use-visibility-refetch"
+import { SHOPPING_ITEM_COLUMNS } from "@/lib/domain/shopping-item-columns"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import {
@@ -148,7 +158,60 @@ export function ShoppingList({
     }
   }, [householdId])
 
+  // ─── 復帰時 refetch ────────────────────────────────────
+  // Realtime は本番で間欠不達（#92）、かつフィルタ付き購読では DELETE が構造的に
+  // 配信されない。ゆえに「配偶者が消した行が消えない / 追加した行が出ない」は
+  // タブ復帰時の refetch でしか回収できぬ。
+  const fetchGenerationRef = useRef(0)
+  const abortRef = useRef<AbortController | null>(null)
+
+  const refetchItems = useCallback(() => {
+    const generation = ++fetchGenerationRef.current
+    // 復帰連打で往復が重なった場合、古い方は捨てる（世代ガード + 明示 abort）
+    abortRef.current?.abort()
+    const abortController = new AbortController()
+    abortRef.current = abortController
+
+    const supabase = createClient()
+    void supabase
+      .from("shopping_items")
+      .select(SHOPPING_ITEM_COLUMNS)
+      .eq("household_id", householdId)
+      .order("sort_order", { ascending: true })
+      .abortSignal(abortController.signal)
+      .then(({ data, error }) => {
+        // abort は成功/失敗いずれの分岐にも入れない（spurious なログ・表示を防ぐ）
+        if (abortController.signal.aborted) return
+        if (generation !== fetchGenerationRef.current) return
+        if (error) {
+          logSupabaseError("shopping", "visibility refetch failed", error, {
+            householdId,
+          })
+          return
+        }
+        if (data) setItems(data)
+      })
+  }, [householdId])
+
+  useVisibilityRefetch(refetchItems)
+
+  // アンマウント時に in-flight を畳む（フックはリスナのみを担うため、
+  // AbortController のライフサイクルは所有者であるこの component 側に置く）
+  useEffect(() => () => abortRef.current?.abort(), [])
+
   // ─── 楽観更新ハンドラ ──────────────────────────────────
+  /**
+   * 追加の楽観挿入。Realtime INSERT ハンドラ（上）と同じ id dedupe・末尾追加に
+   * 揃える（どちらが先着しても二重表示にならない）。表示順は groupedUnchecked が
+   * sort_order で並べ替えるため、末尾追加でも位置は崩れない。
+   */
+  const handleOptimisticAdd = useCallback((item: ShoppingItemData) => {
+    setItems((prev) => {
+      if (prev.some((i) => i.id === item.id)) return prev
+      return [...prev, item]
+    })
+  }, [])
+
   const handleOptimisticToggle = useCallback((id: string, isChecked: boolean) => {
     setItems((prev) =>
       prev.map((item) =>
@@ -165,6 +228,18 @@ export function ShoppingList({
 
   const handleOptimisticDelete = useCallback((id: string) => {
     setItems((prev) => prev.filter((item) => item.id !== id))
+  }, [])
+
+  /**
+   * 削除失敗時の巻き戻し（トグルの巻き戻しと同じ流儀 = 直前の値へ戻す）。
+   * 末尾へ戻しても表示位置は崩れない: 未チェックは sort_order、チェック済みは
+   * checked_at の降順でソートし直されるため。
+   */
+  const handleRollbackDelete = useCallback((item: ShoppingItemData) => {
+    setItems((prev) => {
+      if (prev.some((i) => i.id === item.id)) return prev
+      return [...prev, item]
+    })
   }, [])
 
   // ─── フィルタ & グループ化 ─────────────────────────────
@@ -233,7 +308,7 @@ export function ShoppingList({
       </div>
 
       {/* 追加フォーム */}
-      <AddItemForm />
+      <AddItemForm onAdded={handleOptimisticAdd} />
 
       {/* ストアタブ */}
       <Tabs
@@ -299,6 +374,7 @@ export function ShoppingList({
                           }
                           onOptimisticToggle={handleOptimisticToggle}
                           onOptimisticDelete={handleOptimisticDelete}
+                          onRollbackDelete={handleRollbackDelete}
                         />
                       ))}
                     </div>
@@ -337,6 +413,7 @@ export function ShoppingList({
                             }
                             onOptimisticToggle={handleOptimisticToggle}
                             onOptimisticDelete={handleOptimisticDelete}
+                            onRollbackDelete={handleRollbackDelete}
                           />
                         ))}
                     </div>

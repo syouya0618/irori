@@ -28,6 +28,8 @@ interface StockItemProps {
   dailyRate?: number | null
   onEdit: (item: StockItemData) => void
   onOptimisticDelete: (id: string) => void
+  /** 削除失敗時に行を復元する（shopping のトグル巻き戻しと同じ流儀）。 */
+  onRollbackDelete: (item: StockItemData) => void
 }
 
 function getExpiryStatus(expiresAt: string | null): {
@@ -81,6 +83,7 @@ export function StockItem({
   dailyRate,
   onEdit,
   onOptimisticDelete,
+  onRollbackDelete,
 }: StockItemProps) {
   const [isPending, startTransition] = useTransition()
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -108,6 +111,8 @@ export function StockItem({
     startTransition(async () => {
       const result = await deleteStockItem(item.id)
       if (result.error) {
+        // ロールバック（削除失敗で行が消えたままにしない）
+        onRollbackDelete(item)
         toast.error(result.error)
       }
     })

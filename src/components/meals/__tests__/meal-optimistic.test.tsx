@@ -36,6 +36,7 @@ import {
   makePayloadFor,
   resetRefetchMockState,
   setRefetchData,
+  setRefetchErrorOnce,
 } from "@/test-utils/supabase-realtime-mock"
 
 // ---------------------------------------------------------------------------
@@ -556,13 +557,15 @@ describe("Realtime refetch との収束", () => {
     fireEvent.click(screen.getByRole("button", { name: "追加する" }))
     expect(screen.getByText("トースト")).toBeInTheDocument()
 
-    // 次の refetch を失敗させる (Supabase error 時は data: null)
-    mockState.orderMock.mockImplementationOnce(() =>
-      Promise.resolve({
-        data: null,
-        error: { message: "boom", code: "XX000", details: "", hint: "" },
-      }),
-    )
+    // 次の refetch を失敗させる (Supabase error 時は data: null)。
+    // chain 末尾の形（thenable かつ .abortSignal() を持つ）を実クライアントと
+    // 揃えるため、Promise を直接返さずヘルパ経由で仕込む。
+    setRefetchErrorOnce(mockState, {
+      message: "boom",
+      code: "XX000",
+      details: "",
+      hint: "",
+    })
     await act(async () => {
       emit(makePayload("INSERT", confirmed))
     })
