@@ -42,7 +42,6 @@ vi.mock("sonner", async () => {
 import { CalendarView } from "../calendar-view"
 import type { CalendarEventRecord } from "../use-month-events"
 import { createCalendarEvent } from "@/app/(main)/calendar/actions"
-import { toast } from "sonner"
 import { jstWallClockToIso } from "@/lib/utils/date-jst"
 
 function ev(o: Partial<CalendarEventRecord> & { id: string }): CalendarEventRecord {
@@ -150,7 +149,7 @@ describe("CalendarView", () => {
     expect(screen.getByText("7月15日 14:00〜15:00")).toBeInTheDocument()
   })
 
-  it("時刻付き予定で開始時刻を空にして保存してもクラッシュせず toast で弾く", () => {
+  it("時刻付き予定で開始時刻を空にして保存してもクラッシュせず、シート内で弾く", () => {
     render(<CalendarView {...base} initialEvents={[]} />)
     fireEvent.click(screen.getByRole("button", { name: "予定を追加" }))
     fireEvent.change(screen.getByLabelText("タイトル"), {
@@ -161,11 +160,16 @@ describe("CalendarView", () => {
     // 既定 09:00 を空にする(date/time input は required 無しでクリア可能)
     const startTime = document.getElementById("cal-start-time") as HTMLInputElement
     fireEvent.change(startTime, { target: { value: "" } })
-    // 追加(修正前は jstWallClockToIso の RangeError で無反応・保存も toast もなし)
+    // 追加(最初期は jstWallClockToIso の RangeError で無反応・保存も通知もなし。
+    // 次に handleSubmit の toast で弾いていたが、シートが閉じて入力が消えた。
+    // 現在はシート内の保存前検証で弾き、シートも入力も残す)
     // testing-library の name 文字列は既定で完全一致のため FAB「予定を追加」とは衝突しない
     fireEvent.click(screen.getByRole("button", { name: "追加" }))
-    expect(toast.error).toHaveBeenCalledWith("開始時刻を入力してください")
+    expect(screen.getByRole("alert")).toHaveTextContent("開始時刻を入力してください")
     expect(createCalendarEvent).not.toHaveBeenCalled()
+    // シートは開いたままで、入力したタイトルも残っている
+    expect(screen.getByRole("heading", { name: "予定を追加" })).toBeInTheDocument()
+    expect((screen.getByLabelText("タイトル") as HTMLInputElement).value).toBe("会議")
   })
 
   it("月送りで選択日がその月へ寄り、アジェンダが範囲外日を誤表示しない", () => {

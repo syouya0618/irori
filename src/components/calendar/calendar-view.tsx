@@ -4,7 +4,12 @@ import { useState, useTransition } from "react"
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
-import { jstWallClockToIso } from "@/lib/utils/date-jst"
+// 送信値(start_at/end_at)の導出はシートの保存前検証と同じ関数を使い、
+// 「検証した値」と「送る値」がずれないようにする。
+import {
+  formValueToTimestamps,
+  type CalendarEventFormValue,
+} from "@/lib/domain/calendar-form"
 import {
   createCalendarEvent,
   updateCalendarEvent,
@@ -21,10 +26,7 @@ import {
 } from "./use-month-events"
 import { CalendarMonthView } from "./calendar-month-view"
 import { CalendarAgenda } from "./calendar-agenda"
-import {
-  CalendarEventFormSheet,
-  type CalendarEventFormValue,
-} from "./calendar-event-form-sheet"
+import { CalendarEventFormSheet } from "./calendar-event-form-sheet"
 
 interface CalendarViewProps {
   initialEvents: CalendarEventRecord[]
@@ -70,9 +72,7 @@ export function CalendarView({
     v: CalendarEventFormValue,
     id: string,
   ): { record: CalendarEventRecord; startAt: string | null; endAt: string | null } {
-    const startAt = v.isAllDay ? null : jstWallClockToIso(v.startDate, v.startTime)
-    const endAt =
-      v.isAllDay || !v.endTime ? null : jstWallClockToIso(v.endDate, v.endTime)
+    const { startAt, endAt } = formValueToTimestamps(v)
     return {
       record: {
         id,
@@ -96,9 +96,12 @@ export function CalendarView({
       toast.error("タイトルを入力してください")
       return
     }
-    // 日付/時刻が空だと toRecord の jstWallClockToIso が RangeError を投げ、
-    // event handler の未捕捉例外で保存も toast も出ない無反応状態になる。
-    // date/time input は required 無しでクリア可能なため、ここで明示的に弾く。
+    // 以下 3 つはシート側の保存前検証(validateCalendarFormValue)で先に弾かれるが、
+    // onSubmit を呼ぶ他経路・将来の変更に対する二重防御として残す。
+    // 元々は toRecord の jstWallClockToIso が空値で RangeError を投げ、event handler の
+    // 未捕捉例外で「保存も toast も出ない無反応」になる経路の防御だった(現在は
+    // formValueToTimestamps が null へ倒すため throw はしないが、null のまま送ると
+    // サーバー往復で弾かれるため手元の toast に倒す)。
     if (!v.startDate || !v.endDate) {
       toast.error("日付を入力してください")
       return

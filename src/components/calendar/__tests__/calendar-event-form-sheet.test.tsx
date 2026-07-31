@@ -32,7 +32,7 @@ function ev(o: Partial<CalendarEventRecord> & { id: string }): CalendarEventReco
   }
 }
 
-function renderNewForm() {
+function renderNewForm(overrides?: { onSubmit?: (v: unknown) => void }) {
   return render(
     <CalendarEventFormSheet
       open
@@ -40,7 +40,7 @@ function renderNewForm() {
       editing={null}
       defaultDate="2026-07-15"
       saving={false}
-      onSubmit={vi.fn()}
+      onSubmit={overrides?.onSubmit ?? vi.fn()}
       onDelete={vi.fn()}
       onDeleteSeries={vi.fn()}
     />,
@@ -69,6 +69,13 @@ const startTimeInput = () =>
   document.getElementById("cal-start-time") as HTMLInputElement | null
 const endTimeInput = () =>
   document.getElementById("cal-end-time") as HTMLInputElement | null
+const titleInput = () =>
+  document.getElementById("cal-title") as HTMLInputElement | null
+const memoInput = () => document.getElementById("cal-memo") as HTMLInputElement | null
+const startDateInput = () =>
+  document.getElementById("cal-start-date") as HTMLInputElement | null
+const endDateInput = () =>
+  document.getElementById("cal-end-date") as HTMLInputElement | null
 
 describe("CalendarEventFormSheet - 終日/時刻あり セグメント", () => {
   it("開いた瞬間に「終日」と「時刻あり」の選択肢が見える(発見性)", () => {
@@ -163,4 +170,102 @@ describe("CalendarEventFormSheet - シリーズ一括削除", () => {
       screen.queryByRole("button", { name: /すべて削除/ }),
     ).not.toBeInTheDocument()
   })
+})
+
+describe("CalendarEventFormSheet - 保存前の検証(入力を失わない)", () => {
+  it("終了日 < 開始日で「追加」しても onSubmit を呼ばず、入力は保持されエラーが出る", () => {
+    const onSubmit = vi.fn()
+    renderNewForm({ onSubmit })
+    fireEvent.change(titleInput()!, { target: { value: "検診" } })
+    fireEvent.change(memoInput()!, { target: { value: "母子手帳" } })
+    fireEvent.change(endDateInput()!, { target: { value: "2026-07-14" } })
+
+    fireEvent.click(screen.getByRole("button", { name: "追加" }))
+
+    // シートを閉じる指示(onSubmit)は出ず、入力は 1 文字も失われていない
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(titleInput()!.value).toBe("検診")
+    expect(memoInput()!.value).toBe("母子手帳")
+    expect(endDateInput()!.value).toBe("2026-07-14")
+    // サーバー検証と同一の文言が出る
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "終了日は開始日以降にしてください",
+    )
+  })
+
+  it("エラー時は該当入力に aria-invalid と aria-describedby が付く", () => {
+    renderNewForm()
+    fireEvent.change(titleInput()!, { target: { value: "検診" } })
+    fireEvent.change(endDateInput()!, { target: { value: "2026-07-14" } })
+    fireEvent.click(screen.getByRole("button", { name: "追加" }))
+
+    const alert = screen.getByRole("alert")
+    expect(endDateInput()!.getAttribute("aria-invalid")).toBe("true")
+    expect(endDateInput()!.getAttribute("aria-describedby")).toBe(alert.id)
+    // 無関係な入力には付かない
+    expect(titleInput()!.getAttribute("aria-invalid")).toBeNull()
+  })
+
+  it("タイトル未入力も保存前に弾き、field=title 側に aria-invalid が付く", () => {
+    const onSubmit = vi.fn()
+    renderNewForm({ onSubmit })
+    fireEvent.click(screen.getByRole("button", { name: "追加" }))
+
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.getByRole("alert")).toHaveTextContent("タイトルを入力してください")
+    expect(titleInput()!.getAttribute("aria-invalid")).toBe("true")
+  })
+
+  it("入力を直すとエラー表示は消え、再度「追加」で onSubmit が呼ばれる", () => {
+    const onSubmit = vi.fn()
+    renderNewForm({ onSubmit })
+    fireEvent.change(titleInput()!, { target: { value: "検診" } })
+    fireEvent.change(endDateInput()!, { target: { value: "2026-07-14" } })
+    fireEvent.click(screen.getByRole("button", { name: "追加" }))
+    expect(screen.getByRole("alert")).toBeInTheDocument()
+
+    fireEvent.change(endDateInput()!, { target: { value: "2026-07-16" } })
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
+    expect(endDateInput()!.getAttribute("aria-invalid")).toBeNull()
+
+    fireEvent.click(screen.getByRole("button", { name: "追加" }))
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "検診", endDate: "2026-07-16" }),
+    )
+  })
+
+  it("検証を通れば onSubmit がフォーム値ごと呼ばれる(正常系の回帰)", () => {
+    const onSubmit = vi.fn()
+    renderNewForm({ onSubmit })
+    fireEvent.change(titleInput()!, { target: { value: "検診" } })
+    fireEvent.click(screen.getByRole("button", { name: "追加" }))
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "検診",
+        isAllDay: true,
+        startDate: "2026-07-15",
+        endDate: "2026-07-15",
+      }),
+    )
+  })
+})
+
+describe("CalendarEventFormSheet - 開始日の変更に終了日が追従する", () => {
+  it("開始日を動かすと終了日が同差分でシフトする", () => {
+    renderNewForm()
+    fireEvent.change(endDateInput()!, { target: { value: "2026-07-17" } }) // 期間 = 2日
+    fireEvent.change(startDateInput()!, { target: { value: "2026-07-20" } })
+    expect(endDateInput()!.value).toBe("2026-07-22")
+  })
+
+  it("開始日をクリアしても終了日は消えない(差分が計算できないため据え置き)", () => {
+    renderNewForm()
+    fireEvent.change(endDateInput()!, { target: { value: "2026-07-17" } })
+    fireEvent.change(startDateInput()!, { target: { value: "" } })
+    expect(endDateInput()!.value).toBe("2026-07-17")
+  })
+  // 繰り返し終了日の追従は applyStartDateShift の単体テスト(calendar-form.test.ts)で
+  // 固定する。base-ui Select は jsdom で popup を開けず、この経路を DOM から
+  // 駆動できないため(実ブラウザ側は e2e の繰り返しテストが担保)。
 })
