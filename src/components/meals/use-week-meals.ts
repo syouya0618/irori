@@ -245,7 +245,8 @@ export function useWeekMeals({
       )
       // meal_reactions は別テーブルゆえ meals の購読では発火しない。同一 channel に
       // 2 つ目の .on を chain して meal_reactions の変更でも refetch する
-      // (Flutter meals_week_notifier.dart:138-145 と同一設計)。
+      // (かつて併走していた Flutter 版 meals_week_notifier.dart と同一設計。
+      //  Flutter 版は 2026-07-31 に廃止済み — 参照先はもう存在しない)。
       // filter は付けない: meal_reactions に household_id 列が無く meal_id/user_id のみ。
       // 世帯分離は RLS(meal_reactions_select) が Realtime 配信前に SELECT 評価して担保する。
       .on(

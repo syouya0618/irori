@@ -8,7 +8,7 @@
 
 `main`（Next.js 版）は、献立・買い物・在庫・育児ログの主要機能を実装済みです。育児ログは授乳タイマーや週間サマリーまで含みます。
 
-並行して Flutter 版（`flutter/`）への移行を進めており、現在は Phase 1（認証・ルーティング・育児ログ）まで実装済みです。
+> かつて `flutter/` 配下に Flutter 版の移行を並行して進めていましたが、DB スキーマへの未追随が積み上がり維持コストが上回ったため 2026-07-31 に廃止しました。コードは git 履歴から復元できます。
 
 主な実装済み機能:
 
@@ -41,12 +41,6 @@
 - Supabase Auth / Database / Storage / Realtime
 - Vitest
 - pdfmake
-
-### Mobile（Flutter・移行中）
-
-- Flutter / Dart
-- Riverpod + freezed
-- Supabase Flutter SDK
 
 ## セットアップ
 
