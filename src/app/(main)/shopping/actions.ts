@@ -235,7 +235,16 @@ export async function clearChecked() {
 
   revalidatePath("/shopping")
   // count は実際に削除した行数を返す（事前 SELECT の件数は削除の実績ではない）。
-  return { success: true, count: deleted.length }
+  // removedIds も返すのは、呼び出し側がマウント済みの useState から**その行だけ**を
+  // 消せるようにするため。revalidatePath はサーバキャッシュを消すだけで
+  // マウント済みの state には届かず、Realtime の DELETE はフィルタ付き購読では
+  // 構造的に配信されぬ（公式 docs）。返さねば復帰時 refetch まで消えたはずの行が
+  // 画面に残る。
+  return {
+    success: true,
+    count: deleted.length,
+    removedIds: deleted.map((d) => d.id),
+  }
 }
 
 // ─── 献立から食材を生成 ──────────────────────────────────
@@ -288,16 +297,34 @@ export async function generateFromMeals() {
     sort_order: sortOrder++,
   }))
 
-  const { error: insertError } = await supabase
+  // 挿入行そのものを返す。addItem と同じ理由じゃ — 呼び出し側が Realtime の
+  // INSERT を待たずに楽観挿入できねば、#92（間欠不達）の回では「押しても何も
+  // 出ない」になる。列は SSR の初期取得と同じ SHOPPING_ITEM_COLUMNS を共有する。
+  const { data: inserted, error: insertError } = await supabase
     .from("shopping_items")
     .insert(itemsToInsert)
+    .select(SHOPPING_ITEM_COLUMNS)
 
   if (insertError) {
+    logSupabaseError("shopping", "generate from meals insert failed", insertError, {
+      userId,
+      householdId,
+      itemCount: itemsToInsert.length,
+    })
+    return { error: "食材の追加に失敗しました" }
+  }
+  if (!inserted || inserted.length === 0) {
+    console.error("[shopping] generate from meals returned no rows", {
+      userId,
+      householdId,
+      itemCount: itemsToInsert.length,
+    })
     return { error: "食材の追加に失敗しました" }
   }
 
   revalidatePath("/shopping")
-  return { success: true, count: itemsToInsert.length }
+  // count は挿入予定数ではなく**実際に返った行数**（両者がずれたら異常）。
+  return { success: true, count: inserted.length, items: inserted }
 }
 
 // ─── 食材数のプレビュー（確認ダイアログ用） ─────────────

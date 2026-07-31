@@ -214,6 +214,20 @@ export function ShoppingList({
     })
   }, [])
 
+  /**
+   * 「献立から追加」の楽観挿入。単発追加（handleOptimisticAdd）と同じ id dedupe・
+   * 末尾追加に揃える。複数行を 1 回の setItems で入れるのは、行ごとに setItems を
+   * 呼ぶと関数型更新の連鎖で無駄な再レンダーが積むため。
+   */
+  const handleOptimisticAddMany = useCallback((newItems: ShoppingItemData[]) => {
+    setItems((prev) => {
+      const existing = new Set(prev.map((i) => i.id))
+      const fresh = newItems.filter((i) => !existing.has(i.id))
+      if (fresh.length === 0) return prev
+      return [...prev, ...fresh]
+    })
+  }, [])
+
   const handleOptimisticToggle = useCallback((id: string, isChecked: boolean) => {
     setItems((prev) =>
       prev.map((item) =>
@@ -294,6 +308,18 @@ export function ShoppingList({
         if (result.error) {
           toast.error(result.error)
         } else if (result.success) {
+          // サーバが実際に消した id だけを state から落とす。revalidatePath は
+          // マウント済みの useState には届かず、Realtime の DELETE はフィルタ付き
+          // 購読では構造的に配信されぬ（公式 docs）。ここで落とさねば「削除した」
+          // と告げたのに行が残る。
+          // サーバが実際に消した id だけを state から落とす。revalidatePath は
+          // マウント済みの useState には届かず、Realtime の DELETE はフィルタ付き
+          // 購読では構造的に配信されぬ（公式 docs）。ここで落とさねば「削除した」
+          // と告げたのに行が残る。
+          if (result.removedIds) {
+            const removed = new Set(result.removedIds)
+            setItems((prev) => prev.filter((i) => !removed.has(i.id)))
+          }
           toast.success(`${result.count}件のアイテムを削除しました`)
           setClearDialogOpen(false)
         }
@@ -435,7 +461,7 @@ export function ShoppingList({
 
       {/* アクションボタン */}
       <div className="flex items-center gap-2 mt-2">
-        <GenerateFromMeals />
+        <GenerateFromMeals onAdded={handleOptimisticAddMany} />
 
         <Dialog open={clearDialogOpen} onOpenChange={setClearDialogOpen}>
           <DialogTrigger

@@ -144,7 +144,13 @@ describe("clearChecked: 削除行数の検証と実績カウント", () => {
     })
     setContext(client)
 
-    expect(await clearChecked()).toEqual({ success: true, count: 2 })
+    // removedIds は「サーバが実際に消した id」— 呼び出し側はこれで state から
+    // その行だけを落とす（Realtime の DELETE はフィルタ付き購読で届かぬため）。
+    expect(await clearChecked()).toEqual({
+      success: true,
+      count: 2,
+      removedIds: ["a", "b"],
+    })
   })
 
   it("履歴 insert の失敗は削除を止めず、構造化ログに残す", async () => {
@@ -158,7 +164,11 @@ describe("clearChecked: 削除行数の検証と実績カウント", () => {
     })
     setContext(client)
 
-    expect(await clearChecked()).toEqual({ success: true, count: 1 })
+    expect(await clearChecked()).toEqual({
+      success: true,
+      count: 1,
+      removedIds: ["a"],
+    })
     expect(mockedLog).toHaveBeenCalledWith(
       "shopping",
       expect.any(String),
