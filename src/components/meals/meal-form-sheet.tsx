@@ -19,6 +19,8 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { saveAsTemplate } from "@/app/(main)/meals/actions"
+// startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）
+import { toastOfflineError } from "@/lib/utils/offline-error"
 import { MealDeleteConfirm } from "@/components/meals/meal-delete-confirm"
 import { MealIngredientFields } from "@/components/meals/meal-ingredient-fields"
 import { TemplateSelector } from "@/components/meals/template-selector"
@@ -132,12 +134,17 @@ export function MealFormSheet({
     if (!initialData?.id) return
 
     startTransition(async () => {
-      const result = await saveAsTemplate(initialData.id!)
-      if (result.error) {
-        toast.error(result.error)
-        return
+      try {
+        const result = await saveAsTemplate(initialData.id!)
+        if (result.error) {
+          toast.error(result.error)
+          return
+        }
+        toast.success("テンプレートとして保存しました")
+      } catch (err) {
+        // 楽観更新は無いため巻き戻し不要（シートの入力内容もそのまま残る）。
+        toastOfflineError("[meal-form-sheet] saveAsTemplate", err)
       }
-      toast.success("テンプレートとして保存しました")
     })
   }
 

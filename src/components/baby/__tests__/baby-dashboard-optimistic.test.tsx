@@ -118,9 +118,10 @@ function defaultProps(
     initialDate: TODAY,
     initialDiary: null,
     lastFeedingFallback: null,
+    lastNursingFallback: null,
     babyName: null,
     babyBirthDate: null,
-    pumpingIntervalMin: 180,
+    feedingIntervalMin: 180,
     ...overrides,
   }
 }

@@ -9,6 +9,10 @@ import {
   deleteLog,
 } from "@/app/(main)/baby/actions"
 import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
+// 通信断で Server Action が reject すると、startTransition 内の unhandled reject が
+// 最寄りの error boundary へ bubble し全画面エラー化 + 記録が無言で失われる。
+// 各ハンドラの reject を握ってトーストへ倒す（機序の詳細は offline-error.ts）。
+import { toastOfflineError } from "@/lib/utils/offline-error"
 import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
 import type { BabyLogData } from "@/lib/types/baby"
 
@@ -25,21 +29,6 @@ const DIAPER_OPTIONS: { value: DiaperType; label: string }[] = [
   { value: "poop", label: "うんち" },
   { value: "both", label: "両方" },
 ]
-
-// 通信断で Server Action が reject すると、startTransition 内の unhandled reject が
-// 最寄りの error boundary へ bubble し全画面エラー化 + 記録が無言で失われる
-// (node_modules/next/dist/docs/01-app/01-getting-started/10-error-handling.md:375)。
-// 圏外タップでその袋小路に落ちないよう、各ハンドラの reject を握ってトーストへ倒す。
-const OFFLINE_ERROR_MESSAGE =
-  "通信できませんでした。電波の良い場所でもう一度お試しください"
-
-function toastOfflineError(context: string, err: unknown) {
-  // 握り潰さずエラー詳細を構造化ログに残す（CLAUDE.md: catch 内でログ必須）。
-  console.error(`[baby-quick-actions] ${context} が例外を投げました`, {
-    message: err instanceof Error ? err.message : String(err),
-  })
-  toast.error(OFFLINE_ERROR_MESSAGE)
-}
 
 interface BabyQuickActionsProps {
   /** 記録者（logged_by）。楽観 append 行の作成に使う（B-03） */
@@ -83,7 +72,7 @@ export function BabyQuickActions({
         onLogRemoved?.(logId)
         toast.success(`${label}の記録を取り消しました`)
       } catch (err) {
-        toastOfflineError("deleteLog(undo)", err)
+        toastOfflineError("[baby-quick-actions] deleteLog(undo)", err)
       }
     })
   }
@@ -131,7 +120,7 @@ export function BabyQuickActions({
         }
         successWithUndo("授乳を記録しました", "授乳", result.id)
       } catch (err) {
-        toastOfflineError("recordFeeding", err)
+        toastOfflineError("[baby-quick-actions] recordFeeding", err)
       }
     })
   }
@@ -158,7 +147,7 @@ export function BabyQuickActions({
         }
         successWithUndo("おむつ交換を記録しました", "おむつ", result.id)
       } catch (err) {
-        toastOfflineError("recordDiaper", err)
+        toastOfflineError("[baby-quick-actions] recordDiaper", err)
       }
     })
   }

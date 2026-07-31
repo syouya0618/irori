@@ -9,6 +9,7 @@ import {
   getNextSortOrder,
   searchPurchaseHistory,
 } from "@/lib/supabase/shopping-queries"
+import { SHOPPING_ITEM_COLUMNS } from "@/lib/domain/shopping-item-columns"
 import type { ItemCategory, StoreType } from "@/lib/types/database"
 
 // ─── アイテム追加 ────────────────────────────────────────
@@ -29,22 +30,38 @@ export async function addItem(formData: FormData) {
   // sort_order は既存の最大値 + 1
   const sortOrder = await getNextSortOrder(supabase, householdId)
 
-  const { error } = await supabase.from("shopping_items").insert({
-    household_id: householdId,
-    name: name.trim(),
-    quantity,
-    category,
-    store_type: storeType,
-    created_by: userId,
-    sort_order: sortOrder,
-  })
+  // 挿入行そのものを返す。呼び出し側（AddItemForm → ShoppingList）が Realtime の
+  // INSERT を待たずに楽観挿入するため（#92 の間欠不達下では「押しても何も出ない」）。
+  // 列は SSR の初期取得と同じ SHOPPING_ITEM_COLUMNS を共有する（形の drift 防止）。
+  const { data, error } = await supabase
+    .from("shopping_items")
+    .insert({
+      household_id: householdId,
+      name: name.trim(),
+      quantity,
+      category,
+      store_type: storeType,
+      created_by: userId,
+      sort_order: sortOrder,
+    })
+    .select(SHOPPING_ITEM_COLUMNS)
+    .single()
 
+  // error と「行なし」を分離する（logSupabaseError は非 null の PostgrestError を要求）。
   if (error) {
+    logSupabaseError("shopping", "add item failed", error, {
+      userId,
+      householdId,
+    })
+    return { error: "アイテムの追加に失敗しました" }
+  }
+  if (!data) {
+    console.error("[shopping] add item returned no row", { userId, householdId })
     return { error: "アイテムの追加に失敗しました" }
   }
 
   revalidatePath("/shopping")
-  return { success: true }
+  return { success: true, item: data }
 }
 
 // ─── チェック切り替え ────────────────────────────────────
@@ -67,6 +84,10 @@ export async function toggleItem(itemId: string, isChecked: boolean) {
     .single()
 
   if (error) {
+    logSupabaseError("shopping", "toggle item failed", error, {
+      itemId,
+      householdId,
+    })
     return { error: "更新に失敗しました" }
   }
 
@@ -87,8 +108,27 @@ export async function toggleItem(itemId: string, isChecked: boolean) {
         autoStocked = true
         autoStockedName = updatedItem.name
       }
-    } catch {
-      // auto-stockの失敗はチェック操作自体には影響させない
+    } catch (e) {
+      // auto-stock の失敗はチェック操作自体には影響させない。ただし握り潰さず
+      // 構造化ログへ残す（Supabase の error は class Error を継承しない plain
+      // object ゆえ String(e) は "[object Object]" になる。個別フィールドを読む）。
+      const err = e as Partial<{
+        message: string
+        code: string
+        details: string
+        hint: string
+        status: number
+      }>
+      console.error("[shopping] auto stock threw", {
+        itemId,
+        householdId,
+        message: err?.message,
+        code: err?.code,
+        details: err?.details,
+        hint: err?.hint,
+        status: err?.status,
+        raw: err?.message ? undefined : JSON.stringify(e),
+      })
     }
   }
 
@@ -103,14 +143,27 @@ export async function deleteItem(itemId: string) {
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
 
-  const { error } = await supabase
+  // .delete() は 0 行削除でも error: null を返す（別世帯・不在 id なら 0 行マッチ）。
+  // .select("id") で削除行を要求し、0 行を「成功」と偽らないようにする
+  // （calendar/actions.ts の deleteCalendarEvent と同じ形）。呼び出し側の
+  // 楽観削除はこの error を見て巻き戻すため、ここが success を返すと
+  // 「消えたように見えて消えていない」表示が残る。
+  const { data, error } = await supabase
     .from("shopping_items")
     .delete()
     .eq("id", itemId)
     .eq("household_id", householdId)
+    .select("id")
 
   if (error) {
+    logSupabaseError("shopping", "delete item failed", error, {
+      itemId,
+      householdId,
+    })
     return { error: "削除に失敗しました" }
+  }
+  if (!data || data.length === 0) {
+    return { error: "削除に失敗しました（既に削除されている可能性があります）" }
   }
 
   revalidatePath("/shopping")
@@ -159,18 +212,39 @@ export async function clearChecked() {
   }
 
   // チェック済みアイテムを削除
-  const { error: deleteError } = await supabase
+  // .delete() は 0 行削除でも error: null を返す。上の SELECT で 1 件以上ある
+  // ことを確認済みゆえ、0 行は「RLS で弾かれた」「他端末が先に消した」等の
+  // 異常系じゃ。silent な success: true にせずエラーを返す（0 行なら UI 側も
+  // 消すものが無いため、エラー表示のほうが実態に合う）。
+  const { data: deleted, error: deleteError } = await supabase
     .from("shopping_items")
     .delete()
     .eq("household_id", householdId)
     .eq("is_checked", true)
+    .select("id")
 
   if (deleteError) {
+    logSupabaseError("shopping", "clear checked failed", deleteError, {
+      householdId,
+    })
+    return { error: "チェック済みアイテムの削除に失敗しました" }
+  }
+  if (!deleted || deleted.length === 0) {
     return { error: "チェック済みアイテムの削除に失敗しました" }
   }
 
   revalidatePath("/shopping")
-  return { success: true, count: checkedItems.length }
+  // count は実際に削除した行数を返す（事前 SELECT の件数は削除の実績ではない）。
+  // removedIds も返すのは、呼び出し側がマウント済みの useState から**その行だけ**を
+  // 消せるようにするため。revalidatePath はサーバキャッシュを消すだけで
+  // マウント済みの state には届かず、Realtime の DELETE はフィルタ付き購読では
+  // 構造的に配信されぬ（公式 docs）。返さねば復帰時 refetch まで消えたはずの行が
+  // 画面に残る。
+  return {
+    success: true,
+    count: deleted.length,
+    removedIds: deleted.map((d) => d.id),
+  }
 }
 
 // ─── 献立から食材を生成 ──────────────────────────────────
@@ -223,16 +297,34 @@ export async function generateFromMeals() {
     sort_order: sortOrder++,
   }))
 
-  const { error: insertError } = await supabase
+  // 挿入行そのものを返す。addItem と同じ理由じゃ — 呼び出し側が Realtime の
+  // INSERT を待たずに楽観挿入できねば、#92（間欠不達）の回では「押しても何も
+  // 出ない」になる。列は SSR の初期取得と同じ SHOPPING_ITEM_COLUMNS を共有する。
+  const { data: inserted, error: insertError } = await supabase
     .from("shopping_items")
     .insert(itemsToInsert)
+    .select(SHOPPING_ITEM_COLUMNS)
 
   if (insertError) {
+    logSupabaseError("shopping", "generate from meals insert failed", insertError, {
+      userId,
+      householdId,
+      itemCount: itemsToInsert.length,
+    })
+    return { error: "食材の追加に失敗しました" }
+  }
+  if (!inserted || inserted.length === 0) {
+    console.error("[shopping] generate from meals returned no rows", {
+      userId,
+      householdId,
+      itemCount: itemsToInsert.length,
+    })
     return { error: "食材の追加に失敗しました" }
   }
 
   revalidatePath("/shopping")
-  return { success: true, count: itemsToInsert.length }
+  // count は挿入予定数ではなく**実際に返った行数**（両者がずれたら異常）。
+  return { success: true, count: inserted.length, items: inserted }
 }
 
 // ─── 食材数のプレビュー（確認ダイアログ用） ─────────────

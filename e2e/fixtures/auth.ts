@@ -76,12 +76,8 @@ export function uniqueEmail(workerIndex: number): string {
   return `e2e-w${workerIndex}-${Date.now()}@example.com`
 }
 
-/**
- * 承認済みユーザーを作成する。
- * handle_new_user トリガが profiles を is_approved=false で作るため、
- * service_role で is_approved=true に更新する（承認フローのバイパス）。
- */
-export async function createApprovedUser(email: string): Promise<E2eUser> {
+/** auth.users を作る（handle_new_user トリガが profiles 行を生成する）。 */
+async function createAuthUser(email: string): Promise<string> {
   const admin = adminClient()
 
   const { data, error } = await admin.auth.admin.createUser({
@@ -93,7 +89,17 @@ export async function createApprovedUser(email: string): Promise<E2eUser> {
       `createUser failed for ${email}: ${formatSupabaseError(error)}`
     )
   }
-  const userId = data.user.id
+  return data.user.id
+}
+
+/**
+ * 承認済みユーザーを作成する。
+ * handle_new_user トリガが profiles を is_approved=false で作るため、
+ * service_role で is_approved=true に更新する（承認フローのバイパス）。
+ */
+export async function createApprovedUser(email: string): Promise<E2eUser> {
+  const admin = adminClient()
+  const userId = await createAuthUser(email)
 
   // .update() は 0 行更新でも error: null のため .select().single() で行数を検証する
   const { data: updated, error: updateError } = await admin
@@ -105,6 +111,44 @@ export async function createApprovedUser(email: string): Promise<E2eUser> {
   if (updateError || !updated) {
     throw new Error(
       `profiles approve failed for ${userId}: ${formatSupabaseError(updateError)}`
+    )
+  }
+
+  return { id: userId, email }
+}
+
+/**
+ * **未承認**ユーザーを作成する（承認ゲートの e2e 用）。
+ *
+ * createApprovedUser とは別 export にしている。boolean 引数で分岐させると
+ * 既存の全 e2e が通る経路に手を入れることになり、基準値（13 passed）を
+ * 壊すリスクを負うだけで得がない。
+ *
+ * profiles.is_approved の既定は false（20260408000002）で、承認は
+ * create_household / approve_user の SECURITY DEFINER 経路でしか立たない。
+ * ただし **「作った直後は未承認のはず」を仮定で済ませると、将来トリガや既定値が
+ * 変わったときこのテストが無言で骨抜きになる**（未承認ユーザーが居ないまま
+ * 「ゲートが効いた」と読める）。ゆえに行の実体を読んで fail-loud に固定する。
+ */
+export async function createUnapprovedUser(email: string): Promise<E2eUser> {
+  const admin = adminClient()
+  const userId = await createAuthUser(email)
+
+  const { data: profile, error: profileError } = await admin
+    .from("profiles")
+    .select("is_approved")
+    .eq("id", userId)
+    .single()
+  if (profileError || !profile) {
+    throw new Error(
+      `profiles lookup failed for ${userId}: ${formatSupabaseError(profileError)}`
+    )
+  }
+  if (profile.is_approved !== false) {
+    throw new Error(
+      `新規ユーザー ${userId} の is_approved が false ではありません` +
+        `（実測: ${JSON.stringify(profile.is_approved)}）。` +
+        "承認ゲートの e2e が検証対象を失うため fail-loud で止めます。"
     )
   }
 

@@ -12,6 +12,7 @@ import {
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { getRecipeSuggestions } from "@/app/(main)/stock/actions"
+import { logOfflineError } from "@/lib/utils/offline-error"
 import type { StockItemData } from "./stock-item"
 import type { RecipeSuggestion } from "@/lib/domain"
 import { SuggestionCard } from "./suggestion-card"
@@ -56,14 +57,26 @@ export function StockSuggestions({
     debounceRef.current = setTimeout(async () => {
       if (cancelled) return
       setIsRefreshing(true)
-      const result = await getRecipeSuggestions()
-      if (cancelled) return
-      if (result.error) {
-        toast.error(result.error)
-      } else {
-        setSuggestions(result.data)
+      try {
+        const result = await getRecipeSuggestions()
+        if (cancelled) return
+        if (result.error) {
+          toast.error(result.error)
+        } else {
+          setSuggestions(result.data)
+        }
+        setIsRefreshing(false)
+      } catch (err) {
+        // 注意: ここは startTransition ではなく setTimeout 内の floating promise
+        // ゆえ、reject は error boundary へ bubble せず **無言の unhandled
+        // rejection** になる（機序が別）。加えて setIsRefreshing(true) 済みの
+        // ためスピナーが回りっぱなしで固まる。
+        if (cancelled) return
+        setIsRefreshing(false)
+        // ユーザー起点ではない自動再計算のため、トーストは出さずログのみ
+        // （圏外の在庫操作は操作側が既にトーストしており、二重に鳴らさない）。
+        logOfflineError("[stock-suggestions] getRecipeSuggestions", err)
       }
-      setIsRefreshing(false)
     }, 1000)
 
     return () => {

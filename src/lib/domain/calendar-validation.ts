@@ -40,8 +40,23 @@ export interface ValidatedCalendarInput {
   repeatUntil: string | null
 }
 
+/**
+ * 検証に失敗した入力項目。エラー文言と**同じ場所で**返すことで、
+ * クライアント側が文言を再実装せずに「どの入力が悪いか」を特定できる
+ * （文言とフィールドの二重真値源を作らないための設計）。
+ * サーバー Action は error のみを使い field は無視する。
+ */
+export type CalendarEventField =
+  | "title"
+  | "memo"
+  | "startDate"
+  | "endDate"
+  | "startAt"
+  | "endAt"
+  | "repeatUntil"
+
 export type CalendarValidationResult =
-  | { error: string; value: null }
+  | { error: string; field: CalendarEventField; value: null }
   | { error: null; value: ValidatedCalendarInput }
 
 /**
@@ -60,23 +75,36 @@ export function validateCalendarEventInput(raw: {
   repeatUntil?: string | null
 }): CalendarValidationResult {
   const title = raw.title.trim()
-  if (title.length < 1) return { error: "タイトルを入力してください", value: null }
+  if (title.length < 1)
+    return { error: "タイトルを入力してください", field: "title", value: null }
   if (title.length > MAX_TITLE)
     return {
       error: `タイトルは${MAX_TITLE}文字以内で入力してください`,
+      field: "title",
       value: null,
     }
 
   const memo = raw.memo?.trim() || null
   if (memo && memo.length > MAX_MEMO)
-    return { error: `メモは${MAX_MEMO}文字以内で入力してください`, value: null }
+    return {
+      error: `メモは${MAX_MEMO}文字以内で入力してください`,
+      field: "memo",
+      value: null,
+    }
 
-  if (!isValidYmd(raw.startDate) || !isValidYmd(raw.endDate))
-    return { error: "日付の形式が不正です", value: null }
+  // 形式検証は開始/終了を個別に判定する（文言は共通のまま field だけを分ける）。
+  if (!isValidYmd(raw.startDate))
+    return { error: "日付の形式が不正です", field: "startDate", value: null }
+  if (!isValidYmd(raw.endDate))
+    return { error: "日付の形式が不正です", field: "endDate", value: null }
 
   // startDate/endDate は YYYY-MM-DD ゆえ辞書順 = 暦順で比較して差し支えない。
   if (raw.endDate < raw.startDate)
-    return { error: "終了日は開始日以降にしてください", value: null }
+    return {
+      error: "終了日は開始日以降にしてください",
+      field: "endDate",
+      value: null,
+    }
 
   // 繰り返し検証。repeat !== "none" のとき repeatUntil 必須 + 範囲(startDate より後・
   // startDate+1年以内)。上限は generateRecurrenceDates の防御ガードと同一の
@@ -85,14 +113,27 @@ export function validateCalendarEventInput(raw: {
   let repeatUntil: string | null = null
   if (repeat !== "none") {
     if (!raw.repeatUntil)
-      return { error: "繰り返しの終了日を入力してください", value: null }
+      return {
+        error: "繰り返しの終了日を入力してください",
+        field: "repeatUntil",
+        value: null,
+      }
     if (!isValidYmd(raw.repeatUntil))
-      return { error: "繰り返しの終了日の形式が不正です", value: null }
+      return {
+        error: "繰り返しの終了日の形式が不正です",
+        field: "repeatUntil",
+        value: null,
+      }
     if (raw.repeatUntil <= raw.startDate)
-      return { error: "繰り返しの終了日は開始日より後にしてください", value: null }
+      return {
+        error: "繰り返しの終了日は開始日より後にしてください",
+        field: "repeatUntil",
+        value: null,
+      }
     if (raw.repeatUntil > recurrenceMaxUntil(raw.startDate))
       return {
         error: "繰り返しの終了日は開始日から1年以内にしてください",
+        field: "repeatUntil",
         value: null,
       }
     repeatUntil = raw.repeatUntil
@@ -117,24 +158,36 @@ export function validateCalendarEventInput(raw: {
 
   // 時刻付き
   if (!raw.startAt)
-    return { error: "開始時刻を入力してください", value: null }
+    return { error: "開始時刻を入力してください", field: "startAt", value: null }
   // toJstDateString は不正 ISO で throw / getTime は NaN で順序判定をすり抜けるため、
   // 整合・順序の判定に入る前に必ず ISO 形式をパース検証する。
   if (!isValidIsoDateTime(raw.startAt))
-    return { error: "開始時刻の形式が不正です", value: null }
+    return { error: "開始時刻の形式が不正です", field: "startAt", value: null }
   if (raw.endAt && !isValidIsoDateTime(raw.endAt))
-    return { error: "終了時刻の形式が不正です", value: null }
+    return { error: "終了時刻の形式が不正です", field: "endAt", value: null }
 
   // AUDIT-069: start_date ↔ start_at の JST 暦日整合は DB CHECK 化不能
   // （AT TIME ZONE は STABLE）ゆえ書き込み側で強制する。end_at は endDate と照合。
   if (toJstDateString(raw.startAt) !== raw.startDate)
-    return { error: "開始時刻の日付が開始日と一致しません", value: null }
+    return {
+      error: "開始時刻の日付が開始日と一致しません",
+      field: "startAt",
+      value: null,
+    }
   if (raw.endAt && toJstDateString(raw.endAt) !== raw.endDate)
-    return { error: "終了時刻の日付が終了日と一致しません", value: null }
+    return {
+      error: "終了時刻の日付が終了日と一致しません",
+      field: "endAt",
+      value: null,
+    }
 
   // 順序は getTime で比較する。文字列比較だと +09:00 と Z の混在で誤判定する。
   if (raw.endAt && new Date(raw.endAt).getTime() < new Date(raw.startAt).getTime())
-    return { error: "終了時刻は開始時刻以降にしてください", value: null }
+    return {
+      error: "終了時刻は開始時刻以降にしてください",
+      field: "endAt",
+      value: null,
+    }
 
   return {
     error: null,

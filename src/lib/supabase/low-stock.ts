@@ -1,5 +1,7 @@
+import type { PostgrestError } from "@supabase/supabase-js"
 import type { AuthContext } from "@/lib/supabase/auth-context"
 import type { ItemCategory } from "@/lib/types/database"
+import { logSupabaseError } from "@/lib/supabase/log-error"
 import { getNextSortOrder } from "@/lib/supabase/shopping-queries"
 import { calculateDailyRate, estimateRemainingDays } from "@/lib/domain"
 import { todayJstString, shiftYmd } from "@/lib/utils/date-jst"
@@ -53,6 +55,20 @@ export async function autoAddLowStockItems(
         .eq("is_checked", false),
     ])
 
+  // 取得失敗時は「自動追加をしない」で退化させる（呼び出し側の在庫表示自体は
+  // 壊さない）。ただし理由を握り潰さず、どのクエリが落ちたかを構造化ログに残す。
+  const failed: Array<[string, PostgrestError | null]> = [
+    ["households", householdResult.error],
+    ["baby_logs", logsResult.error],
+    ["stock_items", stockResult.error],
+    ["shopping_items", shoppingResult.error],
+  ]
+  for (const [scope, err] of failed) {
+    if (err) {
+      logSupabaseError("low-stock", `${scope} の取得に失敗`, err, { householdId })
+    }
+  }
+
   if (
     householdResult.error ||
     logsResult.error ||
@@ -60,6 +76,11 @@ export async function autoAddLowStockItems(
     shoppingResult.error ||
     !householdResult.data
   ) {
+    if (!householdResult.error && !householdResult.data) {
+      console.error("[low-stock] households の行が取得できませんでした", {
+        householdId,
+      })
+    }
     return { error: null, addedItems: [] }
   }
 
@@ -109,6 +130,10 @@ export async function autoAddLowStockItems(
     .insert(insertRows)
 
   if (insertError) {
+    logSupabaseError("low-stock", "買い物リストへの自動追加に失敗", insertError, {
+      householdId,
+      count: insertRows.length,
+    })
     return { error: "買い物リストへの追加に失敗しました", addedItems: [] }
   }
 

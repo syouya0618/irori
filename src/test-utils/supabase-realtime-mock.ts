@@ -221,6 +221,7 @@ export function makePayloadFor<TRow>(
  *
  * ### 想定 chain shape
  *   `.from(table).select(cols).eq(col, val).gte(col, val).lte(col, val).order(col)`
+ *   （末尾に `.abortSignal(signal)` を挟んでも同じ結果を resolve する）
  *
  * 別 shape (e.g. `.match()` / `.in()`) を必要とする 2 例目が出たら、本 helper の
  * chain 構造を拡張するか、別 helper を追加すること。
@@ -235,6 +236,13 @@ export type RefetchRealtimeMockState<TRow> = {
   gteMock: ViFn | undefined
   lteMock: ViFn | undefined
   orderMock: ViFn | undefined
+  /**
+   * `.abortSignal(signal)` の記録用（任意）。実クライアントの
+   * PostgrestFilterBuilder は thenable でありながら `.abortSignal()` も持つため、
+   * mock 側も同じ形にする。ここが欠けていると「AbortController 防御を足した実装」
+   * だけが mock で落ち、防御を外す方向の圧力になってしまう。
+   */
+  abortSignalMock?: ViFn | undefined
   /** 次に `.order()` が resolve する data。テスト側で `setRefetchData(state, rows)` で更新 */
   currentResolveData: TRow[]
 }
@@ -249,6 +257,37 @@ export type RefetchRealtimeMockState<TRow> = {
  *
  * @returns `vi.mock` factory の戻り値となる `{ createClient }` shape
  */
+/** chain 末尾が返す「thenable かつ `.abortSignal()` を持つ」オブジェクト。 */
+type ChainThenable = {
+  abortSignal: (...args: unknown[]) => ChainThenable
+  then: (
+    onFulfilled?: ((value: unknown) => unknown) | null,
+    onRejected?: ((reason: unknown) => unknown) | null,
+  ) => Promise<unknown>
+}
+
+/**
+ * 実 PostgrestFilterBuilder と同じ形の chain 末尾を作る。
+ *
+ * `.abortSignal(signal)` は **自分自身を返す**（実装では chain の途中に挟めるため）。
+ * ここが単なる Promise だと、AbortController 防御を持つ実装だけが
+ * `.abortSignal is not a function` で落ち、「mock に合わせて防御を外す」圧力になる。
+ */
+function makeChainThenable(
+  getResult: () => { data: unknown; error: unknown },
+  abortSignalRecorder?: ViFn,
+): ChainThenable {
+  const thenable: ChainThenable = {
+    abortSignal: (...args: unknown[]) => {
+      abortSignalRecorder?.(...args)
+      return thenable
+    },
+    then: (onFulfilled, onRejected) =>
+      Promise.resolve(getResult()).then(onFulfilled, onRejected),
+  }
+  return thenable
+}
+
 export function buildRefetchSupabaseMock<TRow>(
   viMod: typeof ViNamespace,
   state: RefetchRealtimeMockState<TRow>,
@@ -256,11 +295,16 @@ export function buildRefetchSupabaseMock<TRow>(
   state.removeChannelMock = viMod.fn().mockResolvedValue("ok")
   state.channelNameMock = viMod.fn()
 
-  // 最後の .order() が thenable: state.currentResolveData を resolve する
+  // 最後の .order() は thenable かつ .abortSignal() を持つ（実 PostgrestFilterBuilder
+  // と同じ形）。await すれば state.currentResolveData を resolve する。
+  state.abortSignalMock = viMod.fn()
   state.orderMock = viMod
     .fn()
     .mockImplementation(() =>
-      Promise.resolve({ data: state.currentResolveData, error: null }),
+      makeChainThenable(
+        () => ({ data: state.currentResolveData, error: null }),
+        state.abortSignalMock,
+      ),
     )
   state.lteMock = viMod.fn(() => ({ order: state.orderMock }))
   state.gteMock = viMod.fn(() => ({ lte: state.lteMock }))
@@ -334,6 +378,7 @@ export function resetRefetchMockState<TRow>(
   state.gteMock?.mockClear()
   state.lteMock?.mockClear()
   state.orderMock?.mockClear()
+  state.abortSignalMock?.mockClear()
 }
 
 /**
@@ -347,4 +392,20 @@ export function setRefetchData<TRow>(
   rows: TRow[],
 ): void {
   state.currentResolveData = rows
+}
+
+/**
+ * 次の refetch **1 回だけ**を失敗させる（`data: null` + Supabase error）。
+ *
+ * テスト側で `orderMock.mockImplementationOnce(() => Promise.resolve(...))` と
+ * 直接書くと、chain 末尾から `.abortSignal()` が消えて実クライアントの形と乖離する
+ * （AbortController 防御を持つ実装だけが落ちる）。失敗の仕込みは必ずこれを使うこと。
+ */
+export function setRefetchErrorOnce<TRow>(
+  state: RefetchRealtimeMockState<TRow>,
+  error: { message: string; code?: string; details?: string; hint?: string },
+): void {
+  state.orderMock?.mockImplementationOnce(() =>
+    makeChainThenable(() => ({ data: null, error }), state.abortSignalMock),
+  )
 }

@@ -10,6 +10,8 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { updateDefaultPage } from "@/app/(main)/settings/actions"
+// startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）
+import { toastOfflineError } from "@/lib/utils/offline-error"
 import { segmentCn } from "@/lib/utils/segment-cn"
 
 const PAGE_OPTIONS = [
@@ -26,10 +28,16 @@ export function DefaultPageCard({ defaultPage }: { defaultPage: string }) {
   function handleSelect(page: string) {
     setSelected(page)
     startTransition(async () => {
-      const result = await updateDefaultPage(page)
-      if (result.error) {
-        toast.error(result.error)
+      try {
+        const result = await updateDefaultPage(page)
+        if (result.error) {
+          toast.error(result.error)
+          setSelected(defaultPage)
+        }
+      } catch (err) {
+        // reject は未到達ゆえ確実に未保存。業務エラー時と同じ巻き戻しを行う。
         setSelected(defaultPage)
+        toastOfflineError("[default-page-card] updateDefaultPage", err)
       }
     })
   }

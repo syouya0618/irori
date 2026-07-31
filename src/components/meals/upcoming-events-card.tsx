@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useRef, useState } from "react"
 import Link from "next/link"
 import { CalendarDays } from "lucide-react"
 
@@ -8,6 +8,7 @@ import { agendaTimeDisplay } from "@/components/calendar/calendar-agenda"
 import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
 import { CALENDAR_EVENT_COLUMNS } from "@/lib/domain/calendar-event-columns"
 import { eventsForDate } from "@/lib/domain/calendar-grid"
+import { useVisibilityRefetch } from "@/lib/hooks/use-visibility-refetch"
 import { createClient } from "@/lib/supabase/client"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { shiftYmd, todayJstString } from "@/lib/utils/date-jst"
@@ -79,17 +80,12 @@ export function UpcomingEventsCard({
 
   // 復帰時に自己回復する。Realtime は購読しない（本番 postgres_changes は間欠的で
   // DELETE はフィルタ配信されないため refetch が唯一の担保。issue #91/#92）。
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void refetch()
-    }
-    document.addEventListener("visibilitychange", onVisible)
-    window.addEventListener("focus", onVisible)
-    return () => {
-      document.removeEventListener("visibilitychange", onVisible)
-      window.removeEventListener("focus", onVisible)
-    }
-  }, [refetch])
+  // 世代ガード（generationRef）は refetch 側に残す — フックはリスナの張り外しのみ。
+  useVisibilityRefetch(
+    useCallback(() => {
+      void refetch()
+    }, [refetch]),
+  )
 
   const buckets = bucketTodayTomorrow(events, today)
 

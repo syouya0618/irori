@@ -74,7 +74,7 @@ describe("weekStartMonday", () => {
   })
 
   it("日曜は進行中週の月曜を返す（前週に巻き戻さない）", () => {
-    // flutter/lib/core/utils/jst_date.dart の weekStartMonday と同値
+    // かつて併走していた Flutter 版 jst_date.dart の weekStartMonday と同値
     // (日曜 = 進行中週の末尾セマンティクス)
     expect(weekStartMonday("2026-06-14")).toBe("2026-06-08")
   })

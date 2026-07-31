@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Loader2, Trash2 } from "lucide-react"
+import { AlertCircle, Loader2, Trash2 } from "lucide-react"
 import {
   Sheet,
   SheetContent,
@@ -22,8 +22,20 @@ import {
 } from "@/components/ui/select"
 import { formatTimeJst } from "@/lib/utils/date-jst"
 import { segmentCn } from "@/lib/utils/segment-cn"
-import type { CalendarRepeat } from "@/lib/domain/calendar-validation"
+import type {
+  CalendarEventField,
+  CalendarRepeat,
+} from "@/lib/domain/calendar-validation"
+import {
+  applyStartDateShift,
+  validateCalendarFormValue,
+  type CalendarEventFormValue,
+} from "@/lib/domain/calendar-form"
 import type { CalendarEventRecord } from "./use-month-events"
+
+// フォーム値の型は中立モジュール（calendar-form.ts）が正本。既存の import 元を
+// 保つため型のみ再 export する（import type はビルド時に消えるため安全）。
+export type { CalendarEventFormValue }
 
 /** 新規/クリア時の既定開始時刻。initialValue と時刻クリアで共有し値のドリフトを防ぐ。 */
 const DEFAULT_START_TIME = "09:00"
@@ -48,19 +60,8 @@ function addMonthsYmd(ymd: string, months: number): string {
   return new Date(Date.UTC(y, m - 1 + months, d)).toISOString().slice(0, 10)
 }
 
-export interface CalendarEventFormValue {
-  title: string
-  memo: string | null
-  isAllDay: boolean
-  startDate: string
-  endDate: string
-  startTime: string // "HH:MM"(終日なら未使用)
-  endTime: string
-  /** 繰り返し種別(作成モードのみ有効。編集モードは常に "none")。 */
-  repeat: CalendarRepeat
-  /** 繰り返し終了日(YYYY-MM-DD)。repeat === "none" のときは未使用。 */
-  repeatUntil: string
-}
+/** エラー文言の DOM id。aria-describedby で不正な入力と紐付ける。 */
+const ERROR_MESSAGE_ID = "cal-form-error"
 
 /** "YYYY-MM-DD" を "M月D日" へ(TZ 非依存の文字列分解)。 */
 function dayLabelJa(ymd: string): string {
@@ -155,23 +156,39 @@ export function CalendarEventFormSheet({
   const [value, setValue] = useState<CalendarEventFormValue>(() =>
     initialValue(editing, defaultDate),
   )
+  // 保存前検証で弾かれた内容(文言 + 該当項目)。null = エラーなし。
+  const [error, setError] = useState<{
+    message: string
+    field: CalendarEventField
+  } | null>(null)
   if (currentKey !== prevKey) {
     setPrevKey(currentKey)
-    if (open) setValue(initialValue(editing, defaultDate))
+    if (open) {
+      setValue(initialValue(editing, defaultDate))
+      setError(null) // 前回の失敗を新しいフォームへ持ち越さない
+    }
   }
 
   const isGoogle = editing?.source === "google"
   const isEditing = !!editing
 
+  // 値を編集したらエラー表示は消す(修正中に赤いままにしない)。
+  const update = (
+    next: (prev: CalendarEventFormValue) => CalendarEventFormValue,
+  ) => {
+    setValue(next)
+    setError(null)
+  }
+
   const set = <K extends keyof CalendarEventFormValue>(
     k: K,
     v: CalendarEventFormValue[K],
-  ) => setValue((prev) => ({ ...prev, [k]: v }))
+  ) => update((prev) => ({ ...prev, [k]: v }))
 
   // 終日/時刻ありの切替。終日へ戻す時は入力済みの時刻を既定へクリアし、
   // 次に時刻ありへ戻った際に前回値が残らないようにする。
   const setAllDay = (isAllDay: boolean) =>
-    setValue((prev) =>
+    update((prev) =>
       isAllDay
         ? { ...prev, isAllDay: true, startTime: DEFAULT_START_TIME, endTime: "" }
         : { ...prev, isAllDay: false },
@@ -180,7 +197,7 @@ export function CalendarEventFormSheet({
   // 繰り返し種別の切替。none 以外へ変える際、終了日が未入力なら開始日 + 3ヶ月を
   // 既定として補う(startDate 変更後に空へ戻していなければ既存値を尊重)。
   const setRepeat = (repeat: CalendarRepeat) =>
-    setValue((prev) => ({
+    update((prev) => ({
       ...prev,
       repeat,
       repeatUntil:
@@ -188,6 +205,30 @@ export function CalendarEventFormSheet({
           ? addMonthsYmd(prev.startDate, DEFAULT_REPEAT_UNTIL_MONTHS)
           : prev.repeatUntil,
     }))
+
+  // 開始日の変更は終了日・繰り返し終了日を同差分でシフトする(期間を保つ)。
+  const setStartDate = (startDate: string) =>
+    update((prev) => applyStartDateShift(prev, startDate))
+
+  /**
+   * 保存前検証。サーバー Action と**同一の検証器**へ通し、失敗ならシートを
+   * 開いたままエラーを出して onSubmit を呼ばない(入力を失わせない)。
+   * サーバー側の検証は正しさの担保として残っており、ここは UX の一層目。
+   */
+  const handleSave = () => {
+    const result = validateCalendarFormValue(value)
+    if (result.error !== null) {
+      setError({ message: result.error, field: result.field })
+      return
+    }
+    onSubmit(value)
+  }
+
+  /** 該当項目の入力へ付ける aria(不正表示 + エラー文言との紐付け)。 */
+  const fieldAria = (field: CalendarEventField) =>
+    error?.field === field
+      ? { "aria-invalid": true, "aria-describedby": ERROR_MESSAGE_ID }
+      : {}
 
   // 編集中の予定が繰り返しシリーズに属するか(series_id を持つ native 行)。
   const seriesId = !isGoogle ? (editing?.series_id ?? null) : null
@@ -229,6 +270,7 @@ export function CalendarEventFormSheet({
                 placeholder="例: 検診、保育園見学"
                 className="h-11"
                 autoFocus
+                {...fieldAria("title")}
               />
             </div>
 
@@ -256,8 +298,9 @@ export function CalendarEventFormSheet({
                   id="cal-start-date"
                   type="date"
                   value={value.startDate}
-                  onChange={(e) => set("startDate", e.target.value)}
+                  onChange={(e) => setStartDate(e.target.value)}
                   className="h-11"
+                  {...fieldAria("startDate")}
                 />
               </div>
               <div className="flex flex-1 flex-col gap-2">
@@ -268,6 +311,7 @@ export function CalendarEventFormSheet({
                   value={value.endDate}
                   onChange={(e) => set("endDate", e.target.value)}
                   className="h-11"
+                  {...fieldAria("endDate")}
                 />
               </div>
             </div>
@@ -282,6 +326,7 @@ export function CalendarEventFormSheet({
                     value={value.startTime}
                     onChange={(e) => set("startTime", e.target.value)}
                     className="h-11"
+                    {...fieldAria("startAt")}
                   />
                 </div>
                 <div className="flex flex-1 flex-col gap-2">
@@ -292,6 +337,7 @@ export function CalendarEventFormSheet({
                     value={value.endTime}
                     onChange={(e) => set("endTime", e.target.value)}
                     className="h-11"
+                    {...fieldAria("endAt")}
                   />
                 </div>
               </div>
@@ -326,6 +372,7 @@ export function CalendarEventFormSheet({
                       value={value.repeatUntil}
                       onChange={(e) => set("repeatUntil", e.target.value)}
                       className="h-11"
+                      {...fieldAria("repeatUntil")}
                     />
                   </div>
                 )}
@@ -340,8 +387,21 @@ export function CalendarEventFormSheet({
                 onChange={(e) => set("memo", e.target.value || null)}
                 placeholder="場所や持ち物など"
                 className="h-11"
+                {...fieldAria("memo")}
               />
             </div>
+
+            {/* 保存前検証のエラー。シートは開いたままで入力は保持される。 */}
+            {error && (
+              <p
+                id={ERROR_MESSAGE_ID}
+                role="alert"
+                className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              >
+                <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                {error.message}
+              </p>
+            )}
 
             {/* 繰り返しシリーズに属する予定はシリーズ一括削除を提供する。
                 既存の単発削除(フッタのゴミ箱)は「この 1 件のみ」を担い続ける。 */}
@@ -382,7 +442,7 @@ export function CalendarEventFormSheet({
                 </Button>
               )}
               <Button
-                onClick={() => onSubmit(value)}
+                onClick={handleSave}
                 disabled={saving}
                 className="flex-1 cursor-pointer"
               >

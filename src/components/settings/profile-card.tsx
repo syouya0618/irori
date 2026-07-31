@@ -15,6 +15,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { updateProfile } from "@/app/(main)/settings/actions"
+// startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）
+import { toastOfflineError } from "@/lib/utils/offline-error"
 
 interface ProfileCardProps {
   profile: {
@@ -29,12 +31,17 @@ export function ProfileCard({ profile, email }: ProfileCardProps) {
 
   const handleUpdateProfile = (formData: FormData) => {
     startTransition(async () => {
-      const result = await updateProfile(formData)
-      if (result.error) {
-        toast.error(result.error)
-      } else {
-        toast.success("プロフィールを更新しました")
-        router.refresh()
+      try {
+        const result = await updateProfile(formData)
+        if (result.error) {
+          toast.error(result.error)
+        } else {
+          toast.success("プロフィールを更新しました")
+          router.refresh()
+        }
+      } catch (err) {
+        // 楽観更新は無いため巻き戻し不要（表示はサーバー値のまま）
+        toastOfflineError("[profile-card] updateProfile", err)
       }
     })
   }

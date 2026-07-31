@@ -14,7 +14,10 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { addItem, getSuggestions } from "@/app/(main)/shopping/actions"
+// startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）
+import { toastOfflineError } from "@/lib/utils/offline-error"
 import { allCategories, allStores } from "@/lib/utils/categories"
+import type { ShoppingItemData } from "./shopping-item"
 import type { ItemCategory, StoreType } from "@/lib/types/database"
 
 interface Suggestion {
@@ -23,7 +26,15 @@ interface Suggestion {
   storeType: StoreType | null
 }
 
-export function AddItemForm() {
+interface AddItemFormProps {
+  /**
+   * 追加成功時に、サーバが返した挿入行そのものを親へ渡す（楽観挿入用）。
+   * Realtime の INSERT が届かぬ回（issue #92）でも一覧へ即反映するための唯一の経路。
+   */
+  onAdded?: (item: ShoppingItemData) => void
+}
+
+export function AddItemForm({ onAdded }: AddItemFormProps = {}) {
   const [isPending, startTransition] = useTransition()
   const [showOptions, setShowOptions] = useState(false)
   const [name, setName] = useState("")
@@ -98,14 +109,23 @@ export function AddItemForm() {
     formData.set("store_type", storeType)
 
     startTransition(async () => {
-      const result = await addItem(formData)
-      if (result.error) {
-        toast.error(result.error)
-      } else {
-        setName("")
-        setSuggestions([])
-        setShowSuggestions(false)
-        inputRef.current?.focus()
+      try {
+        const result = await addItem(formData)
+        if (result.error) {
+          toast.error(result.error)
+        } else {
+          // 行が返らない実装/モックでも落ちないよう存在を確認してから渡す
+          // （親は id で dedupe する前提のため undefined は流せない）。
+          if (result.item) onAdded?.(result.item)
+          setName("")
+          setSuggestions([])
+          setShowSuggestions(false)
+          inputRef.current?.focus()
+        }
+      } catch (err) {
+        // 楽観挿入は成功後にしか行わないため巻き戻し不要。入力欄も消さない
+        // （圏外で名前を打ち直させないことが「素早く記録」の要）。
+        toastOfflineError("[add-item-form] addItem", err)
       }
     })
   }

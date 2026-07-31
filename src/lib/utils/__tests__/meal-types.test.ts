@@ -24,7 +24,7 @@ describe("meal-types: 選択肢と週ビューの整合", () => {
   })
 
   it("ラベルは既存の間食データ表示のため snack を残す", () => {
-    // DB ENUM の snack は Flutter・既存データ・将来の間食対応のため保持する
+    // DB ENUM の snack は既存データ・将来の間食対応のため保持する
     expect(MEAL_TYPE_LABELS.snack).toBeDefined()
   })
 })

@@ -2,7 +2,7 @@ import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { getVerifiedUser } from "@/lib/supabase/verified-user"
-import { PUMPING_INTERVAL_DEFAULT } from "@/lib/domain/baby-pumping"
+import { FEEDING_INTERVAL_DEFAULT } from "@/lib/domain/baby-feeding-interval"
 import { SettingsContent } from "./settings-content"
 
 export default async function SettingsPage() {
@@ -38,13 +38,26 @@ export default async function SettingsPage() {
     redirect("/setup")
   }
 
-  const { data: household, error: householdError } = await supabase
-    .from("households")
-    .select(
-      "id, name, auto_stock_categories, baby_name, baby_birth_date, pumping_interval_min",
-    )
-    .eq("id", profile.household_id)
-    .single()
+  // household と pending approvals rpc は互いに依存しないため並列化する。
+  // ただし get_pending_approvals は owner だけが必要とするクエリのため、
+  // 無条件に Promise.all へ入れると owner 以外も毎回 rpc を叩くことになる
+  // (権限のないユーザーへの不要なクエリ発行を防ぐ)。ゆえに三項演算子で
+  // owner 以外は実クエリを発行しない Promise.resolve に差し替えてから並列化する。
+  const [
+    { data: household, error: householdError },
+    { data: pendingData, error: pendingError },
+  ] = await Promise.all([
+    supabase
+      .from("households")
+      .select(
+        "id, name, auto_stock_categories, baby_name, baby_birth_date, feeding_interval_min",
+      )
+      .eq("id", profile.household_id)
+      .single(),
+    profile.role === "owner"
+      ? supabase.rpc("get_pending_approvals")
+      : Promise.resolve({ data: null, error: null }),
+  ])
 
   if (householdError) {
     logSupabaseError("settings", "household lookup failed", householdError, {
@@ -55,13 +68,12 @@ export default async function SettingsPage() {
   // ownerのみ: 承認待ちユーザー取得
   let pendingUsers: { id: string; display_name: string; email: string; created_at: string }[] = []
   if (profile.role === "owner") {
-    const { data, error: pendingError } = await supabase.rpc("get_pending_approvals")
     if (pendingError) {
       logSupabaseError("settings", "pending approvals lookup failed", pendingError, {
         householdId: profile.household_id,
       })
     }
-    pendingUsers = data ?? []
+    pendingUsers = pendingData ?? []
   }
 
   return (
@@ -84,8 +96,8 @@ export default async function SettingsPage() {
       babyProfile={{
         name: household?.baby_name ?? null,
         birthDate: household?.baby_birth_date ?? null,
-        pumpingIntervalMin:
-          household?.pumping_interval_min ?? PUMPING_INTERVAL_DEFAULT,
+        feedingIntervalMin:
+          household?.feeding_interval_min ?? FEEDING_INTERVAL_DEFAULT,
       }}
       email={email ?? ""}
       pendingUsers={pendingUsers}

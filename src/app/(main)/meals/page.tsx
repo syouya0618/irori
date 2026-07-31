@@ -19,19 +19,35 @@ export default async function MealsPage() {
   // Vercel (UTC) でもクライアント (JST) でも同じ「JST の今週」を返す
   const { startDate, endDate } = currentWeekRangeJst()
 
-  const { data: meals, error: mealsError } = await supabase
-    .from("meals")
-    .select(
-      `
+  // 今日・明日に重なる予定（CAL-4）。start_url = /meals ゆえ起動直後に目に入る。
+  const today = todayJstString()
+
+  // meals と upcomingEvents は互いに依存しないため並列化
+  const [
+    { data: meals, error: mealsError },
+    { data: upcomingEvents, error: upcomingError },
+  ] = await Promise.all([
+    supabase
+      .from("meals")
+      .select(
+        `
       id, date, meal_type, title, is_eating_out, template_id,
       meal_reactions ( user_id, reaction ),
       meal_ingredients ( name, quantity, category )
     `
-    )
-    .eq("household_id", householdId)
-    .gte("date", startDate)
-    .lte("date", endDate)
-    .order("date")
+      )
+      .eq("household_id", householdId)
+      .gte("date", startDate)
+      .lte("date", endDate)
+      .order("date"),
+    supabase
+      .from("calendar_events")
+      .select(CALENDAR_EVENT_COLUMNS)
+      .eq("household_id", householdId)
+      .gte("end_date", today) // 重なり判定: end_date >= 今日
+      .lte("start_date", shiftYmd(today, 1)) //          AND start_date <= 明日
+      .order("start_date"),
+  ])
 
   if (mealsError) {
     logSupabaseError("meals", "meals lookup failed", mealsError, {
@@ -39,16 +55,6 @@ export default async function MealsPage() {
       householdId,
     })
   }
-
-  // 今日・明日に重なる予定（CAL-4）。start_url = /meals ゆえ起動直後に目に入る。
-  const today = todayJstString()
-  const { data: upcomingEvents, error: upcomingError } = await supabase
-    .from("calendar_events")
-    .select(CALENDAR_EVENT_COLUMNS)
-    .eq("household_id", householdId)
-    .gte("end_date", today) // 重なり判定: end_date >= 今日
-    .lte("start_date", shiftYmd(today, 1)) //          AND start_date <= 明日
-    .order("start_date")
 
   if (upcomingError) {
     logSupabaseError("meals", "upcoming events lookup failed", upcomingError, {

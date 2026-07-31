@@ -36,9 +36,29 @@ jobs:
         run: pnpm test:run
 
       - name: Build
-        run: pnpm build
+        # build 出力の `ƒ Proxy (Middleware)` 行を次ステップの弁別子に使うため tee する。
+        # `set -o pipefail` が無いと tee の 0 で build の失敗が隠れる
+        # (GitHub Actions の既定シェルは `bash -e {0}` で pipefail 無し。
+        #  実測: `set -o pipefail; false | tee /dev/null` → 1 /
+        #        pipefail 無し → 0)。
+        run: |
+          set -o pipefail
+          pnpm build | tee /tmp/next-build.log
+
+      - name: Assert proxy is effective (配置 + 成果物への登録)
+        # 規約ファイルは置き場所を一段間違えるだけで build/lint/tsc 全緑のまま
+        # 黙って無効化される。実測 (Next 16.2.11): 誤配置でも
+        # `.next/server/middleware.js` は**同じ内容で出る**ため実在は根拠にならず、
+        # `functions-config-manifest.json` の /_middleware と build 出力の
+        # `ƒ Proxy (Middleware)` 行だけが消える。詳細はスクリプト冒頭の表。
+        run: ./scripts/check-proxy-effective.py --strict --build-log /tmp/next-build.log
 
       - name: Detect Supabase silent fail (.single()/.maybeSingle()/multi-row without error)
         # strict: issue #20/#14 で全違反を解消済み。新規 silent fail は CI で fail させる。
         # issue #14 推奨3: multi-row クエリ (.select()/.rpc() で error 欠落) も検出する。
         run: ./scripts/check-supabase-error-destructure.py --strict
+
+      - name: Detect unguarded startTransition (offline Server Action reject)
+        # strict: 全 35 箇所を try/catch で握り済み。未握りが混ざると圏外タップで
+        # error boundary へ全画面遷移し記録が無言で失われるため CI で fail させる。
+        run: ./scripts/check-transition-reject-guard.py --strict
