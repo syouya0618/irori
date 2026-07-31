@@ -3,6 +3,7 @@ import {
   adminClient,
   cleanupUser,
   createApprovedUser,
+  createUnapprovedUser,
   uniqueEmail,
   type E2eUser,
 } from "./auth"
@@ -12,6 +13,8 @@ interface E2eFixtures {
   email: string
   /** 承認済み（is_approved=true・世帯なし）ユーザー。teardown で世帯ごと削除する */
   approvedUser: E2eUser
+  /** 未承認（is_approved=false）ユーザー。承認ゲートの回帰検証用 */
+  unapprovedUser: E2eUser
 }
 
 export const test = base.extend<E2eFixtures>({
@@ -63,6 +66,20 @@ export const test = base.extend<E2eFixtures>({
     }
 
     await cleanupUser(user.id, householdId)
+  },
+
+  unapprovedUser: async ({}, use, testInfo) => {
+    // approvedUser と同一テスト内で併用されても衝突しないよう別アドレスを引く
+    // （email fixture は 1 テスト 1 アドレス）。
+    const user = await createUnapprovedUser(
+      `unapproved-${uniqueEmail(testInfo.workerIndex)}`
+    )
+
+    await use(user)
+
+    // 未承認ユーザーは世帯を作れない（create_household に到達する前に承認ゲートで
+    // 止まる）ため、承認済み側のような household 掃除は不要。
+    await cleanupUser(user.id)
   },
 })
 
