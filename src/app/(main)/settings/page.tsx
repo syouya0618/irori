@@ -2,7 +2,7 @@ import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { getVerifiedUser } from "@/lib/supabase/verified-user"
-import { PUMPING_INTERVAL_DEFAULT } from "@/lib/domain/baby-pumping"
+import { FEEDING_INTERVAL_DEFAULT } from "@/lib/domain/baby-feeding-interval"
 import { SettingsContent } from "./settings-content"
 
 export default async function SettingsPage() {
@@ -41,7 +41,7 @@ export default async function SettingsPage() {
   const { data: household, error: householdError } = await supabase
     .from("households")
     .select(
-      "id, name, auto_stock_categories, baby_name, baby_birth_date, pumping_interval_min",
+      "id, name, auto_stock_categories, baby_name, baby_birth_date, feeding_interval_min",
     )
     .eq("id", profile.household_id)
     .single()
@@ -84,8 +84,8 @@ export default async function SettingsPage() {
       babyProfile={{
         name: household?.baby_name ?? null,
         birthDate: household?.baby_birth_date ?? null,
-        pumpingIntervalMin:
-          household?.pumping_interval_min ?? PUMPING_INTERVAL_DEFAULT,
+        feedingIntervalMin:
+          household?.feeding_interval_min ?? FEEDING_INTERVAL_DEFAULT,
       }}
       email={email ?? ""}
       pendingUsers={pendingUsers}

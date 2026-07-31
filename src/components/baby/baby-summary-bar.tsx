@@ -3,7 +3,7 @@
 import { Milk, Droplets, Timer } from "lucide-react"
 import { formatElapsedMinutes, minutesBetween } from "@/lib/utils/baby-log-labels"
 import { todayJstString, formatTimeJst } from "@/lib/utils/date-jst"
-import { computeNextPumping } from "@/lib/domain/baby-pumping"
+import { computeNextFeeding } from "@/lib/domain/baby-feeding-interval"
 import type { TodayCounts } from "@/lib/domain/baby-log-aggregation"
 import type { BabyLogData } from "@/lib/types/baby"
 
@@ -29,11 +29,18 @@ function formatFeedingBreakdown(counts: TodayCounts): string {
 }
 
 interface BabySummaryBarProps {
+  /**
+   * 最後の授乳行（log_type='feeding'・**搾乳を含む**）。「最終授乳」表示に使う。
+   * 目安の起点とは別物ゆえ混同しないこと（`lastNursing` の注記を参照）。
+   */
   lastFeeding: BabyLogData | null
-  /** 最後の搾乳（feeding_type='pumped'）。次の搾乳の目安の起点に使う */
-  lastPumped: BabyLogData | null
-  /** 搾乳間隔（分・設定値）。最後の搾乳＋この間隔で次の目安を出す */
-  pumpingIntervalMin: number
+  /**
+   * 最後に赤子へ与えた授乳（母乳/ミルク/離乳食。**搾乳は除く**）。
+   * 次の授乳の目安の起点に使う。搾乳は赤子に与えていないため目安をリセットしない。
+   */
+  lastNursing: BabyLogData | null
+  /** 授乳間隔（分・設定値）。最後の授乳の開始＋この間隔で次の目安を出す */
+  feedingIntervalMin: number
   now: Date
   todayCounts: TodayCounts
   /** 表示中の日付（YYYY-MM-DD、JST）。今日か過去日かでラベル・経過表示を切り替える */
@@ -42,8 +49,8 @@ interface BabySummaryBarProps {
 
 export function BabySummaryBar({
   lastFeeding,
-  lastPumped,
-  pumpingIntervalMin,
+  lastNursing,
+  feedingIntervalMin,
   now,
   todayCounts,
   date,
@@ -61,10 +68,12 @@ export function BabySummaryBar({
       ? minutesBetween(lastFeeding.logged_at, now.toISOString())
       : null
 
-  // 次の搾乳の目安: 今日の表示 + 最後の搾乳がある時のみ（最後の搾乳＋設定間隔）
-  const nextPumping =
-    isToday && lastPumped
-      ? computeNextPumping(lastPumped.logged_at, pumpingIntervalMin, now)
+  // 次の授乳の目安: 今日の表示 + 最後の授乳がある時のみ（最後の授乳の開始＋設定間隔）。
+  // 起点は搾乳を除いた授乳（lastNursing）。深夜跨ぎで前日行になった授乳も
+  // dashboard 側の fallback を通じてここへ届く。
+  const nextFeeding =
+    isToday && lastNursing
+      ? computeNextFeeding(lastNursing.logged_at, feedingIntervalMin, now)
       : null
 
   return (
@@ -122,27 +131,29 @@ export function BabySummaryBar({
         </div>
       </div>
 
-      {/* 次の搾乳の目安（最後の搾乳＋設定間隔）。搾乳記録がある今日だけ表示 */}
-      {nextPumping && (
+      {/* 次の授乳の目安（最後の授乳の開始＋設定間隔）。授乳記録がある今日だけ表示 */}
+      {nextFeeding && (
         <div className="glass flex items-center gap-2.5 rounded-2xl px-3 py-2.5 shadow-lg shadow-black/[0.04]">
           <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/40">
             <Timer size={16} className="text-amber-700 dark:text-amber-300" />
           </div>
-          <span className="text-xs text-muted-foreground">次の搾乳の目安</span>
+          <span className="text-xs text-muted-foreground">次の授乳の目安</span>
           <span className="ml-auto flex items-baseline gap-1.5">
             <span className="font-mono text-sm font-semibold">
-              {formatTimeJst(nextPumping.targetIso)}
+              {formatTimeJst(nextFeeding.targetIso)}
             </span>
             <span
               className={`text-[11px] ${
-                nextPumping.minutesUntil > 0
+                nextFeeding.minutesUntil > 0
                   ? "text-muted-foreground"
                   : "font-semibold text-amber-600 dark:text-amber-400"
               }`}
             >
-              {nextPumping.minutesUntil > 0
-                ? `あと${formatElapsedMinutes(nextPumping.minutesUntil)}`
-                : "そろそろです"}
+              {/* 目安を過ぎたら「そろそろです」で張り付かせず、超過した経過時間を出す
+                  （どれだけ過ぎたかが読めないと次の判断ができないため） */}
+              {nextFeeding.minutesUntil > 0
+                ? `あと${formatElapsedMinutes(nextFeeding.minutesUntil)}`
+                : `${formatElapsedMinutes(-nextFeeding.minutesUntil)} 経過`}
             </span>
           </span>
         </div>

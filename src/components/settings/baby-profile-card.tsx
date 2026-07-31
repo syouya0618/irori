@@ -18,7 +18,7 @@ import { updateBabyProfile } from "@/app/(main)/settings/actions"
 import { toastOfflineError } from "@/lib/utils/offline-error"
 import { todayJstString } from "@/lib/utils/date-jst"
 import { formatElapsedMinutes } from "@/lib/utils/baby-log-labels"
-import { PUMPING_INTERVAL_OPTIONS } from "@/lib/domain/baby-pumping"
+import { FEEDING_INTERVAL_OPTIONS } from "@/lib/domain/baby-feeding-interval"
 
 export function BabyProfileCard({
   initialProfile,
@@ -26,7 +26,7 @@ export function BabyProfileCard({
   initialProfile: {
     name: string | null
     birthDate: string | null
-    pumpingIntervalMin: number
+    feedingIntervalMin: number
   }
 }) {
   const router = useRouter()
@@ -81,21 +81,21 @@ export function BabyProfileCard({
             />
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="pumping_interval_min">搾乳間隔</Label>
+            <Label htmlFor="feeding_interval_min">授乳間隔</Label>
             <select
-              id="pumping_interval_min"
-              name="pumping_interval_min"
-              defaultValue={String(initialProfile.pumpingIntervalMin)}
+              id="feeding_interval_min"
+              name="feeding_interval_min"
+              defaultValue={String(initialProfile.feedingIntervalMin)}
               className="h-10 rounded-md border bg-background px-3 text-sm transition-colors duration-200"
             >
-              {PUMPING_INTERVAL_OPTIONS.map((min) => (
+              {FEEDING_INTERVAL_OPTIONS.map((min) => (
                 <option key={min} value={min}>
                   {formatElapsedMinutes(min)}
                 </option>
               ))}
             </select>
             <p className="text-xs text-muted-foreground">
-              最後の搾乳からこの時間後を「次の搾乳の目安」に表示します
+              最後の授乳の開始からこの時間後を「次の授乳の目安」に表示します（搾乳は起点になりません）
             </p>
           </div>
           <Button

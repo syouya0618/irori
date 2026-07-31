@@ -15,8 +15,8 @@ const PAST_FEEDING_LOGGED_AT = "2026-04-05T09:15:00+09:00"
 
 const baseProps = {
   lastFeeding: null,
-  lastPumped: null,
-  pumpingIntervalMin: 180,
+  lastNursing: null,
+  feedingIntervalMin: 180,
   now: NOW,
   date: TODAY,
   todayCounts: {
@@ -226,45 +226,60 @@ describe("BabySummaryBar 今日のまとめ", () => {
   })
 })
 
-describe("BabySummaryBar 次の搾乳の目安", () => {
-  function makePumpedLog(loggedAt: string): BabyLogData {
+describe("BabySummaryBar 次の授乳の目安", () => {
+  function makeNursingLog(loggedAt: string): BabyLogData {
     return makeFeedingLog({
-      id: "pumped-1",
-      feeding_type: "pumped",
+      id: "nursing-1",
+      feeding_type: "breast",
       logged_at: loggedAt,
-      amount_ml: 60,
+      amount_ml: null,
     })
   }
 
-  it("今日・搾乳ありのとき目安時刻と残り時間を表示する", () => {
-    // NOW = 4/11 12:00。10:00 搾乳 + 180分 → 13:00 目安（残り1時間）
+  it("今日・授乳ありのとき目安時刻と残り時間を表示する", () => {
+    // NOW = 4/11 12:00。10:00 授乳開始 + 180分 → 13:00 目安（残り1時間）
     render(
       <BabySummaryBar
         {...baseProps}
-        lastPumped={makePumpedLog("2026-04-11T10:00:00+09:00")}
-        pumpingIntervalMin={180}
+        lastNursing={makeNursingLog("2026-04-11T10:00:00+09:00")}
+        feedingIntervalMin={180}
       />,
     )
-    expect(screen.getByText("次の搾乳の目安")).toBeInTheDocument()
+    expect(screen.getByText("次の授乳の目安")).toBeInTheDocument()
     expect(screen.getByText(formatTimeJst("2026-04-11T13:00:00+09:00"))).toBeInTheDocument()
     expect(screen.getByText(/あと1時間/)).toBeInTheDocument()
+    // 旧「次の搾乳の目安」カードは廃止（並記しない）
+    expect(screen.queryByText("次の搾乳の目安")).not.toBeInTheDocument()
   })
 
-  it("目安を過ぎていると「そろそろです」を表示する", () => {
-    // 08:00 搾乳 + 180分 → 11:00 目安。NOW 12:00 は過ぎている
+  it("目安を 30 分過ぎていると「30分 経過」を表示する（「そろそろです」の張り付き廃止）", () => {
+    // 08:30 授乳 + 180分 → 11:30 目安。NOW 12:00 は 30 分超過
     render(
       <BabySummaryBar
         {...baseProps}
-        lastPumped={makePumpedLog("2026-04-11T08:00:00+09:00")}
-        pumpingIntervalMin={180}
+        lastNursing={makeNursingLog("2026-04-11T08:30:00+09:00")}
+        feedingIntervalMin={180}
       />,
     )
-    expect(screen.getByText("そろそろです")).toBeInTheDocument()
+    expect(screen.getByText("30分 経過")).toBeInTheDocument()
+    expect(screen.queryByText("そろそろです")).not.toBeInTheDocument()
   })
 
-  it("搾乳が無ければ目安は表示しない", () => {
-    render(<BabySummaryBar {...baseProps} lastPumped={null} />)
-    expect(screen.queryByText("次の搾乳の目安")).not.toBeInTheDocument()
+  it("目安を 2時間10分 過ぎていると「2時間10分 経過」を表示する（時間+分の書式）", () => {
+    // 06:50 授乳 + 180分 → 09:50 目安。NOW 12:00 は 130 分超過
+    render(
+      <BabySummaryBar
+        {...baseProps}
+        lastNursing={makeNursingLog("2026-04-11T06:50:00+09:00")}
+        feedingIntervalMin={180}
+      />,
+    )
+    expect(screen.getByText("2時間10分 経過")).toBeInTheDocument()
+  })
+
+  it("授乳が無ければ目安は表示しない", () => {
+    render(<BabySummaryBar {...baseProps} lastNursing={null} />)
+    expect(screen.queryByText("次の授乳の目安")).not.toBeInTheDocument()
   })
 
   it("過去日を見ているときは目安を表示しない（今日限定）", () => {
@@ -272,9 +287,30 @@ describe("BabySummaryBar 次の搾乳の目安", () => {
       <BabySummaryBar
         {...baseProps}
         date={PAST_DATE}
-        lastPumped={makePumpedLog("2026-04-05T10:00:00+09:00")}
+        lastNursing={makeNursingLog("2026-04-05T10:00:00+09:00")}
       />,
     )
-    expect(screen.queryByText("次の搾乳の目安")).not.toBeInTheDocument()
+    expect(screen.queryByText("次の授乳の目安")).not.toBeInTheDocument()
+  })
+
+  it("最終授乳（搾乳を含む）と目安の起点（搾乳を除く）は別の値で描かれる", () => {
+    // 11:50 に搾乳（最終授乳＝10分前）、直近の授乳は 10:00（目安は 13:00）。
+    // 搾乳で目安が飛ばないこと・最終授乳表示の契約は変えないことの同時固定。
+    render(
+      <BabySummaryBar
+        {...baseProps}
+        lastFeeding={makeFeedingLog({
+          id: "pumped-1",
+          feeding_type: "pumped",
+          logged_at: "2026-04-11T11:50:00+09:00",
+          amount_ml: 60,
+        })}
+        lastNursing={makeNursingLog("2026-04-11T10:00:00+09:00")}
+      />,
+    )
+    expect(screen.getByText("10分前")).toBeInTheDocument()
+    expect(
+      screen.getByText(formatTimeJst("2026-04-11T13:00:00+09:00")),
+    ).toBeInTheDocument()
   })
 })

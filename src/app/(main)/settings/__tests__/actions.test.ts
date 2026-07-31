@@ -116,11 +116,11 @@ describe("updateBabyProfile: CHECK 違反(23514)の弁別", () => {
   })
 })
 
-describe("updateBabyProfile: 搾乳間隔", () => {
+describe("updateBabyProfile: 授乳間隔", () => {
   function formWithInterval(interval: string): FormData {
     const fd = new FormData()
     fd.set("baby_name", "あかり")
-    fd.set("pumping_interval_min", interval)
+    fd.set("feeding_interval_min", interval)
     return fd
   }
 
@@ -130,7 +130,7 @@ describe("updateBabyProfile: 搾乳間隔", () => {
     const result = await updateBabyProfile(formWithInterval("120"))
     expect(result).toEqual({ success: true })
     expect(update).toHaveBeenCalledWith(
-      expect.objectContaining({ pumping_interval_min: 120 }),
+      expect.objectContaining({ feeding_interval_min: 120 }),
     )
   })
 
@@ -138,7 +138,7 @@ describe("updateBabyProfile: 搾乳間隔", () => {
     const { client, update } = makeSupabase({ error: null })
     setContext(client)
     const result = await updateBabyProfile(formWithInterval("10"))
-    expect(result).toEqual({ error: "搾乳間隔の値が不正です" })
+    expect(result).toEqual({ error: "授乳間隔の値が不正です" })
     expect(update).not.toHaveBeenCalled()
   })
 
@@ -148,7 +148,7 @@ describe("updateBabyProfile: 搾乳間隔", () => {
     const result = await updateBabyProfile(form("あかり"))
     expect(result).toEqual({ success: true })
     expect(update).toHaveBeenCalledWith(
-      expect.objectContaining({ pumping_interval_min: 180 }),
+      expect.objectContaining({ feeding_interval_min: 180 }),
     )
   })
 })

@@ -7,9 +7,9 @@ import { getAppOrigin } from "@/lib/utils/app-origin"
 import { isFutureJstDate } from "@/lib/utils/date-jst"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import {
-  PUMPING_INTERVAL_DEFAULT,
-  normalizePumpingInterval,
-} from "@/lib/domain/baby-pumping"
+  FEEDING_INTERVAL_DEFAULT,
+  normalizeFeedingInterval,
+} from "@/lib/domain/baby-feeding-interval"
 
 export async function updateProfile(formData: FormData) {
   const displayName = formData.get("display_name")
@@ -132,20 +132,20 @@ export async function updateAutoStockCategories(categories: ItemCategory[]) {
 export async function updateBabyProfile(formData: FormData) {
   const babyName = formData.get("baby_name")
   const babyBirthDate = formData.get("baby_birth_date")
-  const pumpingIntervalRaw = formData.get("pumping_interval_min")
+  const feedingIntervalRaw = formData.get("feeding_interval_min")
 
   if (typeof babyName !== "string") {
     return { error: "名前を入力してください" }
   }
 
-  // 搾乳間隔（分）。未送信時は既定を維持。範囲外・不正値は明確に弾く。
-  let pumpingIntervalValue = PUMPING_INTERVAL_DEFAULT
-  if (typeof pumpingIntervalRaw === "string" && pumpingIntervalRaw.trim() !== "") {
-    const normalized = normalizePumpingInterval(Number(pumpingIntervalRaw))
+  // 授乳間隔（分）。未送信時は既定を維持。範囲外・不正値は明確に弾く。
+  let feedingIntervalValue = FEEDING_INTERVAL_DEFAULT
+  if (typeof feedingIntervalRaw === "string" && feedingIntervalRaw.trim() !== "") {
+    const normalized = normalizeFeedingInterval(Number(feedingIntervalRaw))
     if (normalized === null) {
-      return { error: "搾乳間隔の値が不正です" }
+      return { error: "授乳間隔の値が不正です" }
     }
-    pumpingIntervalValue = normalized
+    feedingIntervalValue = normalized
   }
 
   let birthDateValue: string | null = null
@@ -172,7 +172,7 @@ export async function updateBabyProfile(formData: FormData) {
     .update({
       baby_name: babyName.trim() || null,
       baby_birth_date: birthDateValue,
-      pumping_interval_min: pumpingIntervalValue,
+      feeding_interval_min: feedingIntervalValue,
     })
     .eq("id", householdId)
 

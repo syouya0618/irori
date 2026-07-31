@@ -87,7 +87,7 @@ function renderSettings() {
       email="test@example.com"
       pendingUsers={[]}
       autoStockCategories={[]}
-      babyProfile={{ name: null, birthDate: null, pumpingIntervalMin: 180 }}
+      babyProfile={{ name: null, birthDate: null, feedingIntervalMin: 180 }}
     />,
   )
   return screen.getByRole("button", { name: "ログアウト" })

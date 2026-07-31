@@ -53,7 +53,7 @@ interface SettingsContentProps {
   babyProfile: {
     name: string | null
     birthDate: string | null
-    pumpingIntervalMin: number
+    feedingIntervalMin: number
   }
 }
 
