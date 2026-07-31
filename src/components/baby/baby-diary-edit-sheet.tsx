@@ -15,18 +15,10 @@ import { Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { formatDiaryDateHeadingFromYmd } from "@/lib/domain/baby-diary"
 import { upsertBabyDiary } from "@/app/(main)/baby/actions"
+// startTransition 内の未処理 reject は error boundary へ bubble する。
+// 圏外タップで全画面エラー化しないよう握ってトーストへ倒す（詳細は offline-error.ts）。
+import { toastOfflineError } from "@/lib/utils/offline-error"
 import type { BabyDiaryData } from "@/lib/types/baby"
-
-const OFFLINE_ERROR_MESSAGE =
-  "通信できませんでした。電波の良い場所でもう一度お試しください"
-
-function toastOfflineError(context: string, err: unknown) {
-  // 握り潰さずエラー詳細を構造化ログに残す（CLAUDE.md: catch 内でログ必須）。
-  console.error(`[baby-diary-edit-sheet] ${context} が例外を投げました`, {
-    message: err instanceof Error ? err.message : String(err),
-  })
-  toast.error(OFFLINE_ERROR_MESSAGE)
-}
 
 interface BabyDiaryEditSheetProps {
   open: boolean
@@ -67,7 +59,7 @@ export function BabyDiaryEditSheet({
         )
         onOpenChange(false)
       } catch (err) {
-        toastOfflineError("upsertBabyDiary", err)
+        toastOfflineError("[baby-diary-edit-sheet] upsertBabyDiary", err)
       }
     })
   }

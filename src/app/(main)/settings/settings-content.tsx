@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useTransition } from "react"
+import { unstable_rethrow } from "next/navigation"
 import {
   Home,
   LogOut,
@@ -19,6 +20,9 @@ import {
   purgeHouseholdCaches,
   LAST_USER_ID_STORAGE_KEY,
 } from "@/lib/pwa/sw-messages"
+// startTransition 内の未処理 reject は error boundary へ bubble する（詳細は
+// offline-error.ts）。圏外サインアウトで設定画面ごと落ちないよう握ってトーストへ倒す。
+import { toastOfflineError } from "@/lib/utils/offline-error"
 import { ProfileCard } from "@/components/settings/profile-card"
 import { InviteCard } from "@/components/settings/invite-card"
 import { ApprovalCard, type PendingUser } from "@/components/settings/approval-card"
@@ -73,15 +77,24 @@ export function SettingsContent({
   const handleSignOut = () => {
     setIsSigningOut(true)
     startTransition(async () => {
-      // signOut() の redirect は throw ベースのため、後続コードは実行保証がない。
-      // 世帯キャッシュ破棄と localStorage 掃除は必ず signOut() より前に行う。
-      await purgeHouseholdCaches()
       try {
-        localStorage.removeItem(LAST_USER_ID_STORAGE_KEY)
+        // signOut() の redirect は throw ベースのため、後続コードは実行保証がない。
+        // 世帯キャッシュ破棄と localStorage 掃除は必ず signOut() より前に行う。
+        await purgeHouseholdCaches()
+        try {
+          localStorage.removeItem(LAST_USER_ID_STORAGE_KEY)
+        } catch (err) {
+          console.warn("[settings] localStorage の削除に失敗:", err)
+        }
+        await signOut()
       } catch (err) {
-        console.warn("[settings] localStorage の削除に失敗:", err)
+        // catch 先頭で必ず: signOut() の redirect("/login") 内部エラーは
+        // フレームワークへ再送出する（握り潰すと遷移が死ぬ）。
+        unstable_rethrow(err)
+        // 圏外 reject でボタンが押せないまま固まるのを防ぐ（永久ローディング対策）。
+        setIsSigningOut(false)
+        toastOfflineError("[settings-content] purgeHouseholdCaches/signOut", err)
       }
-      await signOut()
     })
   }
 

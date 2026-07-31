@@ -14,6 +14,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { updateBabyProfile } from "@/app/(main)/settings/actions"
+// startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）
+import { toastOfflineError } from "@/lib/utils/offline-error"
 import { todayJstString } from "@/lib/utils/date-jst"
 import { formatElapsedMinutes } from "@/lib/utils/baby-log-labels"
 import { PUMPING_INTERVAL_OPTIONS } from "@/lib/domain/baby-pumping"
@@ -32,12 +34,17 @@ export function BabyProfileCard({
 
   const handleSave = (formData: FormData) => {
     startTransition(async () => {
-      const result = await updateBabyProfile(formData)
-      if (result.error) {
-        toast.error(result.error)
-      } else {
-        toast.success("赤ちゃん情報を更新しました")
-        router.refresh()
+      try {
+        const result = await updateBabyProfile(formData)
+        if (result.error) {
+          toast.error(result.error)
+        } else {
+          toast.success("赤ちゃん情報を更新しました")
+          router.refresh()
+        }
+      } catch (err) {
+        // 楽観更新は無いため巻き戻し不要（表示はサーバー値のまま）
+        toastOfflineError("[baby-profile-card] updateBabyProfile", err)
       }
     })
   }

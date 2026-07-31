@@ -18,6 +18,8 @@ import {
   generateFromMeals,
   previewMealIngredients,
 } from "@/app/(main)/shopping/actions"
+// startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）
+import { toastOfflineError } from "@/lib/utils/offline-error"
 
 export function GenerateFromMeals() {
   const [isPending, startTransition] = useTransition()
@@ -45,13 +47,19 @@ export function GenerateFromMeals() {
 
   const handleGenerate = () => {
     startTransition(async () => {
-      const result = await generateFromMeals()
-      if (result.error) {
-        toast.error(result.error)
-      } else if (result.success) {
-        toast.success(`${result.count}件の食材を追加しました`)
+      try {
+        const result = await generateFromMeals()
+        if (result.error) {
+          toast.error(result.error)
+        } else if (result.success) {
+          toast.success(`${result.count}件の食材を追加しました`)
+        }
+        setOpen(false)
+      } catch (err) {
+        // 楽観挿入は無いため巻き戻し不要。ダイアログは閉じずに残し、
+        // 電波が戻ったらそのまま再実行できるようにする。
+        toastOfflineError("[generate-from-meals] generateFromMeals", err)
       }
-      setOpen(false)
     })
   }
 

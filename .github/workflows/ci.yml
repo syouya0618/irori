@@ -42,3 +42,8 @@ jobs:
         # strict: issue #20/#14 で全違反を解消済み。新規 silent fail は CI で fail させる。
         # issue #14 推奨3: multi-row クエリ (.select()/.rpc() で error 欠落) も検出する。
         run: ./scripts/check-supabase-error-destructure.py --strict
+
+      - name: Detect unguarded startTransition (offline Server Action reject)
+        # strict: 全 35 箇所を try/catch で握り済み。未握りが混ざると圏外タップで
+        # error boundary へ全画面遷移し記録が無言で失われるため CI で fail させる。
+        run: ./scripts/check-transition-reject-guard.py --strict

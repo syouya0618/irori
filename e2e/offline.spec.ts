@@ -47,6 +47,10 @@ const OFFLINE_ACTION_TOAST =
   "通信できませんでした。電波の良い場所でもう一度お試しください"
 const BABY_ERROR_BOUNDARY_HEADING = "育児ログの読み込みに失敗しました"
 
+// I-02: /baby 以外の画面にも同じ握りが要る。/shopping の error boundary は
+// src/app/(main)/shopping/error.tsx（ErrorView の見出しは <h2>）。
+const SHOPPING_ERROR_BOUNDARY_HEADING = "買い物リストの読み込みに失敗しました"
+
 /**
  * Supabase error は plain object のため明示的にフィールドを抽出してログする
  * (String(err) だと "[object Object]" に化ける)。
@@ -351,6 +355,117 @@ test("オンラインで訪問済みの /calendar がオフラインで表示さ
   await expect(
     page.getByRole("heading", { name: "オフラインです" })
   ).not.toBeVisible()
+
+  await context.setOffline(false)
+
+  // teardown は fixture (approvedUser) が household ごと削除する
+})
+
+test("圏外で /shopping のチェックをタップ → 圏外トースト・error boundary へ落ちない", async ({
+  page,
+  context,
+  approvedUser,
+}) => {
+  // SW warmup + マジックリンクログインを含むため既定 60s から延長する
+  test.setTimeout(90_000)
+
+  // I-02: startTransition 内で Server Action が reject すると、未処理の reject は
+  // 最寄りの error boundary へ bubble する
+  // (node_modules/next/dist/docs/01-app/01-getting-started/10-error-handling.md:375)。
+  // B-07 は /baby でのみそれを固定していたため、/baby だけ直って他画面は落ちる
+  // 状態を許していた。ここでは /shopping の toggleItem で同じ契約を固定する。
+  // route abort ではなく context.setOffline(true) を使うのは本ファイルの既存流儀
+  // （SW の fetch にも効くことを冒頭コメントの判別実験で実証済み）。
+
+  // ── 1. 世帯 + 買い物アイテム 1 件を service_role で直 insert ──
+  const admin = adminClient()
+
+  const { data: household, error: householdError } = await admin
+    .from("households")
+    .insert({ name: "E2Eオフライン世帯(shopping reject)" })
+    .select("id")
+    .single()
+  if (householdError || !household) {
+    throw new Error(`households insert failed: ${formatError(householdError)}`)
+  }
+  const householdId = household.id as string
+
+  const { data: linked, error: linkError } = await admin
+    .from("profiles")
+    .update({ household_id: householdId, role: "owner" })
+    .eq("id", approvedUser.id)
+    .select("id")
+    .single()
+  if (linkError || !linked) {
+    throw new Error(`profiles link failed: ${formatError(linkError)}`)
+  }
+
+  const ITEM_NAME = "E2E圏外トグル豆腐"
+  await insertRow("shopping_items", {
+    household_id: householdId,
+    name: ITEM_NAME,
+    created_by: approvedUser.id,
+  })
+
+  // ── 2. 実ログイン ──
+  await loginViaMagicLink(page, approvedUser.email)
+
+  // ── 3. SW の register → activate → controlled 化を待つ ──
+  await page.goto("/shopping")
+  await page.waitForFunction(
+    async () => {
+      const registration = await navigator.serviceWorker.getRegistration()
+      return !!registration?.active
+    },
+    undefined,
+    { timeout: 15_000 }
+  )
+  await page.reload()
+  await page.waitForFunction(() => !!navigator.serviceWorker.controller)
+
+  // ── 4. /shopping をオンラインで訪問して documents キャッシュを温める ──
+  await page.goto("/shopping")
+  await expect(page.getByText(ITEM_NAME)).toBeVisible()
+  await page.waitForFunction(
+    async ({ cacheName, pagePath }) => {
+      const cache = await caches.open(cacheName)
+      const key = new URL(pagePath, location.origin).href
+      return !!(await cache.match(key))
+    },
+    { cacheName: DOCUMENTS_CACHE, pagePath: "/shopping" },
+    { timeout: 15_000 }
+  )
+
+  // ── 5. オフライン化 → キャッシュから /shopping を表示 ──
+  await context.setOffline(true)
+  await page.goto("/shopping")
+  await expect(page.getByText(ITEM_NAME)).toBeVisible()
+
+  // ── 6. 圏外でチェックをタップ → toggleItem が reject ──
+  // 未チェック時の aria-label は `${name}をチェック`（チェック済みは「のチェックを外す」）。
+  // full load 直後の click はハイドレーション完了前だと無反応になりうるため、
+  // B-07 と同方針で「トースト未表示なら click」を toPass で再試行する。
+  // オフラインゆえ再タップしても Server Action はサーバへ到達せず DB は変わらない。
+  const checkButton = page.getByRole("button", { name: `${ITEM_NAME}をチェック` })
+  const offlineToast = page.getByText(OFFLINE_ACTION_TOAST)
+  await expect(async () => {
+    if (!(await offlineToast.isVisible())) {
+      await checkButton.click({ timeout: 2_000 })
+    }
+    await expect(offlineToast).toBeVisible({ timeout: 2_000 })
+  }).toPass({ timeout: 15_000 })
+
+  // error boundary の全画面フォールバック見出し (ErrorView は <h2>) は出ない
+  await expect(
+    page.getByRole("heading", { name: SHOPPING_ERROR_BOUNDARY_HEADING })
+  ).toHaveCount(0)
+  // 画面は /shopping のまま、リストも生きている
+  expect(new URL(page.url()).pathname).toBe("/shopping")
+  await expect(page.getByText(ITEM_NAME)).toBeVisible()
+
+  // 楽観トグルが巻き戻り、未チェック表示（= aria-label が「をチェック」）に戻る。
+  // 巻き戻さないと「チェック済みに見えるのに保存されていない」嘘が残る。
+  await expect(checkButton).toBeVisible()
 
   await context.setOffline(false)
 

@@ -22,6 +22,8 @@ import {
 import { Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { addStockItem, updateStockItem } from "@/app/(main)/stock/actions"
+// startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）
+import { toastOfflineError } from "@/lib/utils/offline-error"
 import { allCategories } from "@/lib/utils/categories"
 import type { StockItemData } from "./stock-item"
 import type { ItemCategory } from "@/lib/types/database"
@@ -93,15 +95,23 @@ export function StockFormSheet({
     formData.set("expires_at", expiresAt)
 
     startTransition(async () => {
-      const result = isEditing
-        ? await updateStockItem(editingItem.id, formData)
-        : await addStockItem(formData)
+      try {
+        const result = isEditing
+          ? await updateStockItem(editingItem.id, formData)
+          : await addStockItem(formData)
 
-      if ("error" in result) {
-        toast.error(result.error)
-      } else {
-        toast.success(isEditing ? "在庫を更新しました" : "在庫を追加しました")
-        onOpenChange(false)
+        if ("error" in result) {
+          toast.error(result.error)
+        } else {
+          toast.success(isEditing ? "在庫を更新しました" : "在庫を追加しました")
+          onOpenChange(false)
+        }
+      } catch (err) {
+        // 楽観更新は無い。シートも閉じずに残し、入力を打ち直させない。
+        toastOfflineError(
+          `[stock-form-sheet] ${isEditing ? "updateStockItem" : "addStockItem"}`,
+          err,
+        )
       }
     })
   }

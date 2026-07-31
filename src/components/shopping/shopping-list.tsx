@@ -51,6 +51,8 @@ import { ShoppingItem, type ShoppingItemData } from "./shopping-item"
 import { AddItemForm } from "./add-item-form"
 import { GenerateFromMeals } from "./generate-from-meals"
 import { clearChecked } from "@/app/(main)/shopping/actions"
+// startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）
+import { toastOfflineError } from "@/lib/utils/offline-error"
 import {
   getCategoryLabel,
   categoryDisplayOrder,
@@ -287,12 +289,18 @@ export function ShoppingList({
   // ─── チェック済み削除 ──────────────────────────────────
   const handleClearChecked = () => {
     startClearTransition(async () => {
-      const result = await clearChecked()
-      if (result.error) {
-        toast.error(result.error)
-      } else if (result.success) {
-        toast.success(`${result.count}件のアイテムを削除しました`)
-        setClearDialogOpen(false)
+      try {
+        const result = await clearChecked()
+        if (result.error) {
+          toast.error(result.error)
+        } else if (result.success) {
+          toast.success(`${result.count}件のアイテムを削除しました`)
+          setClearDialogOpen(false)
+        }
+      } catch (err) {
+        // 楽観削除はしていないため巻き戻し不要。ダイアログも開いたままにして
+        // 電波が戻ったら再試行できるようにする。
+        toastOfflineError("[shopping-list] clearChecked", err)
       }
     })
   }

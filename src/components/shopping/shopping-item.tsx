@@ -8,6 +8,8 @@ import { getCategoryLabel, getCategoryColor } from "@/lib/utils/categories"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { toggleItem, deleteItem } from "@/app/(main)/shopping/actions"
+// startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）
+import { toastOfflineError } from "@/lib/utils/offline-error"
 import type { ItemCategory, StoreType } from "@/lib/types/database"
 
 export interface ShoppingItemData {
@@ -54,15 +56,22 @@ export function ShoppingItem({
     onOptimisticToggle(item.id, newChecked)
 
     startTransition(async () => {
-      const result = await toggleItem(item.id, newChecked)
-      if (result.error) {
-        // ロールバック
+      try {
+        const result = await toggleItem(item.id, newChecked)
+        if (result.error) {
+          // ロールバック
+          onOptimisticToggle(item.id, !newChecked)
+          toast.error(result.error)
+          return
+        }
+        if (result.autoStocked && result.autoStockedName) {
+          toast.success(`${result.autoStockedName}を在庫に追加しました`)
+        }
+      } catch (err) {
+        // reject は「サーバーへ届いていない」= 業務エラーより確実に未反映ゆえ、
+        // result.error と同じロールバックを行う（チェックが残る嘘を作らない）。
         onOptimisticToggle(item.id, !newChecked)
-        toast.error(result.error)
-        return
-      }
-      if (result.autoStocked && result.autoStockedName) {
-        toast.success(`${result.autoStockedName}を在庫に追加しました`)
+        toastOfflineError("[shopping-item] toggleItem", err)
       }
     })
   }
@@ -78,12 +87,19 @@ export function ShoppingItem({
     onOptimisticDelete(item.id)
 
     startTransition(async () => {
-      const result = await deleteItem(item.id)
-      if (result.error) {
-        // ロールバック（トグルの巻き戻しと対称。失敗したのに行が消えたままだと
-        // 「消えたはずのものが復帰で蘇る」不整合になる）
+      try {
+        const result = await deleteItem(item.id)
+        if (result.error) {
+          // ロールバック（トグルの巻き戻しと対称。失敗したのに行が消えたままだと
+          // 「消えたはずのものが復帰で蘇る」不整合になる）
+          onRollbackDelete(item)
+          toast.error(result.error)
+        }
+      } catch (err) {
+        // reject はサーバー未到達 = 行は確実に残っている。巻き戻さないと
+        // 「消えたはずのものが復帰で蘇る」不整合になる（result.error と同じ理由）。
         onRollbackDelete(item)
-        toast.error(result.error)
+        toastOfflineError("[shopping-item] deleteItem", err)
       }
     })
   }

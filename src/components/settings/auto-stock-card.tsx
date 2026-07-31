@@ -11,6 +11,8 @@ import {
 } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import { updateAutoStockCategories } from "@/app/(main)/settings/actions"
+// startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）
+import { toastOfflineError } from "@/lib/utils/offline-error"
 import { getCategoryLabel } from "@/lib/utils/categories"
 import type { ItemCategory } from "@/lib/types/database"
 
@@ -41,12 +43,19 @@ export function AutoStockCategoriesCard({
     setSelected(next)
 
     startTransition(async () => {
-      const result = await updateAutoStockCategories(
-        [...next] as ItemCategory[],
-      )
-      if (result.error) {
-        toast.error(result.error)
+      try {
+        const result = await updateAutoStockCategories(
+          [...next] as ItemCategory[],
+        )
+        if (result.error) {
+          toast.error(result.error)
+          setSelected(new Set(initialCategories))
+        }
+      } catch (err) {
+        // reject は「サーバーへ届いてすらいない」= result.error より確実に未反映ゆえ、
+        // 業務エラー時と同じ巻き戻しを行う（選択が保存済みに見える嘘を残さない）。
         setSelected(new Set(initialCategories))
+        toastOfflineError("[auto-stock-card] updateAutoStockCategories", err)
       }
     })
   }

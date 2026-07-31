@@ -29,6 +29,7 @@ import { useVisibilityRefetch } from "@/lib/hooks/use-visibility-refetch"
 import { STOCK_ITEM_COLUMNS } from "@/lib/domain/stock-item-columns"
 import { Button } from "@/components/ui/button"
 import { checkAndAutoAddLowStock } from "@/app/(main)/stock/actions"
+import { logOfflineError } from "@/lib/utils/offline-error"
 import { StockItem, type StockItemData } from "./stock-item"
 import { StockFormSheet } from "./stock-form-sheet"
 import { ReceiptEntrySheet } from "./receipt-entry-sheet"
@@ -131,16 +132,25 @@ export function StockList({
 
     if (last && Date.now() - Number(last) < THIRTY_MIN) return
 
-    checkAndAutoAddLowStock().then((result) => {
-      if (result.error) return
-      sessionStorage.setItem(key, String(Date.now()))
-      if (result.addedItems.length > 0) {
-        toast.success(
-          `在庫が少ない${result.addedItems.length}件を買い物リストに追加しました`,
-          { description: result.addedItems.join("、") },
-        )
-      }
-    })
+    checkAndAutoAddLowStock()
+      .then((result) => {
+        if (result.error) return
+        sessionStorage.setItem(key, String(Date.now()))
+        if (result.addedItems.length > 0) {
+          toast.success(
+            `在庫が少ない${result.addedItems.length}件を買い物リストに追加しました`,
+            { description: result.addedItems.join("、") },
+          )
+        }
+      })
+      .catch((err) => {
+        // 注意: ここは startTransition ではなく floating promise ゆえ、reject は
+        // error boundary へ bubble せず **無言の unhandled rejection** になる
+        // （機序が別）。マウント時の自動チェックでユーザー起点ではないため
+        // トーストは出さずログのみ。sessionStorage も更新しないので、
+        // 電波が戻った次のマウントで再試行される。
+        logOfflineError("[stock-list] checkAndAutoAddLowStock", err)
+      })
   }, [])
 
   // ─── 復帰時 refetch ────────────────────────────────────
