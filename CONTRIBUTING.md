@@ -7,7 +7,6 @@ irori への貢献に興味を持っていただきありがとうございま�
 - Node.js 24 推奨（`.nvmrc` 参照。CI も Node 24 で実行）
 - pnpm 10 以上（`corepack enable` で有効化できます）
 - Supabase アカウント / プロジェクト（または Supabase CLI でのローカル起動）
-- Flutter SDK（Flutter 版を触る場合のみ）
 
 ## セットアップ
 
@@ -18,16 +17,6 @@ irori への貢献に興味を持っていただきありがとうございま�
    - **ローカルスタック**: `supabase start`（`supabase/config.toml` と `supabase/migrations/` を反映）
    - **リモートプロジェクト**: `supabase link --project-ref <project-ref>` の後 `supabase db push`
 5. 開発サーバを起動: `pnpm dev` → http://localhost:3000
-
-### Flutter（任意）
-
-```bash
-cd flutter
-flutter pub get
-flutter run \
-  --dart-define=SUPABASE_URL=https://your-project.supabase.co \
-  --dart-define=SUPABASE_ANON_KEY=your-anon-key
-```
 
 ## ブランチとコミット
 

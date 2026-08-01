@@ -20,7 +20,7 @@ export const MEAL_TYPE_SHORT_LABELS: Record<MealType, string> = {
  * 表示されない不可視データが生まれ、UNIQUE(household_id, date, meal_type) と
  * 組み合わさって「既に登録されています」の原因不明エラーになる(削除手段も無い)。
  *
- * DB の meal_type ENUM には 'snack' が残っている(Flutter・既存データ・将来の
+ * DB の meal_type ENUM には 'snack' が残っている(既存データ・将来の
  * 間食対応のため)。MEAL_TYPE_LABELS も全種別を保持し、既存の間食データを表示できる。
  */
 export const WEEK_VIEW_MEAL_TYPES: MealType[] = ["breakfast", "lunch", "dinner"]

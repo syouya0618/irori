@@ -21,7 +21,6 @@ describe("buildOptimisticLog (B-03)", () => {
     expect(log.amount_ml).toBe(120)
     // 未指定は全て null
     expect(log.diaper_type).toBeNull()
-    expect(log.ended_at).toBeNull()
     expect(log.temperature).toBeNull()
     expect(log.weight_g).toBeNull()
     expect(log.height_cm).toBeNull()
@@ -53,16 +52,6 @@ describe("buildOptimisticLog (B-03)", () => {
     expect(log.log_type).toBe("diaper")
     expect(log.diaper_type).toBe("poop")
     expect(log.feeding_type).toBeNull()
-  })
-
-  it("sleep: ended_at 未指定はアクティブ睡眠（null）", () => {
-    const log = buildOptimisticLog({
-      id: "s1",
-      logType: "sleep",
-      loggedBy: "u1",
-    })
-    expect(log.log_type).toBe("sleep")
-    expect(log.ended_at).toBeNull()
   })
 
   it("logged_at 未指定時は呼び出し時刻を使う", () => {

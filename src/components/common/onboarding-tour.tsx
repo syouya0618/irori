@@ -54,7 +54,7 @@ const STEPS: TourStep[] = [
   {
     icon: Baby,
     title: "育児",
-    body: "授乳・おむつ・睡眠をワンタップで記録します。夜間や抱っこ中でもすぐ残せます。",
+    body: "授乳・おむつをワンタップで記録します。夜間や抱っこ中でもすぐ残せます。",
   },
   {
     icon: Settings,

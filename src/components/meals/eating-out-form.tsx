@@ -13,6 +13,8 @@ import {
   getEatingOutLog,
 } from "@/app/(main)/meals/eating-out-actions"
 import { compressImage } from "@/lib/utils/compress-image"
+// startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）
+import { toastOfflineError } from "@/lib/utils/offline-error"
 
 interface EatingOutFormProps {
   mealId: string
@@ -117,17 +119,22 @@ export function EatingOutForm({ mealId }: EatingOutFormProps) {
 
   function handleSave() {
     startTransition(async () => {
-      const result = await saveEatingOutLog({
-        mealId,
-        restaurantName: restaurantName.trim() || null,
-        memo: memo.trim() || null,
-        rating: rating > 0 ? rating : null,
-        photoUrl,
-      })
-      if (result.error) {
-        toast.error(result.error)
-      } else {
-        toast.success("外食記録を保存しました")
+      try {
+        const result = await saveEatingOutLog({
+          mealId,
+          restaurantName: restaurantName.trim() || null,
+          memo: memo.trim() || null,
+          rating: rating > 0 ? rating : null,
+          photoUrl,
+        })
+        if (result.error) {
+          toast.error(result.error)
+        } else {
+          toast.success("外食記録を保存しました")
+        }
+      } catch (err) {
+        // 楽観更新は無く、入力内容も state に残るため巻き戻し不要。
+        toastOfflineError("[eating-out-form] saveEatingOutLog", err)
       }
     })
   }

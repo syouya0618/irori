@@ -1,9 +1,9 @@
 "use client"
 
-import { Milk, Droplets, Moon, Sun, Timer } from "lucide-react"
+import { Milk, Droplets, Timer } from "lucide-react"
 import { formatElapsedMinutes, minutesBetween } from "@/lib/utils/baby-log-labels"
 import { todayJstString, formatTimeJst } from "@/lib/utils/date-jst"
-import { computeNextPumping } from "@/lib/domain/baby-pumping"
+import { computeNextFeeding } from "@/lib/domain/baby-feeding-interval"
 import type { TodayCounts } from "@/lib/domain/baby-log-aggregation"
 import type { BabyLogData } from "@/lib/types/baby"
 
@@ -29,13 +29,18 @@ function formatFeedingBreakdown(counts: TodayCounts): string {
 }
 
 interface BabySummaryBarProps {
+  /**
+   * 最後の授乳行（log_type='feeding'・**搾乳を含む**）。「最終授乳」表示に使う。
+   * 目安の起点とは別物ゆえ混同しないこと（`lastNursing` の注記を参照）。
+   */
   lastFeeding: BabyLogData | null
-  /** 最後の搾乳（feeding_type='pumped'）。次の搾乳の目安の起点に使う */
-  lastPumped: BabyLogData | null
-  /** 搾乳間隔（分・設定値）。最後の搾乳＋この間隔で次の目安を出す */
-  pumpingIntervalMin: number
-  activeSleep: BabyLogData | null
-  lastSleepEndedAt: string | null
+  /**
+   * 最後に赤子へ与えた授乳（母乳/ミルク/離乳食。**搾乳は除く**）。
+   * 次の授乳の目安の起点に使う。搾乳は赤子に与えていないため目安をリセットしない。
+   */
+  lastNursing: BabyLogData | null
+  /** 授乳間隔（分・設定値）。最後の授乳の開始＋この間隔で次の目安を出す */
+  feedingIntervalMin: number
   now: Date
   todayCounts: TodayCounts
   /** 表示中の日付（YYYY-MM-DD、JST）。今日か過去日かでラベル・経過表示を切り替える */
@@ -44,10 +49,8 @@ interface BabySummaryBarProps {
 
 export function BabySummaryBar({
   lastFeeding,
-  lastPumped,
-  pumpingIntervalMin,
-  activeSleep,
-  lastSleepEndedAt,
+  lastNursing,
+  feedingIntervalMin,
   now,
   todayCounts,
   date,
@@ -65,21 +68,12 @@ export function BabySummaryBar({
       ? minutesBetween(lastFeeding.logged_at, now.toISOString())
       : null
 
-  const sleepElapsed =
-    isToday && activeSleep
-      ? minutesBetween(activeSleep.logged_at, now.toISOString())
-      : null
-
-  // 覚醒時間: 起きている + 最後に起きた時刻がある場合に計算
-  const awakeElapsed =
-    isToday && !activeSleep && lastSleepEndedAt
-      ? minutesBetween(lastSleepEndedAt, now.toISOString())
-      : null
-
-  // 次の搾乳の目安: 今日の表示 + 最後の搾乳がある時のみ（最後の搾乳＋設定間隔）
-  const nextPumping =
-    isToday && lastPumped
-      ? computeNextPumping(lastPumped.logged_at, pumpingIntervalMin, now)
+  // 次の授乳の目安: 今日の表示 + 最後の授乳がある時のみ（最後の授乳の開始＋設定間隔）。
+  // 起点は搾乳を除いた授乳（lastNursing）。深夜跨ぎで前日行になった授乳も
+  // dashboard 側の fallback を通じてここへ届く。
+  const nextFeeding =
+    isToday && lastNursing
+      ? computeNextFeeding(lastNursing.logged_at, feedingIntervalMin, now)
       : null
 
   return (
@@ -97,20 +91,14 @@ export function BabySummaryBar({
         />
         <div className="h-8 w-px bg-border" aria-hidden="true" />
         <TodayStat
-          icon={<Moon size={14} className="text-violet-600 dark:text-violet-400" />}
-          label="睡眠"
-          value={formatElapsedMinutes(todayCounts.totalSleepMinutes)}
-        />
-        <div className="h-8 w-px bg-border" aria-hidden="true" />
-        <TodayStat
           icon={<Droplets size={14} className="text-sky-600 dark:text-sky-400" />}
           label="おむつ"
           value={`おしっこ${todayCounts.peeCount}・うんち${todayCounts.poopCount}`}
         />
       </div>
 
-      {/* 直近の経過（次の授乳の目安・睡眠状態） */}
-      <div className="grid grid-cols-3 gap-3">
+      {/* 直近の経過（最終授乳・おむつ） */}
+      <div className="grid grid-cols-2 gap-3">
         {/* Last feeding */}
         <div className="glass flex flex-col items-center gap-1.5 rounded-2xl p-3 shadow-lg shadow-black/[0.04]">
           <div className="flex size-8 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/40">
@@ -141,62 +129,31 @@ export function BabySummaryBar({
               : "---"}
           </span>
         </div>
-
-        {/* Sleep status */}
-        <div className="glass flex flex-col items-center gap-1.5 rounded-2xl p-3 shadow-lg shadow-black/[0.04]">
-          <div
-            className={`flex size-8 items-center justify-center rounded-full ${
-              activeSleep
-                ? "bg-violet-100 dark:bg-violet-900/40"
-                : "bg-emerald-100 dark:bg-emerald-900/40"
-            }`}
-          >
-            {activeSleep ? (
-              <Moon size={16} className="text-violet-700 dark:text-violet-300" />
-            ) : (
-              <Sun size={16} className="text-emerald-700 dark:text-emerald-300" />
-            )}
-          </div>
-          <span className="text-[10px] text-muted-foreground">
-            {activeSleep ? "睡眠中" : "起きてる"}
-          </span>
-          <span className="font-mono text-xs font-semibold">
-            {/* 過去日は非表示（"---"）にする: lastSleepEndedAt は
-                derivedLastSleepEndedAt ?? サーバの today 向けクロスデイ
-                フォールバックであり、選択中の過去日にスコープされた値では
-                ないため、絶対時刻化すると別日のデータを表示しうる（B-01 領域）。*/}
-            {isToday
-              ? sleepElapsed !== null
-                ? formatElapsedMinutes(sleepElapsed)
-                : awakeElapsed !== null
-                  ? formatElapsedMinutes(awakeElapsed)
-                  : "---"
-              : "---"}
-          </span>
-        </div>
       </div>
 
-      {/* 次の搾乳の目安（最後の搾乳＋設定間隔）。搾乳記録がある今日だけ表示 */}
-      {nextPumping && (
+      {/* 次の授乳の目安（最後の授乳の開始＋設定間隔）。授乳記録がある今日だけ表示 */}
+      {nextFeeding && (
         <div className="glass flex items-center gap-2.5 rounded-2xl px-3 py-2.5 shadow-lg shadow-black/[0.04]">
           <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/40">
             <Timer size={16} className="text-amber-700 dark:text-amber-300" />
           </div>
-          <span className="text-xs text-muted-foreground">次の搾乳の目安</span>
+          <span className="text-xs text-muted-foreground">次の授乳の目安</span>
           <span className="ml-auto flex items-baseline gap-1.5">
             <span className="font-mono text-sm font-semibold">
-              {formatTimeJst(nextPumping.targetIso)}
+              {formatTimeJst(nextFeeding.targetIso)}
             </span>
             <span
               className={`text-[11px] ${
-                nextPumping.minutesUntil > 0
+                nextFeeding.minutesUntil > 0
                   ? "text-muted-foreground"
                   : "font-semibold text-amber-600 dark:text-amber-400"
               }`}
             >
-              {nextPumping.minutesUntil > 0
-                ? `あと${formatElapsedMinutes(nextPumping.minutesUntil)}`
-                : "そろそろです"}
+              {/* 目安を過ぎたら「そろそろです」で張り付かせず、超過した経過時間を出す
+                  （どれだけ過ぎたかが読めないと次の判断ができないため） */}
+              {nextFeeding.minutesUntil > 0
+                ? `あと${formatElapsedMinutes(nextFeeding.minutesUntil)}`
+                : `${formatElapsedMinutes(-nextFeeding.minutesUntil)} 経過`}
             </span>
           </span>
         </div>
@@ -216,7 +173,7 @@ function TodayStat({
 }) {
   return (
     // 授乳・おむつの値は複合表示（母乳8・ミルク2 / おしっこ2・うんち1）ゆえ、
-    // 3 チップ横並びだと text-sm では狭い端末で行が溢れる。値を text-xs に落とし、
+    // 横並びだと text-sm では狭い端末で行が溢れる。値を text-xs に落とし、
     // さらに min-w-0 を置いて flex アイテムが縮める（= 溢れた最悪ケースは
     // カードを横に破らず 2 行へ折り返す）ようにする。whitespace-nowrap は付けない。
     <div className="flex min-w-0 flex-col items-center gap-0.5 text-center">

@@ -23,6 +23,8 @@ import {
   deleteTemplate,
 } from "@/app/(main)/meals/actions"
 import { SuggestionListInDialog } from "@/components/meals/suggestion-list-in-dialog"
+// startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）
+import { toastOfflineError } from "@/lib/utils/offline-error"
 import type { TemplateIngredient } from "@/lib/domain"
 
 interface Template {
@@ -55,14 +57,23 @@ export function TemplateSelector({
 
   useEffect(() => {
     if (!open || hasLoaded) return
-    getTemplates().then((result) => {
-      if (result.error) {
-        toast.error(result.error)
-      } else {
-        setTemplates(result.data)
-      }
-      setHasLoaded(true)
-    })
+    getTemplates()
+      .then((result) => {
+        if (result.error) {
+          toast.error(result.error)
+        } else {
+          setTemplates(result.data)
+        }
+        setHasLoaded(true)
+      })
+      .catch((err) => {
+        // 注意: ここは startTransition ではなく floating promise ゆえ、reject は
+        // error boundary へ bubble せず **無言の unhandled rejection** になる
+        // （機序が別）。加えて hasLoaded が立たず isLoading が永久 true になり、
+        // スピナーのまま固まる。必ず立てて空状態へ倒す。
+        setHasLoaded(true)
+        toastOfflineError("[template-selector] getTemplates", err)
+      })
   }, [open, hasLoaded])
 
   function handleOpenChange(nextOpen: boolean) {
@@ -76,14 +87,19 @@ export function TemplateSelector({
 
   function handleSelect(templateId: string) {
     startTransition(async () => {
-      const result = await loadTemplate(templateId)
-      if (result.error) {
-        toast.error(result.error)
-        return
-      }
-      if (result.data) {
-        onSelect(result.data)
-        handleOpenChange(false)
+      try {
+        const result = await loadTemplate(templateId)
+        if (result.error) {
+          toast.error(result.error)
+          return
+        }
+        if (result.data) {
+          onSelect(result.data)
+          handleOpenChange(false)
+        }
+      } catch (err) {
+        // 読み取り専用（反映もダイアログ閉じも成功時のみ）ゆえ巻き戻し不要。
+        toastOfflineError("[template-selector] loadTemplate", err)
       }
     })
   }
@@ -99,13 +115,18 @@ export function TemplateSelector({
   function handleDelete(e: React.MouseEvent, templateId: string) {
     e.stopPropagation()
     startTransition(async () => {
-      const result = await deleteTemplate(templateId)
-      if (result.error) {
-        toast.error(result.error)
-        return
+      try {
+        const result = await deleteTemplate(templateId)
+        if (result.error) {
+          toast.error(result.error)
+          return
+        }
+        setTemplates((prev) => prev.filter((t) => t.id !== templateId))
+        toast.success("テンプレートを削除しました")
+      } catch (err) {
+        // ローカル除去は成功後にしか行わない（楽観削除ではない）ゆえ巻き戻し不要。
+        toastOfflineError("[template-selector] deleteTemplate", err)
       }
-      setTemplates((prev) => prev.filter((t) => t.id !== templateId))
-      toast.success("テンプレートを削除しました")
     })
   }
 

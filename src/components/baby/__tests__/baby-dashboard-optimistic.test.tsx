@@ -7,14 +7,12 @@
  * 再タップで二重記録の実害が出る。本 PR は Server Action が返す id で楽観 append し、
  * 既存の Realtime echo は id 重複スキップ（baby-dashboard.tsx の INSERT append）で吸収する。
  *
- * 検証対象（計画書 §3 B-03 の fail-red 3 点 + 睡眠の整合 1 点）:
+ * 検証対象（計画書 §3 B-03 の fail-red 3 点）:
  * 1. Realtime を発火させずに記録アクションが解決 → logs に新行（今日のまとめ 回数 / timeline）
  * 2. Undo（取り消す）成功で logs から除去される
  * 3. 同 id の Realtime INSERT echo が来ても二重 append されない（1 件のまま）
- * 4. 睡眠開始→終了を Realtime 無しで楽観反映（トグル 起こす⇄ねんね）。serverActiveSleep /
- *    echo と二重にならない（id dedupe が守る）ことを併せて確認。
  *
- * 時刻は active-sleep.test.tsx と同様に実タイマー + todayJstString() の実時刻から組む
+ * 時刻は実タイマー + todayJstString() の実時刻から組む
  * （記録の logged_at は client now = 当日ゆえ選択日窓に入る）。
  */
 
@@ -39,12 +37,7 @@ import {
   resetInlineReducerMockState,
 } from "@/test-utils/supabase-realtime-mock"
 import { todayJstString } from "@/lib/utils/date-jst"
-import {
-  recordDiaper,
-  startSleep,
-  endSleep,
-  deleteLog,
-} from "@/app/(main)/baby/actions"
+import { recordDiaper, deleteLog } from "@/app/(main)/baby/actions"
 import { toast } from "sonner"
 
 const mockState = vi.hoisted(() => ({
@@ -68,8 +61,6 @@ vi.mock("@/lib/supabase/client", async () => {
 vi.mock("@/app/(main)/baby/actions", () => ({
   recordFeeding: vi.fn(),
   recordDiaper: vi.fn(),
-  startSleep: vi.fn(),
-  endSleep: vi.fn(),
   deleteLog: vi.fn(),
   recordTemperature: vi.fn(),
   recordGrowth: vi.fn(),
@@ -82,8 +73,6 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 import { BabyDashboard } from "../baby-dashboard"
 
 const mockedRecordDiaper = vi.mocked(recordDiaper)
-const mockedStartSleep = vi.mocked(startSleep)
-const mockedEndSleep = vi.mocked(endSleep)
 const mockedDeleteLog = vi.mocked(deleteLog)
 const mockedToast = vi.mocked(toast)
 
@@ -106,7 +95,6 @@ function makeLog(
     breast_left_sec: null,
     breast_right_sec: null,
     diaper_type: null,
-    ended_at: null,
     temperature: null,
     weight_g: null,
     height_cm: null,
@@ -123,19 +111,17 @@ function defaultProps(
 ): Parameters<typeof BabyDashboard>[0] {
   return {
     initialLogs: [],
-    initialOverlapLogs: [],
     initialWeeklyLogs: [],
     initialGrowthLogs: [],
     householdId: "h1",
     userId: "u1",
     initialDate: TODAY,
     initialDiary: null,
-    lastSleepEndedAt: null,
-    activeSleepFallback: null,
     lastFeedingFallback: null,
+    lastNursingFallback: null,
     babyName: null,
     babyBirthDate: null,
-    pumpingIntervalMin: 180,
+    feedingIntervalMin: 180,
     ...overrides,
   }
 }
@@ -250,63 +236,5 @@ describe("BabyDashboard / 記録の楽観 append (B-03)", () => {
     expect(
       within(summary()).queryByText("おしっこ2・うんち0"),
     ).not.toBeInTheDocument()
-  })
-
-  it("睡眠開始→終了を Realtime 無しで楽観反映（トグル ねんね→起こす→ねんね）", async () => {
-    mockedStartSleep.mockResolvedValue({ error: null, id: "sleep-opt-1" })
-    mockedEndSleep.mockResolvedValue({ error: null })
-    render(<BabyDashboard {...defaultProps()} />)
-
-    // 初期: 起床中トグル
-    expect(
-      screen.getByRole("button", { name: "ねんね" }),
-    ).toBeInTheDocument()
-
-    // 睡眠開始
-    fireEvent.click(screen.getByRole("button", { name: "ねんね" }))
-    await waitFor(() => expect(mockedStartSleep).toHaveBeenCalled())
-
-    // Realtime echo 無しでもトグルが「睡眠中（経過表示）」へ、timeline に睡眠中行。
-    // findByRole は isPending（トランジション中スピナー = テキスト無し・disabled）が
-    // 解け経過表示が出るまで待つ（waitFor で settle を待たずに click すると disabled で no-op）。
-    const wakeButton = await screen.findByRole("button", { name: /(時間|分)/ })
-    expect(
-      screen.queryByRole("button", { name: "ねんね" }),
-    ).not.toBeInTheDocument()
-    expect(screen.getByText("睡眠中")).toBeInTheDocument()
-    expect(screen.getByText("睡眠中...")).toBeInTheDocument()
-
-    // 整合（B-01/B-02）: 同 id の睡眠 INSERT echo が後追いで来ても二重 append されない。
-    // 楽観 append 済みの sleep-opt-1 を echo が重複させると timeline に睡眠中行が 2 本出る。
-    // id dedupe（appendLog / INSERT ハンドラ双方のガード）で 1 本のまま = serverActiveSleep とも二重化しない。
-    act(() => {
-      emit(
-        makePayload(
-          "INSERT",
-          makeLog({
-            id: "sleep-opt-1",
-            log_type: "sleep",
-            logged_at: `${TODAY}T09:00:00+09:00`,
-          }),
-        ),
-      )
-    })
-    expect(screen.getAllByText("睡眠中...")).toHaveLength(1)
-
-    // 睡眠終了
-    fireEvent.click(wakeButton)
-    await waitFor(() =>
-      expect(mockedEndSleep).toHaveBeenCalledWith("sleep-opt-1"),
-    )
-
-    // Realtime echo 無しでもトグルが「ねんね」へ戻り、睡眠中表示が消える
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "ねんね" }),
-      ).toBeInTheDocument(),
-    )
-    expect(screen.queryByText("睡眠中...")).not.toBeInTheDocument()
-    // 二重記録が起きていない（startSleep は 1 回のみ = 再タップ誘発なし）
-    expect(mockedStartSleep).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,10 +1,14 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, unstable_rethrow } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Loader2, Clock, LogOut, RefreshCw } from "lucide-react"
 import { signOut } from "./actions"
+// 注意: ここは startTransition ではなくプレーンな async onClick ゆえ、reject は
+// error boundary へ bubble せず **無言の unhandled rejection** になる（機序が別）。
+// 症状は同じ「無言で失敗 + ボタンが固まる」ため同じトーストへ倒す。
+import { toastOfflineError } from "@/lib/utils/offline-error"
 
 export function PendingContent() {
   const router = useRouter()
@@ -26,7 +30,16 @@ export function PendingContent() {
 
   async function handleSignOut() {
     setIsSigningOut(true)
-    await signOut()
+    try {
+      await signOut()
+    } catch (err) {
+      // catch 先頭で必ず: signOut() の redirect("/login") 内部エラーは
+      // フレームワークへ再送出する（握り潰すと遷移が死ぬ）。
+      unstable_rethrow(err)
+      // 圏外 reject でボタンが固まったままにしない。
+      setIsSigningOut(false)
+      toastOfflineError("[pending-content] signOut", err)
+    }
   }
 
   return (

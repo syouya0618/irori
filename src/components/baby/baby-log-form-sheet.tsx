@@ -44,6 +44,9 @@ import {
   parseFeedingDurationInput,
 } from "@/lib/domain/feeding"
 import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
+// startTransition 内の未処理 reject は error boundary へ bubble し、入力/記録が
+// 無言で失われる。握ってトーストへ倒す（機序の詳細は offline-error.ts）。
+import { toastOfflineError } from "@/lib/utils/offline-error"
 import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
 import type { BabyLogData } from "@/lib/types/baby"
 
@@ -116,21 +119,6 @@ const AMOUNT_PRESETS_ML = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
 function parseAmountMl(raw: string): number | null {
   const n = parseInt(raw, 10)
   return Number.isFinite(n) && n >= 0 ? n : null
-}
-
-// 通信断で Server Action が reject すると、startTransition 内の unhandled reject が
-// 最寄りの error boundary へ bubble し全画面エラー化 + 入力/記録が無言で失われる
-// (node_modules/next/dist/docs/01-app/01-getting-started/10-error-handling.md:375)。
-// 圏外操作でその袋小路に落ちないよう、各ハンドラの reject を握ってトーストへ倒す。
-const OFFLINE_ERROR_MESSAGE =
-  "通信できませんでした。電波の良い場所でもう一度お試しください"
-
-function toastOfflineError(context: string, err: unknown) {
-  // 握り潰さずエラー詳細を構造化ログに残す（CLAUDE.md: catch 内でログ必須）。
-  console.error(`[baby-log-form-sheet] ${context} が例外を投げました`, {
-    message: err instanceof Error ? err.message : String(err),
-  })
-  toast.error(OFFLINE_ERROR_MESSAGE)
 }
 
 interface BabyLogFormSheetProps {
@@ -383,7 +371,7 @@ export function BabyLogFormSheet({
         toast.success("記録しました")
         onOpenChange(false)
       } catch (err) {
-        toastOfflineError("recordCreate", err)
+        toastOfflineError("[baby-log-form-sheet] recordCreate", err)
       }
     })
   }
@@ -400,7 +388,7 @@ export function BabyLogFormSheet({
         // 時刻を触った時のみ loggedAt を送る。量やメモだけの編集で既存 logged_at の秒が
         // HH:mm 丸めで無言に失われるのを防ぐ（updateLog は未指定なら logged_at を変更しない）。
         // seed と同値（変更→元に戻した場合含む）なら送らず、時刻検証もスキップしてよい
-        // — 既存記録の時刻はそのまま妥当。sleep の logged_at ≤ ended_at 整合はサーバ Action 側で拒否する。
+        // — 既存記録の時刻はそのまま妥当。
         if (timeHm !== seedTimeHm) {
           const loggedAt = jstDateTimeToIso(logDate, timeHm)
           if (!loggedAt) {
@@ -504,7 +492,7 @@ export function BabyLogFormSheet({
         toast.success("ログを更新しました")
         onOpenChange(false)
       } catch (err) {
-        toastOfflineError("updateLog", err)
+        toastOfflineError("[baby-log-form-sheet] updateLog", err)
       }
     })
   }
@@ -524,7 +512,7 @@ export function BabyLogFormSheet({
         toast.success("ログを削除しました")
         onOpenChange(false)
       } catch (err) {
-        toastOfflineError("deleteLog", err)
+        toastOfflineError("[baby-log-form-sheet] deleteLog", err)
       }
     })
   }

@@ -12,6 +12,9 @@ import {
 } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { approveUser } from "@/app/(main)/settings/actions"
+// 注意: ここは startTransition ではなくプレーンな async onClick ゆえ、reject は
+// error boundary へ bubble せず **無言の unhandled rejection** になる（機序が別）。
+import { toastOfflineError } from "@/lib/utils/offline-error"
 
 export interface PendingUser {
   id: string
@@ -47,13 +50,20 @@ function PendingUserRow({ user }: { user: PendingUser }) {
 
   async function handleApprove() {
     setIsApproving(true)
-    const result = await approveUser(user.id)
-    if (result.error) {
-      toast.error(result.error)
+    try {
+      const result = await approveUser(user.id)
+      if (result.error) {
+        toast.error(result.error)
+        setIsApproving(false)
+      } else {
+        toast.success(`${user.email} を承認しました`)
+        router.refresh()
+      }
+    } catch (err) {
+      // approveUser は redirect/notFound を投げない（settings/actions.ts の
+      // approveUser は必ず { error } / { success } を返す）ため unstable_rethrow は不要。
       setIsApproving(false)
-    } else {
-      toast.success(`${user.email} を承認しました`)
-      router.refresh()
+      toastOfflineError("[approval-card] approveUser", err)
     }
   }
 

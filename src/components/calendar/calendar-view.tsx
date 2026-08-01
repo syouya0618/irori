@@ -4,13 +4,21 @@ import { useState, useTransition } from "react"
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
-import { jstWallClockToIso } from "@/lib/utils/date-jst"
+// 送信値(start_at/end_at)の導出はシートの保存前検証と同じ関数を使い、
+// 「検証した値」と「送る値」がずれないようにする。
+import {
+  formValueToTimestamps,
+  type CalendarEventFormValue,
+} from "@/lib/domain/calendar-form"
 import {
   createCalendarEvent,
   updateCalendarEvent,
   deleteCalendarEvent,
   deleteCalendarEventSeries,
 } from "@/app/(main)/calendar/actions"
+// startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）。
+// 楽観挿入/削除を持つため、reject 経路でも result.error と同じ巻き戻しを行う。
+import { toastOfflineError } from "@/lib/utils/offline-error"
 import {
   useMonthEvents,
   OPTIMISTIC_EVENT_ID_PREFIX,
@@ -18,10 +26,7 @@ import {
 } from "./use-month-events"
 import { CalendarMonthView } from "./calendar-month-view"
 import { CalendarAgenda } from "./calendar-agenda"
-import {
-  CalendarEventFormSheet,
-  type CalendarEventFormValue,
-} from "./calendar-event-form-sheet"
+import { CalendarEventFormSheet } from "./calendar-event-form-sheet"
 
 interface CalendarViewProps {
   initialEvents: CalendarEventRecord[]
@@ -67,9 +72,7 @@ export function CalendarView({
     v: CalendarEventFormValue,
     id: string,
   ): { record: CalendarEventRecord; startAt: string | null; endAt: string | null } {
-    const startAt = v.isAllDay ? null : jstWallClockToIso(v.startDate, v.startTime)
-    const endAt =
-      v.isAllDay || !v.endTime ? null : jstWallClockToIso(v.endDate, v.endTime)
+    const { startAt, endAt } = formValueToTimestamps(v)
     return {
       record: {
         id,
@@ -93,9 +96,12 @@ export function CalendarView({
       toast.error("タイトルを入力してください")
       return
     }
-    // 日付/時刻が空だと toRecord の jstWallClockToIso が RangeError を投げ、
-    // event handler の未捕捉例外で保存も toast も出ない無反応状態になる。
-    // date/time input は required 無しでクリア可能なため、ここで明示的に弾く。
+    // 以下 3 つはシート側の保存前検証(validateCalendarFormValue)で先に弾かれるが、
+    // onSubmit を呼ぶ他経路・将来の変更に対する二重防御として残す。
+    // 元々は toRecord の jstWallClockToIso が空値で RangeError を投げ、event handler の
+    // 未捕捉例外で「保存も toast も出ない無反応」になる経路の防御だった(現在は
+    // formValueToTimestamps が null へ倒すため throw はしないが、null のまま送ると
+    // サーバー往復で弾かれるため手元の toast に倒す)。
     if (!v.startDate || !v.endDate) {
       toast.error("日付を入力してください")
       return
@@ -111,19 +117,25 @@ export function CalendarView({
       m.upsertOptimistic(record)
       setSheetOpen(false)
       startTransition(async () => {
-        const res = await updateCalendarEvent({
-          id: editingSnapshot.id,
-          title: v.title,
-          memo: v.memo,
-          isAllDay: v.isAllDay,
-          startDate: v.startDate,
-          endDate: v.endDate,
-          startAt,
-          endAt,
-        })
-        if (res.error) {
+        try {
+          const res = await updateCalendarEvent({
+            id: editingSnapshot.id,
+            title: v.title,
+            memo: v.memo,
+            isAllDay: v.isAllDay,
+            startDate: v.startDate,
+            endDate: v.endDate,
+            startAt,
+            endAt,
+          })
+          if (res.error) {
+            m.upsertOptimistic(editingSnapshot) // 復元
+            toast.error(res.error)
+          }
+        } catch (err) {
+          // reject はサーバー未到達 = 確実に未更新。楽観置換を元へ戻す。
           m.upsertOptimistic(editingSnapshot) // 復元
-          toast.error(res.error)
+          toastOfflineError("[calendar-view] updateCalendarEvent", err)
         }
       })
     } else if (v.repeat !== "none") {
@@ -132,21 +144,26 @@ export function CalendarView({
       const { startAt, endAt } = toRecord(v, "recurring")
       setSheetOpen(false)
       startTransition(async () => {
-        const res = await createCalendarEvent({
-          title: v.title,
-          memo: v.memo,
-          isAllDay: v.isAllDay,
-          startDate: v.startDate,
-          endDate: v.endDate,
-          startAt,
-          endAt,
-          repeat: v.repeat,
-          repeatUntil: v.repeatUntil,
-        })
-        if (res.error) {
-          toast.error(res.error)
-        } else {
-          void m.refetch(m.monthFirst)
+        try {
+          const res = await createCalendarEvent({
+            title: v.title,
+            memo: v.memo,
+            isAllDay: v.isAllDay,
+            startDate: v.startDate,
+            endDate: v.endDate,
+            startAt,
+            endAt,
+            repeat: v.repeat,
+            repeatUntil: v.repeatUntil,
+          })
+          if (res.error) {
+            toast.error(res.error)
+          } else {
+            void m.refetch(m.monthFirst)
+          }
+        } catch (err) {
+          // この分岐だけは楽観挿入をしていない（上のコメント参照）ため巻き戻し不要。
+          toastOfflineError("[calendar-view] createCalendarEvent(repeat)", err)
         }
       })
     } else {
@@ -156,20 +173,27 @@ export function CalendarView({
       m.upsertOptimistic(record)
       setSheetOpen(false)
       startTransition(async () => {
-        const res = await createCalendarEvent({
-          title: v.title,
-          memo: v.memo,
-          isAllDay: v.isAllDay,
-          startDate: v.startDate,
-          endDate: v.endDate,
-          startAt,
-          endAt,
-        })
-        if (res.error || !("eventId" in res) || !res.eventId) {
+        try {
+          const res = await createCalendarEvent({
+            title: v.title,
+            memo: v.memo,
+            isAllDay: v.isAllDay,
+            startDate: v.startDate,
+            endDate: v.endDate,
+            startAt,
+            endAt,
+          })
+          if (res.error || !("eventId" in res) || !res.eventId) {
+            m.removeOptimistic(tempId)
+            toast.error(res.error ?? "予定の作成に失敗しました。")
+          } else {
+            m.replaceOptimisticId(tempId, res.eventId)
+          }
+        } catch (err) {
+          // reject はサーバー未到達 = 予定は作られていない。temp 行を残すと
+          // 確定 id を持たない幽霊が居座るため必ず除去する。
           m.removeOptimistic(tempId)
-          toast.error(res.error ?? "予定の作成に失敗しました。")
-        } else {
-          m.replaceOptimisticId(tempId, res.eventId)
+          toastOfflineError("[calendar-view] createCalendarEvent", err)
         }
       })
     }
@@ -180,10 +204,17 @@ export function CalendarView({
     m.removeOptimistic(id)
     setSheetOpen(false)
     startTransition(async () => {
-      const res = await deleteCalendarEvent(id)
-      if (res.error) {
+      try {
+        const res = await deleteCalendarEvent(id)
+        if (res.error) {
+          if (snapshot) m.upsertOptimistic(snapshot) // 復元
+          toast.error(res.error)
+        }
+      } catch (err) {
+        // reject はサーバー未到達 = 予定は残っている。復元しないと
+        // 「消えたはずの予定が復帰で蘇る」不整合になる。
         if (snapshot) m.upsertOptimistic(snapshot) // 復元
-        toast.error(res.error)
+        toastOfflineError("[calendar-view] deleteCalendarEvent", err)
       }
     })
   }
@@ -195,10 +226,16 @@ export function CalendarView({
     m.setAllEvents(m.events.filter((e) => e.series_id !== seriesId))
     setSheetOpen(false)
     startTransition(async () => {
-      const res = await deleteCalendarEventSeries(seriesId)
-      if (res.error) {
+      try {
+        const res = await deleteCalendarEventSeries(seriesId)
+        if (res.error) {
+          m.setAllEvents(snapshot) // 復元
+          toast.error(res.error)
+        }
+      } catch (err) {
+        // reject はサーバー未到達 = シリーズは残っている。一括除去を巻き戻す。
         m.setAllEvents(snapshot) // 復元
-        toast.error(res.error)
+        toastOfflineError("[calendar-view] deleteCalendarEventSeries", err)
       }
     })
   }

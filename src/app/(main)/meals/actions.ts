@@ -146,8 +146,30 @@ export async function deleteMeal(mealId: string) {
   }
 
   // Delete ingredients and reactions first (in case cascade isn't set)
-  await supabase.from("meal_ingredients").delete().eq("meal_id", mealId)
-  await supabase.from("meal_reactions").delete().eq("meal_id", mealId)
+  // ここは CASCADE と重複する**二重防御**ゆえ消さぬこと。ただし従来は結果を誰も
+  // 受け取らず、失敗が完全に無音だった。error を受けて構造化ログへ残す。
+  // 中断はしない: 子削除が失敗しても親 meals の削除が通れば CASCADE が後始末する
+  // ため、ここで早期 return すると「消せるはずの献立が消せない」退行になる。
+  // なお 0 行は正常（食材・リアクションが無い献立は普通に在る）ゆえ行数は見ない。
+  const { error: ingredientsError } = await supabase
+    .from("meal_ingredients")
+    .delete()
+    .eq("meal_id", mealId)
+  if (ingredientsError) {
+    logSupabaseError("meals", "meal ingredients delete failed", ingredientsError, {
+      mealId,
+    })
+  }
+
+  const { error: reactionsError } = await supabase
+    .from("meal_reactions")
+    .delete()
+    .eq("meal_id", mealId)
+  if (reactionsError) {
+    logSupabaseError("meals", "meal reactions delete failed", reactionsError, {
+      mealId,
+    })
+  }
 
   const { error } = await supabase.from("meals").delete().eq("id", mealId)
 
@@ -283,10 +305,18 @@ export async function saveAsTemplate(mealId: string) {
   }
 
   // Link template to meal
-  await supabase
+  // 紐付けの失敗はテンプレート保存自体を無効にはしない（テンプレートは既に在る）が、
+  // 従来は結果を誰も受け取らず無音だった。error を受けて構造化ログへ残す。
+  const { error: linkError } = await supabase
     .from("meals")
     .update({ template_id: template.id })
     .eq("id", mealId)
+  if (linkError) {
+    logSupabaseError("meals", "template link failed", linkError, {
+      mealId,
+      templateId: template.id,
+    })
+  }
 
   revalidatePath("/meals")
   return { error: null, templateId: template.id }
@@ -344,10 +374,20 @@ export async function deleteTemplate(templateId: string) {
   }
 
   // Unlink meals that reference this template
-  await supabase
+  // FK は `template_id ... ON DELETE SET NULL`（initial_schema.sql:129）ゆえ
+  // この unlink は DB 側の後始末と重複する**二重防御**。中断はしない（中断すると
+  // DB だけなら消せたはずのテンプレートが消せなくなる退行になる）。
+  // 0 行は正常（参照する献立が無い場合）ゆえ行数は見ない。error は必ず受けて残す。
+  const { error: unlinkError } = await supabase
     .from("meals")
     .update({ template_id: null })
     .eq("template_id", templateId)
+
+  if (unlinkError) {
+    logSupabaseError("meals", "template unlink failed", unlinkError, {
+      templateId,
+    })
+  }
 
   const { error } = await supabase
     .from("meal_templates")

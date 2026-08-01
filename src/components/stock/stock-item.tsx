@@ -8,6 +8,8 @@ import { getCategoryLabel, getCategoryColor } from "@/lib/utils/categories"
 import { daysFromTodayJst } from "@/lib/utils/date-jst"
 import { Button } from "@/components/ui/button"
 import { deleteStockItem, addToShoppingList } from "@/app/(main)/stock/actions"
+// startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）
+import { toastOfflineError } from "@/lib/utils/offline-error"
 import { estimateRemainingDays } from "@/lib/domain/consumption-rate"
 import type { ItemCategory } from "@/lib/types/database"
 
@@ -28,6 +30,8 @@ interface StockItemProps {
   dailyRate?: number | null
   onEdit: (item: StockItemData) => void
   onOptimisticDelete: (id: string) => void
+  /** 削除失敗時に行を復元する（shopping のトグル巻き戻しと同じ流儀）。 */
+  onRollbackDelete: (item: StockItemData) => void
 }
 
 function getExpiryStatus(expiresAt: string | null): {
@@ -81,6 +85,7 @@ export function StockItem({
   dailyRate,
   onEdit,
   onOptimisticDelete,
+  onRollbackDelete,
 }: StockItemProps) {
   const [isPending, startTransition] = useTransition()
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -106,20 +111,34 @@ export function StockItem({
     onOptimisticDelete(item.id)
 
     startTransition(async () => {
-      const result = await deleteStockItem(item.id)
-      if (result.error) {
-        toast.error(result.error)
+      try {
+        const result = await deleteStockItem(item.id)
+        if (result.error) {
+          // ロールバック（削除失敗で行が消えたままにしない）
+          onRollbackDelete(item)
+          toast.error(result.error)
+        }
+      } catch (err) {
+        // reject はサーバー未到達 = 在庫は残っている。巻き戻さないと
+        // 「消えたはずの在庫が復帰で蘇る」不整合になる（result.error と同じ理由）。
+        onRollbackDelete(item)
+        toastOfflineError("[stock-item] deleteStockItem", err)
       }
     })
   }
 
   const handleAddToShopping = () => {
     startTransition(async () => {
-      const result = await addToShoppingList(item.id)
-      if (result.error) {
-        toast.error(result.error)
-      } else {
-        toast.success(`${item.name}を買い物リストに追加しました`)
+      try {
+        const result = await addToShoppingList(item.id)
+        if (result.error) {
+          toast.error(result.error)
+        } else {
+          toast.success(`${item.name}を買い物リストに追加しました`)
+        }
+      } catch (err) {
+        // 楽観挿入は無い（買い物リストは別画面が読み直す）ゆえ巻き戻し不要。
+        toastOfflineError("[stock-item] addToShoppingList", err)
       }
     })
   }
