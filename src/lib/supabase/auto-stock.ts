@@ -60,7 +60,13 @@ export async function autoAddToStock(
       .from("stock_items")
       .update({ quantity: existing.quantity + 1 })
       .eq("id", existing.id)
-    if (updateError) return false
+    if (updateError) {
+      logSupabaseError("shopping", "stock quantity increment failed", updateError, {
+        householdId,
+        stockItemId: existing.id,
+      })
+      return false
+    }
   } else {
     const { error: insertError } = await supabase.from("stock_items").insert({
       household_id: householdId,
@@ -70,7 +76,12 @@ export async function autoAddToStock(
       unit: "個",
       created_by: userId,
     })
-    if (insertError) return false
+    if (insertError) {
+      logSupabaseError("shopping", "stock item auto insert failed", insertError, {
+        householdId,
+      })
+      return false
+    }
   }
 
   return true

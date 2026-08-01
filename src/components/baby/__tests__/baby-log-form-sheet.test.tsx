@@ -46,7 +46,6 @@ function bottleFeedingLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
     breast_left_sec: null,
     breast_right_sec: null,
     diaper_type: null,
-    ended_at: null,
     temperature: null,
     weight_g: null,
     height_cm: null,

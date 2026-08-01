@@ -1,5 +1,6 @@
 import { cache } from "react"
 import { createClient } from "@/lib/supabase/server"
+import { STOCK_ITEM_COLUMNS } from "@/lib/domain/stock-item-columns"
 
 /**
  * 同一リクエスト内で在庫クエリを共有するためのReact cache()ラッパー。
@@ -15,9 +16,7 @@ export const getCachedStockItems = cache(async (householdId: string) => {
   const supabase = await createClient()
   const { data, error } = await supabase
     .from("stock_items")
-    .select(
-      "id, name, category, quantity, unit, expires_at, created_by, created_at, updated_at",
-    )
+    .select(STOCK_ITEM_COLUMNS)
     .eq("household_id", householdId)
     .order("name")
 

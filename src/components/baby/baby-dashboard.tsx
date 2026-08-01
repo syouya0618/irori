@@ -17,6 +17,7 @@ import { FeedingTimer } from "./feeding-timer"
 import { BabyWeeklySummary } from "./weekly-summary/baby-weekly-summary"
 import { GrowthChartSection } from "./charts/growth-chart-section"
 import { useNow } from "@/lib/hooks/use-now"
+import { useVisibilityRefetch } from "@/lib/hooks/use-visibility-refetch"
 import { todayJstString, toJstDateString, shiftYmd } from "@/lib/utils/date-jst"
 import { buildBabyWeeklySummary } from "@/lib/domain/baby-weekly-summary"
 import {
@@ -29,19 +30,13 @@ import {
   aggregateDiapers,
   sumDiaperBreakdown,
 } from "@/lib/domain/baby-log-aggregation"
-import { sleepOverlapMinutesForDate } from "@/lib/domain/baby-sleep-overlap"
-import { findLastPumped } from "@/lib/domain/baby-pumping"
+import { findLastNursing } from "@/lib/domain/baby-feeding-interval"
 import { BABY_LOG_COLUMNS } from "@/lib/domain/baby-log-columns"
 import type { BabyLogData, BabyDiaryData } from "@/lib/types/baby"
 import type { BabyLogType, FeedingType } from "@/lib/types/database"
 
 interface BabyDashboardProps {
   initialLogs: BabyLogData[]
-  /**
-   * 前夜開始・当日終了の overlap 睡眠（B-02）。今日のまとめの按分入力専用で
-   * timeline（logs）には合流させない。選択日変更時は refetch で入れ替える。
-   */
-  initialOverlapLogs: BabyLogData[]
   initialWeeklyLogs: BabyLogData[]
   initialGrowthLogs: BabyLogData[]
   householdId: string
@@ -49,54 +44,41 @@ interface BabyDashboardProps {
   initialDate: string
   /** 今日の育児日記（1日1本・無ければ null）。選択日変更時は refetch で入れ替える。 */
   initialDiary: BabyDiaryData | null
-  lastSleepEndedAt: string | null
-  activeSleepFallback: BabyLogData | null
   /**
    * 今日より前の最後の授乳（批判レビュー P3）。深夜跨ぎサイクル（開始時刻が前日）は
    * 今日窓の logs に現れないため、当日に授乳が無い間の「最終授乳」表示を補完する。
    * isToday の時のみ使う（過去日のまとめへ漏らすと別日の時刻を表示してしまう）。
    */
   lastFeedingFallback: BabyLogData | null
+  /**
+   * 今日より前の最後の「授乳」（搾乳を除く）。次の授乳の目安の起点フォールバック。
+   *
+   * `lastFeedingFallback` と**別に持つ**理由: あちらは搾乳を含む（最終授乳表示の
+   * 契約）ため、そのまま目安に流用すると「搾乳しただけで目安が飛ぶ」が残る。
+   * 深夜跨ぎ（前日 23:00 授乳 → 翌 01:00 に閲覧）でも目安が消えないための経路。
+   */
+  lastNursingFallback: BabyLogData | null
   babyName: string | null
   babyBirthDate: string | null
-  /** 搾乳間隔（分）。次の搾乳の目安の算出に使う（設定で変更可能） */
-  pumpingIntervalMin: number
-}
-
-/**
- * 前夜以前に開始し、選択日 `date` の JST 窓に重なる完了睡眠か（overlapLogs 判定）。
- * `date` 当日に開始した睡眠は logs 側に属するため除外し、二重計上を防ぐ。
- */
-function isOverlapSleepFor(log: BabyLogData, date: string): boolean {
-  return (
-    log.log_type === "sleep" &&
-    !!log.ended_at &&
-    toJstDateString(log.logged_at) < date &&
-    sleepOverlapMinutesForDate(log.logged_at, log.ended_at, date) > 0
-  )
+  /** 授乳間隔（分）。次の授乳の目安の算出に使う（設定で変更可能） */
+  feedingIntervalMin: number
 }
 
 export function BabyDashboard({
   initialLogs,
-  initialOverlapLogs,
   initialWeeklyLogs,
   initialGrowthLogs,
   householdId,
   userId,
   initialDate,
   initialDiary,
-  lastSleepEndedAt,
-  activeSleepFallback,
   lastFeedingFallback,
+  lastNursingFallback,
   babyName,
   babyBirthDate,
-  pumpingIntervalMin,
+  feedingIntervalMin,
 }: BabyDashboardProps) {
   const [logs, setLogs] = useState<BabyLogData[]>(initialLogs)
-  // B-02: 前夜開始の overlap 睡眠。summarizeTodayCounts の入力にのみ合流させる
-  // （timeline = logs には混ぜない）。logs とは logged_at レンジが排他のため重複しない。
-  const [overlapLogs, setOverlapLogs] =
-    useState<BabyLogData[]>(initialOverlapLogs)
   const [weeklyLogs, setWeeklyLogs] =
     useState<BabyLogData[]>(initialWeeklyLogs)
   const [growthLogs, setGrowthLogs] =
@@ -115,16 +97,15 @@ export function BabyDashboard({
   const [formKey, setFormKey] = useState(0)
   const [timerOpen, setTimerOpen] = useState(false)
   const [timerFeedingType, setTimerFeedingType] = useState<FeedingType>("breast_left")
-  // 日跨ぎアクティブ睡眠のサーバフォールバック（B-01）。
-  // state 保持にするのは endSleep 成功時に明示クリアするため
-  // （Realtime 不達 #92 でもトグルが「睡眠中」へ戻らない）。
-  const [serverActiveSleep, setServerActiveSleep] =
-    useState<BabyLogData | null>(activeSleepFallback)
   // 「今日より前の最後の授乳」フォールバック（P3）。state 保持にするのは、深夜跨ぎ
   // サイクルの記録直後（timeline へは入場できない）に FeedingTimer からこの値を
   // 即時更新するため（さもなくばリロードまで最終授乳が旧値/「---」に留まる）。
   const [serverLastFeeding, setServerLastFeeding] =
     useState<BabyLogData | null>(lastFeedingFallback)
+  // 「今日より前の最後の授乳（搾乳を除く）」フォールバック。次の授乳の目安の起点。
+  // 上と同じ理由で state 保持（深夜跨ぎ記録直後にタイマーから即時更新するため）。
+  const [serverLastNursing, setServerLastNursing] =
+    useState<BabyLogData | null>(lastNursingFallback)
   const now = useNow(60_000)
 
   const today = todayJstString()
@@ -148,21 +129,9 @@ export function BabyDashboard({
     const supabase = createClient()
     const isRelevantToCurrentWeek = (log: BabyLogData) => {
       const logDate = toJstDateString(log.logged_at)
-      if (logDate >= weeklyStartDateRef.current && logDate <= todayRef.current)
-        return true
-
-      if (log.log_type !== "sleep" || !log.ended_at) return false
-
-      const weekStartMs = new Date(
-        `${weeklyStartDateRef.current}T00:00:00+09:00`,
-      ).getTime()
-      const weekEndMs = new Date(
-        `${shiftYmd(todayRef.current, 1)}T00:00:00+09:00`,
-      ).getTime()
-      const sleepStartMs = new Date(log.logged_at).getTime()
-      const sleepEndMs = new Date(log.ended_at).getTime()
-
-      return sleepEndMs > weekStartMs && sleepStartMs < weekEndMs
+      return (
+        logDate >= weeklyStartDateRef.current && logDate <= todayRef.current
+      )
     }
 
     const channel = supabase
@@ -193,15 +162,6 @@ export function BabyDashboard({
                 if (prev.some((l) => l.id === newLog.id)) return prev
                 return [newLog, ...prev]
               })
-            }
-            // B-02: 前夜開始の overlap 睡眠は logged_at が選択日でないため下の logs
-            // ガードで弾かれる。今日のまとめの按分入力として別 state に取り込む。
-            if (isOverlapSleepFor(newLog, selectedDateRef.current)) {
-              setOverlapLogs((prev) =>
-                prev.some((l) => l.id === newLog.id)
-                  ? prev
-                  : [newLog, ...prev],
-              )
             }
             if (toJstDateString(newLog.logged_at) !== selectedDateRef.current) {
               return
@@ -234,31 +194,6 @@ export function BabyDashboard({
               return prev
             })
 
-            // B-01 フォールバックの同期: 前夜開始の未終了睡眠は選択日 logs に
-            // 属さないため上下の分岐では扱われない。別端末で終了（ended_at 設定）
-            // されたらクリアし、編集されたら追従させる。
-            setServerActiveSleep((prev) => {
-              if (!prev || prev.id !== updated.id) return prev
-              return updated.ended_at ? null : updated
-            })
-
-            // B-02 overlap 睡眠の同期: 前夜開始の睡眠が終了（ended_at 設定）すると
-            // 今日のまとめの按分入力に加わる。ended_at 解除・日付変更で範囲外へ出たら除く。
-            // ここが「起こす」タップで今日のまとめが週間バーと同値になる live 経路。
-            const belongsToOverlap = isOverlapSleepFor(
-              updated,
-              selectedDateRef.current,
-            )
-            setOverlapLogs((prev) => {
-              const exists = prev.some((l) => l.id === updated.id)
-              if (belongsToOverlap && exists)
-                return prev.map((l) => (l.id === updated.id ? updated : l))
-              if (belongsToOverlap && !exists) return [updated, ...prev]
-              if (!belongsToOverlap && exists)
-                return prev.filter((l) => l.id !== updated.id)
-              return prev
-            })
-
             const belongsToDate =
               toJstDateString(updated.logged_at) ===
               selectedDateRef.current
@@ -278,10 +213,6 @@ export function BabyDashboard({
             setLogs((prev) => prev.filter((l) => l.id !== deleted.id))
             setWeeklyLogs((prev) => prev.filter((l) => l.id !== deleted.id))
             setGrowthLogs((prev) => prev.filter((l) => l.id !== deleted.id))
-            setOverlapLogs((prev) => prev.filter((l) => l.id !== deleted.id))
-            setServerActiveSleep((prev) =>
-              prev && prev.id === deleted.id ? null : prev,
-            )
           }
         },
       )
@@ -342,9 +273,9 @@ export function BabyDashboard({
 
   // タブ復帰時に選択日の日記を再取得し、DELETE 非配信（配偶者の空保存）を回収する
   // （calendar use-month-events と同流儀。issue #91/#92/#155）。
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState !== "visible") return
+  // 選択日の stale ガードは下のコールバック側に残す — フックはリスナの張り外しのみ。
+  useVisibilityRefetch(
+    useCallback(() => {
       const supabase = createClient()
       const date = selectedDateRef.current
       void supabase
@@ -367,14 +298,8 @@ export function BabyDashboard({
           if (selectedDateRef.current !== date) return
           setDiary(data ?? null)
         })
-    }
-    document.addEventListener("visibilitychange", onVisible)
-    window.addEventListener("focus", onVisible)
-    return () => {
-      document.removeEventListener("visibilitychange", onVisible)
-      window.removeEventListener("focus", onVisible)
-    }
-  }, [householdId])
+    }, [householdId]),
+  )
 
   // Fetch logs when navigating to a different date (skip initial mount — initialLogs covers it)
   const initialDateRef = useRef(initialDate)
@@ -416,34 +341,6 @@ export function BabyDashboard({
         }
       })
 
-    // B-02: overlap 睡眠も選択日に合わせて refetch し、サーバ初回表示と窓を同一化する。
-    // これを怠ると「過去日へ移動して今日へ戻る」往復で今日のまとめの睡眠分が経路依存で変動する。
-    // 別 prop のため logs のマージ経路（mergeDateNavLogs / admission guard）は不変。
-    supabase
-      .from("baby_logs")
-      .select(BABY_LOG_COLUMNS)
-      .eq("household_id", householdId)
-      .eq("log_type", "sleep")
-      .lt("logged_at", dayStart)
-      .gte("ended_at", dayStart)
-      .order("logged_at", { ascending: false })
-      .abortSignal(abortController.signal)
-      .then(({ data, error }) => {
-        if (abortController.signal.aborted) return
-        if (error) {
-          // logs 側の fetch が同時失敗時に toast を出すため、overlap 側は
-          // 二重トースト回避で構造化ログのみ（握り潰しはしない）。
-          logSupabaseError(
-            "baby",
-            "overlap sleep navigation fetch failed",
-            error,
-            { householdId, selectedDate },
-          )
-          return
-        }
-        if (data) setOverlapLogs(data)
-      })
-
     // 育児日記（1日1本）も選択日に合わせて refetch する。無い日は正常系（maybeSingle）。
     supabase
       .from("baby_diaries")
@@ -476,29 +373,28 @@ export function BabyDashboard({
   }, [selectedDate, householdId])
 
   // Derive summary in a single pass
-  // （B-01: 導出は純関数へ抽出。前夜開始の未終了睡眠は logs に現れないため
-  //   サーバフォールバック serverActiveSleep で補完する。P3: 授乳も同型 —
-  //   深夜跨ぎサイクルは前日行になり logs に現れないため serverLastFeeding で補完。
-  //   ただし今日表示の時のみ。過去日は「その日の授乳」を表示する契約ゆえ、
-  //   別日の fallback を混ぜると過去日のまとめに嘘の時刻が出る）
-  const { activeSleep, lastFeeding, derivedLastSleepEndedAt } = useMemo(
-    () =>
-      deriveDashboardSummary(
-        logs,
-        serverActiveSleep,
-        isToday ? serverLastFeeding : null,
-      ),
-    [logs, serverActiveSleep, serverLastFeeding, isToday],
+  // （導出は純関数へ抽出。P3: 深夜跨ぎサイクルは前日行になり logs に現れないため
+  //   serverLastFeeding で補完する。ただし今日表示の時のみ。過去日は「その日の授乳」
+  //   を表示する契約ゆえ、別日の fallback を混ぜると過去日のまとめに嘘の時刻が出る）
+  const { lastFeeding } = useMemo(
+    () => deriveDashboardSummary(logs, isToday ? serverLastFeeding : null),
+    [logs, serverLastFeeding, isToday],
   )
 
-  // 次の搾乳の目安: 選択日の logs から最後の搾乳を導出（サマリバーで isToday 時のみ表示）
-  const lastPumped = useMemo(() => findLastPumped(logs), [logs])
+  // 次の授乳の目安の起点: 選択日の logs から「最後の授乳（搾乳を除く）」を導出する。
+  // 当日にまだ授乳が無い間は serverLastNursing（今日より前の最後の授乳）で補完する
+  // — 深夜跨ぎ（前日 23:00 開始）の授乳は今日窓の logs に現れないため。
+  // lastFeeding と同じく今日表示の時のみ fallback を混ぜる（過去日に別日の時刻を
+  // 持ち込まない。なお目安カード自体もサマリバー側で isToday 限定）。
+  const lastNursing = useMemo(
+    () => findLastNursing(logs) ?? (isToday ? serverLastNursing : null),
+    [logs, serverLastNursing, isToday],
+  )
 
-  // 今日のまとめ: 選択日の logs に加え、前夜開始の overlap 睡眠を按分入力へ合流。
-  // feeding/diaper は date フィルタ、sleep は当日窓へ按分され、週間/PDF と per-day 同値。
+  // 今日のまとめ: 選択日の logs を date フィルタで集計する（週間/PDF と per-day 同値）。
   const todayCounts = useMemo(
-    () => summarizeTodayCounts([...logs, ...overlapLogs], selectedDate),
-    [logs, overlapLogs, selectedDate],
+    () => summarizeTodayCounts(logs, selectedDate),
+    [logs, selectedDate],
   )
 
   // 成長曲線: 全期間の成長ログから体重/身長系列を組む
@@ -507,9 +403,6 @@ export function BabyDashboard({
     [growthLogs, today],
   )
 
-  // Today's logs-derived value takes priority (reactive to Realtime),
-  // server prop is fallback for cross-day wakeup
-  const effectiveLastSleepEndedAt = derivedLastSleepEndedAt ?? lastSleepEndedAt
   const weeklySummary = useMemo(
     () => buildBabyWeeklySummary(weeklyLogs, today),
     [weeklyLogs, today],
@@ -571,20 +464,6 @@ export function BabyDashboard({
     setLogs((prev) => prev.filter((l) => l.id !== id))
   }, [])
 
-  // endSleep 成功時の楽観反映（B-01 の明示クリア + B-03 の logs 更新を統合）。
-  // - 同日開始の睡眠は logs に居る（B-03 で楽観 append 済み or Realtime 由来）。
-  //   その行へ ended_at を反映し、deriveDashboardSummary の activeSleep 判定を解除して
-  //   トグルを「ねんね」へ戻す（Realtime 不達 #92 でも「起こす」に張り付かない）。
-  // - 前夜開始の日跨ぎ睡眠は logs に居らず serverActiveSleep 側にある（B-01）。
-  //   id 一致時にそれをクリアする。UNIQUE index idx_one_active_sleep により未終了睡眠は
-  //   高々 1 件ゆえ、両者が同時に別の睡眠を指すことはない。
-  const handleSleepEnded = useCallback((id: string, endedAt: string) => {
-    setServerActiveSleep((prev) => (prev?.id === id ? null : prev))
-    setLogs((prev) =>
-      prev.map((l) => (l.id === id ? { ...l, ended_at: endedAt } : l)),
-    )
-  }, [])
-
   return (
     <div className="flex flex-col gap-4 px-4 pt-12 pb-8">
       <BabyAgeHeader
@@ -600,10 +479,8 @@ export function BabyDashboard({
 
       <BabySummaryBar
         lastFeeding={lastFeeding}
-        lastPumped={lastPumped}
-        pumpingIntervalMin={pumpingIntervalMin}
-        activeSleep={activeSleep}
-        lastSleepEndedAt={effectiveLastSleepEndedAt}
+        lastNursing={lastNursing}
+        feedingIntervalMin={feedingIntervalMin}
         now={now}
         todayCounts={todayCounts}
         date={selectedDate}
@@ -611,13 +488,10 @@ export function BabyDashboard({
 
       {isToday && (
         <BabyQuickActions
-          activeSleep={activeSleep}
-          now={now}
           userId={userId}
           onCreateLog={handleCreateLog}
           onCreateFeeding={handleCreateFeeding}
           onStartTimer={handleStartTimer}
-          onSleepEnded={handleSleepEnded}
           onLogRecorded={appendLog}
           onLogRemoved={removeLog}
         />
@@ -670,18 +544,22 @@ export function BabyDashboard({
         initialFeedingType={timerFeedingType}
         userId={userId}
         onLogRecorded={appendLog}
-        onPrevDayLogRecorded={(log) =>
+        onPrevDayLogRecorded={(log) => {
           // 深夜跨ぎサイクル（前日行）は timeline へ入れず、最終授乳 fallback のみ
           // 即時更新する（P3）。より新しい既存 fallback を古い行で上書きしない防御付き
           // （実運用では新記録が常に最新だが、比較は epoch で行い表記混在に耐える）。
-          setServerLastFeeding((prev) =>
+          const keepNewer = (prev: BabyLogData | null) =>
             prev &&
             new Date(prev.logged_at).getTime() >
               new Date(log.logged_at).getTime()
               ? prev
-              : log,
-          )
-        }
+              : log
+          setServerLastFeeding(keepNewer)
+          // 次の授乳の目安の起点も同時に前進させる（さもなくば深夜跨ぎ記録の直後だけ
+          // 目安が古い授乳に張り付く）。タイマーは母乳サイクルしか書かないが、
+          // 搾乳ガードを明示しておく（起点に搾乳を入れない契約のミラー）。
+          if (log.feeding_type !== "pumped") setServerLastNursing(keepNewer)
+        }}
       />
     </div>
   )

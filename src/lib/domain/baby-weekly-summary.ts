@@ -1,18 +1,15 @@
 import { shiftYmd, toJstDateString } from "@/lib/utils/date-jst"
-import { sleepOverlapMinutesForDate } from "./baby-sleep-overlap"
 import type { BabyLogType } from "@/lib/types/database"
 
 export interface BabyWeeklySummaryLogInput {
   log_type: BabyLogType
   logged_at: string
-  ended_at: string | null
 }
 
 export interface BabyWeeklySummaryDay {
   date: string
   feedingCount: number
   diaperCount: number
-  sleepMinutes: number
 }
 
 /**
@@ -29,7 +26,6 @@ export interface BabyWeeklySummaryDay {
 export const WEEKLY_CHART_BASELINE = {
   feedingCount: 8, // 授乳: 一日の目安上限（回）
   diaperCount: 10, // おむつ: 一日の目安上限（回）
-  sleepMinutes: 840, // 睡眠: 14時間 = 840分
 } as const
 
 function createEmptyDay(date: string): BabyWeeklySummaryDay {
@@ -37,7 +33,6 @@ function createEmptyDay(date: string): BabyWeeklySummaryDay {
     date,
     feedingCount: 0,
     diaperCount: 0,
-    sleepMinutes: 0,
   }
 }
 
@@ -57,16 +52,7 @@ export function buildBabyWeeklySummary(
   }
 
   for (const log of logs) {
-    if (log.log_type === "sleep" && log.ended_at) {
-      // 日跨ぎ睡眠は共通ヘルパで各日へ按分（PDF 集計・今日のまとめと同一ロジック）
-      for (const day of byDate.values()) {
-        day.sleepMinutes += sleepOverlapMinutesForDate(
-          log.logged_at,
-          log.ended_at,
-          day.date,
-        )
-      }
-    } else if (log.log_type === "feeding") {
+    if (log.log_type === "feeding") {
       const date = toJstDateString(log.logged_at)
       const day = byDate.get(date)
       if (!day) continue
@@ -87,8 +73,7 @@ export function totalBabyWeeklySummary(days: BabyWeeklySummaryDay[]) {
     (total, day) => ({
       feedingCount: total.feedingCount + day.feedingCount,
       diaperCount: total.diaperCount + day.diaperCount,
-      sleepMinutes: total.sleepMinutes + day.sleepMinutes,
     }),
-    { feedingCount: 0, diaperCount: 0, sleepMinutes: 0 },
+    { feedingCount: 0, diaperCount: 0 },
   )
 }

@@ -222,6 +222,43 @@ test("時刻付き予定の作成→HH:MM 表示、編集でタイトル変更�
   })
 })
 
+test("検証に弾かれてもシートは閉じず、入力が保持される", async ({
+  page,
+  approvedUser,
+}) => {
+  await loginAndOpenCalendar(page, approvedUser.email)
+
+  const addSheet = page.getByRole("heading", { name: "予定を追加" })
+  await openOverlay(page.getByRole("button", { name: "予定を追加" }), addSheet)
+  await page.locator("#cal-title").fill("入力保持テスト")
+  await page.locator("#cal-memo").fill("母子手帳と診察券")
+  // 終了日を開始日より前にする(サーバー往復で弾かれていた代表ケース)。
+  await page.locator("#cal-end-date").fill(shiftYmd(todayJst(), -1))
+  await page.getByRole("button", { name: "追加", exact: true }).click()
+
+  // data-open が付いた「生きているシート」に限定して assert する。
+  // close 開始で data-open は同期的に外れるため、退場アニメーション中の
+  // 旧シート(isVisible() は true のまま)でこの assert は満たされない。
+  // エラー文言も**シート内**に限定する — 同じ文言をサーバーが返して
+  // sonner トーストに出すだけの実装ではこの assert は通らない。
+  const openSheet = page.locator('[data-slot="sheet-content"][data-open]')
+  await expect(openSheet).toBeVisible()
+  await expect(
+    openSheet.getByText("終了日は開始日以降にしてください"),
+  ).toBeVisible()
+  await expect(openSheet.locator("#cal-title")).toHaveValue("入力保持テスト")
+  await expect(openSheet.locator("#cal-memo")).toHaveValue("母子手帳と診察券")
+  await expect(openSheet.locator("#cal-end-date")).toHaveAttribute(
+    "aria-invalid",
+    "true",
+  )
+
+  // 終了日を直せばそのまま保存でき、入力し直しは不要。
+  await page.locator("#cal-end-date").fill(todayJst())
+  await page.getByRole("button", { name: "追加", exact: true }).click()
+  await waitForEventCount(approvedUser.id, "入力保持テスト", 1)
+})
+
 test("時刻付き予定は終了時刻も表示し、アジェンダは終日→時刻順に並ぶ", async ({
   page,
   approvedUser,

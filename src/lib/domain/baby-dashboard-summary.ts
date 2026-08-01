@@ -2,23 +2,11 @@ import type { BabyLogData } from "@/lib/types/baby"
 import { toJstDateString } from "@/lib/utils/date-jst"
 
 export interface BabyDashboardSummary {
-  activeSleep: BabyLogData | null
   lastFeeding: BabyLogData | null
-  derivedLastSleepEndedAt: string | null
 }
 
 /**
- * BabyDashboard のまとめ表示（アクティブ睡眠・最終授乳・最後の睡眠終了時刻）を
- * 選択日の logs から 1 パスで導出する純関数。
- *
- * B-01（日跨ぎアクティブ睡眠の袋小路）対応:
- * 前夜に開始し未終了のままの睡眠は「選択日の logs」に現れない
- * （logged_at が前日のため当日窓のクエリから外れる）。その場合でも
- * サーバで別途取得した未終了睡眠 `activeSleepFallback` を用いることで、
- * 翌日の UI からトグルで終了できるようにする。
- * ローカル導出が優先（Realtime に反応する）で、fallback は補完のみ。
- * UNIQUE 部分 index idx_one_active_sleep により未終了睡眠は世帯あたり
- * 高々 1 件のため、両者が同時に別の睡眠を指すことはない。
+ * BabyDashboard のまとめ表示（最終授乳）を選択日の logs から 1 パスで導出する純関数。
  *
  * lastFeeding は**配列順に依存せず** logged_at（epoch 比較）が最新の授乳行を選ぶ
  * （批判レビュー P2）: 楽観 append（appendLog / Realtime INSERT）は無条件の先頭
@@ -26,9 +14,7 @@ export interface BabyDashboardSummary {
  * 供給側で保証されない。先頭一致だと「タイマー中に記録したミルク」より古いサイクル行が
  * 最終授乳になり、経過表示がリロードまで古い値に張り付く。文字列比較でなく epoch
  * 比較なのは、楽観行（toISOString の "Z"）とサーバ行（"+00:00"）の表記混在で
- * 辞書順が時刻順と食い違うため。sleep 系 2 フィールドは従来どおり先頭一致
- * （降順前提）— activeSleep は高々 1 件ゆえ順序非依存、derivedLastSleepEndedAt の
- * 順序前提は本 PR で供給側が変わっておらず既存挙動を維持する。
+ * 辞書順が時刻順と食い違うため。
  *
  * `lastFeedingFallback`（批判レビュー P3）: logged_at の開始時刻化により、深夜を
  * 跨いだサイクルは前日行になり当日窓の logs に現れない。当日に授乳が無い間
@@ -37,18 +23,11 @@ export interface BabyDashboardSummary {
  */
 export function deriveDashboardSummary(
   logs: BabyLogData[],
-  activeSleepFallback: BabyLogData | null,
   lastFeedingFallback: BabyLogData | null = null,
 ): BabyDashboardSummary {
-  let activeSleep: BabyLogData | undefined
   let lastFeeding: BabyLogData | undefined
   let lastFeedingEpoch = Number.NEGATIVE_INFINITY
-  let derivedLastSleepEndedAt: string | null = null
   for (const l of logs) {
-    if (!activeSleep && l.log_type === "sleep" && !l.ended_at)
-      activeSleep = l
-    if (!derivedLastSleepEndedAt && l.log_type === "sleep" && l.ended_at)
-      derivedLastSleepEndedAt = l.ended_at
     if (l.log_type === "feeding") {
       const epoch = new Date(l.logged_at).getTime()
       // 不正 ISO（NaN）は比較に負けて選ばれない（NaN > x は常に false）
@@ -59,9 +38,7 @@ export function deriveDashboardSummary(
     }
   }
   return {
-    activeSleep: activeSleep ?? activeSleepFallback,
     lastFeeding: lastFeeding ?? lastFeedingFallback ?? null,
-    derivedLastSleepEndedAt,
   }
 }
 
@@ -89,11 +66,7 @@ export function deriveDashboardSummary(
  * **同じ入場条件を鏡写しにしている**（先着行はこの guard を通って初めて prev に
  * 入るため）。将来 logs の日付窓に cross-midnight の `or()` 節を足す際は、admission
  * guard と本フィルタを**同時に**更新すること。片方だけ広げると、fetch in-flight
- * 中に届いた前夜開始の睡眠が解決時に無音で落ちる。
- *
- * B-02（睡眠集計統一）は logs の窓を広げず、前夜開始の overlap 睡眠を **別 state
- * overlapLogs** で扱う設計を採ったため、この鏡写し不変条件は不変のまま維持されている
- * （logs = 選択日分のみ。timeline も B-09 も既存テストも前提が変わらない）。
+ * 中に届いた前日開始の行が解決時に無音で落ちる。
  */
 export function mergeDateNavLogs(
   prev: BabyLogData[],
@@ -104,7 +77,7 @@ export function mergeDateNavLogs(
   const preserved = prev.filter(
     (l) =>
       !fetchedIds.has(l.id) &&
-      // Realtime admission guard（baby-dashboard.tsx:136）と同期を保つこと（B-02 注意）
+      // Realtime admission guard（baby-dashboard.tsx）と同期を保つこと（上の注意）
       toJstDateString(l.logged_at) === selectedDate,
   )
   if (preserved.length === 0) return fetched

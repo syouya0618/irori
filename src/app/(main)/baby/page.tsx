@@ -1,7 +1,7 @@
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { BabyDashboard } from "@/components/baby/baby-dashboard"
-import { PUMPING_INTERVAL_DEFAULT } from "@/lib/domain/baby-pumping"
+import { FEEDING_INTERVAL_DEFAULT } from "@/lib/domain/baby-feeding-interval"
 import { BABY_LOG_COLUMNS } from "@/lib/domain/baby-log-columns"
 import { todayJstString, shiftYmd } from "@/lib/utils/date-jst"
 
@@ -17,18 +17,15 @@ export default async function BabyPage() {
   const tomorrowStart = `${tomorrowJst}T00:00:00+09:00`
   const weeklyStart = `${weeklyStartJst}T00:00:00+09:00`
 
-  // 今日のログ + 最新の完了済み睡眠 + 未終了睡眠 + 前夜開始の overlap 睡眠
-  // + 週間サマリー用ログ + 赤ちゃんプロフィールを並列取得
+  // 今日のログ + 週間サマリー用ログ + 赤ちゃんプロフィールを並列取得
   const [
     { data: logs, error: logsError },
-    { data: lastSleepData, error: lastSleepError },
-    { data: activeSleepData, error: activeSleepError },
-    { data: overlapSleepLogs, error: overlapSleepError },
     { data: weeklyLogs, error: weeklyLogsError },
     { data: household, error: householdError },
     { data: growthLogs, error: growthLogsError },
     { data: todayDiary, error: diaryError },
     { data: lastFeedingData, error: lastFeedingError },
+    { data: lastNursingData, error: lastNursingError },
   ] = await Promise.all([
       supabase
         .from("baby_logs")
@@ -39,51 +36,14 @@ export default async function BabyPage() {
         .order("logged_at", { ascending: false }),
       supabase
         .from("baby_logs")
-        .select("ended_at")
-        .eq("household_id", householdId)
-        .eq("log_type", "sleep")
-        .not("ended_at", "is", null)
-        .order("ended_at", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
-      // 未終了睡眠（B-01: 日跨ぎアクティブ睡眠の袋小路対策）。
-      // 前夜開始の未終了睡眠は今日窓のクエリに現れないため、別途取得して
-      // dashboard へフォールバックとして渡す。UNIQUE 部分 index
-      // idx_one_active_sleep（20260410000001_baby_logs.sql）により高々 1 件。
-      supabase
-        .from("baby_logs")
         .select(BABY_LOG_COLUMNS)
         .eq("household_id", householdId)
-        .eq("log_type", "sleep")
-        .is("ended_at", null)
-        .order("logged_at", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
-      // 前夜開始・当日終了の overlap 睡眠（B-02: 今日のまとめの按分入力）。
-      // logged_at が前日以前のため today 窓（logs）には現れない完了睡眠を別 prop で渡し、
-      // summarizeTodayCounts の入力にのみ合流させる（timeline = logs の意味は不変）。
-      // ended_at が null の未終了睡眠は activeSleepFallback（B-01）が担い、按分には
-      // 寄与しない（完了セッションのみ集計）ため、ここは ended_at 非 null に限定して二重取得を避ける。
-      supabase
-        .from("baby_logs")
-        .select(BABY_LOG_COLUMNS)
-        .eq("household_id", householdId)
-        .eq("log_type", "sleep")
-        .lt("logged_at", todayStart)
-        .gte("ended_at", todayStart)
-        .order("logged_at", { ascending: false }),
-      supabase
-        .from("baby_logs")
-        .select(BABY_LOG_COLUMNS)
-        .eq("household_id", householdId)
+        .gte("logged_at", weeklyStart)
         .lt("logged_at", tomorrowStart)
-        .or(
-          `logged_at.gte.${weeklyStart},and(log_type.eq.sleep,ended_at.gte.${weeklyStart})`,
-        )
         .order("logged_at", { ascending: false }),
       supabase
         .from("households")
-        .select("baby_name, baby_birth_date, pumping_interval_min")
+        .select("baby_name, baby_birth_date, feeding_interval_min")
         .eq("id", householdId)
         .maybeSingle(),
       // 成長曲線用: 成長ログを古い順に全件（低頻度データ・1000 未満想定、順序を昇順で決定化）
@@ -103,7 +63,7 @@ export default async function BabyPage() {
       // 今日より前の最後の授乳（批判レビュー P3: 最終授乳フォールバック）。
       // logged_at の開始時刻セマンティクスにより、深夜を跨いだサイクルは前日行に
       // なって今日窓の logs に現れない。当日にまだ授乳が無い間「最終授乳 ---」へ
-      // 落ちないよう、B-01 の未終了睡眠と同型のフォールバックとして渡す。
+      // 落ちないよう、別クエリで取ってフォールバックとして渡す。
       supabase
         .from("baby_logs")
         .select(BABY_LOG_COLUMNS)
@@ -113,28 +73,34 @@ export default async function BabyPage() {
         .order("logged_at", { ascending: false })
         .limit(1)
         .maybeSingle(),
+      // 今日より前の最後の「授乳」（搾乳を除く）。次の授乳の目安の起点フォールバック。
+      // 上のクエリ（最終授乳表示用）と分けているのは、あちらが搾乳を含む契約だから
+      // — 流用すると「搾乳しただけで目安が飛ぶ」（本 issue の主訴）が残る。
+      //
+      // 除外は **pumped 1 値の denylist** で書く（allowlist で列挙すると DB 側 ENUM に
+      // 新しい授乳種別が増えたとき、その授乳が無音で目安から漏れる）。
+      //
+      // `.neq` 単体ではなく `.or(is.null, neq)` にするのは SQL の三値論理のため:
+      // `feeding_type <> 'pumped'` は feeding_type IS NULL の行を**落とす**（実測:
+      // 3 行の probe で neq は NULL 行を捨て、or は残した）。現状 feeding 行の
+      // feeding_type は CHECK `chk_feeding`（log_type <> 'feeding' OR feeding_type
+      // IS NOT NULL・実 DB で存在を確認）により NULL になり得ぬが、その CHECK が
+      // 緩んだ瞬間に「授乳を記録しても目安が動かない」が無音で復活する結合になる。
+      // 搾乳と確定しておらぬ行は授乳として数える向き（目安が早まる方が安全）へ倒す。
+      supabase
+        .from("baby_logs")
+        .select(BABY_LOG_COLUMNS)
+        .eq("household_id", householdId)
+        .eq("log_type", "feeding")
+        .or("feeding_type.is.null,feeding_type.neq.pumped")
+        .lt("logged_at", todayStart)
+        .order("logged_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
     ])
 
   if (logsError) {
     logSupabaseError("baby", "today logs lookup failed", logsError, {
-      householdId,
-    })
-  }
-
-  if (lastSleepError) {
-    logSupabaseError("baby", "last sleep lookup failed", lastSleepError, {
-      householdId,
-    })
-  }
-
-  if (activeSleepError) {
-    logSupabaseError("baby", "active sleep lookup failed", activeSleepError, {
-      householdId,
-    })
-  }
-
-  if (overlapSleepError) {
-    logSupabaseError("baby", "overlap sleep lookup failed", overlapSleepError, {
       householdId,
     })
   }
@@ -169,23 +135,27 @@ export default async function BabyPage() {
     })
   }
 
+  if (lastNursingError) {
+    logSupabaseError("baby", "last nursing lookup failed", lastNursingError, {
+      householdId,
+    })
+  }
+
   return (
     <BabyDashboard
       initialLogs={logs ?? []}
-      initialOverlapLogs={overlapSleepLogs ?? []}
       initialWeeklyLogs={weeklyLogs ?? []}
       initialGrowthLogs={growthLogs ?? []}
       householdId={householdId}
       userId={userId}
       initialDate={todayJst}
       initialDiary={todayDiary ?? null}
-      lastSleepEndedAt={lastSleepData?.ended_at ?? null}
-      activeSleepFallback={activeSleepData ?? null}
       lastFeedingFallback={lastFeedingData ?? null}
+      lastNursingFallback={lastNursingData ?? null}
       babyName={household?.baby_name ?? null}
       babyBirthDate={household?.baby_birth_date ?? null}
-      pumpingIntervalMin={
-        household?.pumping_interval_min ?? PUMPING_INTERVAL_DEFAULT
+      feedingIntervalMin={
+        household?.feeding_interval_min ?? FEEDING_INTERVAL_DEFAULT
       }
     />
   )

@@ -7,9 +7,9 @@ import { getAppOrigin } from "@/lib/utils/app-origin"
 import { isFutureJstDate } from "@/lib/utils/date-jst"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import {
-  PUMPING_INTERVAL_DEFAULT,
-  normalizePumpingInterval,
-} from "@/lib/domain/baby-pumping"
+  FEEDING_INTERVAL_DEFAULT,
+  normalizeFeedingInterval,
+} from "@/lib/domain/baby-feeding-interval"
 
 export async function updateProfile(formData: FormData) {
   const displayName = formData.get("display_name")
@@ -22,12 +22,22 @@ export async function updateProfile(formData: FormData) {
   if (result.error !== null) return { error: result.error }
   const { supabase, userId } = result.context
 
-  const { error } = await supabase
+  // .update() は 0 行更新でも error: null を返す（RLS で弾かれた・行が無い場合も
+  // 「成功」に見える）。.select("id") で更新行を要求し silent fail を防ぐ。
+  // profiles は列 GRANT で UPDATE を display_name/avatar_url/default_page に
+  // 限っており（20260603000001）、SELECT は revoke されておらず profiles_select
+  // が `id = auth.uid()` を許すため、自分の行の returning は通る。
+  const { data, error } = await supabase
     .from("profiles")
     .update({ display_name: displayName.trim() })
     .eq("id", userId)
+    .select("id")
 
   if (error) {
+    logSupabaseError("settings", "profile update failed", error, { userId })
+    return { error: "プロフィールの更新に失敗しました" }
+  }
+  if (!data || data.length === 0) {
     return { error: "プロフィールの更新に失敗しました" }
   }
 
@@ -94,12 +104,18 @@ export async function updateDefaultPage(page: string) {
   if (result.error !== null) return { error: result.error }
   const { supabase, userId } = result.context
 
-  const { error } = await supabase
+  // 0 行更新を「成功」と偽らない（updateProfile と同じ理由）。
+  const { data, error } = await supabase
     .from("profiles")
     .update({ default_page: page })
     .eq("id", userId)
+    .select("id")
 
   if (error) {
+    logSupabaseError("settings", "default page update failed", error, { userId })
+    return { error: "設定の更新に失敗しました" }
+  }
+  if (!data || data.length === 0) {
     return { error: "設定の更新に失敗しました" }
   }
 
@@ -117,12 +133,20 @@ export async function updateAutoStockCategories(categories: ItemCategory[]) {
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
 
-  const { error } = await supabase
+  // 0 行更新を「成功」と偽らない（別世帯・RLS 拒否は 0 行マッチになる）。
+  const { data, error } = await supabase
     .from("households")
     .update({ auto_stock_categories: categories })
     .eq("id", householdId)
+    .select("id")
 
   if (error) {
+    logSupabaseError("settings", "auto stock categories update failed", error, {
+      householdId,
+    })
+    return { error: "設定の更新に失敗しました" }
+  }
+  if (!data || data.length === 0) {
     return { error: "設定の更新に失敗しました" }
   }
 
@@ -132,20 +156,20 @@ export async function updateAutoStockCategories(categories: ItemCategory[]) {
 export async function updateBabyProfile(formData: FormData) {
   const babyName = formData.get("baby_name")
   const babyBirthDate = formData.get("baby_birth_date")
-  const pumpingIntervalRaw = formData.get("pumping_interval_min")
+  const feedingIntervalRaw = formData.get("feeding_interval_min")
 
   if (typeof babyName !== "string") {
     return { error: "名前を入力してください" }
   }
 
-  // 搾乳間隔（分）。未送信時は既定を維持。範囲外・不正値は明確に弾く。
-  let pumpingIntervalValue = PUMPING_INTERVAL_DEFAULT
-  if (typeof pumpingIntervalRaw === "string" && pumpingIntervalRaw.trim() !== "") {
-    const normalized = normalizePumpingInterval(Number(pumpingIntervalRaw))
+  // 授乳間隔（分）。未送信時は既定を維持。範囲外・不正値は明確に弾く。
+  let feedingIntervalValue = FEEDING_INTERVAL_DEFAULT
+  if (typeof feedingIntervalRaw === "string" && feedingIntervalRaw.trim() !== "") {
+    const normalized = normalizeFeedingInterval(Number(feedingIntervalRaw))
     if (normalized === null) {
-      return { error: "搾乳間隔の値が不正です" }
+      return { error: "授乳間隔の値が不正です" }
     }
-    pumpingIntervalValue = normalized
+    feedingIntervalValue = normalized
   }
 
   let birthDateValue: string | null = null
@@ -167,14 +191,16 @@ export async function updateBabyProfile(formData: FormData) {
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
 
-  const { error } = await supabase
+  // 0 行更新を「成功」と偽らない（別世帯・RLS 拒否は 0 行マッチになる）。
+  const { data, error } = await supabase
     .from("households")
     .update({
       baby_name: babyName.trim() || null,
       baby_birth_date: birthDateValue,
-      pumping_interval_min: pumpingIntervalValue,
+      feeding_interval_min: feedingIntervalValue,
     })
     .eq("id", householdId)
+    .select("id")
 
   if (error) {
     logSupabaseError("settings", "baby profile update failed", error, {
@@ -187,6 +213,9 @@ export async function updateBabyProfile(formData: FormData) {
     if (error.code === "23514") {
       return { error: "誕生日には今日以前の日付を指定してください" }
     }
+    return { error: "赤ちゃん情報の更新に失敗しました" }
+  }
+  if (!data || data.length === 0) {
     return { error: "赤ちゃん情報の更新に失敗しました" }
   }
 

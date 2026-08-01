@@ -23,21 +23,6 @@ updates:
           - "minor"
           - "patch"
 
-  # Flutter / Dart (flutter/pubspec.yaml)
-  - package-ecosystem: "pub"
-    directory: "/flutter"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
-    commit-message:
-      prefix: "chore"
-      include: "scope"
-    groups:
-      pub-minor-patch:
-        update-types:
-          - "minor"
-          - "patch"
-
   # GitHub Actions ワークフローの action バージョン
   - package-ecosystem: "github-actions"
     directory: "/"

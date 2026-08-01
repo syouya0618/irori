@@ -14,17 +14,13 @@ import {
   recordDiaper,
   updateLog,
   deleteLog,
-  startSleep,
   recordTemperature,
   recordGrowth,
   recordMemo,
   upsertBabyDiary,
 } from "../actions"
 import { logSupabaseError } from "@/lib/supabase/log-error"
-import {
-  FUTURE_LOG_TIME_ERROR,
-  SLEEP_START_AFTER_END_ERROR,
-} from "@/lib/domain/baby-log-time"
+import { FUTURE_LOG_TIME_ERROR } from "@/lib/domain/baby-log-time"
 
 const mockedLog = vi.mocked(logSupabaseError)
 const HOUSEHOLD = "house-1"
@@ -50,15 +46,15 @@ function makeUpdateSupabase(updateResult: { data: unknown; error: unknown }) {
 }
 
 /**
- * updateLog の loggedAt 指定経路を模した fake client。
- * 先に log_type/ended_at を pre-fetch（select().eq().eq().maybeSingle()）してから
+ * updateLog の durationSec 単独編集経路を模した fake client。
+ * 先に breast_left_sec を pre-fetch（select().eq().eq().maybeSingle()）してから
  * update().eq().eq().select("id").single() する。両方 supabase.from("baby_logs") 起点。
  */
 function makeUpdateSupabaseWithFetch(
   fetchResult: { data: unknown; error: unknown },
   updateResult: { data: unknown; error: unknown },
 ) {
-  // pre-fetch: from().select("log_type, ended_at").eq().eq().maybeSingle()
+  // pre-fetch: from().select("breast_left_sec").eq().eq().maybeSingle()
   const maybeSingle = vi.fn().mockResolvedValue(fetchResult)
   const fetchEq2 = vi.fn(() => ({ maybeSingle }))
   const fetchEq1 = vi.fn(() => ({ eq: fetchEq2 }))
@@ -132,39 +128,7 @@ describe("recordFeeding / recordDiaper が作成した log id を返す（Undo �
   })
 })
 
-describe("startSleep / record{Temperature,Growth,Memo} が作成 log id を返す（B-03 楽観 append 用）", () => {
-  it("startSleep: 成功時に作成した睡眠 log の id を返す", async () => {
-    const { client } = makeSupabase({ data: { id: "sleep-1" }, error: null })
-    setContext(client)
-    const result = await startSleep()
-    expect(result).toEqual({ error: null, id: "sleep-1" })
-  })
-
-  it("startSleep: 23505（既に睡眠中）は正常系ゆえ id: null + ログ抑止", async () => {
-    const { client } = makeSupabase({
-      data: null,
-      error: { code: "23505", message: "duplicate key" },
-    })
-    setContext(client)
-    const result = await startSleep()
-    expect(result.error).toBe("既に睡眠中のセッションがあります。")
-    expect(result.id).toBeNull()
-    // 23505 は UNIQUE 制約による正常系ゆえ構造化ログは出さない
-    expect(mockedLog).not.toHaveBeenCalled()
-  })
-
-  it("startSleep: 23505 以外の DB エラーは id: null + logSupabaseError", async () => {
-    const { client } = makeSupabase({
-      data: null,
-      error: { code: "XX000", message: "boom" },
-    })
-    setContext(client)
-    const result = await startSleep()
-    expect(result.error).toBe("睡眠の記録に失敗しました。")
-    expect(result.id).toBeNull()
-    expect(mockedLog).toHaveBeenCalled()
-  })
-
+describe("record{Temperature,Growth,Memo} が作成 log id を返す（B-03 楽観 append 用）", () => {
   it("recordTemperature: 成功時に id を返す", async () => {
     const { client } = makeSupabase({ data: { id: "temp-1" }, error: null })
     setContext(client)
@@ -271,41 +235,9 @@ describe("updateLog の記録時刻検証（タスクB）", () => {
     expect(update).not.toHaveBeenCalled()
   })
 
-  it("sleep で logged_at > ended_at は拒否し update しない（負 overlap 防止）", async () => {
-    const { client, update } = makeUpdateSupabaseWithFetch(
-      {
-        data: { log_type: "sleep", ended_at: "2026-07-09T11:00:00Z" },
-        error: null,
-      },
-      { data: { id: "sleep-1" }, error: null },
-    )
-    setContext(client)
-    const result = await updateLog("sleep-1", {
-      loggedAt: "2026-07-09T12:00:00.000Z",
-    })
-    expect(result.error).toBe(SLEEP_START_AFTER_END_ERROR)
-    expect(update).not.toHaveBeenCalled()
-  })
-
-  it("sleep で logged_at ≤ ended_at は update まで進む", async () => {
-    const { client, update } = makeUpdateSupabaseWithFetch(
-      {
-        data: { log_type: "sleep", ended_at: "2026-07-09T12:00:00Z" },
-        error: null,
-      },
-      { data: { id: "sleep-1" }, error: null },
-    )
-    setContext(client)
-    const result = await updateLog("sleep-1", {
-      loggedAt: "2026-07-09T10:00:00.000Z",
-    })
-    expect(result).toEqual({ error: null })
-    expect(update).toHaveBeenCalled()
-  })
-
-  it("非 sleep（feeding）は order 検証をスキップして update まで進む", async () => {
-    const { client, update } = makeUpdateSupabaseWithFetch(
-      { data: { log_type: "feeding", ended_at: null }, error: null },
+  it("loggedAt 変更は pre-fetch なしで update まで進む", async () => {
+    const { client, update, fetchSelect } = makeUpdateSupabaseWithFetch(
+      { data: null, error: null },
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
@@ -315,6 +247,8 @@ describe("updateLog の記録時刻検証（タスクB）", () => {
     })
     expect(result).toEqual({ error: null })
     expect(update).toHaveBeenCalled()
+    // 既存行の pre-fetch が要るのは durationSec 単独編集のときだけ
+    expect(fetchSelect).not.toHaveBeenCalled()
   })
 
   it("pre-fetch が 0 行（別世帯/不在）なら update せず失敗を返す", async () => {
@@ -323,9 +257,7 @@ describe("updateLog の記録時刻検証（タスクB）", () => {
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    const result = await updateLog("missing", {
-      loggedAt: "2026-07-09T10:00:00.000Z",
-    })
+    const result = await updateLog("missing", { durationSec: 300 })
     expect(result.error).toBeTruthy()
     expect(update).not.toHaveBeenCalled()
   })
@@ -413,7 +345,7 @@ describe("updateLog の授乳時間（durationSec）更新", () => {
     // durationSec 単独編集は既存行を pre-fetch する（sides を持つ行の合計だけ編集を
     // fail-loud で拒むため）。ここでは sides 無しの行を返す = 従来経路が通る前提。
     const maybeSingle = vi.fn().mockResolvedValue({
-      data: { log_type: "feeding", ended_at: null, breast_left_sec: null },
+      data: { breast_left_sec: null },
       error: null,
     })
     const fetchEq2 = vi.fn(() => ({ maybeSingle }))
@@ -926,7 +858,7 @@ describe("updateLog: 左右別の授乳時間", () => {
   it("sides を持つ行への durationSec 単独編集は fail-loud で拒否（無音で sides を捨てない）", async () => {
     const { client, update } = makeUpdateSupabaseWithFetch(
       {
-        data: { log_type: "feeding", ended_at: null, breast_left_sec: 300 },
+        data: { breast_left_sec: 300 },
         error: null,
       },
       { data: { id: "log-1" }, error: null },
@@ -947,7 +879,7 @@ describe("updateLog: 左右別の授乳時間", () => {
   it("sides を持たない行への durationSec 単独編集は従来どおり通る", async () => {
     const { client, update } = makeUpdateSupabaseWithFetch(
       {
-        data: { log_type: "feeding", ended_at: null, breast_left_sec: null },
+        data: { breast_left_sec: null },
         error: null,
       },
       { data: { id: "log-1" }, error: null },

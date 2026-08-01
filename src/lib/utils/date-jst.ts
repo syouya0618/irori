@@ -93,7 +93,8 @@ export function shiftYmd(ymd: string, days: number): string {
  * YYYY-MM-DD 文字列が属する週の月曜日を YYYY-MM-DD で返す。
  * タイムゾーンに一切依存しない（Date.UTC + getUTCDay のみ使用）。
  * 日曜は「進行中の週の末尾」として同週の月曜に丸める —
- * flutter/lib/core/utils/jst_date.dart の weekStartMonday と同一セマンティクス。
+ * かつて併走していた Flutter 版 jst_date.dart の weekStartMonday と同一セマンティクス
+ * （Flutter 版は 2026-07-31 に廃止済み。この関数がその契約の唯一の担い手になった）。
  *
  * @returns 月曜の YYYY-MM-DD。パース失敗時は null（daysBetweenYmd と同じ規約）。
  */

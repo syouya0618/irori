@@ -6,6 +6,8 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { getRecipeSuggestions } from "@/app/(main)/stock/actions"
 import { loadTemplate } from "@/app/(main)/meals/actions"
+// startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）
+import { toastOfflineError } from "@/lib/utils/offline-error"
 import type { RecipeSuggestion, TemplateIngredient } from "@/lib/domain"
 import { matchRateBadgeClass } from "@/components/stock/suggestion-card"
 
@@ -33,15 +35,28 @@ export function SuggestionListInDialog({
     if (!isActive || hasLoaded) return
 
     let cancelled = false
-    getRecipeSuggestions().then((result) => {
-      if (cancelled) return
-      if (result.error) {
-        toast.error(result.error)
-      } else {
-        setSuggestions(result.data)
-      }
-      setHasLoaded(true)
-    })
+    getRecipeSuggestions()
+      .then((result) => {
+        if (cancelled) return
+        if (result.error) {
+          toast.error(result.error)
+        } else {
+          setSuggestions(result.data)
+        }
+        setHasLoaded(true)
+      })
+      .catch((err) => {
+        // 注意: ここは startTransition ではなく floating promise ゆえ、reject は
+        // error boundary へ bubble せず **無言の unhandled rejection** になる
+        // （機序が別）。加えて hasLoaded が立たず isLoading が永久 true になり、
+        // スピナーのまま固まる。必ず立てて空状態へ倒す。
+        if (cancelled) return
+        setHasLoaded(true)
+        toastOfflineError(
+          "[suggestion-list-in-dialog] getRecipeSuggestions",
+          err,
+        )
+      })
 
     return () => {
       cancelled = true
@@ -50,13 +65,18 @@ export function SuggestionListInDialog({
 
   function handleSelect(templateId: string) {
     startTransition(async () => {
-      const result = await loadTemplate(templateId)
-      if (result.error) {
-        toast.error(result.error)
-        return
-      }
-      if (result.data) {
-        onSelect(result.data)
+      try {
+        const result = await loadTemplate(templateId)
+        if (result.error) {
+          toast.error(result.error)
+          return
+        }
+        if (result.data) {
+          onSelect(result.data)
+        }
+      } catch (err) {
+        // 読み取り専用（onSelect は成功時のみ）ゆえ巻き戻し不要。
+        toastOfflineError("[suggestion-list-in-dialog] loadTemplate", err)
       }
     })
   }

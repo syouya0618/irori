@@ -8,8 +8,6 @@ import { isFutureIso } from "@/lib/utils/date-jst"
 
 export const FUTURE_LOG_TIME_ERROR = "未来の時刻は記録できません"
 export const INVALID_LOG_TIME_ERROR = "時刻を入力してください"
-export const SLEEP_START_AFTER_END_ERROR =
-  "睡眠の開始は終了より前の時刻にしてください"
 
 // 00:00〜23:59 のみ許容（"25:00" 等の範囲外を先に弾く）。
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/
@@ -37,21 +35,4 @@ export function validateLogTime(iso: string, now?: Date): string | null {
   if (Number.isNaN(new Date(iso).getTime())) return INVALID_LOG_TIME_ERROR
   if (isFutureIso(iso, 5, now)) return FUTURE_LOG_TIME_ERROR
   return null
-}
-
-/**
- * 睡眠ログの logged_at ≤ ended_at 整合を検証する。破れば日本語メッセージ、妥当なら null。
- * - ended_at=null（睡眠中）は制約なし（null を返す）。
- * - 等時刻（logged_at == ended_at）は許容（sleepOverlapMinutesForDate は overlap 0 で無害）。
- * - 不正日時(NaN)は別バリデーション（validateLogTime）に委ね null を返す。
- */
-export function validateSleepOrder(
-  loggedAtIso: string,
-  endedAtIso: string | null,
-): string | null {
-  if (endedAtIso === null) return null
-  const start = new Date(loggedAtIso).getTime()
-  const end = new Date(endedAtIso).getTime()
-  if (Number.isNaN(start) || Number.isNaN(end)) return null
-  return start > end ? SLEEP_START_AFTER_END_ERROR : null
 }

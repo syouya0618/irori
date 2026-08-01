@@ -21,6 +21,8 @@ import {
 import { Loader2, Plus, Trash2, ReceiptText, Camera } from "lucide-react"
 import { toast } from "sonner"
 import { addReceiptItemsToStock } from "@/app/(main)/stock/actions"
+// startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）
+import { toastOfflineError } from "@/lib/utils/offline-error"
 import { allCategories } from "@/lib/utils/categories"
 import { guessItemCategory } from "@/lib/domain/item-category-guess"
 import { scannedItemsToDrafts, type ReceiptDraftItem } from "@/lib/domain/receipt"
@@ -219,13 +221,18 @@ export function ReceiptEntrySheet({ open, onOpenChange }: ReceiptEntrySheetProps
     }
 
     startTransition(async () => {
-      const result = await addReceiptItemsToStock(drafts)
-      if ("error" in result) {
-        toast.error(result.error)
-        return
+      try {
+        const result = await addReceiptItemsToStock(drafts)
+        if ("error" in result) {
+          toast.error(result.error)
+          return
+        }
+        toast.success(`${result.count}件を在庫に追加しました`)
+        onOpenChange(false)
+      } catch (err) {
+        // 楽観挿入は無い。シートも閉じずに残し、読み取り済みの明細を捨てない。
+        toastOfflineError("[receipt-entry-sheet] addReceiptItemsToStock", err)
       }
-      toast.success(`${result.count}件を在庫に追加しました`)
-      onOpenChange(false)
     })
   }
 

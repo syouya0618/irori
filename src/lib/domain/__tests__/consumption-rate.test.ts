@@ -66,7 +66,7 @@ describe("calculateDailyRate", () => {
     const logs = [
       mkLog("diaper", 1),
       mkLog("feeding", 1), // feedingはカウントしない
-      mkLog("sleep", 1),
+      mkLog("temperature", 1),
     ]
     expect(calculateDailyRate(logs, "diaper", TODAY)).toBe(1)
   })

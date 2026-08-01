@@ -106,26 +106,45 @@
   }
 }
 
-/* ── Liquid Glass ユーティリティ ── */
+/* ── Liquid Glass ユーティリティ ──
+ *
+ * ⚠️ ぼかしの値は必ず CSS 変数（--glass-filter）経由で渡すこと。**リテラルで書くな。**
+ *
+ * 理由（2026-07-28 実測）: リテラルで `backdrop-filter: blur(40px) saturate(1.8)` と
+ * 書くと、Next 16 / Turbopack のビルド（lightningcss）が「prefix 版だけで足りる」と
+ * 静的に判断し、**標準プロパティを削って `-webkit-backdrop-filter` だけを出力する**。
+ * Chrome 150 は `-webkit-backdrop-filter` を解さない（CSS.supports = false）ため、
+ * **Chrome/Android では Liquid Glass のぼかしが 1px も掛からなくなる**（iOS Safari は
+ * -webkit- を解するので効く ＝ 同じ画面が端末により別デザインになる）。
+ * 実測: 修正前のビルド後 CSS で `.glass` の標準プロパティ = 0 件、Chrome 実機の
+ * computed backdropFilter = "none"、WebKit = "blur(40px) saturate(1.8)"。
+ *
+ * `var()` を挟むと lightningcss は値を静的解析できず両方を残す（Tailwind 自身の
+ * backdrop-blur-* ユーティリティが同じ手法で生き残っているのを確認済み）。
+ * 変更時は必ずビルド後 CSS を grep して標準プロパティの存在を確かめること。
+ */
 @layer utilities {
   .glass {
+    --glass-filter: blur(40px) saturate(1.8);
     background: oklch(1 0 0 / 55%);
-    backdrop-filter: blur(40px) saturate(1.8);
-    -webkit-backdrop-filter: blur(40px) saturate(1.8);
+    -webkit-backdrop-filter: var(--glass-filter);
+    backdrop-filter: var(--glass-filter);
     border: 1px solid oklch(1 0 0 / 30%);
   }
 
   .glass-subtle {
+    --glass-filter: blur(24px) saturate(1.5);
     background: oklch(1 0 0 / 40%);
-    backdrop-filter: blur(24px) saturate(1.5);
-    -webkit-backdrop-filter: blur(24px) saturate(1.5);
+    -webkit-backdrop-filter: var(--glass-filter);
+    backdrop-filter: var(--glass-filter);
     border: 1px solid oklch(1 0 0 / 20%);
   }
 
   .glass-nav {
+    --glass-filter: blur(48px) saturate(2);
     background: oklch(1 0 0 / 70%);
-    backdrop-filter: blur(48px) saturate(2);
-    -webkit-backdrop-filter: blur(48px) saturate(2);
+    -webkit-backdrop-filter: var(--glass-filter);
+    backdrop-filter: var(--glass-filter);
     border-top: 1px solid oklch(1 0 0 / 40%);
   }
 

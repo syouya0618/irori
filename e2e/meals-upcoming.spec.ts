@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test"
 import { test, expect } from "./fixtures/test"
-import { loginViaMagicLink } from "./fixtures/auth"
+import { adminClient, loginViaMagicLink } from "./fixtures/auth"
 
 /**
  * CAL-4「今日・明日の予定」カード E2E:
@@ -11,6 +11,43 @@ import { loginViaMagicLink } from "./fixtures/auth"
  */
 
 test.setTimeout(180_000)
+
+/**
+ * 予定作成 server action の完了を DB 断面で待つ (service_role で RLS バイパス)。
+ * calendar.spec.ts の同名ヘルパ・golden-path.spec.ts の waitForMealRow と同じ流儀
+ * (各 spec ファイルでの重複が既存の慣習。cross-spec import は Playwright の
+ * テストファイル読み込みを壊しうるため避ける)。
+ *
+ * calendar-view.tsx の新規予定作成は「楽観挿入 → シートを閉じる → startTransition
+ * 内で非同期に createCalendarEvent を実行」の順であり、画面に予定名が見えた時点
+ * ではサーバー側の INSERT が commit 済みである保証がない。/meals への遷移前に
+ * この関数で実永続化を待つことで、「楽観表示は見えたが commit 前に SSR した」
+ * という固定待ち時間に依存しない同期点を作る（waitForTimeout 等の時間待ちは
+ * flake を時間で覆い隠すだけで使わない）。
+ */
+async function waitForEventCount(
+  userId: string,
+  title: string,
+  expected: number,
+): Promise<void> {
+  const admin = adminClient()
+  await expect(async () => {
+    const { data: profile } = await admin
+      .from("profiles")
+      .select("household_id")
+      .eq("id", userId)
+      .single()
+    if (!profile?.household_id) throw new Error("household not ready")
+    const { data, error } = await admin
+      .from("calendar_events")
+      .select("id")
+      .eq("household_id", profile.household_id)
+      .eq("title", title)
+    if (error) throw new Error(`calendar lookup failed: ${error.message}`)
+    if ((data?.length ?? 0) !== expected)
+      throw new Error(`expected ${expected} "${title}", got ${data?.length ?? 0}`)
+  }).toPass({ timeout: 15_000 })
+}
 
 /** login(マジックリンク) → 世帯作成 → /meals に着地。 */
 async function loginAndCreateHousehold(
@@ -50,6 +87,9 @@ test("今日の予定を作ると /meals の先頭にカードが出て、そこ
   await expect(page.getByText("保育園見学").first()).toBeVisible({
     timeout: 15_000,
   })
+
+  // 楽観表示は commit を保証しないため、DB 断面で実永続化を待ってから遷移する。
+  await waitForEventCount(approvedUser.id, "保育園見学", 1)
 
   // /meals を SSR させ直してカードを確認する（Router Cache に依らず断面を見る）。
   await page.goto("/meals")

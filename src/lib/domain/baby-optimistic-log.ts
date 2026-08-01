@@ -44,7 +44,6 @@ export interface BuildOptimisticLogParams {
   breastLeftSec?: number | null
   breastRightSec?: number | null
   diaperType?: DiaperType | null
-  endedAt?: string | null
   temperature?: number | null
   weightG?: number | null
   heightCm?: number | null
@@ -69,7 +68,6 @@ export function buildOptimisticLog(
     breast_left_sec: params.breastLeftSec ?? null,
     breast_right_sec: params.breastRightSec ?? null,
     diaper_type: params.diaperType ?? null,
-    ended_at: params.endedAt ?? null,
     temperature: params.temperature ?? null,
     weight_g: params.weightG ?? null,
     height_cm: params.heightCm ?? null,

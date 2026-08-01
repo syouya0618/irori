@@ -24,14 +24,12 @@ export {
 } from "./consumption-rate"
 export {
   aggregateFeedings,
-  aggregateSleep,
   aggregateDiapers,
   extractTemperatures,
   extractGrowth,
   calculateAge,
   type AggregationLogInput,
   type DailyFeedingSummary,
-  type DailySleepSummary,
   type DailyDiaperSummary,
   type TemperatureRecord,
   type GrowthRecord,
