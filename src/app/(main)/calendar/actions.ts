@@ -16,6 +16,33 @@ import {
   jstWallClockToIso,
 } from "@/lib/utils/date-jst"
 
+/**
+ * `calendar_events` を書き換えた後に呼ぶ。**この表を読むページを全て**無効化する。
+ *
+ * `/calendar` だけを無効化しておると、`/meals` の「今日・明日の予定」カードが
+ * 最大 10 秒古いまま残る。原因は 3 つが重なるためじゃ:
+ *
+ * 1. カードのデータは `meals/page.tsx` がサーバで `calendar_events` を引いて
+ *    `initialEvents` として渡す = **`/meals` の RSC ペイロードに乗っておる**
+ * 2. `next.config.ts` の `staleTimes.dynamic: 10` により、10 秒以内の
+ *    クライアント遷移は取得済みペイロードを再利用する
+ * 3. カードの復帰時 refetch は `visibilitychange`/`focus` 契機ゆえ、
+ *    BottomNav の遷移（同一ドキュメント内）では**発火せず自己修復もせぬ**
+ *
+ * `revalidatePath` は Client Cache を purge する（同梱 docs
+ * `04-functions/revalidatePath.md`: "This will purge the Client Cache, and
+ * invalidate all cached data for revalidation on the next page visit."）ゆえ、
+ * ここで `/meals` も無効化すれば `staleTimes` を迂回できる。
+ *
+ * **呼び出し側に 5 箇所へ素で書かせぬのは、6 箇所目を足す者が忘れるからじゃ。**
+ * 表と読者の対応はこの 1 箇所に閉じておく（`calendar_events` を読むページを
+ * 増やしたら、ここへ足せば全経路に効く）。
+ */
+function revalidateCalendarConsumers() {
+  revalidatePath("/calendar")
+  revalidatePath("/meals")
+}
+
 export interface CalendarEventActionInput {
   title: string
   memo?: string | null
@@ -78,7 +105,7 @@ export async function createCalendarEvent(input: CalendarEventActionInput) {
     return { error: "予定の作成に失敗しました。もう一度お試しください。" }
   }
 
-  revalidatePath("/calendar")
+  revalidateCalendarConsumers()
   return { error: null, eventId: data.id }
 }
 
@@ -187,7 +214,7 @@ async function createCalendarEventSeries(args: {
     return { error: "繰り返し予定の作成に失敗しました。もう一度お試しください。" }
   }
 
-  revalidatePath("/calendar")
+  revalidateCalendarConsumers()
   return { error: null, seriesId, count: data.length }
 }
 
@@ -227,7 +254,7 @@ export async function updateCalendarEvent(
     return { error: "この予定は編集できません（同期予定か、権限がありません）。" }
   }
 
-  revalidatePath("/calendar")
+  revalidateCalendarConsumers()
   return { error: null }
 }
 
@@ -252,7 +279,7 @@ export async function deleteCalendarEvent(id: string) {
     return { error: "この予定は削除できません（同期予定か、権限がありません）。" }
   }
 
-  revalidatePath("/calendar")
+  revalidateCalendarConsumers()
   return { error: null }
 }
 
@@ -285,6 +312,6 @@ export async function deleteCalendarEventSeries(seriesId: string) {
     return { error: "この予定は削除できません（同期予定か、権限がありません）。" }
   }
 
-  revalidatePath("/calendar")
+  revalidateCalendarConsumers()
   return { error: null, count: data.length }
 }
