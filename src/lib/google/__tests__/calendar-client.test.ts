@@ -289,6 +289,28 @@ describe("fetchAllEventPages のページネーション", () => {
     expect(result.nextSyncToken).toBeNull()
   })
 
+  it("途中ページだけがトークンを持ち最終ページが持たねば null（拾い置きを禁じる）", async () => {
+    // 「最後に見た非 null を採る」実装はこの形で初めて剥がれる。前のケース
+    // （最終ページがトークンを持つ）はその実装でも通ってしまい弁別できぬ。
+    // 途中ページのトークンを保存すると、そのページ以降の差分を**永久に取り
+    // 逃す**（次の 410 か再連携までミラーに現れぬ）ゆえ null で落ちねばならぬ。
+    stubFetchSequence([
+      jsonOk({
+        items: [],
+        nextPageToken: "p2",
+        nextSyncToken: "TOKEN_FROM_PAGE_1_MUST_NOT_BE_USED",
+      }),
+      jsonOk({ items: [] }),
+    ])
+
+    const result = await fetchAllEventPages(ACCESS_TOKEN, CALENDAR_ID, {
+      mode: "incremental",
+      syncToken: SYNC_TOKEN,
+    })
+
+    expect(result.nextSyncToken).toBeNull()
+  })
+
   it("pageToken が前進しなければ無限ループせず throw する", async () => {
     // 同じ pageToken を返し続ける異常な API を模す。
     stubFetchSequence([jsonOk({ items: [], nextPageToken: "same" })])
