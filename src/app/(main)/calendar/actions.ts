@@ -9,6 +9,7 @@ import {
   type CalendarRepeat,
 } from "@/lib/domain/calendar-validation"
 import { generateRecurrenceDates } from "@/lib/domain/calendar-recurrence"
+import { latestIsoTimestamp } from "@/lib/domain/google-sync-signal"
 import {
   daysBetweenYmd,
   shiftYmd,
@@ -287,4 +288,42 @@ export async function deleteCalendarEventSeries(seriesId: string) {
 
   revalidatePath("/calendar")
   return { error: null, count: data.length }
+}
+
+/**
+ * V7: Google 同期の完了シグナルを読む（`google_connections.last_synced_at`）。
+ *
+ * **Realtime を使わぬ**代わりの経路じゃ。`google_calendar_subscriptions` は
+ * `sync_token` / `sync_lease_until` という秘密を持つため publication へ載せられず、
+ * かつ「削除のみの同期サイクル」は `calendar_events` に INSERT/UPDATE を生まぬ
+ * ため Realtime では原理的に捕まらぬ。client は `syncScheduled === true` の
+ * ときだけこの値を数回ポーリングし、前進したら events を refetch する。
+ *
+ * `google_connections` は household RLS で SELECT 可・非機密ゆえ authenticated
+ * クライアントで読む（service role を描画/操作経路に持ち込まぬ）。
+ */
+export async function fetchGoogleSyncSignal(): Promise<{
+  lastSyncedAt: string | null
+}> {
+  const result = await getAuthContext()
+  if (result.error !== null) return { lastSyncedAt: null }
+  const { supabase, householdId } = result.context
+
+  const { data, error } = await supabase
+    .from("google_connections")
+    .select("last_synced_at")
+    .eq("household_id", householdId)
+
+  if (error) {
+    logSupabaseError("calendar", "google sync signal lookup failed", error, {
+      householdId,
+    })
+    // 判定不能。null を返せば client は「前進しておらぬ」と見なして黙る
+    // （ポーリングの失敗で画面を倒さぬ）。
+    return { lastSyncedAt: null }
+  }
+
+  return {
+    lastSyncedAt: latestIsoTimestamp((data ?? []).map((r) => r.last_synced_at)),
+  }
 }

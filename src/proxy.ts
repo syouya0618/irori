@@ -71,7 +71,21 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   const isPublicRoute =
-    pathname === "/login" || pathname.startsWith("/auth/callback")
+    pathname === "/login" ||
+    pathname.startsWith("/auth/callback") ||
+    // V8【致命的】Vercel Cron は **cookie 無しの GET** を送る。承認ゲートを
+    // 通すと未認証と判定されて /login へ 307 され、**ハンドラに到達せぬ**
+    // （テストは緑・本番は 100% 不発）。認可はハンドラ側の fail-closed な
+    // CRON_SECRET 検証が担う（`src/app/api/cron/*/route.ts`）。
+    //
+    // **matcher から外すのではなく isPublicRoute にしてある理由**:
+    // matcher から外すと proxy 自体を通らなくなり、`Server-Timing` も載らぬ
+    // （#171 で入れた TTFB の内訳計測が cron 経路だけ欠ける）。isPublicRoute
+    // なら proxy は通り、迂回するのは承認ゲートだけで済む。
+    //
+    // 意図的に認証を外すのは `/api/cron/` ただ一つじゃ。ここに別の prefix を
+    // 足す前に、そのハンドラが fail-closed な認可を持つことを必ず確かめよ。
+    pathname.startsWith("/api/cron/")
   const isInviteRoute = pathname.startsWith("/invite/")
   const isPendingRoute = pathname === "/pending-approval"
 

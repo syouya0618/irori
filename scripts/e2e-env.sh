@@ -31,8 +31,14 @@ grep -E '^(NEXT_PUBLIC_SUPABASE_URL|NEXT_PUBLIC_SUPABASE_ANON_KEY|SUPABASE_SERVI
 # GoTrue の site_url (supabase/config.toml) と一致させるため 127.0.0.1 固定
 echo 'NEXT_PUBLIC_APP_URL="http://127.0.0.1:3000"' >> "$ENV_FILE"
 
-# 検証: 4 キーが揃っているか
-for key in NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY NEXT_PUBLIC_APP_URL; do
+# cron の認可 secret（V8）。e2e/google-cron-proxy.spec.ts が
+# 「secret 無しで 401 / 正しい secret で到達」を実ビルドで検証するために要る。
+# **テスト専用の固定値**じゃ。本番の値ではない（本番は Vercel の env に置く）。
+# 未設定だと「正しい secret」側のテストが skip され、V8 の検査が半分抜ける。
+echo 'CRON_SECRET="e2e-cron-secret-do-not-use-in-production"' >> "$ENV_FILE"
+
+# 検証: 5 キーが揃っているか
+for key in NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY NEXT_PUBLIC_APP_URL CRON_SECRET; do
   if ! grep -q "^${key}=" "$ENV_FILE"; then
     echo "error: ${key} を ${ENV_FILE} に書き出せませんでした。\`supabase status -o env\` の出力を確認してください。" >&2
     exit 1
