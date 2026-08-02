@@ -18,7 +18,7 @@
 -- CHECK 制約は RLS と違い role に依らぬ。RLS / 権限側は
 -- calendar_events_rls.sql と google_calendar_sync_grants_rls.sql が担う。
 BEGIN;
-SELECT plan(16);
+SELECT plan(18);
 
 -- ── seed ───────────────────────────────────────────────────────
 INSERT INTO households (id, name) VALUES
@@ -56,7 +56,7 @@ SELECT throws_ok(
      VALUES ('11111111-1111-1111-1111-111111111111',
              repeat('a', 201), true, '2026-08-10', '2026-08-10',
              'google', 'gev-title-201', 'family@group.calendar.google.com') $$,
-  '23514', NULL, 'title: 201 文字は拒否');
+  '23514', 'new row for relation "calendar_events" violates check constraint "chk_calendar_title"', 'title: 201 文字は拒否');
 SELECT throws_ok(
   $$ INSERT INTO calendar_events
        (household_id, title, is_all_day, start_date, end_date, source,
@@ -64,7 +64,7 @@ SELECT throws_ok(
      VALUES ('11111111-1111-1111-1111-111111111111',
              '   ', true, '2026-08-10', '2026-08-10',
              'google', 'gev-title-blank', 'family@group.calendar.google.com') $$,
-  '23514', NULL, 'title: 空白のみは拒否（summary 欠落は "(無題)" へ倒す契約）');
+  '23514', 'new row for relation "calendar_events" violates check constraint "chk_calendar_title"', 'title: 空白のみは拒否（summary 欠落は "(無題)" へ倒す契約）');
 
 -- ══ chk_calendar_memo: memo IS NULL OR char_length(memo) <= 1000 ══
 SELECT lives_ok(
@@ -82,7 +82,7 @@ SELECT throws_ok(
      VALUES ('11111111-1111-1111-1111-111111111111', 'memo 超過',
              repeat('m', 1001), true, '2026-08-10', '2026-08-10',
              'google', 'gev-memo-1001', 'family@group.calendar.google.com') $$,
-  '23514', NULL, 'memo: 1001 文字は拒否（Google の description は切り詰める契約）');
+  '23514', 'new row for relation "calendar_events" violates check constraint "chk_calendar_memo"', 'memo: 1001 文字は拒否（Google の description は切り詰める契約）');
 
 -- ══ chk_calendar_date_order: end_date >= start_date ══
 -- Google の all-day `end.date` は排他的ゆえ D-2 が -1 日する。単日は end = start。
@@ -101,7 +101,7 @@ SELECT throws_ok(
      VALUES ('11111111-1111-1111-1111-111111111111', '逆転', true,
              '2026-08-10', '2026-08-09', 'google',
              'gev-date-lt', 'family@group.calendar.google.com') $$,
-  '23514', NULL, 'date_order: end_date < start_date は拒否（-1 日の引きすぎを DB が止める）');
+  '23514', 'new row for relation "calendar_events" violates check constraint "chk_calendar_date_order"', 'date_order: end_date < start_date は拒否（-1 日の引きすぎを DB が止める）');
 
 -- ══ chk_calendar_google_meta: google 行は 2 列とも NOT NULL ══
 SELECT lives_ok(
@@ -118,8 +118,28 @@ SELECT throws_ok(
         google_event_id)
      VALUES ('11111111-1111-1111-1111-111111111111', 'calendar_id 欠落', true,
              '2026-08-10', '2026-08-10', 'google', 'gev-meta-ng') $$,
-  '23514', NULL,
+  '23514', 'new row for relation "calendar_events" violates check constraint "chk_calendar_google_meta"',
   'google_meta: google_calendar_id のみ NULL は拒否（V6: UNIQUE が効かず重複が積もる穴）');
+
+-- ══ chk_calendar_native_no_google: native 行は google 列を持てぬ ══
+-- これが破れると UNIQUE index(NULLS DISTINCT 既定)が partial と同義でなくなり、
+-- V1/V6 の冪等キーの前提が崩れる。
+SELECT lives_ok(
+  $$ INSERT INTO calendar_events
+       (household_id, title, is_all_day, start_date, end_date, source)
+     VALUES ('11111111-1111-1111-1111-111111111111', 'native 行', true,
+             '2026-08-10', '2026-08-10', 'native') $$,
+  'native_no_google: native 行は google 列 NULL で通る');
+SELECT throws_ok(
+  $$ INSERT INTO calendar_events
+       (household_id, title, is_all_day, start_date, end_date, source,
+        google_event_id, google_calendar_id)
+     VALUES ('11111111-1111-1111-1111-111111111111', 'native なのに google', true,
+             '2026-08-10', '2026-08-10', 'native',
+             'gev-native-ng', 'family@group.calendar.google.com') $$,
+  '23514',
+  'new row for relation "calendar_events" violates check constraint "chk_calendar_native_no_google"',
+  'native_no_google: native 行に google_event_id が付いておれば拒否');
 
 -- ══ chk_calendar_all_day ══
 SELECT lives_ok(
@@ -137,7 +157,7 @@ SELECT throws_ok(
      VALUES ('11111111-1111-1111-1111-111111111111', 'all-day なのに時刻', true,
              '2026-08-10', '2026-08-10', '2026-08-10T01:00:00Z', 'google',
              'gev-allday-ng', 'family@group.calendar.google.com') $$,
-  '23514', NULL, 'all_day: 終日行に start_at が付いておれば拒否');
+  '23514', 'new row for relation "calendar_events" violates check constraint "chk_calendar_all_day"', 'all_day: 終日行に start_at が付いておれば拒否');
 
 -- ══ chk_calendar_time_order: end_at IS NULL OR end_at >= start_at ══
 SELECT lives_ok(
@@ -157,7 +177,7 @@ SELECT throws_ok(
              '2026-08-10', '2026-08-10',
              '2026-08-10T02:00:00Z', '2026-08-10T01:00:00Z', 'google',
              'gev-time-lt', 'family@group.calendar.google.com') $$,
-  '23514', NULL, 'time_order: end_at < start_at は拒否');
+  '23514', 'new row for relation "calendar_events" violates check constraint "chk_calendar_time_order"', 'time_order: end_at < start_at は拒否');
 
 -- ══ D-2 の GoogleCalendarEventRow 全 19 列を実 INSERT ══
 -- 列名は src/lib/domain/google-calendar-sync.ts の interface に一致させること。
