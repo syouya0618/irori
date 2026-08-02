@@ -93,3 +93,59 @@ describe("proxy: 承認ゲート（DB 読みゆえ即時に効き続ける）", 
     expect(res.headers.get("location")).toContain("/pending-approval")
   })
 })
+
+/**
+ * Server-Timing による最小の可観測性（I-15）。
+ *
+ * 「もっさりする」という訴えを**次回は測れる**ようにする経路じゃ。proxy は静的
+ * アセット以外の全リクエストを通り、TTFB の支配項が認証往復であることが実測で
+ * 分かっている（getUser 16.55ms → getClaims 0.14ms への切替が #171）。ゆえに
+ * 認証と DB の内訳をここで返す。
+ *
+ * 計測範囲は **proxy 自身の auth + db のみ**（ページ本体の描画は含まぬ）。
+ *
+ * `Server-Timing` は同一オリジンなら追加設定なしでブラウザが解釈し、DevTools の
+ * Network → Timing に出て `PerformanceServerTiming` からも読める。ブラウザが実際に
+ * 解釈することは e2e（e2e/server-timing.spec.ts）が実ブラウザで固定する。
+ * ここでは全 return 経路に載っていることを固定する — `supabaseResponse` は
+ * cookie 書き込みのたびに再代入されるため、載せ忘れが起きやすい。
+ */
+describe("proxy: Server-Timing（体感の遅さを次回は測れるようにする）", () => {
+  it("通常応答に auth と db の内訳が載る", async () => {
+    getClaims.mockResolvedValue(validClaims)
+    const res = await proxy(request("/baby"))
+    const timing = res.headers.get("Server-Timing")
+    expect(timing).toMatch(/auth;dur=[\d.]+/)
+    expect(timing).toMatch(/db;dur=[\d.]+/)
+  })
+
+  it("未認証の /login redirect にも載る（307 が遅い場合も測れる）", async () => {
+    getClaims.mockResolvedValue({ data: null, error: null })
+    const res = await proxy(request("/baby"))
+    expect(res.status).toBe(307)
+    expect(res.headers.get("Server-Timing")).toMatch(/auth;dur=[\d.]+/)
+  })
+
+  it("未認証は DB を引かぬゆえ db は載らない（測っていないものを載せない）", async () => {
+    getClaims.mockResolvedValue({ data: null, error: null })
+    const res = await proxy(request("/login"))
+    const timing = res.headers.get("Server-Timing")
+    expect(timing).toMatch(/auth;dur=/)
+    expect(timing).not.toMatch(/db;dur=/)
+  })
+
+  it("未承認の /pending-approval redirect にも載る", async () => {
+    getClaims.mockResolvedValue(validClaims)
+    profileSingle.mockResolvedValue({ data: { is_approved: false }, error: null })
+    const res = await proxy(request("/baby"))
+    expect(res.status).toBe(307)
+    expect(res.headers.get("Server-Timing")).toMatch(/db;dur=/)
+  })
+
+  it("承認済みが /login に来た時の / redirect にも載る", async () => {
+    getClaims.mockResolvedValue(validClaims)
+    const res = await proxy(request("/login"))
+    expect(res.status).toBe(307)
+    expect(res.headers.get("Server-Timing")).toMatch(/db;dur=/)
+  })
+})

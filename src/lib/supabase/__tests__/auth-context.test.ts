@@ -130,6 +130,8 @@ describe("getAuthContext: 承認ゲート（二層目）", () => {
     expect(r.reason).toBe("not-approved")
   })
 
+  // I-16 で足した lookup-failed が、この「断定しない」不変条件を満たす具体値である
+  // ことを下の describe が正面から固定する（ここは否定形ゆえ単独では弱い）。
   it("is_approved が読めなかった場合は not-approved と断定しない（一過性エラーで /pending-approval へ飛ばさぬ）", async () => {
     // lookup 失敗を「未承認」と断定すると、一過性の DB エラーで承認済みの利用者が
     // 承認待ち画面へ落ちる。context を返さぬ点は同じ（fail-closed は保たれる）。
@@ -138,5 +140,54 @@ describe("getAuthContext: 承認ゲート（二層目）", () => {
     const r = await getAuthContext()
     expect(r.reason).not.toBe("not-approved")
     expect(r.context).toBeNull()
+  })
+})
+
+/**
+ * 一過性エラーと「世帯なし」の弁別（I-16）。
+ *
+ * 従前は profiles の lookup 失敗をログには残すが**分岐に使っておらず**、
+ * `!profile?.household_id` に吸われて `no-household` を返していた。呼び出し元の
+ * (main)/layout はそれを見て /setup へ redirect するため、**世帯が在るのに
+ * 世帯作成画面へ飛ぶ**（世帯を二重に作りかねない）。
+ *
+ * `settings/page.tsx` は既に「lookup 失敗は throw して error boundary」の流儀を
+ * 採っており、同一リポ内で不統一だったのを揃える。
+ */
+describe("getAuthContext: 一過性エラーを「世帯なし」と区別する（I-16）", () => {
+  it("profiles の lookup 失敗は lookup-failed（no-household ではない）", async () => {
+    getClaims.mockResolvedValue({ data: { claims: { sub: "user-1" } }, error: null })
+    profileSingle.mockResolvedValue({
+      data: null,
+      error: { message: "connection reset", code: "08006" },
+    })
+    const r = await getAuthContext()
+    // 正面から固定する（否定形の assertion では typo も他の reason も素通りする）
+    expect(r.reason).toBe("lookup-failed")
+    expect(r.context).toBeNull()
+  })
+
+  it("error なしで profile が空でも lookup-failed へ倒す（判定不能を誘導に使わない）", async () => {
+    // .single() は通常 0 行で PGRST116 を返すが、将来 .maybeSingle() へ
+    // 変えた場合などにこの経路が生きる。「世帯なし」と断定してはならぬ。
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {})
+    getClaims.mockResolvedValue({ data: { claims: { sub: "user-1" } }, error: null })
+    profileSingle.mockResolvedValue({ data: null, error: null })
+    const r = await getAuthContext()
+    expect(r.reason).toBe("lookup-failed")
+    expect(r.context).toBeNull()
+    expect(spy).toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
+  it("本当に世帯が無い場合は従来どおり no-household（/setup 誘導は残す）", async () => {
+    // lookup-failed を足したせいで正常な世帯なし導線まで壊しては本末転倒じゃ。
+    getClaims.mockResolvedValue({ data: { claims: { sub: "user-1" } }, error: null })
+    profileSingle.mockResolvedValue({
+      data: { household_id: null, is_approved: true },
+      error: null,
+    })
+    const r = await getAuthContext()
+    expect(r.reason).toBe("no-household")
   })
 })

@@ -15,6 +15,19 @@ export default async function MainLayout({
   const { context, reason } = await getAuthContext()
 
   if (!context) {
+    // 一過性の DB エラーは「世帯なし」ではない。redirect すると**世帯が在るのに
+    // /setup（世帯作成画面）へ飛ばされ**、利用者が世帯を二重に作りかねない。
+    // 判定不能は誘導せず error boundary へ倒す（再試行ボタンで自己回復する）。
+    //
+    // ⚠️ この throw を受けるのは `(main)/error.tsx` ではなく **`app/error.tsx`** じゃ。
+    // Next 公式 docs 原文（node_modules/next/dist/docs/01-app/03-api-reference/
+    // 03-file-conventions/error.md:96）:
+    //   "It does **not** wrap the `layout.js` or `template.js` above it in the
+    //    same segment."
+    // ゆえに同一セグメントの error.tsx は自分の layout の throw を捕まえられぬ。
+    if (reason === "lookup-failed") {
+      throw new Error("プロフィールの取得に失敗しました")
+    }
     // 遷移先は proxy の分岐と一致させる（層をまたぐ判定の食い違いは無限
     // リダイレクトを生む）。proxy も未承認を /pending-approval へ送る。
     if (reason === "not-approved") redirect("/pending-approval")

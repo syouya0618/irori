@@ -26,7 +26,17 @@ export function ExportCard() {
     setIsDownloading(true)
     try {
       const res = await fetch(`/api/baby-report?period=${period}`)
-      if (!res.ok) throw new Error()
+      if (!res.ok) {
+        // status を握り潰さない。小児科の受診当日に失敗した時、401（セッション切れ）
+        // と 500（サーバ側の DB エラー）では利用者の次の一手が全く違う。
+        console.error("[export-card] baby-report の取得に失敗しました", {
+          status: res.status,
+          statusText: res.statusText,
+          period,
+        })
+        toast.error(`ダウンロードに失敗しました（HTTP ${res.status}）`)
+        return
+      }
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement("a")
@@ -34,7 +44,21 @@ export function ExportCard() {
       a.download = `baby-log.pdf`
       a.click()
       URL.revokeObjectURL(url)
-    } catch {
+
+      // サーバが上限で切り詰めた場合は成功トーストではなく警告を出す
+      // （PDF 本文にも同じ警告が刷り込まれている）。
+      if (res.headers.get("X-Report-Truncated") === "1") {
+        toast.warning(
+          "記録が多いため、一部のみのレポートです（全件ではありません）",
+        )
+      }
+    } catch (err) {
+      // bind の無い `catch {}` は真因を完全に消す。通信断・CORS・blob 失敗の
+      // いずれかを後から切り分けられるよう、必ず構造化して残す。
+      console.error("[export-card] baby-report のダウンロードで例外", {
+        message: err instanceof Error ? err.message : String(err),
+        period,
+      })
       toast.error("ダウンロードに失敗しました")
     } finally {
       setIsDownloading(false)
