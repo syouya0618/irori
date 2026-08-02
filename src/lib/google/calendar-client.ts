@@ -16,7 +16,13 @@ import {
  *    > "These are: `iCalUID`, `orderBy`, `privateExtendedProperty`, `q`,
  *    >  `sharedExtendedProperty`, `timeMin`, `timeMax`, `updatedMin`"
  *    → **`timeMin` はフル同期の初回のみ**。増分同期に付けたら 400 で壊れる。
- *      本モジュールは params を判別可能ユニオンにし、**型の上で表現不能**にしてある。
+ *      本モジュールは params を判別可能ユニオンにしてある。**実測（tsc 6）**:
+ *      オブジェクトリテラルで `{ mode:"incremental", syncToken, timeMin }` と
+ *      書けば TS2353 で落ちる（通常の呼び出し形はこれゆえ実用上は塞がる）が、
+ *      **一旦変数へ組んでから渡す経路は excess property check が効かず素通りする**。
+ *      ゆえに最終的な担保は型ではなく `buildEventsUrl` の構造
+ *      （incremental 分岐が `timeMin` を書く行を持たぬこと）と、それを固定する
+ *      `__tests__/calendar-client.test.ts` の URL 契約テストじゃ。
  * 2. **410 GONE**:
  *    > "If the `syncToken` expires, the server will respond with a 410 GONE response
  *    >  code and the client should clear its storage and perform a full
@@ -108,7 +114,9 @@ export interface GoogleCalendarListEntry {
  * **判別可能ユニオンにしてある理由**: `timeMin` と `syncToken` の併用は Google が
  * 明示的に禁じており（上記一次情報 1）、増分同期に `timeMin` を付けると
  * 「未来のみ同期」のつもりが 400 で全滅する。オプショナル項目の集合にすると
- * 併用が**型として書けてしまう**ため、初めから表現不能にする。
+ * 併用が**型として書けてしまう**ため、判別子で分けて呼び出し側の事故を減らす。
+ * ただし型だけに頼るな — 変数経由の呼び出しは型検査をすり抜ける（上記一次情報 1
+ * の実測メモを見よ）。真の担保は `buildEventsUrl` の構造と URL 契約テストじゃ。
  */
 export type GoogleEventsQuery =
   /** フル同期。**`timeMin` を付けてよいのはこちらだけ**。 */
@@ -299,6 +307,12 @@ export async function fetchCalendarList(
  *
  * 生イベントの型は呼び出し側が与える（D-5 が `GoogleRawEvent` を渡し、
  * そのまま `diffPage` へ流せる。ここで D-2 を import せぬための型引数じゃ）。
+ *
+ * ## D-5 への契約: **全ページ走査を自前でループするな**
+ * 必ず `fetchAllEventPages()` を通せ。ここを手で回すと「`nextSyncToken` は最終
+ * ページのみ」という規則を各呼び出し側で再実装することになり、本 PR が塞いだ
+ * 事故（途中ページのトークンを保存し、以後の差分を永久に取り逃す）が戻る。
+ * この関数を直接使ってよいのは、1 ページだけ覗く診断用途に限る。
  */
 export async function fetchEventsPage<T = unknown>(
   accessToken: string,
