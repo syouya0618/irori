@@ -244,15 +244,48 @@ describe("atomic リース", () => {
     })
   })
 
-  it("Google が落ちてもリースは解放される（finally）", async () => {
-    const h = harness()
+  it("**失敗時はリースを握ったまま**にする（一過性失敗のバックオフ）", async () => {
+    const db = seedDb()
+    const h = harness(db)
     h.fetchAllEventPages.mockRejectedValue(
-      new GoogleCalendarError("network", "boom"),
+      new GoogleCalendarError("quota", "429", { status: 429 }),
     )
     const summary = await syncHousehold(h.fake.client, HOUSE, h.deps)
 
     expect(summary.connections[0]?.subscriptions[0]?.status).toBe("failed")
-    expect(h.fake.db.google_calendar_subscriptions[0]?.sync_lease_until).toBeNull()
+    // 解放すると、失敗時は last_synced_at も前進せぬ設計と噛み合って
+    // 「レート制限中にページを開くたび再試行」になる。
+    expect(db.google_calendar_subscriptions[0]?.sync_lease_until).toBe(
+      new Date(NOW + SYNC_LEASE_MS).toISOString(),
+    )
+  })
+
+  it("失敗直後の再実行は **Google を叩かぬ**（リース保持中ゆえ skip）", async () => {
+    const db = seedDb()
+    const h = harness(db)
+    h.fetchAllEventPages.mockRejectedValue(
+      new GoogleCalendarError("quota", "429", { status: 429 }),
+    )
+    await syncHousehold(h.fake.client, HOUSE, h.deps)
+    expect(h.fetchAllEventPages).toHaveBeenCalledTimes(1)
+
+    const summary = await syncHousehold(h.fake.client, HOUSE, h.deps)
+    expect(h.fetchAllEventPages).toHaveBeenCalledTimes(1)
+    expect(summary.connections[0]?.subscriptions[0]?.status).toBe(
+      "skipped_leased",
+    )
+  })
+
+  it("410 のときは **解放する**（掃除直後で空ゆえ復旧を待たせぬ）", async () => {
+    const db = seedDb()
+    db.google_calendar_subscriptions[0]!.sync_token = "token-stale"
+    const h = harness(db)
+    h.fetchAllEventPages.mockRejectedValue(
+      new GoogleCalendarError("gone", "410", { status: 410 }),
+    )
+    await syncHousehold(h.fake.client, HOUSE, h.deps)
+
+    expect(db.google_calendar_subscriptions[0]?.sync_lease_until).toBeNull()
   })
 })
 

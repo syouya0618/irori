@@ -586,22 +586,35 @@ async function syncSubscription({
     }
     return outcome
   } finally {
-    // ── リース解放 ────────────────────────────────────────────
+    // ── リース解放（**失敗時は解放せぬ** = 一過性失敗のバックオフ）──────
+    //
+    // 無条件に解放すると、Google 側の障害・429 の最中に `/calendar` を開く
+    // たび新しい `fetchAllEventPages` が飛ぶ。失敗時は `last_synced_at` を
+    // 前進させぬ設計（410 の復旧を抑止せぬため）ゆえ staleness ゲートが
+    // 毎回 true を返し、**レート制限中に再試行を撃ち続ける**古典的な形になる。
+    // リースを握ったままにすれば、次の実行は `skipped_leased` で静かに諦め、
+    // SYNC_LEASE_MS（120 秒）ぶんのバックオフが只で手に入る。
+    //
+    // 410（`resync_required`）は**解放する**: ミラーを掃除した直後ゆえ
+    // カレンダーが空になっており、フル同期での復旧を 2 分待たせたくない。
+    //
     // `.eq("sync_lease_until", leaseUntil)` を必ず付ける。付けねば、自分の
     // リースが失効した後に**別実行が取り直したリースを消して**しまい、
     // 二重同期防止そのものが壊れる。
-    const { error: releaseError } = await supabase
-      .from("google_calendar_subscriptions")
-      .update({ sync_lease_until: null })
-      .eq("id", subscription.id)
-      .eq("household_id", householdId)
-      .eq("sync_lease_until", leaseUntil)
-    if (releaseError) {
-      // 解放に失敗しても最長 SYNC_LEASE_MS で自然に失効する。同期結果は覆さぬ。
-      logSupabaseError("google-sync", "リースの解放に失敗", releaseError, {
-        subscriptionId: subscription.id,
-        householdId,
-      })
+    if (outcome.status !== "failed") {
+      const { error: releaseError } = await supabase
+        .from("google_calendar_subscriptions")
+        .update({ sync_lease_until: null })
+        .eq("id", subscription.id)
+        .eq("household_id", householdId)
+        .eq("sync_lease_until", leaseUntil)
+      if (releaseError) {
+        // 解放に失敗しても最長 SYNC_LEASE_MS で自然に失効する。同期結果は覆さぬ。
+        logSupabaseError("google-sync", "リースの解放に失敗", releaseError, {
+          subscriptionId: subscription.id,
+          householdId,
+        })
+      }
     }
   }
 }
