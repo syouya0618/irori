@@ -17,6 +17,14 @@ export interface BabyReportInput {
   diapers: DailyDiaperSummary[]
   temperatures: TemperatureRecord[]
   growth: GrowthRecord[]
+  /**
+   * 取得上限に達し、期間内の記録を**全ては含んでいない**ことを示す。
+   *
+   * 紙に刷って小児科へ持ち込む性質上、「全件でない」ことは**紙の上に残る**必要が
+   * ある。HTTP ヘッダやトーストは印刷した瞬間に消えるため、PDF 本体にも
+   * 明示する（三重: サーバログ / レスポンスヘッダ / この行）。
+   */
+  truncated?: boolean
 }
 
 const FONT_PATH = path.join(process.cwd(), "fonts", "NotoSansJP-Regular.ttf")
@@ -114,6 +122,18 @@ export async function generateBabyReport(input: BabyReportInput): Promise<Buffer
         margin: [0, 0, 0, 4],
       } as Content,
       { text: `期間: ${periodLabel}`, fontSize: 10, margin: [0, 0, 0, 8] } as Content,
+      // 上限到達時のみ挿入する警告行。無音の切り詰めは「全件を見せた」と誤読され、
+      // 受診の判断材料そのものを歪めるため、紙の上でも必ず分かる形にする。
+      ...(input.truncated
+        ? ([
+            {
+              text: "⚠ 記録件数が取得上限に達したため、この期間の記録の一部のみを表示しています（全件ではありません）。",
+              fontSize: 9,
+              color: "#b45309",
+              margin: [0, 0, 0, 8],
+            } as Content,
+          ])
+        : []),
       {
         canvas: [{ type: "line", x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, lineColor: BORDER_COLOR }],
         margin: [0, 0, 0, 4],

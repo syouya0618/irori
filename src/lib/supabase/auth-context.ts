@@ -17,7 +17,11 @@ export const getAuthContext = cache(
   async (): Promise<
     | {
         error: string
-        reason: "unauthenticated" | "not-approved" | "no-household"
+        reason:
+          | "unauthenticated"
+          | "not-approved"
+          | "no-household"
+          | "lookup-failed"
         context: null
       }
     | { error: null; reason: null; context: AuthContext }
@@ -42,22 +46,46 @@ export const getAuthContext = cache(
       .eq("id", userId)
       .single()
 
+    // 一過性の DB エラー（接続断・タイムアウト・RLS 誤設定）を「世帯なし」と
+    // 混同してはならぬ。混同すると**世帯が在るのに /setup へ飛ばされる**（世帯を
+    // 二重作成しかねない導線）。settings/page.tsx は既に error boundary へ倒す
+    // 流儀を採っており、ここが不統一だった。
+    //
+    // lookup-failed も context は返さぬ（fail-closed は維持）。違うのは
+    // **呼び出し元がどう扱うか**だけ: no-household は /setup へ誘導してよいが、
+    // lookup-failed は「分からない」ゆえ誘導せず error boundary へ倒す。
     if (profileError) {
       logSupabaseError("auth-context", "profile lookup failed", profileError, {
         userId,
       })
+      return {
+        error: "プロフィールの取得に失敗しました",
+        reason: "lookup-failed",
+        context: null,
+      }
+    }
+
+    // error なしで行が無い経路（.single() は通常 PGRST116 を返すため想定外だが、
+    // 将来 .maybeSingle() へ変えた場合などに素通りする）。「世帯なし」と断定
+    // できぬため lookup-failed 側へ倒す — 判定不能を誘導に使わぬのが本項の要。
+    if (!profile) {
+      console.error("[auth-context] profile が error なしで空でした", { userId })
+      return {
+        error: "プロフィールの取得に失敗しました",
+        reason: "lookup-failed",
+        context: null,
+      }
     }
 
     // 承認判定は household 判定より**先**に置く。proxy の順序（未承認は
     // /pending-approval へ・その後 setup 等へ進ませる）と揃えるためで、
     // 承認を取り消された利用者（household_id は残る）もここで確実に落ちる。
-    // 「明示的に false のときだけ」落とすのは、lookup 失敗（profile === null）を
-    // 承認済み/未承認のどちらとも断定せぬため — その経路は下の no-household で
-    // 文脈を返さず落ちる（一過性エラーと「世帯なし」の弁別は I-16 の領分）。
-    if (profile?.is_approved === false)
+    // 「明示的に false のときだけ」落とすのは、lookup 失敗を承認済み/未承認の
+    // どちらとも断定せぬため — その経路は上で lookup-failed として既に落ちている。
+    if (profile.is_approved === false)
       return { error: "承認待ちです", reason: "not-approved", context: null }
 
-    if (!profile?.household_id)
+    if (!profile.household_id)
       return { error: "世帯が設定されていません", reason: "no-household", context: null }
 
     return { error: null, reason: null, context: { supabase, userId, householdId: profile.household_id } }
