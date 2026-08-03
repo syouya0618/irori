@@ -94,6 +94,16 @@ UTILITY_TO_PROPERTY: list[tuple[re.Pattern[str], str]] = [
 TRANSITION_ARBITRARY = re.compile(r"transition-\[([^\]]+)\]")
 CLASS_STRING = re.compile(r'"([^"\n]{20,})"')
 
+# 行コメント / ブロックコメント。**禁止語を説明する行が禁止に引っかかる**のを避ける。
+#
+# これは規約系検出器の典型的な穴じゃ。初版は行に `transition-all` の文字列が
+# 在るだけで違反としたため、
+#   `// transition は colors のみ（transition-all は禁止）`
+# のような**規約を説明するコメント自体**を違反と報告した（実測 2 件）。
+# 違反の説明が違反になると、正しく書いた者ほど赤くなる。
+LINE_COMMENT = re.compile(r"//[^\n]*")
+BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+
 DEFAULT_PATHS = ["src"]
 
 
@@ -104,12 +114,37 @@ def properties_of(utility: str) -> str | None:
     return None
 
 
+def is_test_path(path: Path) -> bool:
+    """
+    テストファイルは検査せぬ。
+
+    テストの class 文字列は**描画されぬ**うえ、「`transition-all` が無いこと」を
+    assert するテスト（`expect(cls).not.toContain("transition-all")`）は
+    禁止語をソースに持たざるを得ぬ。**検査する側を検査すると必ず偽陽性になる。**
+
+    代償: テスト内に定義したインラインコンポーネントは見えぬ。それは受け入れる
+    （そもそも描画経路に乗らぬため）。
+    """
+    return "__tests__" in path.parts or ".test." in path.name or ".spec." in path.name
+
+
+def strip_comments(text: str) -> str:
+    """コメントを**同じ長さの空白**へ潰す（行番号と桁位置を保つため）。"""
+    def blank(m: re.Match[str]) -> str:
+        return "".join(" " if c != "\n" else "\n" for c in m.group(0))
+
+    return LINE_COMMENT.sub(blank, BLOCK_COMMENT.sub(blank, text))
+
+
 def check_file(path: Path) -> list[str]:
     violations: list[str] = []
+    if is_test_path(path):
+        return violations
     try:
-        text = path.read_text(encoding="utf-8")
+        raw = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return violations
+    text = strip_comments(raw)
 
     for lineno, line in enumerate(text.splitlines(), start=1):
         if "transition-all" in line:
