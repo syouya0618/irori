@@ -57,6 +57,21 @@ export type FeedingType =
   | "pumped"
 export type DiaperType = "pee" | "poop" | "both"
 export type CalendarEventSource = "native" | "google"
+/**
+ * Google 接続の恒久状態。`needs_reauth` は refresh token 失効（invalid_grant）で、
+ * 再連携バナーの出し分けに使う。DB 側は TEXT + CHECK ゆえ migration で値が増えうる
+ * — 未知値で画面を倒さず退化表示すること（enum drift 防御）。
+ */
+export type GoogleConnectionStatus = "active" | "needs_reauth"
+/** 同期の一過性状態（`error` は D-5 の一時表示用。恒久失敗は connection_status が持つ） */
+export type GoogleSyncStatus = "idle" | "syncing" | "error"
+/** 直近の失敗の種別（UI 文言の分岐用） */
+export type GoogleSyncErrorKind =
+  | "invalid_grant"
+  | "gone"
+  | "quota"
+  | "network"
+  | "unknown"
 
 export interface Database {
   public: {
@@ -490,6 +505,16 @@ export interface Database {
           google_calendar_id: string | null
           etag: string | null
           ical_uid: string | null
+          /** 由来の購読（ON DELETE SET NULL: 購読が消えても予定は残る = V9） */
+          subscription_id: string | null
+          /** どの配偶者の接続経由で入った行か（google 行のみ） */
+          source_user_id: string | null
+          location: string | null
+          html_link: string | null
+          /** 繰り返しの親 id（singleEvents=true で展開された各回に付く） */
+          recurring_event_id: string | null
+          google_updated: string | null
+          synced_at: string | null
           created_by: string | null
           created_at: string
           updated_at: string
@@ -510,6 +535,13 @@ export interface Database {
           google_calendar_id?: string | null
           etag?: string | null
           ical_uid?: string | null
+          subscription_id?: string | null
+          source_user_id?: string | null
+          location?: string | null
+          html_link?: string | null
+          recurring_event_id?: string | null
+          google_updated?: string | null
+          synced_at?: string | null
           created_by?: string | null
         }
         Update: {
@@ -522,6 +554,129 @@ export interface Database {
           end_at?: string | null
           series_id?: string | null
           // source / google_* は native 行の編集で触らない(型上も出さない)
+        }
+        Relationships: []
+      }
+      /**
+       * Google カレンダー接続（ユーザー単位・非機密）。
+       * authenticated は SELECT と「本人の行の DELETE」だけができる。
+       * **INSERT / UPDATE は RLS ポリシーも GRANT も無い = service role 専用**
+       * （型は書けるように見えるが、authenticated から撃てば 42501 で落ちる）。
+       */
+      google_connections: {
+        Row: {
+          id: string
+          household_id: string
+          /** 接続した本人（profiles.id） */
+          user_id: string
+          /** Google の不変 ID（userinfo の sub）。取得には `openid email` スコープが要る */
+          google_account_id: string
+          google_email: string
+          connection_status: GoogleConnectionStatus
+          sync_status: GoogleSyncStatus
+          last_error_kind: GoogleSyncErrorKind | null
+          /** 同期完了シグナル（V7: Realtime を使わずこの列の前進をポーリングする） */
+          last_synced_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          household_id: string
+          user_id: string
+          google_account_id: string
+          google_email: string
+          connection_status?: GoogleConnectionStatus
+          sync_status?: GoogleSyncStatus
+          last_error_kind?: GoogleSyncErrorKind | null
+          last_synced_at?: string | null
+        }
+        Update: {
+          google_email?: string
+          connection_status?: GoogleConnectionStatus
+          sync_status?: GoogleSyncStatus
+          last_error_kind?: GoogleSyncErrorKind | null
+          last_synced_at?: string | null
+        }
+        Relationships: []
+      }
+      /**
+       * Google カレンダーの購読状態。
+       *
+       * ⚠ `sync_token` / `sync_lease_until` は**秘密**で、authenticated の列 GRANT の
+       * 外にある。ゆえに authenticated クライアントからの `select("*")` は
+       * **42501 で落ちる** — 列を明示して SELECT すること。これらの列に触れてよいのは
+       * service role（同期エンジン）だけじゃ。
+       * authenticated が UPDATE できるのは `is_selected` のみ（列 GRANT）。
+       * INSERT / DELETE はポリシーも GRANT も無い = service role 専用。
+       */
+      google_calendar_subscriptions: {
+        Row: {
+          id: string
+          connection_id: string
+          household_id: string
+          google_calendar_id: string
+          /** Google のカレンダー表示名。NULL / 空なら google_calendar_id にフォールバックする */
+          summary: string | null
+          is_selected: boolean
+          /** 秘密（service role 専用）。増分同期のトークン */
+          sync_token: string | null
+          /** 秘密（service role 専用）。二重同期防止のリース期限 */
+          sync_lease_until: string | null
+          last_synced_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          connection_id: string
+          household_id: string
+          google_calendar_id: string
+          summary?: string | null
+          is_selected?: boolean
+          sync_token?: string | null
+          sync_lease_until?: string | null
+          last_synced_at?: string | null
+        }
+        Update: {
+          summary?: string | null
+          is_selected?: boolean
+          sync_token?: string | null
+          sync_lease_until?: string | null
+          last_synced_at?: string | null
+        }
+        Relationships: []
+      }
+      /**
+       * Google OAuth トークン（**機密・平文**）。
+       * RLS 有効かつポリシー 0 本 = deny-all、GRANT も無い。読み書きできるのは
+       * service role（BYPASSRLS）のみ。**ポリシーを足すな** — 1 本足せば同世帯の
+       * 全員に平文の refresh token が開く。
+       */
+      google_tokens: {
+        Row: {
+          /** google_connections.id（1 接続 = 1 行。接続削除で CASCADE 消滅） */
+          connection_id: string
+          refresh_token: string
+          access_token: string | null
+          access_token_expires_at: string | null
+          /** 実際に同意されたスコープ（calendar.readonly 欠落の検知用） */
+          scope: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          connection_id: string
+          refresh_token: string
+          access_token?: string | null
+          access_token_expires_at?: string | null
+          scope?: string | null
+        }
+        Update: {
+          refresh_token?: string
+          access_token?: string | null
+          access_token_expires_at?: string | null
+          scope?: string | null
         }
         Relationships: []
       }

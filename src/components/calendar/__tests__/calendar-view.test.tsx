@@ -33,6 +33,9 @@ vi.mock("@/app/(main)/calendar/actions", () => ({
   updateCalendarEvent: vi.fn().mockResolvedValue({ error: null }),
   deleteCalendarEvent: vi.fn().mockResolvedValue({ error: null }),
   deleteCalendarEventSeries: vi.fn().mockResolvedValue({ error: null }),
+  // V7 の同期シグナル。既定の props（syncScheduled=false）ではポーリングが
+  // 走らぬため呼ばれぬが、mock に無いと import 段階で落ちる。
+  fetchGoogleSyncSignal: vi.fn().mockResolvedValue({ lastSyncedAt: null }),
 }))
 vi.mock("sonner", async () => {
   const { vi: viMod } = await import("vitest")

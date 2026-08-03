@@ -15,6 +15,7 @@ import {
   updateCalendarEvent,
   deleteCalendarEvent,
   deleteCalendarEventSeries,
+  fetchGoogleSyncSignal,
 } from "@/app/(main)/calendar/actions"
 // startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）。
 // 楽観挿入/削除を持つため、reject 経路でも result.error と同じ巻き戻しを行う。
@@ -27,11 +28,19 @@ import {
 import { CalendarMonthView } from "./calendar-month-view"
 import { CalendarAgenda } from "./calendar-agenda"
 import { CalendarEventFormSheet } from "./calendar-event-form-sheet"
+import { useGoogleSyncPoll } from "./use-google-sync-poll"
 
 interface CalendarViewProps {
   initialEvents: CalendarEventRecord[]
   householdId: string
   initialMonthFirst: string
+  /**
+   * V7: サーバが `after()` で Google 同期を予約したか。
+   * true のときだけ `last_synced_at` を数回ポーリングして前進を待つ。
+   */
+  syncScheduled?: boolean
+  /** 予約時点の `last_synced_at`（ポーリングの基準値）。 */
+  initialGoogleSyncedAt?: string | null
 }
 
 /** "YYYY-MM" を "YYYY年M月" へ */
@@ -52,11 +61,23 @@ export function CalendarView({
   initialEvents,
   householdId,
   initialMonthFirst,
+  syncScheduled = false,
+  initialGoogleSyncedAt = null,
 }: CalendarViewProps) {
   const m = useMonthEvents({ initialEvents, householdId, initialMonthFirst })
   const [pending, startTransition] = useTransition()
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editing, setEditing] = useState<CalendarEventRecord | null>(null)
+
+  // V7: Google 同期の完了を拾う（Realtime を使わぬ唯一の削除反映経路）。
+  useGoogleSyncPoll({
+    enabled: syncScheduled,
+    baseline: initialGoogleSyncedAt,
+    fetchSignal: fetchGoogleSyncSignal,
+    onAdvanced: () => {
+      void m.refetch(m.monthFirst)
+    },
+  })
 
   const openNew = () => {
     setEditing(null)
