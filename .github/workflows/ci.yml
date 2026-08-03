@@ -62,3 +62,17 @@ jobs:
         # strict: 全 35 箇所を try/catch で握り済み。未握りが混ざると圏外タップで
         # error boundary へ全画面遷移し記録が無言で失われるため CI で fail させる。
         run: ./scripts/check-transition-reject-guard.py --strict
+
+      - name: Detect transition-all and incomplete transition-[...] enumerations
+        # 上の check-transition-reject-guard.py とは**別物**じゃ（あちらは
+        # startTransition の reject 握り、こちらは CSS の遷移）。名前が似ておるが
+        # 関心事は無関係ゆえ混同するな。
+        #
+        # strict: `src/components/ui/` の 4 件を解消済み。`components.json` が在る
+        # （style=base-nova）ため `shadcn add` は上流既定の transition-all を
+        # 持ち込む。人の目視では守れぬゆえ CI で止める。
+        #
+        # 列挙漏れも見る: `transition-[...]` から 1 つ落とすとその性質だけが
+        # 瞬間切替へ退行し、しかも grep transition-all は 0 件のままゆえ
+        # 「直った」ように見える。
+        run: ./scripts/check-transition-all.py --strict
