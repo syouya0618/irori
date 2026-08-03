@@ -1,4 +1,4 @@
-import { shiftYmd, toJstDateString } from "@/lib/utils/date-jst"
+import { isValidYmd, shiftYmd, toJstDateString } from "@/lib/utils/date-jst"
 
 /**
  * Google Calendar API v3 `events.list` の生イベントを `calendar_events` の
@@ -204,24 +204,11 @@ function optionalText(value: string | null | undefined): string | null {
 // 日付・時刻のガード
 // ============================================================
 
-const YMD_RE = /^\d{4}-\d{2}-\d{2}$/
-
-/**
- * "YYYY-MM-DD" として妥当かを厳格判定する。
- *
- * **これを怠ると同期全体が落ちる**: `shiftYmd("garbage", -1)` は
- * `Number("garbage")=NaN` → Invalid Date → `.toISOString()` が **RangeError を
- * throw** し、生イベント 1 件で `diffPage` ごと死ぬ。正規表現だけでは
- * "2026-02-30" を通してしまうため、UTC で往復させて実在日も確かめる
- * （`new Date("YYYY-MM-DD")` の UTC 罠に触れぬよう、**日付演算には使わず
- * 妥当性判定にのみ**用い、オフセットも明示している）。
- */
-function isValidYmd(value: string | null | undefined): value is string {
-  if (typeof value !== "string" || !YMD_RE.test(value)) return false
-  const probe = new Date(`${value}T00:00:00.000Z`)
-  if (Number.isNaN(probe.getTime())) return false
-  return probe.toISOString().slice(0, 10) === value
-}
+// `isValidYmd` は `date-jst.ts` へ移した（手入力側の検証と同一の実装を使う）。
+//
+// **これを怠ると同期全体が落ちる**: `shiftYmd("garbage", -1)` は
+// `Number("garbage")=NaN` → Invalid Date → `.toISOString()` が **RangeError を
+// throw** し、生イベント 1 件で `diffPage` ごと死ぬ。ゆえに前段ガードは必須じゃ。
 
 /**
  * 時刻付き ISO 8601 として妥当かを判定する（`calendar-validation.ts` と同一規約）。
