@@ -1,4 +1,4 @@
-import { toJstDateString } from "@/lib/utils/date-jst"
+import { isValidYmd, toJstDateString } from "@/lib/utils/date-jst"
 import {
   recurrenceMaxUntil,
   type RecurrenceRepeat,
@@ -10,12 +10,13 @@ const MAX_MEMO = 1000
 /** 繰り返し種別。"none" は単発予定。 */
 export type CalendarRepeat = "none" | RecurrenceRepeat
 
-const YMD_PATTERN = /^\d{4}-\d{2}-\d{2}$/
-
-/** YYYY-MM-DD 形式かを判定する（日付バケットの形式検証）。 */
-function isValidYmd(s: string): boolean {
-  return YMD_PATTERN.test(s)
-}
+// 日付の妥当性判定は `date-jst.ts` の `isValidYmd` に一本化した。
+//
+// ここには正規表現だけの版が置かれており（形式のみ）、同じ目的で**より厳格な**
+// 版が `google-calendar-sync.ts` にも在った。同名・同目的で強度が違う関数が
+// 2 つ在ると、**緩い方が通した値が厳しい方の下流で落ちる**。実際こちらが緩く、
+// `2026-02-30` を通して Postgres の `22008` まで運んでおった（＝項目エラーに
+// ならず 500 になる）。
 
 /**
  * 時刻付き ISO 8601 かを判定する。date-only や不正値を弾く。

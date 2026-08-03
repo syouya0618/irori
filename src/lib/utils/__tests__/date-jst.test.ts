@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest"
 import {
+  isValidYmd,
+  shiftYmd,
   todayJstString,
   daysBetweenYmd,
   daysFromTodayJst,
@@ -256,5 +258,66 @@ describe("isFutureIso", () => {
   it("不正 ISO(NaN)は false（未来ではない・形式検証は呼び出し側）", () => {
     const now = new Date("2026-07-09T00:00:00Z")
     expect(isFutureIso("not-a-date", 5, now)).toBe(false)
+  })
+})
+
+/**
+ * `isValidYmd` は**手入力の検証**（`calendar-validation.ts`）と
+ * **Google 同期の前段ガード**（`google-calendar-sync.ts`）の両方が使う。
+ *
+ * かつてこの 2 経路は同名・同目的で**強度の違う実装**を各自持っており、
+ * 手入力側は正規表現のみで `2026-02-30` を通しておった。緩い方が通した値は
+ * 項目エラーにならず Postgres の `22008` まで運ばれる（＝失敗する層が違う）。
+ * ここを 1 箇所に寄せた以上、**強度をテストで固定する**。
+ */
+describe("isValidYmd", () => {
+  it.each(["2026-07-09", "2026-01-01", "2026-12-31", "2024-02-29"])(
+    "実在する日付は true: %s",
+    (ymd) => expect(isValidYmd(ymd)).toBe(true)
+  )
+
+  // ⭐ ここが本命。正規表現だけの実装は**すべて素通しする**。
+  it.each([
+    ["2026-02-30", "2 月 30 日は存在せぬ（Date.UTC では 3/2 へ繰り上がる）"],
+    ["2026-02-31", "同上"],
+    ["2025-02-29", "平年の 2/29"],
+    ["2026-13-01", "13 月"],
+    ["2026-00-10", "0 月"],
+    ["2026-04-31", "4 月は 30 日まで"],
+    ["2026-07-00", "0 日"],
+    ["2026-07-32", "32 日"],
+  ])("形式は合うが実在せぬ日付は false: %s（%s）", (ymd) =>
+    expect(isValidYmd(ymd)).toBe(false)
+  )
+
+  it.each([
+    "2026-7-09",
+    "26-07-09",
+    "2026/07/09",
+    "2026-07-09T00:00:00Z",
+    " 2026-07-09",
+    "garbage",
+    "",
+  ])("形式違反は false: %s", (v) => expect(isValidYmd(v)).toBe(false))
+
+  it("null / undefined / 非文字列は false（型述語で絞り込める）", () => {
+    expect(isValidYmd(null)).toBe(false)
+    expect(isValidYmd(undefined)).toBe(false)
+  })
+
+  /**
+   * `shiftYmd` は不正値で `RangeError` を throw する。ゆえに
+   * 「`isValidYmd` を通ってから渡す」契約が守られておることを固定する。
+   * これが破れると、壊れた 1 件で同期の 1 ページ丸ごとが死ぬ。
+   */
+  it("isValidYmd を通した値なら shiftYmd は throw せぬ", () => {
+    const candidates = ["2026-02-30", "2026-07-09", "garbage", "2024-02-29"]
+    for (const c of candidates) {
+      if (isValidYmd(c)) {
+        expect(() => shiftYmd(c, -1)).not.toThrow()
+      }
+    }
+    // 対照: 通さずに渡すと実際に throw する（このガードが飾りでない証拠）
+    expect(() => shiftYmd("garbage", -1)).toThrow()
   })
 })
