@@ -130,14 +130,20 @@ describe("formValueToTimestamps", () => {
     ).toEqual({ startAt: null, endAt: null })
   })
 
-  it("存在しない日付(2026-02-31)は throw せず、検証が日付不一致で弾く(無音で通さない)", () => {
+  it("存在しない日付(2026-02-31)は throw せず、検証が**日付の形式**で弾く(無音で通さない)", () => {
     // 実測: Date は "2026-02-31" を Invalid にせず翌月へ繰り上げる。ゆえに
-    // ISO は生成されるが、start_at の JST 暦日 ≠ startDate となり検証で落ちる。
+    // ISO は生成されてしまう（= 形式の見た目だけでは気付けぬ）。
     const v = form({ isAllDay: false, startDate: "2026-02-31", startTime: "09:00" })
     expect(() => formValueToTimestamps(v)).not.toThrow()
     const r = validateCalendarFormValue(v)
-    expect(r.error).toBe("開始時刻の日付が開始日と一致しません")
-    if (r.value === null) expect(r.field).toBe("startAt")
+
+    // かつてこれは「開始時刻の日付が開始日と一致しません」で落ちておった
+    // （start_at の JST 暦日 ≠ startDate という**副作用**で偶然捕まっておった）。
+    // 検証が実在日を見るようになり、**startDate 自身の問題として**弾かれる。
+    // 利用者に出る文言としてもこちらが正しい — 直すべきは時刻ではなく日付じゃ。
+    expect(r.error).toBe("日付の形式が不正です")
+    expect(r.value).toBeNull()
+    if (r.value === null) expect(r.field).toBe("startDate")
   })
 })
 

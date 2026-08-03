@@ -28,8 +28,43 @@ export function todayJstString(now: Date = new Date()): string {
   return JST_FORMATTER.format(now)
 }
 
+const YMD_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * "YYYY-MM-DD" として妥当かを**厳格に**判定する（形式 + 実在日）。
+ *
+ * ## 正規表現だけでは足りぬ
+ * `/^\d{4}-\d{2}-\d{2}$/` は `2026-02-30` や `2026-13-01` を通す。この値が
+ * 下流でどう化けるかは経路ごとに違い、**どれも静かじゃ**:
+ *
+ * - `Date.UTC(2026, 1, 30)` は **3 月 2 日へ繰り上がる**（`parseYmd` 経由の
+ *   `daysBetweenYmd` / `shiftYmd` / `weekStartMonday` がこれに乗る）
+ * - `shiftYmd("garbage", -1)` は `Number("garbage")=NaN` → Invalid Date →
+ *   `.toISOString()` が **`RangeError` を throw** する
+ * - DATE 列への INSERT は Postgres が `22008` で弾く（＝項目エラーではなく
+ *   500 になる。**失敗する層が間違っておる**）
+ *
+ * ## 実装の断り
+ * `new Date("YYYY-MM-DD")` は UTC 罠を持つため**日付演算には使わぬ**。ここでは
+ * オフセットを明示（`T00:00:00.000Z`）したうえで**妥当性判定にのみ**用い、
+ * UTC で往復させて実在日を確かめる。往復が一致せねば、その日は存在せぬ。
+ *
+ * @returns 妥当なら true（型述語ゆえ null/undefined を絞り込める）
+ */
+export function isValidYmd(value: string | null | undefined): value is string {
+  if (typeof value !== "string" || !YMD_PATTERN.test(value)) return false
+  const probe = new Date(`${value}T00:00:00.000Z`)
+  if (Number.isNaN(probe.getTime())) return false
+  return probe.toISOString().slice(0, 10) === value
+}
+
 /**
  * "YYYY-MM-DD" 形式の文字列を数値分解する。タイムゾーンに依存しない。
+ *
+ * ⚠️ **形式しか見ておらぬ**（`2026-02-30` を `{y:2026,m:2,d:30}` として返す）。
+ * 実在日まで要るなら呼び出し前に `isValidYmd` で締めよ。ここを厳格化すると
+ * `daysBetweenYmd` / `shiftYmd` / `weekStartMonday` の返り値が一斉に変わるため、
+ * 本関数は据え置き、**入口（検証層）で弾く**方針を採っておる。
  */
 function parseYmd(ymd: string): { y: number; m: number; d: number } | null {
   const pattern = /^(\d{4})-(\d{2})-(\d{2})$/
