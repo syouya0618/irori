@@ -246,3 +246,49 @@ describe("validateCalendarEventInput", () => {
     })
   })
 })
+
+/**
+ * 実在せぬ日付を**検証層で**弾くこと。
+ *
+ * かつてこの検証は正規表現のみで、`2026-02-30` を通しておった。日付ピッカー
+ * 経由では踏まぬが Server Action は直接呼べるため、不正日は項目エラーではなく
+ * Postgres の `22008 date/time field value out of range` まで運ばれておった
+ * ＝ **データは壊れぬが、失敗する層が間違っておる**（利用者には 500 に見える）。
+ */
+describe("validateCalendarEventInput — 実在せぬ日付", () => {
+  const base = { title: "検診", isAllDay: true as const }
+
+  it.each([
+    ["startDate", "2026-02-30", "2026-03-01"],
+    ["startDate", "2026-13-01", "2026-12-01"],
+    ["endDate", "2026-07-09", "2026-02-30"],
+    ["endDate", "2026-07-09", "2026-04-31"],
+  ])("%s が実在せぬ日なら項目エラー（%s → %s）", (field, startDate, endDate) => {
+    const r = validateCalendarEventInput({ ...base, startDate, endDate })
+    expect(r.error).toBe("日付の形式が不正です")
+    // union の絞り込み。先に value が null であることを assert しておくゆえ、
+    // 成功側へ落ちて field の検査が黙って飛ぶことはない。
+    expect(r.value).toBeNull()
+    if (r.value === null) expect(r.field).toBe(field)
+  })
+
+  it("対照: 実在する閏日は通る（過剰に厳しくないこと）", () => {
+    const r = validateCalendarEventInput({
+      ...base,
+      startDate: "2024-02-29",
+      endDate: "2024-02-29",
+    })
+    expect(r.error).toBeNull()
+  })
+
+  it("repeatUntil が実在せぬ日でも弾く", () => {
+    const r = validateCalendarEventInput({
+      ...base,
+      startDate: "2026-07-09",
+      endDate: "2026-07-09",
+      repeat: "weekly",
+      repeatUntil: "2026-02-30",
+    })
+    expect(r.error).not.toBeNull()
+  })
+})
