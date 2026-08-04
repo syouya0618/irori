@@ -18,11 +18,23 @@ import { loadE2eEnv } from "./fixtures/env"
  *   - CRON_SECRET 検証を外せば → **200/500**（赤）
  * の**両方**を割る。V8 が「不可分の 1 PR」と言うのはこの不可分性ゆえじゃ。
  *
- * ## status を 200 で固定せぬ理由
- * 認可を通った後の本体は Supabase（service role）を触るため、環境の権限状態に
- * 依存する。ここで検証したいのは**到達と認可**であって同期の成否ではない。
- * ゆえに「307 でない」「401 でない」を assert する（同期本体の契約は
- * `src/lib/google/__tests__/sync.test.ts` が持つ）。
+ * ## 200 まで固定する（2026-08-04 に「せぬ」から改めた）
+ * 当初は「本体が service role で Supabase を触るゆえ環境の権限状態に依存する」
+ * として `not.toBe(307/401)` に留めておった。それは**開発機の Supabase CLI が
+ * 壊れておった**ことを暗黙に許容していただけで、契約としては弱すぎる:
+ * `not.toBe(401)` は **500 を通してしまう**ゆえ、service role が表を読めぬ環境
+ * （実際 CLI 2.108.0 では `42501 permission denied for table google_connections`）
+ * でも緑になる。cron は誰も見ておらぬ経路ゆえ、それは最も避けたい偽緑じゃ。
+ *
+ * CLI を CI と同じ 2.101.0 へ揃えた今、200 は両環境で安定する。ゆえに
+ *   - **200**（500 を弾く＝service role が表を読めることの固定）
+ *   - `ok: true` と `summaries` が配列（本体を走り切った証跡。エラーページ等の
+ *     別物が 200 で返る取り違えも同時に潰す）
+ * まで固定する。**`households` の値は assert せぬ** — e2e は
+ * `google_connections` を作らぬゆえ常に 0 じゃが、それは偶然の環境事実であって
+ * この経路の契約ではない。将来 fixture が接続を 1 本作った途端に無関係な赤を
+ * 生むため、脆い結合を作らぬ。同期本体の契約は
+ * `src/lib/google/__tests__/sync.test.ts` が持つ。
  */
 
 const CRON_PATH = "/api/cron/google-sync"
@@ -48,23 +60,36 @@ test("誤った secret でも 401（307 ではなく）", async ({ request }) =>
   expect(res.status()).toBe(401)
 })
 
-test("正しい secret ならハンドラへ到達する（401 でも 307 でもない）", async ({
-  request,
-}) => {
+test("正しい secret なら同期本体を走り切って 200 を返す", async ({ request }) => {
   // `next start` 側の env は playwright.config.ts が .env.e2e から注入する。
   // テストプロセスには自動で入らぬゆえ同じファイルから読む。
+  //
+  // ⚠️ ここを `test.skip` で逃がすと V8 の検査が**半分抜けたまま緑**になる。
+  // `.env.e2e` は生成器（scripts/e2e-env.sh）が必ず CRON_SECRET を書くゆえ、
+  // 欠けておるのは「生成器より古いファイルが残っておる」ときだけじゃ。
+  // それは黙って skip すべき状況ではなく、直すべき状況ゆえ**落とす**。
   const secret = loadE2eEnv().CRON_SECRET?.trim()
-  test.skip(
-    !secret,
-    "CRON_SECRET が未設定（`pnpm e2e:env` を再実行して .env.e2e を作り直すこと）",
-  )
+  expect(
+    secret,
+    "CRON_SECRET が .env.e2e に無い。`pnpm e2e:env` で作り直すこと（古い .env.e2e が残っておる）",
+  ).toBeTruthy()
 
   const res = await request.get(CRON_PATH, {
     maxRedirects: 0,
     headers: { authorization: `Bearer ${secret}` },
   })
-  expect(res.status()).not.toBe(307)
-  expect(res.status()).not.toBe(401)
+
+  // proxy に食われれば 307、認可が外れれば 401、service role が表を読めねば 500。
+  // 200 ちょうどを要求することで 3 つとも 1 本で割れる。
+  expect(
+    res.status(),
+    "cron が 200 を返しておらぬ（307=proxy に食われた / 401=認可 / 500=service role が表を読めぬ）",
+  ).toBe(200)
+
+  // 200 を返す別物（エラーページ等）と取り違えぬよう、本体の形まで見る。
+  const body = await res.json()
+  expect(body).toMatchObject({ ok: true })
+  expect(Array.isArray(body.summaries)).toBe(true)
 })
 
 test("session 認証の明示トリガは承認ゲートを通る（cookie 無しなら /login へ）", async ({
