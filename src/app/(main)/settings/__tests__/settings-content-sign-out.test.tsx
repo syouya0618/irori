@@ -88,6 +88,8 @@ function renderSettings() {
       pendingUsers={[]}
       autoStockCategories={[]}
       babyProfile={{ name: null, birthDate: null, feedingIntervalMin: 180 }}
+      googleConnections={[]}
+      googleNotice={null}
     />,
   )
   return screen.getByRole("button", { name: "ログアウト" })
