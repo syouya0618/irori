@@ -4,7 +4,25 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-[color,background-color,border-color,outline-color,box-shadow,translate,opacity] duration-200 outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  // ⭐ `min-h-11 min-w-11`（44px）を**基底**に置く。CLAUDE.md「Touch targets: min 44px」/
+  //    DESIGN_SYSTEM.md:99「タッチターゲット最小 44x44px」の担い手じゃ。
+  //
+  // ## なぜ variant の h-* を書き換えず min-* を足すのか
+  // `h-8`（32px）を `h-11` に置き換えると、既に 44px 以上を指定しておる呼び出し側
+  // （`min-h-14` の授乳タイマー等）まで巻き込んで縮む恐れがある。`min-height` は
+  // **足りぬときだけ効く**ゆえ、大きいものは一切変わらぬ。
+  //
+  // ## なぜ呼び出し側 57 箇所ではなく基底で直すのか
+  // 実測で 44px 未満は 57 箇所 / 30 ファイルじゃった（size 別: sm は 16/16 全滅、
+  // lg 7/9、default 24/38）。呼び出し側を直す形だと **1 つ漏らせば穴が残り、
+  // 次に足すボタンも同じ穴を開ける**。基底に置けば既定で満たされる。
+  //
+  // ## `after:` の当たり判定拡張を採らなかった理由
+  // 見た目を保つ手（`switch.tsx` が採っておる `after:absolute after:-inset-*`）も
+  // あるが、隣接する小ボタンで**当たり判定が重なり合い、後勝ちで誤タップを増やす**。
+  // DESIGN_SYSTEM.md:15-16 は失敗しやすい操作を「**誤タップ（片手操作時）**」と
+  // 名指ししており、この用途では実寸を広げる方が目的に適う。
+  "group/button inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-[color,background-color,border-color,outline-color,box-shadow,translate,opacity] duration-200 outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
