@@ -52,9 +52,22 @@ UPDATE profiles SET household_id = '99999999-9999-9999-9999-999999999999',
 
 -- ── (1) seed が効いておることの固定 ────────────────────────────
 -- 承認待ちが 0 人だと以降の「member には見えぬ」assert が**行が無いだけの偽緑**になる。
+--
+-- ⚠️ **本テストが seed した 2 人に限定して数える**（世界全体を数えぬ）。
+-- 以前は `count(*) FROM profiles WHERE is_approved = false AND household_id IS NULL`
+-- と全体を数えて 2 を期待しており、**DB に他の承認待ちユーザーが 1 人でも
+-- 居れば、変更と無関係に赤くなった**。CI は毎回新品の DB ゆえ通っておったが、
+-- 手元で e2e を一度回すだけで壊れる（実測: 残留 13 人 + seed 2 人 = 15）。
+--
+-- 変更と無関係な赤は「赤に慣れる」を招き、本物の赤と区別できなくなる。
+-- ID を名指しすれば、この assert の意味（seed の 2 人が承認待ちで居る）は
+-- そのままに、外部の状態から独立になる。
 SELECT is(
-  (SELECT count(*) FROM profiles WHERE is_approved = false AND household_id IS NULL),
-  2::bigint, 'seed: 承認待ちユーザーが 2 人おる（household_id は NULL）');
+  (SELECT count(*) FROM profiles
+    WHERE id IN ('44444444-4444-4444-4444-444444444444',
+                 '55555555-5555-5555-5555-555555555555')
+      AND is_approved = false AND household_id IS NULL),
+  2::bigint, 'seed: 本テストの承認待ち 2 人が居る（household_id は NULL）');
 
 -- ══ member 文脈 ════════════════════════════════════════════════
 SET LOCAL role authenticated;
@@ -86,8 +99,20 @@ SELECT set_config('request.jwt.claims',
   json_build_object('sub', '22222222-2222-2222-2222-222222222222', 'role', 'authenticated')::text, true);
 
 -- (5) owner には承認待ちが見える = (2) が「行が無いだけ」ではない対照
-SELECT is((SELECT count(*) FROM get_pending_approvals()), 2::bigint,
-  'get_pending_approvals: owner には 2 件見える（(2) の対照）');
+--
+-- (1) と同じ理由で **seed した 2 人に限定して数える**。外部の承認待ちユーザーが
+-- 居ても壊れぬ。
+--
+-- ⚠️ 限定しても**世帯フィルタの回帰は捕まる**: seed の承認待ち 2 人は
+-- `household_id IS NULL` ゆえ、`get_pending_approvals` に自世帯フィルタを
+-- 入れると `NULL = owner_household` が常に false となり、この count は
+-- 2 → 0 になって赤くなる。その案は 20260603000001:109-125 で
+-- 「承認導線が全損する」として撤回済みであり、この assert がその門番じゃ。
+SELECT is(
+  (SELECT count(*) FROM get_pending_approvals()
+    WHERE id IN ('44444444-4444-4444-4444-444444444444',
+                 '55555555-5555-5555-5555-555555555555')),
+  2::bigint, 'get_pending_approvals: owner には seed の 2 件が見える（(2) の対照）');
 
 -- (6) 一覧には email が載る（承認判断の材料・欠けたら導線が死ぬ）
 SELECT is(
