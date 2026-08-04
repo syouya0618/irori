@@ -31,6 +31,10 @@ import { AutoStockCategoriesCard } from "@/components/settings/auto-stock-card"
 import { OcrProviderCard } from "@/components/settings/ocr-provider-card"
 import { BabyProfileCard } from "@/components/settings/baby-profile-card"
 import { ExportCard } from "@/components/settings/export-card"
+import {
+  GoogleCalendarCard,
+  type GoogleConnectionView,
+} from "@/components/settings/google-calendar-card"
 import { ThemeCard } from "@/components/settings/theme-card"
 import { HelpCard } from "@/components/settings/help-card"
 import type { HouseholdRole } from "@/lib/types/database"
@@ -55,6 +59,10 @@ interface SettingsContentProps {
     birthDate: string | null
     feedingIntervalMin: number
   }
+  /** 自分の Google カレンダー接続（0 件なら未接続）。 */
+  googleConnections: GoogleConnectionView[]
+  /** OAuth callback が付ける `?google=` の値。未知コードはカード側が無視する。 */
+  googleNotice: string | null
 }
 
 const roleLabels: Record<HouseholdRole, string> = {
@@ -70,6 +78,8 @@ export function SettingsContent({
   pendingUsers,
   autoStockCategories,
   babyProfile,
+  googleConnections,
+  googleNotice,
 }: SettingsContentProps) {
   const [, startTransition] = useTransition()
   const [isSigningOut, setIsSigningOut] = useState(false)
@@ -138,6 +148,12 @@ export function SettingsContent({
 
       {/* 赤ちゃん情報 */}
       <BabyProfileCard initialProfile={babyProfile} />
+
+      {/* Google カレンダー連携 */}
+      <GoogleCalendarCard
+        connections={googleConnections}
+        notice={googleNotice}
+      />
 
       {/* 記録エクスポート */}
       <ExportCard />

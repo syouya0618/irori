@@ -11,6 +11,7 @@ import {
   updateAutoStockCategories,
   updateBabyProfile,
   updateDefaultPage,
+  updateGoogleCalendarSelection,
   updateProfile,
 } from "../actions"
 import { logSupabaseError } from "@/lib/supabase/log-error"
@@ -228,5 +229,115 @@ describe("settings の update: 0 行更新を成功と偽らない", () => {
     const { client } = makeSupabase({ error: null })
     setContext(client)
     expect(await updateAutoStockCategories(["baby"])).toEqual({ success: true })
+  })
+})
+
+/**
+ * Google カレンダーの購読トグル（D-4）。
+ *
+ * 世帯スコープを `.eq("household_id", ...)` で**明示**する契約ゆえ `.eq()` を
+ * 2 回鎖ねる。上の `makeSupabase` は 1 回しか返さぬため専用の fake を使う。
+ */
+function makeGoogleSupabase(result: {
+  data: Array<{ id: string }> | null
+  error: unknown
+}) {
+  const select = vi.fn().mockResolvedValue(result)
+  const eqHousehold = vi.fn(() => ({ select }))
+  const eqId = vi.fn(() => ({ eq: eqHousehold }))
+  const update = vi.fn(() => ({ eq: eqId }))
+  const from = vi.fn(() => ({ update }))
+  return { client: { from }, from, update, eqId, eqHousehold, select }
+}
+
+describe("updateGoogleCalendarSelection", () => {
+  it("認証前に入力を検証する（空 ID は DB へ到達せぬ）", async () => {
+    const { client, update } = makeGoogleSupabase({ data: [], error: null })
+    setContext(client)
+    expect(await updateGoogleCalendarSelection("  ", true)).toEqual({
+      error: "カレンダーの指定が不正です",
+    })
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it("boolean 以外の選択状態は弾く", async () => {
+    const { client, update } = makeGoogleSupabase({ data: [], error: null })
+    setContext(client)
+    expect(
+      await updateGoogleCalendarSelection(
+        "sub-1",
+        "true" as unknown as boolean,
+      ),
+    ).toEqual({ error: "選択状態の指定が不正です" })
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it("未認証はエラーを返す", async () => {
+    getAuthContext.mockResolvedValue({
+      error: "認証されていません",
+      reason: "unauthenticated",
+      context: null,
+    })
+    expect(await updateGoogleCalendarSelection("sub-1", true)).toEqual({
+      error: "認証されていません",
+    })
+  })
+
+  it("is_selected だけを更新し、世帯スコープを明示する", async () => {
+    const { client, from, update, eqId, eqHousehold } = makeGoogleSupabase({
+      data: [{ id: "sub-1" }],
+      error: null,
+    })
+    setContext(client)
+
+    expect(await updateGoogleCalendarSelection("sub-1", true)).toEqual({
+      success: true,
+    })
+    expect(from).toHaveBeenCalledWith("google_calendar_subscriptions")
+    // 秘密列（sync_token / sync_lease_until）へは絶対に触れぬ。
+    expect(update).toHaveBeenCalledWith({ is_selected: true })
+    expect(eqId).toHaveBeenCalledWith("id", "sub-1")
+    expect(eqHousehold).toHaveBeenCalledWith("household_id", HOUSEHOLD)
+  })
+
+  it("OFF も同じ経路で通る", async () => {
+    const { client, update } = makeGoogleSupabase({
+      data: [{ id: "sub-1" }],
+      error: null,
+    })
+    setContext(client)
+    expect(await updateGoogleCalendarSelection("sub-1", false)).toEqual({
+      success: true,
+    })
+    expect(update).toHaveBeenCalledWith({ is_selected: false })
+  })
+
+  it("0 行更新を成功と偽らぬ（別世帯・RLS 拒否）", async () => {
+    const { client } = makeGoogleSupabase({ data: [], error: null })
+    setContext(client)
+    expect(await updateGoogleCalendarSelection("sub-1", true)).toEqual({
+      error: "カレンダーの設定に失敗しました",
+    })
+  })
+
+  it("Supabase error は構造化ログへ落としてから返す", async () => {
+    const error = {
+      message: "permission denied for column sync_token",
+      code: "42501",
+      details: null,
+      hint: null,
+    }
+    const { client } = makeGoogleSupabase({ data: null, error })
+    setContext(client)
+
+    expect(await updateGoogleCalendarSelection("sub-1", true)).toEqual({
+      error: "カレンダーの設定に失敗しました",
+    })
+    expect(mockedLog).toHaveBeenCalledWith(
+      "settings",
+      "google calendar selection update failed",
+      error,
+      { subscriptionId: "sub-1", householdId: HOUSEHOLD },
+    )
   })
 })
