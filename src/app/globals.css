@@ -177,3 +177,46 @@
     min-width: 44px;
   }
 }
+
+/*
+ * prefers-reduced-motion: 動きを抑える（DESIGN_SYSTEM.md:118 / 167）
+ *
+ * 指針の原文:
+ *   L118 「`prefers-reduced-motion`: アニメーションを無効化」
+ *   L167 「**Glass blur は維持**、アニメーションのみ無効化」
+ *
+ * ## ⚠️ backdrop-filter には触れぬこと
+ * glass は irori の手触りそのものであり、動きではない。ここで
+ * `backdrop-filter: none` を足すと、動きに弱い利用者だけが**別のアプリを
+ * 使っておるように見える**。指針が名指しで維持を求めておるのはそのためじゃ。
+ * （Chrome でぼかしが消える回帰は #169 で一度起きておる。同じ画を別経路で
+ *   再現させぬ。）
+ *
+ * ## 読み込み表示（animate-spin）を凍らせぬ理由
+ * 定石の `animation-iteration-count: 1` は spinner を**1 回転で停止**させる。
+ * この画面には読み込み表示が 34 箇所あり、止まった spinner は「処理中」では
+ * なく「壊れた」に見える — 動きを減らしたくて設定した人に、代わりに不安を
+ * 与えることになる。
+ *
+ * メディアクエリは `reduce`（no ではない）ゆえ、**遅くするのは仕様に沿う**。
+ * 前庭障害の誘因は大きな移動・視差であって、その場の小さな回転ではない。
+ * ゆえに spinner だけは停止させず 3 秒周期へ落とす。
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* 読み込み表示のみ例外（上の注記を見よ）。停止させず、ゆっくり回す。 */
+  .animate-spin {
+    animation-duration: 3s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
