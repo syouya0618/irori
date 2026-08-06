@@ -410,3 +410,102 @@ describe("BabyDashboard / Realtime → 週間サマリー反映", () => {
     ])
   })
 })
+
+/**
+ * 取得窓（8日）と表示窓（7日）の分離に対する検出器。
+ *
+ * **既存の Realtime 差分テスト（上の describe）は 8 日目に対して盲目じゃ。**
+ * どれも `chartTitles("直近7日の授乳回数")` 経由でしか state を観測しておらず、
+ * 8 日目（TODAY-7）はグラフに描かれぬ。ゆえに取得窓を -7 → -6 に戻しても
+ * 上の 9 本は全て緑のまま通り、平均だけが静かにズレる。
+ *
+ * ここではグラフを経由せず **平均の表示テキスト**を観測点にする。
+ */
+describe("BabyDashboard / 取得窓 8 日と表示窓 7 日の分離", () => {
+  // TODAY = 2026-04-16 ゆえ、取得窓は 4/09〜4/16、表示窓は 4/10〜4/16。
+  const FETCH_WINDOW_START = "2026-04-09" // TODAY - 7（表示窓の外・平均の中）
+  const YESTERDAY = "2026-04-15"
+
+  function feedingAt(id: string, ymd: string, hhmm: string): BabyLogData {
+    return makeLog({
+      id,
+      log_type: "feeding",
+      logged_at: `${ymd}T${hhmm}:00+09:00`,
+      feeding_type: "bottle",
+      amount_ml: 100,
+    })
+  }
+
+  it("取得窓の先頭日（TODAY-7）の Realtime INSERT が平均に届く（グラフには出ない）", () => {
+    // 昨日に 3 件 → 記録のあった日は 1 日、平均 3.0 回/日
+    render(
+      <BabyDashboard
+        {...defaultProps({
+          initialWeeklyLogs: [
+            feedingAt("y1", YESTERDAY, "08:00"),
+            feedingAt("y2", YESTERDAY, "12:00"),
+            feedingAt("y3", YESTERDAY, "18:00"),
+          ],
+        })}
+      />,
+    )
+
+    expect(screen.getByText("3.0回/日")).toBeInTheDocument()
+    expect(screen.getByText("記録のあった1日の平均")).toBeInTheDocument()
+
+    // TODAY-7 は取得窓の**先頭**。ここが Realtime で弾かれると平均は動かぬ。
+    act(() => {
+      emit(makePayload("INSERT", feedingAt("w1", FETCH_WINDOW_START, "09:00")))
+    })
+
+    // 記録のあった日が 2 日・合計 4 件 → 2.0 回/日
+    expect(screen.getByText("2.0回/日")).toBeInTheDocument()
+    expect(screen.getByText("記録のあった2日の平均")).toBeInTheDocument()
+
+    // グラフ（表示窓 7 日）には 4/9 は現れぬ — 窓を混ぜていない証拠
+    const labels = chartTitles("直近7日の授乳回数").map((t) => t.split(":")[0])
+    expect(labels).toEqual([
+      "4/10",
+      "4/11",
+      "4/12",
+      "4/13",
+      "4/14",
+      "4/15",
+      "4/16",
+    ])
+    expect(labels).not.toContain("4/9")
+  })
+
+  it("今日の記録は平均に入らない（経過途中ゆえ分母から外す契約）", () => {
+    render(
+      <BabyDashboard
+        {...defaultProps({
+          initialWeeklyLogs: [
+            feedingAt("y1", YESTERDAY, "08:00"),
+            feedingAt("y2", YESTERDAY, "12:00"),
+          ],
+        })}
+      />,
+    )
+
+    expect(screen.getByText("2.0回/日")).toBeInTheDocument()
+
+    act(() => {
+      emit(makePayload("INSERT", feedingAt("t1", TODAY, "09:00")))
+    })
+
+    // 今日の 1 件はグラフには出るが、平均は据え置き
+    expect(chartTitles("直近7日の授乳回数")).toContain("4/16: 1回")
+    expect(screen.getByText("2.0回/日")).toBeInTheDocument()
+    expect(screen.getByText("記録のあった1日の平均")).toBeInTheDocument()
+  })
+
+  it("記録が 1 日も無ければ平均は — （0.0 と出して「本当に0回」と誤読させない）", () => {
+    render(<BabyDashboard {...defaultProps()} />)
+
+    expect(
+      screen.getByText("平均を出せる記録がまだありません"),
+    ).toBeInTheDocument()
+    expect(screen.queryByText("0.0回/日")).not.toBeInTheDocument()
+  })
+})
