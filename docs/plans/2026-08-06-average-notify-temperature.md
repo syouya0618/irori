@@ -756,7 +756,7 @@ A-1 と A-2 は**独立**（触るファイルが交差しない）。並行し�
 | **B-0** | **到達性のスパイク** | **妻の iPhone に手動で 1 通届く** | コードはマージしない（使い捨ての検証枝）。ただし**VAPID 鍵は本番のものを生成して保管する**（下記） |
 | B-1 | 購読基盤（M1 + SW push + 設定カード） | 両端末で購読でき、手動送信で通知が出る | B-0 が通っていること |
 | B-2 | 予定への通知設定（M2 + フォーム） | 予定に通知時刻を付けられ、`remind_at` がサーバ導出される | B-1 マージ済み |
-| B-3 | 配信キューとジョブ（M3 + `/api/cron/notify` + pg_cron） | 実際に時刻どおり通知が届く（**予定通知のみ**） | B-2 マージ済み・**pg_cron / pg_net が Free で有効化できることを実機確認済み** |
+| B-3 | 配信キューとジョブ（M3 + `/api/cron/notify` + pg_cron） | 実際に時刻どおり通知が届く（**予定通知のみ**） | B-2 マージ済み。~~pg_cron / pg_net の実機確認~~ → **2026-08-06 に完了**（本番で両方 Success） |
 | B-4 | 失効処理と診断（`pushsubscriptionchange`・起動時突き合わせ・心拍表示） | 410 で宛先が外れ、`最終実行`/`最終配信` が設定画面に出る | B-3 マージ済み |
 | **B-5** | **毎朝ダイジェスト** | 指定時刻に今日の予定が 1 通届く | B-4 マージ済み |
 | **B-6** | **通知の着地先（`?date=` 対応）** | 明日の予定の通知をタップして明日が開く（月跨ぎ込み） | B-1 以降ならいつでも。B-5 より**前**が望ましい |
@@ -788,7 +788,7 @@ A-1 と A-2 は**独立**（触るファイルが交差しない）。並行し�
 | **B-1-3** | 購読 Action + 設定カード + **サインアウト解除** | 中位 | B-1-1,2 | 新規 `settings/notification-card.tsx`, `settings/actions.ts` | 許可要求がユーザー操作起点。**公開鍵未設定なら subscribe せず「未設定」表示**。`signOut` で行 DELETE + `unsubscribe()` | jsdom + **e2e**（jsdom に `PushManager` は無い）+ 実機 |
 | **B-2-1** | migration M2 | **上位** | B-1 | 新規 migration | `calendar_events` に**生成列 `event_uid`** + **`event_reminders`**（`event_uid` で結ぶ・google 行にも付く）+ **BEFORE トリガで `remind_at` を強制導出** + `notification_preferences`（**UPDATE ポリシーあり**・`digest_time` は JST 契約を COMMENT に） | pgTAP（`throws_like` で CHECK・**PostgREST 直叩きで `remind_at` を偽装しても上書きされる**・**google 行を delete→再 insert しても通知が生き残る**） |
 | **B-2-2** | 予定フォーム + 再スケジュール畳み込み | **上位** | B-2-1 | `calendar-event-form-sheet.tsx`, `calendar/actions.ts` | 5 択が出て既定値が引かれる。**`remind_at` が動いたら同 `event_key` の未送信キュー行を同一 tx で `rescheduled` に畳む** | **「時刻を編集したら旧キュー行が発火しない」回帰テスト** |
-| **B-3-0** | **pg_cron / pg_net の実機確認** | 主 | B-2 | Supabase Dashboard | **両方**の `create extension` が通る | **実機**。通らねば DR-5 を見直す |
+| ~~B-3-0~~ | ~~pg_cron / pg_net の実機確認~~ | — | — | — | **完了（2026-08-06・本番で両方 Success）** | — |
 | **B-3-1** | migration M3 | 中位 | B-3-0 | 新規 migration | `notification_deliveries` + `household_id` + **`event_key`** + `UNIQUE NULLS NOT DISTINCT` + 両 FK が **SET NULL** + `notification_heartbeat` | pgTAP（**digest 行を 2 回 INSERT して弾かれる** / `.upsert(onConflict)` が実 DB で解決する / **2 人 seed で配偶者の行が見える**） |
 | **B-3-2** | 配信ジョブ | **最上位／上位** | B-3-1 | 新規 `api/cron/notify/route.ts` | 選出述語（**`start_at > now` を含む**）・grace・**claim してから送る**・世帯ごとループ・410 分岐・**心拍 upsert** | 単体（fake timers で決定的に）+ **e2e は `request` フィクスチャ（cookie 無し）で cron route を列挙して 401** |
 | **B-3-3** | pg_cron 登録 + Vault | 主 | B-3-2 | **新規 `docs/runbooks/notify-cron.md`（migration ではない）** | 5 分毎に発火。**Vault の秘密が schedule 発火前に入っている**。掃除ジョブも登録。回転手順を併記 | 実機（`sent_at` と `ran_at` が進む） |
@@ -897,7 +897,7 @@ A-1 と A-2 は**独立**（触るファイルが交差しない）。並行し�
 |---|---|---|---|---|---|---|
 | R1 | Supabase Free の pause で通知が止まる | **低** | 中 | pause 条件は「週 1 回の DB 活動が無い」＝夫婦が 1 週間 irori を開いていない状態。事前警告メールが 1 通来る | **アプリ自体が開かなくなる**ので「静かには」死なぬ | Dashboard から Resume（自動復帰しない） |
 | **R1b** | **DB は生きたまま通知だけ止まる** | **中** | **高** | `cron.schedule` が消える／pg_net が 401 を返し続ける／Vercel が落ちる — **これらは全てアプリが正常に見えたまま起きる** | **設定カードの「最終配信」**（これが唯一の検知手段。R1 ではなくこちらが本命） | 原因ごと。まず `cron.job_run_details` と `net._http_response` を見る |
-| R2 | **pg_cron が Free で使えない** | 中 | 高 | B-3-0 で**先に実機確認**する | `create extension` の失敗 | DR-5 を見直し Cloudflare / Vercel Pro へ |
+| ~~R2~~ | ~~pg_cron が Free で使えない~~ | **消滅** | — | **2026-08-06 に本番実機で確認済み**（`create extension` が両方 Success）。公式に明記が無かった論点を実機で潰した | — | — |
 | R3 | **Safari が push 権限を剥奪** | 中 | 高 | push ハンドラは**必ず**可視通知を出す。grace window で遅配の雪崩を防ぐ | 妻の端末で通知が来なくなる | 設定カードから再許可（ユーザー操作が要る） |
 | R4 | cron の取りこぼし・二重起動 | **高**（公式が明言） | 中 | キュー方式（catch-up + UNIQUE） | `notification_deliveries` の `sent_at` 欠落 | 次の実行が拾う |
 | R5 | `job_run_details` がディスクを食う | 高 | 中 | 掃除ジョブを**同時に**登録（公式が「自動削除されない」と明記） | DB サイズ | 手動 DELETE |
@@ -918,7 +918,7 @@ A-1 と A-2 は**独立**（触るファイルが交差しない）。並行し�
 
 | # | 未決 | 判断者 | 期限 | 必要な情報 |
 |---|---|---|---|---|
-| **Q1** | **Supabase Free で `pg_cron` と `pg_net` が有効化できるか** | 主 | **B-3 着手前** | Dashboard で `create extension pg_cron` と `create extension pg_net` を実行。**両方要る**（計画は `net.http_post` に全依存しておる） |
+| ~~Q1~~ | ~~Supabase Free で `pg_cron` と `pg_net` が有効化できるか~~ | — | **決着（2026-08-06 実機）** | 主が本番 Dashboard で `create extension if not exists pg_cron;` と `pg_net;` を実行 → **Success**。公式に明記の無かった「Free で使えるか」は**実機で肯定**された。DR-5 は据え置き、R2 は消滅 |
 | Q2 | 毎朝ダイジェストの既定時刻 | 主 | **B-5**（B-2 ではない） | 生活リズム（07:00 を仮置き） |
 | ~~Q3~~ | ~~世帯全員か作成者のみか~~ | — | **決着** | `event_reminders` を**世帯単位**にしたことで解決（夫が付けた通知は妻にも届く） |
 | Q4 | ① の平均が「グラフと合わぬ」と感じるか | 主 | A-1 の実物を見てから | 代替案（今日を除く 6 日平均）は定数で切替可能にしてある |
@@ -933,7 +933,7 @@ A-1 と A-2 は**独立**（触るファイルが交差しない）。並行し�
 |---|---|---|
 | 要件明確度 | **5** | 3 件とも主の回答で確定。真の性質も調査で判明。Q5（5 択で足りるか）のみ残 |
 | UI/UX 成熟度 | **4** | 画面と状態は定義済み。①③ は実物を見ての微調整が残る |
-| 技術設計成熟度 | **4** | ①③ は 5。② は Q1（pg_cron / pg_net の可否）が未確認ゆえ 4 |
+| 技術設計成熟度 | **5** | ①③ は実装済み。② は **Q1（pg_cron / pg_net）が 2026-08-06 に本番実機で通り**、DR-5 の前提が裏づけられた |
 | セキュリティ成熟度 | **5** | 行 RLS × **列 GRANT** の二段防御・`REVOKE ALL` → GRANT の環境差潰し・BEFORE トリガによる導出強制・publication 非追加の明文宣言・allowlist 削除・secret 分離まで設計済み |
 | テスト成熟度 | **4** | 壊れる既存テスト 6+ 本を特定。SW リスナ登録の盲点と pgTAP の `throws_like` を是正済み。**claim の排他だけは逐次テストで弁別できぬ**と明示 |
 | 移行準備度 | **5** | migration 3 本、いずれも新テーブルか新列のみ。`CALENDAR_EVENT_COLUMNS` に触れぬため順序事故の主経路が消えた |
@@ -941,10 +941,10 @@ A-1 と A-2 は**独立**（触るファイルが交差しない）。並行し�
 
 ### 着手前に解決すべき項目
 
-1. **B-0（到達性スパイク）** — 妻の iPhone に 1 通届かせる。**`pnpm build && pnpm start` で行うこと**（dev では SW が登録されぬ）。VAPID 鍵は本番用を生成して保管
-2. **Q1（pg_cron **と pg_net** の実機確認）** — 通らねば DR-5 を見直す
+1. **B-0（到達性スパイク）** — 妻の iPhone に 1 通届かせる。**`pnpm build && pnpm start` で行うこと**（dev では SW が登録されぬ）。VAPID 鍵は本番用を生成して保管。**残る唯一の門はこれ**
+2. ~~Q1（pg_cron / pg_net の実機確認）~~ → **2026-08-06 に決着**（本番で両方 Success）
 3. **Q5（リード時間の 5 択で足りるか）** — B-2 のスキーマを切る前に
-4. トラック A はこれらを待たずに着手してよい
+4. ~~トラック A~~ → **実装済み**（PR #206 / #207）
 
 ---
 
