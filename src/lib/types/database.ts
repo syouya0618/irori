@@ -515,6 +515,18 @@ export interface Database {
           recurring_event_id: string | null
           google_updated: string | null
           synced_at: string | null
+          /**
+           * 削除→再挿入（410 フル再同期）をまたいで不変な同一性キー（**生成列**）。
+           * google 行は `google_calendar_id|google_event_id`、native 行は `id`。
+           * `event_reminders` の結合キーじゃ。
+           *
+           * ⚠️ **`CALENDAR_EVENT_COLUMNS` には入れておらぬ**（入れると migration より
+           * 先にコードが出た瞬間に、この定数を共有する 4 画面が同時に落ちる）。
+           * 必要な箇所が `.select("id, event_uid")` のように個別に取ること。
+           *
+           * ⚠️ 生成列ゆえ **書けぬ** → `Insert` / `Update` には出しておらぬ。
+           */
+          event_uid: string
           created_by: string | null
           created_at: string
           updated_at: string
@@ -554,6 +566,67 @@ export interface Database {
           end_at?: string | null
           series_id?: string | null
           // source / google_* は native 行の編集で触らない(型上も出さない)
+        }
+        Relationships: []
+      }
+      /**
+       * 予定への通知設定（B-2・**世帯単位**）。夫が付けた通知は妻にも届く。
+       *
+       * ⚠️ `calendar_events` へは **FK を張っておらぬ**。`event_uid` で結ぶ
+       * （410 フル再同期が google 行を DELETE→INSERT し直すため、行 id で結ぶと
+       * CASCADE で全滅／SET NULL で迷子になる）。
+       *
+       * ⚠️ `remind_at` は **BEFORE トリガが導出する唯一の真値**ゆえ、
+       * `Insert` / `Update` に出しておらぬ。送っても列 GRANT が無く `42501` で落ちる。
+       * 同様に `created_by` / `created_at` / `updated_at` もトリガと DEFAULT の領分。
+       */
+      event_reminders: {
+        Row: {
+          id: string
+          event_uid: string
+          household_id: string
+          remind_kind: string
+          remind_minutes_before: number | null
+          remind_at: string
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          event_uid: string
+          household_id: string
+          remind_kind: "minutes" | "prev_day_20"
+          remind_minutes_before?: number | null
+        }
+        Update: {
+          remind_kind?: "minutes" | "prev_day_20"
+          remind_minutes_before?: number | null
+        }
+        Relationships: []
+      }
+      /**
+       * 通知の個人設定（**ユーザー単位**）。event_reminders が世帯単位なのと
+       * 意図的に非対称じゃ:「いつ通知を出すか」は世帯の合意、「既定でどれを選ぶか」は
+       * 個人の好み。
+       *
+       * ⚠️ `digest_time` は TZ を持たぬ `TIME` ゆえ **JST 壁時計として解釈する契約**
+       * （列 COMMENT が正本）。素で UTC 比較すると 9 時間ずれる。
+       */
+      notification_preferences: {
+        Row: {
+          user_id: string
+          event_default_minutes: number | null
+          digest_time: string | null
+          updated_at: string
+        }
+        Insert: {
+          user_id: string
+          event_default_minutes?: number | null
+          digest_time?: string | null
+        }
+        Update: {
+          event_default_minutes?: number | null
+          digest_time?: string | null
         }
         Relationships: []
       }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition } from "react"
+import { useRef, useState, useTransition } from "react"
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -16,7 +16,17 @@ import {
   deleteCalendarEvent,
   deleteCalendarEventSeries,
   fetchGoogleSyncSignal,
+  fetchEventReminder,
+  setEventReminder,
 } from "@/app/(main)/calendar/actions"
+import {
+  defaultReminderChoice,
+  reminderRowToState,
+  reminderTargetFromCreateResult,
+  type ReminderChoice,
+  type ReminderState,
+  type ReminderTarget,
+} from "@/lib/domain/event-reminder"
 // startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）。
 // 楽観挿入/削除を持つため、reject 経路でも result.error と同じ巻き戻しを行う。
 import { toastOfflineError } from "@/lib/utils/offline-error"
@@ -41,6 +51,11 @@ interface CalendarViewProps {
   syncScheduled?: boolean
   /** 予約時点の `last_synced_at`（ポーリングの基準値）。 */
   initialGoogleSyncedAt?: string | null
+  /**
+   * B-2: `notification_preferences.event_default_minutes`。新規予定の通知の既定値。
+   * null = 既定は「なし」。
+   */
+  defaultReminderMinutes?: number | null
 }
 
 /** "YYYY-MM" を "YYYY年M月" へ */
@@ -63,11 +78,25 @@ export function CalendarView({
   initialMonthFirst,
   syncScheduled = false,
   initialGoogleSyncedAt = null,
+  defaultReminderMinutes = null,
 }: CalendarViewProps) {
   const m = useMonthEvents({ initialEvents, householdId, initialMonthFirst })
   const [pending, startTransition] = useTransition()
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editing, setEditing] = useState<CalendarEventRecord | null>(null)
+
+  // ── B-2: 通知設定 ────────────────────────────────────────────
+  // 既存予定は**シートを開いた時に 1 件だけ**引く。月ぶんを先読みせぬのは、
+  // `event_uid` を `CALENDAR_EVENT_COLUMNS` へ入れておらぬためじゃ(入れると
+  // migration より先にコードが出た瞬間に 4 画面が同時に落ちる)。
+  // 読み込み中を `loading` として出すのは、既に設定済みの通知を「なし」と
+  // 表示して**利用者が気付かず上書きする**のを避けるためじゃ。
+  const [reminder, setReminder] = useState<ReminderState>({
+    status: "ready",
+    choice: "none",
+  })
+  // 連打で古い応答が新しい選択を踏み潰さぬようにする世代番号。
+  const reminderSeq = useRef(0)
 
   // V7: Google 同期の完了を拾う（Realtime を使わぬ唯一の削除反映経路）。
   useGoogleSyncPoll({
@@ -82,10 +111,90 @@ export function CalendarView({
   const openNew = () => {
     setEditing(null)
     setSheetOpen(true)
+    // 新規は個人の既定値から始める(まだ DB に行は無い)。
+    reminderSeq.current += 1
+    setReminder({
+      status: "ready",
+      choice: defaultReminderChoice(defaultReminderMinutes),
+    })
   }
+
   const openEvent = (event: CalendarEventRecord) => {
     setEditing(event)
     setSheetOpen(true)
+    // 楽観行(まだ確定 id を持たぬ)は問い合わせても見つからぬゆえ「なし」から始める。
+    if (event.id.startsWith(OPTIMISTIC_EVENT_ID_PREFIX)) {
+      reminderSeq.current += 1
+      setReminder({ status: "ready", choice: "none" })
+      return
+    }
+    const seq = (reminderSeq.current += 1)
+    setReminder({ status: "loading" })
+    // effect ではなくクリックハンドラの promise 内で state を触る
+    // (effect 内の同期 setState は React Compiler の lint が落ちる)。
+    void fetchEventReminder(event.id)
+      .then((res) => {
+        if (reminderSeq.current !== seq) return // 別の予定へ移った後の応答は捨てる
+        if (res.error) {
+          // 判定不能を「なし」と偽らぬ。変更させずに理由を出す。
+          setReminder({ status: "unsupported" })
+          toast.error(res.error)
+          return
+        }
+        setReminder(reminderRowToState(res.row))
+      })
+      .catch((err) => {
+        if (reminderSeq.current !== seq) return
+        setReminder({ status: "unsupported" })
+        toastOfflineError("[calendar-view] fetchEventReminder", err)
+      })
+  }
+
+  /**
+   * 通知 Select の変更。**既存予定は即時保存**する(google の read-only 詳細シートには
+   * 保存ボタンが無く、native の編集でも本文とは独立した設定として扱うほうが読みやすい)。
+   * 新規予定はまだ行が無いゆえ値を保持し、作成成功後に書き込む。
+   */
+  const handleReminderChange = (choice: ReminderChoice) => {
+    const previous = reminder
+    setReminder({ status: "ready", choice })
+
+    const target = editing
+    if (!target || target.id.startsWith(OPTIMISTIC_EVENT_ID_PREFIX)) return
+
+    const seq = (reminderSeq.current += 1)
+    startTransition(async () => {
+      try {
+        const res = await setEventReminder({ eventId: target.id }, choice)
+        if (res.error) {
+          if (reminderSeq.current === seq) setReminder(previous) // 復元
+          toast.error(res.error)
+        }
+      } catch (err) {
+        // reject はサーバー未到達 = 未保存。選択を元へ戻す。
+        if (reminderSeq.current === seq) setReminder(previous)
+        toastOfflineError("[calendar-view] setEventReminder", err)
+      }
+    })
+  }
+
+  /**
+   * 予定を作った直後に通知を書く。**予定の作成は既に成功しておる**ゆえ、ここが
+   * 失敗しても作成を巻き戻さず、通知が付かなかったことだけを告げる
+   * (黙って落とすと「設定したのに来ぬ」という最も不快な壊れ方になる)。
+   */
+  const applyReminderAfterCreate = async (
+    target: ReminderTarget | null,
+    choice: ReminderChoice,
+  ) => {
+    // 宛先が決まらぬ（作成失敗・id 不明）ときと「なし」のときは何もせぬ。
+    if (target === null || choice === "none") return
+    try {
+      const res = await setEventReminder(target, choice)
+      if (res.error) toast.error("予定は作成しましたが、通知の設定に失敗しました。")
+    } catch (err) {
+      toastOfflineError("[calendar-view] setEventReminder(create)", err)
+    }
   }
 
   /** フォーム値を action 入力 + 楽観行へ変換 */
@@ -131,6 +240,9 @@ export function CalendarView({
       toast.error("開始時刻を入力してください")
       return
     }
+    // 新規作成時に書き込む通知の選択(保存ボタンを押した時点の値で固定する)。
+    const reminderChoice: ReminderChoice =
+      reminder.status === "ready" ? reminder.choice : "none"
     const editingSnapshot = editing
     if (editingSnapshot) {
       // 編集: 楽観置換 → 失敗で復元
@@ -181,6 +293,12 @@ export function CalendarView({
             toast.error(res.error)
           } else {
             void m.refetch(m.monthFirst)
+            // 宛先の決め方は単発と共通の 1 規則
+            // (シリーズは id を運ばず series_id を渡す = 400 件の UUID は URL に載らぬ)。
+            await applyReminderAfterCreate(
+              reminderTargetFromCreateResult(res),
+              reminderChoice,
+            )
           }
         } catch (err) {
           // この分岐だけは楽観挿入をしていない（上のコメント参照）ため巻き戻し不要。
@@ -209,6 +327,10 @@ export function CalendarView({
             toast.error(res.error ?? "予定の作成に失敗しました。")
           } else {
             m.replaceOptimisticId(tempId, res.eventId)
+            await applyReminderAfterCreate(
+              reminderTargetFromCreateResult(res),
+              reminderChoice,
+            )
           }
         } catch (err) {
           // reject はサーバー未到達 = 予定は作られていない。temp 行を残すと
@@ -329,6 +451,8 @@ export function CalendarView({
         onSubmit={handleSubmit}
         onDelete={handleDelete}
         onDeleteSeries={handleDeleteSeries}
+        reminder={reminder}
+        onReminderChange={handleReminderChange}
       />
     </div>
   )

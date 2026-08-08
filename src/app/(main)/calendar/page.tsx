@@ -16,7 +16,7 @@ export const maxDuration = 30
 export default async function CalendarPage() {
   const { context } = await getAuthContext()
   if (!context) return null
-  const { supabase, householdId } = context
+  const { supabase, householdId, userId } = context
 
   const monthFirst = currentMonthFirstJst()
   const { gridStart, gridEnd } = gridRangeOf(monthFirst)
@@ -28,19 +28,34 @@ export default async function CalendarPage() {
   //
   // 月グリッドの取得と並行に走らせる（直列にすると TTFB が 1 往復ぶん伸びる）。
   // `after()` の予約は描画スコープ内で起きるためこの形でよい。
-  const [{ data: events, error }, sync] = await Promise.all([
-    supabase
-      .from("calendar_events")
-      .select(CALENDAR_EVENT_COLUMNS)
-      .eq("household_id", householdId)
-      .lte("start_date", gridEnd) // 重なり判定: start_date <= gridEnd
-      .gte("end_date", gridStart) //           AND end_date >= gridStart
-      .order("start_date"),
-    maybeScheduleSync(supabase, householdId),
-  ])
+  const [{ data: events, error }, sync, { data: prefs, error: prefsError }] =
+    await Promise.all([
+      supabase
+        .from("calendar_events")
+        .select(CALENDAR_EVENT_COLUMNS)
+        .eq("household_id", householdId)
+        .lte("start_date", gridEnd) // 重なり判定: start_date <= gridEnd
+        .gte("end_date", gridStart) //           AND end_date >= gridStart
+        .order("start_date"),
+      maybeScheduleSync(supabase, householdId),
+      // B-2: 新規予定の通知の既定値。**ユーザー単位**の好みゆえ userId で引く
+      // (通知そのものは世帯単位だが、既定でどれを選ぶかは個人の設定)。
+      // 未設定なら行が無いのが正常ゆえ maybeSingle で 0 行を error にせぬ。
+      supabase
+        .from("notification_preferences")
+        .select("event_default_minutes")
+        .eq("user_id", userId)
+        .maybeSingle(),
+    ])
 
   if (error) {
     logSupabaseError("calendar", "month lookup failed", error, { householdId })
+  }
+  if (prefsError) {
+    // 既定値が引けぬだけで画面は成立する(「なし」へ退化)。倒さず log に残す。
+    logSupabaseError("calendar", "notification prefs lookup failed", prefsError, {
+      userId,
+    })
   }
 
   return (
@@ -54,6 +69,7 @@ export default async function CalendarPage() {
       // これが Google 側の削除を画面へ反映する唯一の担保じゃ。
       syncScheduled={sync.syncScheduled}
       initialGoogleSyncedAt={sync.lastSyncedAt}
+      defaultReminderMinutes={prefs?.event_default_minutes ?? null}
     />
   )
 }
