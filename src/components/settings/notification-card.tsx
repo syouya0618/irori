@@ -225,7 +225,7 @@ export function NotificationCard({ devices, health }: NotificationCardProps) {
   }, [vapidPublicKey])
 
   /**
-   * 端末の解除。
+   * 端末を一覧から外す。
    *
    * ## ⚠️ 行を消すだけでは解除にならぬ
    * ブラウザの購読が生きたままなら、起動時の突き合わせ
@@ -236,6 +236,17 @@ export function NotificationCard({ devices, health }: NotificationCardProps) {
    *
    * どの行がこのブラウザの購読かは endpoint でしか分からず、その列は GRANT の
    * 外じゃ。ゆえに endpoint を**渡して**、一致したかだけを受け取る。
+   *
+   * ## ★ ゆえに「解除」と名乗れるのは**自分の端末だけ**じゃ
+   * `unsubscribe()` を呼べるのは自分のブラウザに対してだけで、配偶者の端末や
+   * 手放した古い端末のブラウザには手が届かぬ。行を消しても**その端末が次に
+   * アプリを開いた瞬間、突き合わせが冪等に登録し直す**（サーバ側に失効テーブルを
+   * 置けば止められるが、主の裁定で**作らぬ**と決まった）。
+   *
+   * ゆえに名前は「一覧から外す」じゃ。**この画面から出来ることを、出来る通りに
+   * 呼ぶ。** 戻り値の `deletedCurrentDevice` が自端末か他端末かを分けるゆえ、
+   * 成功の文言もそこで分ける —— 他端末に「解除しました」と言えば、戻ってきた時に
+   * 主は「解除が効かぬ」と読み、通知基盤の故障を疑って追えぬ道へ入る。
    */
   const handleDelete = useCallback((id: string) => {
     startTransition(async () => {
@@ -264,7 +275,16 @@ export function NotificationCard({ devices, health }: NotificationCardProps) {
         // 「テスト通知を送る」表示のまま購読が無い、を作らぬ。
         setSubscribedHere(false)
       }
-      toast.success("この端末の通知を解除しました。")
+      // ⚠️ **自端末と他端末で文言を分ける。** 自端末は印 + `unsubscribe()` と対に
+      // してあるゆえ「解除しました」は真じゃが、他端末では**嘘**になる
+      // （その端末が開けば戻る）。分けられるのは `deletedCurrentDevice` が
+      // サーバから 1 ビット返っておるおかげで、これを捨てて 1 文に戻せば
+      // どちらかが必ず嘘になる。
+      toast.success(
+        result.deletedCurrentDevice
+          ? "この端末の通知を解除しました。"
+          : "一覧から外しました（その端末で再度開くと戻ります）。",
+      )
     })
   }, [])
 
@@ -362,10 +382,14 @@ export function NotificationCard({ devices, health }: NotificationCardProps) {
                     size="sm"
                     disabled={pending}
                     onClick={() => handleDelete(device.id)}
-                    aria-label={`${device.userAgent ?? "不明な端末"}の通知を解除`}
+                    // 端末ごとに一意（`getByRole` が割れぬこと・端末名を必ず含む）。
+                    // 「通知を解除」とは名乗らぬ —— 他端末のブラウザには手が届かず、
+                    // その端末が開けば突き合わせが登録し直すゆえ、この画面が
+                    // 出来るのは一覧から外すことまでじゃ。
+                    aria-label={`${device.userAgent ?? "不明な端末"}を一覧から外す`}
                     className="min-h-11 shrink-0"
                   >
-                    解除
+                    一覧から外す
                   </Button>
                 </li>
               ))}

@@ -34,6 +34,7 @@ import {
   type PushDeviceView,
 } from "../notification-card"
 import { deletePushSubscription } from "@/app/(main)/settings/push-actions"
+import { toast } from "sonner"
 import { PUSH_OPT_OUT_MARKER_KEY } from "@/lib/pwa/push-reconcile"
 import type { NotificationHealthView } from "@/lib/domain/notification-health"
 
@@ -238,16 +239,16 @@ describe("端末ごとの failure_count（B-1 で列は在ったが誰も読ん�
     expect(screen.getByText("送信エラー 7回・最終エラー 2分前")).toBeInTheDocument()
     // 解除ボタンの aria-label は端末ごとに異なる（getByRole が割れぬこと）。
     expect(
-      screen.getByRole("button", { name: "Android の Chromeの通知を解除" }),
+      screen.getByRole("button", { name: "Android の Chromeを一覧から外す" }),
     ).toBeInTheDocument()
     expect(
-      screen.getByRole("button", { name: "Mac の Chromeの通知を解除" }),
+      screen.getByRole("button", { name: "Mac の Chromeを一覧から外す" }),
     ).toBeInTheDocument()
   })
 })
 
 /**
- * ## 「解除」が恒久的に効くこと（SEC-1 / B1）
+ * ## 「解除」が恒久的に効くこと（SEC-1 / B1）—— **効くのは自分の端末だけ**
  *
  * DB 行を消すだけでは解除にならぬ。ブラウザの購読が生きたままなら、起動時の
  * 突き合わせ（`PushSubscriptionReconciler`）が同じ endpoint を登録し直し、
@@ -261,6 +262,11 @@ describe("端末ごとの failure_count（B-1 で列は在ったが誰も読ん�
  *      自分の購読を畳んではならぬ）
  *   3. 併せて localStorage に解除の印を残す（`unsubscribe()` が圏外・権限で
  *      落ちた時、突き合わせを止められるのはこの印だけじゃ）
+ *
+ * ★ **2 の裏返しが文言の制約じゃ。** 他端末には `unsubscribe()` も印も届かぬ
+ * ゆえ、その端末が次に開けば行は戻る。ボタンが「一覧から外す」と名乗り、成功の
+ * 文言が自端末・他端末で割れておるのはそれゆえで、**下の 2 本がその割れ目を
+ * 対で固定しておる**（片方だけなら「常にこちらを出す」実装で緑になる）。
  */
 describe("端末の解除は恒久的に効く", () => {
   const ENDPOINT = "https://fcm.googleapis.com/fcm/send/this-device"
@@ -286,9 +292,69 @@ describe("端末の解除は恒久的に効く", () => {
   beforeEach(() => {
     localStorage.clear()
     vi.mocked(deletePushSubscription).mockReset()
+    vi.mocked(toast.success).mockClear()
   })
   afterEach(() => {
     localStorage.clear()
+  })
+
+  /**
+   * ★ **自端末には「解除しました」と言うてよい。**
+   * 印（`PUSH_OPT_OUT_MARKER_KEY`）と `unsubscribe()` が対にしてあるゆえ、
+   * この端末の購読は本当に戻らぬ —— 印だけでも突き合わせは退く（下の
+   * 「`unsubscribe()` が落ちても」を見よ）。
+   */
+  it("自端末を外したら「この端末の通知を解除しました。」と告げる", async () => {
+    stubSubscribedBrowser()
+    vi.mocked(deletePushSubscription).mockResolvedValue({
+      error: null,
+      deletedCurrentDevice: true,
+    })
+
+    render(
+      <NotificationCard
+        devices={[device({ id: "sub-1", userAgent: "この端末" })]}
+        health={health()}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "この端末を一覧から外す" }))
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("この端末の通知を解除しました。"),
+    )
+  })
+
+  /**
+   * ★ **他端末に「解除しました」と言うてはならぬ。**
+   * 配偶者の端末・手放した古い端末のブラウザには `unsubscribe()` も印も届かず、
+   * その端末が次に開いた瞬間、突き合わせが冪等に登録し直す（サーバ側の失効
+   * テーブルは主の裁定で**作らぬ**）。「解除しました」と告げれば、戻ってきた
+   * ときに主は「解除が効かぬ」と読み、通知基盤の故障を疑って追えぬ道へ入る。
+   */
+  it("**他端末には「解除」と言わず、戻ることまで告げる**", async () => {
+    stubSubscribedBrowser()
+    vi.mocked(deletePushSubscription).mockResolvedValue({
+      error: null,
+      deletedCurrentDevice: false,
+    })
+
+    render(
+      <NotificationCard
+        devices={[device({ id: "sub-2", userAgent: "配偶者の端末" })]}
+        health={health()}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "配偶者の端末を一覧から外す" }))
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "一覧から外しました（その端末で再度開くと戻ります）。",
+      ),
+    )
+    // 嘘の側が**混ざっておらぬ**ことまで見る（両方出す実装を素通しせぬ）。
+    expect(toast.success).not.toHaveBeenCalledWith(
+      "この端末の通知を解除しました。",
+    )
   })
 
   it("この端末の行を消したら、ブラウザ側の購読も畳み、解除の印を残す", async () => {
@@ -304,7 +370,7 @@ describe("端末の解除は恒久的に効く", () => {
         health={health()}
       />,
     )
-    fireEvent.click(screen.getByRole("button", { name: "この端末の通知を解除" }))
+    fireEvent.click(screen.getByRole("button", { name: "この端末を一覧から外す" }))
 
     // 自分の endpoint を添えて呼ぶ（サーバはこれと突き合わせて 1 ビットを返す）。
     await waitFor(() =>
@@ -328,7 +394,7 @@ describe("端末の解除は恒久的に効く", () => {
         health={health()}
       />,
     )
-    fireEvent.click(screen.getByRole("button", { name: "配偶者の端末の通知を解除" }))
+    fireEvent.click(screen.getByRole("button", { name: "配偶者の端末を一覧から外す" }))
 
     await waitFor(() => expect(deletePushSubscription).toHaveBeenCalled())
     expect(unsubscribe).not.toHaveBeenCalled()
@@ -350,7 +416,7 @@ describe("端末の解除は恒久的に効く", () => {
         health={health()}
       />,
     )
-    fireEvent.click(screen.getByRole("button", { name: "この端末の通知を解除" }))
+    fireEvent.click(screen.getByRole("button", { name: "この端末を一覧から外す" }))
 
     // 印が残っておれば、突き合わせは次の起動でも退く（最後の砦）。
     await waitFor(() =>
@@ -372,7 +438,7 @@ describe("端末の解除は恒久的に効く", () => {
         health={health()}
       />,
     )
-    fireEvent.click(screen.getByRole("button", { name: "この端末の通知を解除" }))
+    fireEvent.click(screen.getByRole("button", { name: "この端末を一覧から外す" }))
 
     await waitFor(() => expect(deletePushSubscription).toHaveBeenCalled())
     expect(unsubscribe).not.toHaveBeenCalled()
