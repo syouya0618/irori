@@ -479,6 +479,131 @@ self.addEventListener("notificationclick", (event) => {
   )
 })
 
+// ─────────────────── pushsubscriptionchange (失効処理・B-4) ───────────────────
+
+// ⚠️ **拾わねば購読が黙って死ぬ。** Chrome / Android はブラウザ都合で購読を回す
+// (鍵の更新・ストレージ逼迫・長期未使用など)。その瞬間に古い endpoint は 410 になり、
+// 配信ジョブが DB 行を消す。ここで新しい購読を登録し直さねば、主は「いつの間にか
+// 通知が来なくなった」としか分からぬ。
+//
+// SW から Server Action は呼べぬ (RSC のプロトコルに乗らぬ) ゆえ、セッション認証の
+// Route Handler へ POST する。SW の fetch は cookie を運ぶため、これで足りる。
+// パスは src/app/api/push/resubscribe/route.ts と**手動同期**すること
+// (classic script ゆえ import できぬ。APP_PAGES と同じ約束じゃ)。
+const RESUBSCRIBE_PATH = "/api/push/resubscribe"
+
+/**
+ * 購読 JSON からサーバへ送る body を組む。3 つ揃わねば null (送らぬ)。
+ * `oldEndpoint` は**新しい endpoint と違う時だけ**載せる (同じなら消す対象が無い)。
+ *
+ * ⚠️ **`userAgent` を必ず載せること。** `upsert_push_subscription` は
+ * `ON CONFLICT ... SET user_agent = EXCLUDED.user_agent` ゆえ、省くと既存行の
+ * 端末名が NULL で潰れ、設定カードの全端末が「不明な端末」に化ける
+ * (どれを解除すればよいか主に分からなくなる)。
+ */
+function buildResubscribeBody(subscriptionJson, oldEndpoint, userAgent) {
+  if (!subscriptionJson) return null
+  const endpoint = subscriptionJson.endpoint
+  const keys = subscriptionJson.keys || {}
+  if (!endpoint || !keys.p256dh || !keys.auth) return null
+  const body = { endpoint, p256dh: keys.p256dh, auth: keys.auth }
+  if (typeof userAgent === "string" && userAgent) body.userAgent = userAgent
+  if (typeof oldEndpoint === "string" && oldEndpoint && oldEndpoint !== endpoint) {
+    body.oldEndpoint = oldEndpoint
+  }
+  return body
+}
+
+/**
+ * ⚠️ **`res.ok` を成功の証拠にしてはならぬ。**
+ *
+ * このパスは `src/proxy.ts` の承認ゲートを通る (`isPublicRoute` に入れておらぬ
+ * ＝ 認証が要るゆえ正しい)。セッション切れなら proxy は `/login` へ、未承認なら
+ * `/pending-approval` へ **307 redirect** を返す。fetch は既定でそれを追い、
+ * **HTML の 200** が返る — `res.ok` は true じゃ。信じれば「登録された」と
+ * 記録して何も登録されておらぬ。
+ * ゆえに (a) `redirect: "manual"` で追わせず (b) JSON の `{ ok: true }` を確かめる。
+ */
+async function isResubscribeAccepted(res) {
+  if (!res || res.status !== 200) return false
+  const contentType = (res.headers && res.headers.get("content-type")) || ""
+  if (!contentType.includes("application/json")) return false
+  try {
+    const body = await res.json()
+    return Boolean(body && body.ok === true)
+  } catch (err) {
+    console.warn("[sw] 再登録の応答を JSON として読めなかった:", err)
+    return false
+  }
+}
+
+/**
+ * 新しい購読を得る。3 段構え:
+ *   1. `event.newSubscription` (仕様どおりの実装。Chrome はこれを渡す)
+ *   2. 既に張り直されておればそれ (`getSubscription()`)
+ *   3. 旧購読の `applicationServerKey` で subscribe し直す
+ *      (Firefox 等はイベントに何も載せぬため、鍵の出所がここしかない)
+ *
+ * 3 つとも取れねば null を返して**何もせぬ**。ここで推測の鍵を使って subscribe
+ * すると、送信が全て 403 になる購読を自分で作ることになる。復旧は起動時の
+ * 突き合わせ (`push-subscription-reconciler.tsx`) が担う。
+ */
+async function resolveChangedSubscription(event) {
+  if (event && event.newSubscription) return event.newSubscription
+  const existing = await self.registration.pushManager.getSubscription()
+  if (existing) return existing
+  const oldOptions = event && event.oldSubscription && event.oldSubscription.options
+  const applicationServerKey = oldOptions && oldOptions.applicationServerKey
+  if (!applicationServerKey) return null
+  return self.registration.pushManager.subscribe({
+    // Safari は不可視 push を許さぬ。登録時と同じ条件で張り直す。
+    userVisibleOnly: true,
+    applicationServerKey,
+  })
+}
+
+async function handlePushSubscriptionChange(event) {
+  try {
+    const subscription = await resolveChangedSubscription(event)
+    if (!subscription) {
+      console.warn("[sw] pushsubscriptionchange: 新しい購読を作れなかった")
+      return
+    }
+    const oldEndpoint =
+      (event && event.oldSubscription && event.oldSubscription.endpoint) || null
+    // WorkerNavigator も userAgent を持つ。取れねば null で退化させる。
+    const userAgent = (self.navigator && self.navigator.userAgent) || null
+    const body = buildResubscribeBody(subscription.toJSON(), oldEndpoint, userAgent)
+    if (!body) {
+      console.warn("[sw] pushsubscriptionchange: 購読情報が欠けておる")
+      return
+    }
+    const res = await fetch(RESUBSCRIBE_PATH, {
+      method: "POST",
+      credentials: "same-origin",
+      redirect: "manual",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+    if (!(await isResubscribeAccepted(res))) {
+      // ⚠️ ここで購読を消したり unsubscribe したりせぬ。認証切れ・一時障害でも
+      // 同じ経路を通るゆえ、破棄は不可逆な過剰反応じゃ (「破棄は狭く」)。
+      // 次にアプリを開いた時の突き合わせが拾い直す。
+      console.warn(
+        "[sw] 購読の再登録が受理されなかった:",
+        res ? res.status : "応答なし",
+      )
+    }
+  } catch (err) {
+    // 握り潰さぬ。ここが唯一の証跡じゃ (endpoint は出さぬ)。
+    console.warn("[sw] pushsubscriptionchange の処理に失敗:", err)
+  }
+}
+
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(handlePushSubscriptionChange(event))
+})
+
 // ───────────────────────── テストフック ─────────────────────────
 // vitest (node:vm) から純粋関数を検証するための公開。実行時挙動には影響しない。
 self.__TEST_HOOKS__ = {
@@ -487,7 +612,11 @@ self.__TEST_HOOKS__ = {
   trimCache,
   extractAssetUrls,
   parsePushPayload,
+  buildResubscribeBody,
+  isResubscribeAccepted,
+  handlePushSubscriptionChange,
   CACHE_NAMES,
   APP_PAGES,
   PRECACHE_URLS,
+  RESUBSCRIBE_PATH,
 }

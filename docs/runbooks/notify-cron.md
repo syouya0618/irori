@@ -201,6 +201,48 @@ select max(sent_at) from notification_deliveries;
 
 ---
 
+## 購読の失効と自己修復（B-4）
+
+「通知が来ぬ」の半分は cron ではなく**購読側**が死んでおる。3 つの経路で守る。
+
+**① 削除は 410 / 404 だけ。**
+`src/lib/notifications/send-push.ts` の `PUSH_GONE_STATUSES` が唯一の判定源じゃ。
+401 / 403 / 429 / 5xx は**消さず再試行へ回す** — 4xx を一括で恒久扱いにすると、
+VAPID の設定ミス 1 つで全端末の購読が消し飛び、復旧には各端末での再登録が要る
+（「再試行は広く、破棄は狭く」）。集合そのものは `send-push.test.ts` が
+100..599 を総なめして、`deliver.test.ts` が 400..599 を配信層まで通して固定する。
+
+**② ブラウザが購読を回したら SW が拾う。**
+Chrome / Android は都合で購読を差し替える。`public/sw.js` の
+`pushsubscriptionchange` が新しい購読を `POST /api/push/resubscribe` へ送り直す。
+このパスは**セッション認証**ゆえ `isPublicRoute` へ足してはならぬ
+（足すと `auth.uid()` が NULL になり `upsert_push_subscription` が 28000 で落ちる）。
+機械検査は `src/app/api/push/resubscribe/__tests__/route.test.ts` が持つ。
+
+**③ アプリ起動時に突き合わせる。**
+`PushSubscriptionReconciler`（`(main)/layout.tsx`）が、ブラウザに購読が在れば
+同じ route を冪等に叩く。410 で消した行はここで生き返る。
+⚠️ `upsert_push_subscription` は再購読を「復帰」と見なして `failure_count` を
+0 に畳む設計ゆえ、**アプリを開くたびに端末ごとの失敗カウントが一度リセットされる**。
+cron は 5 分ごとに回るゆえ本当に壊れておる端末なら数分で戻るが、
+設定カードの `送信エラー N回` が 0 に見えても「直った」とは限らぬ。
+判断は `最終エラー`（`last_failure_at`）と併せて行うこと。
+
+### 画面から見る
+
+主が SQL を打たずとも、`/settings` の通知カードに同じ 2 つが出ておる:
+
+| 表示 | 対応する値 |
+|---|---|
+| 最終実行 | `notification_heartbeat.ran_at`（10 分以上前なら「動いていません」と出る） |
+| 最終配信 | 世帯の `MAX(notification_deliveries.sent_at)` |
+| 送信エラー N回 | `push_subscriptions.failure_count`（端末ごと） |
+
+閾値の 10 分は上の一次監視表と**同じ値**じゃ（`HEARTBEAT_STALE_MS`）。
+片方だけ動かすと、画面と手順書が違うことを言い出す。
+
+---
+
 ## secret の回転
 
 `NOTIFY_CRON_SECRET` は **Vercel と Vault の 2 箇所に複製されておる**。
@@ -228,6 +270,8 @@ select cron.unschedule('notify-deliveries');
 - ハンドラ: `src/app/api/cron/notify/route.ts`
 - 配信本体: `src/lib/notifications/deliver.ts`
 - テーブル: `supabase/migrations/20260808100003_notification_deliveries.sql`
+- 再登録の endpoint: `src/app/api/push/resubscribe/route.ts`（SW と起動時の突き合わせが叩く）
+- 起動時の突き合わせ: `src/components/common/push-subscription-reconciler.tsx`
 - 認可の機械検査: `e2e/cron-routes-auth.spec.ts`（proxy に食われぬこと + 鍵の分離）
 - 登録 verb の機械検査: `src/app/api/cron/notify/__tests__/runbook-contract.test.ts`
   （この手順書の `net.http_*()` とハンドラの export が食い違えば赤になる）

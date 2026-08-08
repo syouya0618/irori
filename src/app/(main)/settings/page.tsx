@@ -3,6 +3,10 @@ import { createClient } from "@/lib/supabase/server"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { getVerifiedUser } from "@/lib/supabase/verified-user"
 import { FEEDING_INTERVAL_DEFAULT } from "@/lib/domain/baby-feeding-interval"
+import {
+  formatRelativeJa,
+  summarizeNotificationHealth,
+} from "@/lib/domain/notification-health"
 import { SettingsContent } from "./settings-content"
 
 /**
@@ -71,6 +75,8 @@ export default async function SettingsPage({
     { data: pendingData, error: pendingError },
     { data: googleConnections, error: googleConnectionsError },
     { data: pushDevices, error: pushDevicesError },
+    { data: heartbeat, error: heartbeatError },
+    { data: lastDelivery, error: lastDeliveryError },
   ] = await Promise.all([
     supabase
       .from("households")
@@ -98,15 +104,54 @@ export default async function SettingsPage({
     // `42501` で落ちる（pgTAP B-6 が固定）。列は必ず明示すること。
     supabase
       .from("push_subscriptions")
-      .select("id, user_agent, created_at, last_success_at, failure_count")
+      .select(
+        "id, user_agent, created_at, last_success_at, last_failure_at, failure_count",
+      )
       .eq("user_id", userId)
       .order("created_at"),
+    // 心拍は**世帯を跨いで 1 行**（配信基盤は 1 つ）。RLS は
+    // `get_my_household_id() IS NOT NULL` ゆえ承認済みの世帯員だけが読める。
+    // ⚠️ 行が無いのは異常ではない —— migration が初期行を置かぬ設計じゃ
+    // （「まだ一度も走っておらぬ」の正直な表現）。ゆえに `.maybeSingle()`。
+    supabase
+      .from("notification_heartbeat")
+      .select("ran_at, failed_count")
+      .eq("id", 1)
+      .maybeSingle(),
+    // 「最終配信」= 世帯の MAX(sent_at)。索引
+    // `idx_notification_deliveries_sent` がこの形（household_id, sent_at DESC
+    // の部分索引）に合わせて在る。
+    supabase
+      .from("notification_deliveries")
+      .select("sent_at")
+      .eq("household_id", profile.household_id)
+      .not("sent_at", "is", null)
+      .order("sent_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
   ])
 
   if (pushDevicesError) {
     logSupabaseError("settings", "push subscriptions lookup failed", pushDevicesError, {
       userId,
     })
+  }
+
+  // 診断の取得に失敗しても画面は出す（診断が見えぬこと自体は通知を止めぬ）。
+  // ただし**握り潰さぬ** —— 見えぬ理由がログに残らねば、次に「通知が来ぬ」と
+  // 言われた時に何も辿れなくなる。
+  if (heartbeatError) {
+    logSupabaseError("settings", "notification heartbeat lookup failed", heartbeatError, {
+      userId,
+    })
+  }
+  if (lastDeliveryError) {
+    logSupabaseError(
+      "settings",
+      "last notification delivery lookup failed",
+      lastDeliveryError,
+      { householdId: profile.household_id },
+    )
   }
 
   if (googleConnectionsError) {
@@ -172,6 +217,10 @@ export default async function SettingsPage({
     })
   }
 
+  // 相対表記の基準時刻は 1 つに揃える（各所で `new Date()` を呼ぶと、
+  // 同じ画面の中で「3分前」と「4分前」が混ざりうる）。
+  const now = new Date()
+
   // ownerのみ: 承認待ちユーザー取得
   let pendingUsers: { id: string; display_name: string; email: string; created_at: string }[] = []
   if (profile.role === "owner") {
@@ -214,9 +263,18 @@ export default async function SettingsPage({
         id: device.id,
         userAgent: device.user_agent,
         createdAt: device.created_at,
-        lastSuccessAt: device.last_success_at,
+        // 相対表記は**サーバで確定させる**。クライアントのレンダー中に
+        // `Date.now()` を読むと SSR とハイドレーションで別の文字列になり得る。
+        lastSuccessLabel: formatRelativeJa(device.last_success_at, now),
+        lastFailureLabel: formatRelativeJa(device.last_failure_at, now),
         failureCount: device.failure_count,
       }))}
+      pushHealth={summarizeNotificationHealth({
+        ranAt: heartbeat?.ran_at ?? null,
+        failedCount: heartbeat?.failed_count ?? null,
+        lastSentAt: lastDelivery?.sent_at ?? null,
+        now,
+      })}
     />
   )
 }

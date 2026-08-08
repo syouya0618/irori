@@ -15,6 +15,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { deliverDueNotifications } from "../deliver"
 import type { PushSendResult, PushTarget, VapidConfig } from "../send-push"
+import { PUSH_GONE_STATUSES } from "../send-push"
 import {
   createFakeNotifySupabase,
   emptyNotifyDb,
@@ -614,6 +615,89 @@ describe("送信の失敗", () => {
     // 行は 1 本のまま（冪等キーが効いて作り直されてもおらぬ）。
     expect(db.notification_deliveries).toHaveLength(1)
     expect(db.notification_deliveries[0].sent_at).toBe(NOW)
+  })
+
+  /**
+   * ★ **削除に至る status の集合を、実物の allowlist と突き合わせる（B-4）。**
+   *
+   * ⚠️ **この総なめが何を証明し、何を証明せぬかを正直に書く。**
+   * `gone` は実物の `PUSH_GONE_STATUSES` から導いて渡しておるゆえ、これは
+   * 「渡した flag が尊重された」＋「allowlist が広がっておらぬ」の 2 点じゃ。
+   * **配信層が status を覗いておらぬこと**を弁別するのは、この下の
+   * 「矛盾した組」2 本の方であって、この総なめではない
+   * （検出器の射程を過大に語らぬ。この repo が繰り返し踏んできた誤りゆえ）。
+   *
+   * それでも置くのは、`send-push.test.ts` の総なめが送信層の中で閉じており、
+   * 「配信層まで来て実際に行が消えた」ことを一度も見ておらぬからじゃ。
+   * 見本 1 本ずつでは、列挙し忘れた status がそのまま穴になる
+   * （401 だけ置いても 403/429/503 で復活した blocklist を素通しする）。
+   */
+  it("**購読が消える status の集合は {404, 410} ちょうど**（400..599 を配信層まで通す）", async () => {
+    const deleted: number[] = []
+    for (let status = 400; status <= 599; status++) {
+      const db = seed()
+      await run(db, {
+        result: {
+          ok: false,
+          // 実物の allowlist を使う。ここを手書きの真理値表にすると
+          // 「テストの中だけ正しい」ものになる。
+          gone: PUSH_GONE_STATUSES.has(status),
+          status,
+          message: `swept ${status}`,
+        },
+      }).promise
+      if (db.push_subscriptions.length === 0) deleted.push(status)
+    }
+    expect(deleted).toEqual([404, 410])
+  })
+
+  // 表駆動。集合テストの補集合側を「1 本ずつ読める形」でも残す
+  // （失敗時にどの status で壊れたかが即座に分かる）。
+  it.each([401, 403, 408, 429, 500, 502, 503])(
+    "%i では購読を消さず、claim を解いて再試行へ回す",
+    async (status) => {
+      const db = seed()
+      const result = await run(db, {
+        result: { ok: false, gone: false, status, message: "transient" },
+      }).promise
+
+      expect(db.push_subscriptions).toHaveLength(1)
+      expect(db.push_subscriptions[0].failure_count).toBe(1)
+      expect(result.failed).toBe(1)
+      expect(db.notification_deliveries[0]).toMatchObject({
+        // 再試行に回す ＝ 行は未送信・未 skip のまま残らねばならぬ。
+        sent_at: null,
+        skipped_at: null,
+        skip_reason: null,
+      })
+    },
+  )
+
+  /**
+   * ★ **判定源は `gone` フラグただ 1 つ**（status を見ておらぬことの証明）。
+   *
+   * この 2 本は「矛盾した組」を故意に渡す。配信層が status を覗いておれば
+   * 必ずどちらかが割れる — 送信層の allowlist が正しいことは、配信層が
+   * **それに従っておること**を別に確かめねば意味を成さぬ。
+   */
+  it("`gone: false` なら status が 410 でも購読を消さぬ", async () => {
+    const db = seed()
+    await run(db, {
+      result: { ok: false, gone: false, status: 410, message: "誤読の罠" },
+    }).promise
+
+    expect(db.push_subscriptions).toHaveLength(1)
+    expect(db.notification_deliveries[0].skip_reason).toBeNull()
+  })
+
+  it("`gone: true` なら status が 500 でも購読を消す", async () => {
+    const db = seed()
+    await run(db, {
+      result: { ok: false, gone: true, status: 500, message: "誤読の罠" },
+    }).promise
+
+    expect(db.push_subscriptions).toHaveLength(0)
+    expect(db.notification_deliveries[0].skip_reason).toBe("gone")
   })
 
   it("**401 では購読を消さぬ**（VAPID 設定ミス 1 つで全端末が消し飛ぶのを止める）", async () => {

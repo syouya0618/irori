@@ -23,7 +23,15 @@
 
 import { useCallback, useEffect, useState, useTransition } from "react"
 import { toast } from "sonner"
-import { Bell, BellOff, Loader2, Smartphone, TriangleAlert } from "lucide-react"
+import {
+  Activity,
+  Bell,
+  BellOff,
+  Loader2,
+  Send,
+  Smartphone,
+  TriangleAlert,
+} from "lucide-react"
 import {
   Card,
   CardContent,
@@ -36,18 +44,29 @@ import {
   deletePushSubscription,
 } from "@/app/(main)/settings/push-actions"
 import { toastOfflineError } from "@/lib/utils/offline-error"
+import type { NotificationHealthView } from "@/lib/domain/notification-health"
 
 export interface PushDeviceView {
   id: string
   /** `summarizeUserAgent` の出力。取れなかった端末は null */
   userAgent: string | null
   createdAt: string
-  lastSuccessAt: string | null
+  /** 「3分前」等の相対表記。**サーバで組む**（下の注記を見よ） */
+  lastSuccessLabel: string | null
+  lastFailureLabel: string | null
   failureCount: number
 }
 
 interface NotificationCardProps {
   devices: PushDeviceView[]
+  /**
+   * 配信パイプラインの診断（B-4）。
+   *
+   * ⚠️ **相対表記はサーバで確定させてある。** ここで `Date.now()` を読むと
+   * SSR とハイドレーションで別の文字列になり得る（このページは cookie 依存で
+   * 毎リクエスト描かれるゆえ、サーバで組んで困ることは無い）。
+   */
+  health: NotificationHealthView
 }
 
 /** base64url の VAPID 公開鍵を `applicationServerKey` 用の Uint8Array へ変換する。 */
@@ -69,7 +88,34 @@ function formatDate(iso: string): string {
   return `${Number(month)}/${Number(day)}`
 }
 
-export function NotificationCard({ devices }: NotificationCardProps) {
+/**
+ * 診断の一言。**色ではなく文言で意味を運ぶ**（色だけに依存する表現は禁じ手じゃ）。
+ * 平穏なら null —— 何も起きておらぬ時に警告を出すと、本当の警告が薄まる。
+ */
+function healthMessageOf(health: NotificationHealthView): string | null {
+  switch (health.runState) {
+    case "never":
+      return "通知の配信はまだ一度も実行されていません。"
+    case "stale":
+      return `配信の処理が${health.ranAtLabel ?? "しばらく前"}から動いていません。通知が届かない可能性があります。`
+    case "failing":
+      return `直近の配信で ${health.failedCount} 件の失敗がありました。`
+    default:
+      return null
+  }
+}
+
+/** 端末ごとの一行。失敗が在れば**そちらを先に**見せる。 */
+function deviceStatusOf(device: PushDeviceView): string {
+  if (device.failureCount > 0) {
+    const when = device.lastFailureLabel ? `・最終エラー ${device.lastFailureLabel}` : ""
+    return `送信エラー ${device.failureCount}回${when}`
+  }
+  if (device.lastSuccessLabel) return `最終受信 ${device.lastSuccessLabel}`
+  return "まだ届いていません"
+}
+
+export function NotificationCard({ devices, health }: NotificationCardProps) {
   // 公開鍵はビルド時に埋まる（`NEXT_PUBLIC_` ゆえレンダー中に読んで安全）。
   // 未設定のまま subscribe すると、環境によっては購読が成立して「有効」に見えるのに
   // 送信が全て 403 になる ＝ **画面が嘘をつく**。ゆえに押させぬ。
@@ -80,6 +126,7 @@ export function NotificationCard({ devices }: NotificationCardProps) {
   const [denied, setDenied] = useState(false)
   const [pending, startTransition] = useTransition()
   const [working, setWorking] = useState(false)
+  const healthMessage = healthMessageOf(health)
 
   // ⚠️ setState は **promise のコールバック内**で呼ぶ（effect 本体で同期的に呼ぶと
   // React Compiler の「effect 内の同期 setState」規則に触れる）。
@@ -231,13 +278,20 @@ export function NotificationCard({ devices }: NotificationCardProps) {
                   key={device.id}
                   className="flex items-center justify-between gap-2 rounded-xl bg-muted/40 px-3 py-2"
                 >
-                  <span className="flex min-w-0 items-center gap-2 text-sm">
-                    <Smartphone size={14} className="shrink-0" />
-                    <span className="truncate">
-                      {device.userAgent ?? "不明な端末"}
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    <span className="flex min-w-0 items-center gap-2 text-sm">
+                      <Smartphone size={14} className="shrink-0" aria-hidden="true" />
+                      <span className="truncate">
+                        {device.userAgent ?? "不明な端末"}
+                      </span>
+                      <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                        {formatDate(device.createdAt)}
+                      </span>
                     </span>
-                    <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
-                      {formatDate(device.createdAt)}
+                    {/* B-1 で列は在ったが誰も読んでおらなんだ failure_count を出す。
+                        端末ごとの失敗は「1 台だけ死んでおる」を切り分ける唯一の手がかりじゃ。 */}
+                    <span className="text-xs text-muted-foreground">
+                      {deviceStatusOf(device)}
                     </span>
                   </span>
                   <Button
@@ -256,6 +310,45 @@ export function NotificationCard({ devices }: NotificationCardProps) {
             </ul>
           </div>
         )}
+
+        {/* ── 配信の状況（診断・B-4）──────────────────────────────
+            ⚠️ **「最終実行」と「最終配信」は必ず並べて出す。** 片方だけでは
+            「パイプラインが止まった」と「送るものが無かった」を区別できぬ。
+            前者は cron の心拍（送るものが無くとも進む）、後者は MAX(sent_at)
+            （静かな週は進まぬ）ゆえ、2 つ揃って初めて意味を成す。 */}
+        <div className="flex flex-col gap-1.5 rounded-xl bg-muted/40 px-3 py-2">
+          <p className="text-xs font-medium text-muted-foreground">配信の状況</p>
+          <dl className="flex flex-col gap-1 text-sm">
+            <div className="flex items-center justify-between gap-2">
+              <dt className="flex items-center gap-1.5 text-muted-foreground">
+                <Activity size={14} className="shrink-0" aria-hidden="true" />
+                最終実行
+              </dt>
+              <dd>
+                {health.runState === "never"
+                  ? "まだありません"
+                  : (health.ranAtLabel ?? "不明")}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <dt className="flex items-center gap-1.5 text-muted-foreground">
+                <Send size={14} className="shrink-0" aria-hidden="true" />
+                最終配信
+              </dt>
+              <dd>
+                {health.deliveryState === "never"
+                  ? "まだありません"
+                  : (health.lastSentLabel ?? "不明")}
+              </dd>
+            </div>
+          </dl>
+          {healthMessage && (
+            <p className="flex items-start gap-2 text-sm text-muted-foreground">
+              <TriangleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+              {healthMessage}
+            </p>
+          )}
+        </div>
       </CardContent>
     </Card>
   )

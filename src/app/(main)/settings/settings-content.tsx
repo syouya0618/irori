@@ -44,6 +44,7 @@ import {
 import { ThemeCard } from "@/components/settings/theme-card"
 import { HelpCard } from "@/components/settings/help-card"
 import type { HouseholdRole } from "@/lib/types/database"
+import type { NotificationHealthView } from "@/lib/domain/notification-health"
 
 interface SettingsContentProps {
   profile: {
@@ -71,6 +72,8 @@ interface SettingsContentProps {
   googleNotice: string | null
   /** 通知を受け取る端末（本人のみ・秘密列は含まぬ） */
   pushDevices: PushDeviceView[]
+  /** 配信パイプラインの診断（B-4）。相対表記はサーバで確定済み。 */
+  pushHealth: NotificationHealthView
 }
 
 const roleLabels: Record<HouseholdRole, string> = {
@@ -89,6 +92,7 @@ export function SettingsContent({
   googleConnections,
   googleNotice,
   pushDevices,
+  pushHealth,
 }: SettingsContentProps) {
   const [, startTransition] = useTransition()
   const [isSigningOut, setIsSigningOut] = useState(false)
@@ -168,7 +172,7 @@ export function SettingsContent({
       />
 
       {/* 通知（Web Push） */}
-      <NotificationCard devices={pushDevices} />
+      <NotificationCard devices={pushDevices} health={pushHealth} />
 
       {/* 記録エクスポート */}
       <ExportCard />

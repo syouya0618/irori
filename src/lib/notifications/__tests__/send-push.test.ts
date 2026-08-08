@@ -26,7 +26,8 @@ vi.mock("web-push", () => ({
   WebPushError: FakeWebPushError,
 }))
 
-const { sendPushNotification, readVapidConfig } = await import("../send-push")
+const { sendPushNotification, readVapidConfig, PUSH_GONE_STATUSES } =
+  await import("../send-push")
 
 const TARGET = {
   endpoint: "https://fcm.googleapis.com/secret-token",
@@ -84,6 +85,32 @@ describe("sendPushNotification", () => {
       ).resolves.toMatchObject({ ok: false, gone: false, status })
     },
   )
+
+  /**
+   * ★ **集合そのものを固定する（B-4）。**
+   *
+   * 上の 2 つは「見本」じゃ。見本だけでは `>= 400 && < 500` への書き換え
+   * （＝ 4xx 一括の blocklist）を**捕まえられぬ** — 404/410 は依然 gone ゆえ
+   * 前者は緑、401/403/429 を列挙しておらねば後者も緑になる。
+   * ゆえに **100..599 を総なめして「gone になった status の集合」を作り、
+   * それが `{404, 410}` と完全一致すること**を assert する。
+   * blocklist へ戻した瞬間、集合が 100 個ぶん膨れて必ず赤になる。
+   */
+  it("**gone になる status の集合は {404, 410} ちょうど**（100..599 を総なめ）", async () => {
+    const gone: number[] = []
+    for (let status = 100; status <= 599; status++) {
+      sendNotification.mockRejectedValueOnce(
+        new FakeWebPushError("swept", status, TARGET.endpoint),
+      )
+      const result = await sendPushNotification(TARGET, VAPID, { title: "t" })
+      if (result.ok === false && result.gone) gone.push(status)
+    }
+    expect(gone).toEqual([404, 410])
+  })
+
+  it("公開されておる allowlist 定数も同じ集合じゃ（実装と宣言の食い違いを殺す）", () => {
+    expect([...PUSH_GONE_STATUSES].sort((a, b) => a - b)).toEqual([404, 410])
+  })
 
   it("通信断（WebPushError でない例外）も gone ではない", async () => {
     sendNotification.mockRejectedValueOnce(new Error("ETIMEDOUT"))

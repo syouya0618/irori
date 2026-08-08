@@ -3,6 +3,7 @@ import { getAuthContext } from "@/lib/supabase/auth-context"
 import { BottomNav } from "@/components/common/bottom-nav"
 import { CacheUserGuard } from "@/components/common/cache-user-guard"
 import { OnboardingTour } from "@/components/common/onboarding-tour"
+import { PushSubscriptionReconciler } from "@/components/common/push-subscription-reconciler"
 
 export default async function MainLayout({
   children,
@@ -38,6 +39,9 @@ export default async function MainLayout({
     <div className="min-h-dvh bg-background">
       {/* 別ユーザーログイン時に前ユーザーの世帯キャッシュ (SW) を破棄 */}
       <CacheUserGuard userId={context.userId} />
+      {/* 410 で消された購読を起動時に張り直す（B-4）。layout ゆえクライアント
+          遷移では再マウントされず、走るのはハードロードごとに 1 回じゃ */}
+      <PushSubscriptionReconciler />
       <main className="mx-auto max-w-lg pb-20">{children}</main>
       <BottomNav />
       {/* 初回ユーザーに使い方ツアーを表示（既読は localStorage 判定・自己 gating） */}

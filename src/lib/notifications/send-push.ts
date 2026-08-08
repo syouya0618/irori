@@ -39,6 +39,29 @@ export type PushSendResult =
   | { ok: false; gone: boolean; status: number | null; message: string }
 
 /**
+ * ★ **購読を削除してよい status の allowlist（B-4）。**
+ *
+ * この集合の**外**に出た瞬間、被害は非対称に跳ね上がる:
+ *   - 狭すぎた（漏らした）→ 死んだ購読が DB に残る。cron が毎回 1 回失敗し、
+ *     `failure_count` が積み上がって設定カードに出る。**回復可能**。
+ *   - 広すぎた（4xx を一括で恒久扱いにした）→ VAPID 設定ミスや一時的な認可
+ *     エラー 1 つで**全端末の購読が消し飛び、通知が永久に止まる**。復旧には主が
+ *     各端末を開いて登録し直すしかない。**不可逆**。
+ *
+ * ゆえにここは blocklist（`>= 400 && < 500` 等）で書いてはならぬ。
+ * `send-push.test.ts` が **100..599 を総なめして集合そのものを** `{404, 410}` と
+ * 突き合わせる（1 件ずつの見本テストでは blocklist への書き換えを捕まえられぬ）。
+ *
+ * RFC 8030 §7.3 は購読の失効を 404 / 410 で表すと定めており、実際の挙動も
+ * FCM が 404 と 410 の両方を返す（410 だけに絞ると FCM の失効を取りこぼす）。
+ *
+ * ⚠️ **{@link isProvenNotDelivered}（行を再送するか）と混ぜるな。** あちらは
+ * status の**有無**だけを見る別の判断で、この集合とは交わらぬ
+ * —— 購読の生死と、その 1 通を再び送るかは別の問いじゃ。
+ */
+export const PUSH_GONE_STATUSES: ReadonlySet<number> = new Set([404, 410])
+
+/**
  * ★ **再送してよいのは「確実に届いておらぬ」と証明できる失敗だけ**（at-most-once）。
  *
  * ## なぜ「怪しきは再送」ではなく「怪しきは落とす」なのか
@@ -138,7 +161,9 @@ export async function sendPushNotification(
     if (error instanceof WebPushError) {
       return {
         ok: false,
-        gone: error.statusCode === 404 || error.statusCode === 410,
+        // ⚠️ **範囲比較で書き換えるな**（`>= 400 && < 500` は 401/403/429 を
+        // 破棄側へ引きずり込む）。判定は allowlist の集合参照ただ 1 つに保つ。
+        gone: PUSH_GONE_STATUSES.has(error.statusCode),
         status: error.statusCode,
         message: error.message,
       }

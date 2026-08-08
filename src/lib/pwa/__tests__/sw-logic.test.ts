@@ -31,15 +31,35 @@ interface DuckPushEvent {
   data?: { json: () => unknown; text: () => string } | null
 }
 
+interface ResubscribeBody {
+  endpoint: string
+  p256dh: string
+  auth: string
+  oldEndpoint?: string
+}
+
+interface DuckResponse {
+  status: number
+  headers: { get: (name: string) => string | null }
+  json: () => Promise<unknown>
+}
+
 interface TestHooks {
   classifyRequest: (request: DuckRequest, originHref: string) => string | null
   makeCacheKey: (rawUrl: string) => string
   trimCache: (cacheName: string, max?: number) => Promise<void>
   extractAssetUrls: (html: string) => string[]
   parsePushPayload: (event: DuckPushEvent | null) => PushPayload
+  buildResubscribeBody: (
+    json: { endpoint?: string; keys?: { p256dh?: string; auth?: string } } | null,
+    oldEndpoint?: string | null,
+  ) => ResubscribeBody | null
+  isResubscribeAccepted: (res: DuckResponse | null) => Promise<boolean>
+  handlePushSubscriptionChange: (event: unknown) => Promise<void>
   CACHE_NAMES: Record<string, string>
   APP_PAGES: string[]
   PRECACHE_URLS: string[]
+  RESUBSCRIBE_PATH: string
 }
 
 /**
@@ -50,7 +70,10 @@ interface TestHooks {
  * 本番では 1 通も届かぬ — CLAUDE.md の「規約ファイルは在るだけでは効いておらぬ」と
  * 同 family じゃ。ゆえに記録関数にして集合を assert できるようにする。
  */
-function loadSwWithEvents(extraGlobals: Record<string, unknown> = {}): {
+function loadSwWithEvents(
+  extraGlobals: Record<string, unknown> = {},
+  selfOverrides: Record<string, unknown> = {},
+): {
   hooks: TestHooks
   events: string[]
 } {
@@ -64,6 +87,7 @@ function loadSwWithEvents(extraGlobals: Record<string, unknown> = {}): {
     skipWaiting: () => Promise.resolve(),
     clients: { claim: () => Promise.resolve() },
     registration: { showNotification: () => Promise.resolve() },
+    ...selfOverrides,
   }
   const sandbox: Record<string, unknown> = {
     self,
@@ -79,8 +103,11 @@ function loadSwWithEvents(extraGlobals: Record<string, unknown> = {}): {
   return { hooks, events }
 }
 
-function loadSw(extraGlobals: Record<string, unknown> = {}): TestHooks {
-  return loadSwWithEvents(extraGlobals).hooks
+function loadSw(
+  extraGlobals: Record<string, unknown> = {},
+  selfOverrides: Record<string, unknown> = {},
+): TestHooks {
+  return loadSwWithEvents(extraGlobals, selfOverrides).hooks
 }
 
 function makeReq(
@@ -316,10 +343,12 @@ describe("sw.js __TEST_HOOKS__", () => {
 })
 
 describe("イベントリスナの登録", () => {
-  it("push / notificationclick を含む必要なイベントが全て登録される", () => {
+  it("push / notificationclick / pushsubscriptionchange を含む必要なイベントが全て登録される", () => {
     const { events } = loadSwWithEvents()
 
     // 集合として固定する。綴り間違い・登録漏れがそのまま赤になる。
+    // ⚠️ `pushsubscriptionchange` を落とすと、ブラウザが購読を回した瞬間に
+    // **通知が黙って止まる**（純粋関数のテストは全部緑のまま）。
     expect([...events].sort()).toEqual([
       "activate",
       "fetch",
@@ -327,7 +356,207 @@ describe("イベントリスナの登録", () => {
       "message",
       "notificationclick",
       "push",
+      "pushsubscriptionchange",
     ])
+  })
+})
+
+describe("pushsubscriptionchange（購読の張り直し・B-4）", () => {
+  const NEW_SUB = {
+    endpoint: "https://fcm.googleapis.com/new",
+    keys: { p256dh: "k-new", auth: "a-new" },
+  }
+
+  function jsonResponse(body: unknown, status = 200): DuckResponse {
+    return {
+      status,
+      headers: { get: (n: string) => (n === "content-type" ? "application/json" : null) },
+      json: () => Promise.resolve(body),
+    }
+  }
+
+  /** proxy が承認ゲートで返す HTML（セッション切れ・未承認）。 */
+  function htmlResponse(status = 200): DuckResponse {
+    return {
+      status,
+      headers: { get: (n: string) => (n === "content-type" ? "text/html; charset=utf-8" : null) },
+      json: () => Promise.reject(new Error("not json")),
+    }
+  }
+
+  interface FetchCall {
+    url: string
+    init: {
+      method?: string
+      redirect?: string
+      credentials?: string
+      body?: string
+    }
+  }
+
+  function setup(
+    options: {
+      response?: DuckResponse | (() => DuckResponse)
+      existing?: unknown
+      subscribeResult?: unknown
+      onSubscribe?: (options: unknown) => void
+    } = {},
+  ) {
+    const calls: FetchCall[] = []
+    const fetch = (url: string, init: FetchCall["init"]) => {
+      calls.push({ url, init })
+      const res = options.response ?? jsonResponse({ ok: true })
+      return Promise.resolve(typeof res === "function" ? res() : res)
+    }
+    const pushManager = {
+      getSubscription: () => Promise.resolve(options.existing ?? null),
+      subscribe: (subscribeOptions: unknown) => {
+        options.onSubscribe?.(subscribeOptions)
+        return Promise.resolve(options.subscribeResult ?? null)
+      },
+    }
+    const hooks = loadSw({ fetch }, { registration: { pushManager } })
+    return { hooks, calls }
+  }
+
+  const subscription = (json: unknown) => ({ toJSON: () => json })
+
+  it("`event.newSubscription` をそのままサーバへ登録し直す", async () => {
+    const { hooks, calls } = setup()
+    await hooks.handlePushSubscriptionChange({
+      newSubscription: subscription(NEW_SUB),
+      oldSubscription: { endpoint: "https://fcm.googleapis.com/old" },
+    })
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url).toBe("/api/push/resubscribe")
+    expect(calls[0].init.method).toBe("POST")
+    // ⚠️ 承認ゲートの 307 を追わせぬ（追うと HTML の 200 を成功と誤読する）。
+    expect(calls[0].init.redirect).toBe("manual")
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({
+      endpoint: NEW_SUB.endpoint,
+      p256dh: "k-new",
+      auth: "a-new",
+      oldEndpoint: "https://fcm.googleapis.com/old",
+    })
+  })
+
+  it("newSubscription が無ければ `getSubscription()` を使う（Firefox 等）", async () => {
+    const { hooks, calls } = setup({ existing: subscription(NEW_SUB) })
+    await hooks.handlePushSubscriptionChange({})
+
+    expect(calls).toHaveLength(1)
+    expect(JSON.parse(calls[0].init.body as string).endpoint).toBe(NEW_SUB.endpoint)
+  })
+
+  it("どちらも無ければ旧購読の applicationServerKey で subscribe し直す", async () => {
+    const seen: unknown[] = []
+    const { hooks, calls } = setup({
+      subscribeResult: subscription(NEW_SUB),
+      onSubscribe: (o) => seen.push(o),
+    })
+    await hooks.handlePushSubscriptionChange({
+      oldSubscription: {
+        endpoint: "https://fcm.googleapis.com/old",
+        options: { applicationServerKey: "key-bytes", userVisibleOnly: true },
+      },
+    })
+
+    // Safari は不可視 push を許さぬ。登録時と同じ条件で張り直す。
+    expect(seen).toEqual([
+      { userVisibleOnly: true, applicationServerKey: "key-bytes" },
+    ])
+    expect(calls).toHaveLength(1)
+  })
+
+  it("鍵の出所が無ければ**何もせぬ**（推測の鍵で 403 の購読を自作せぬ）", async () => {
+    const { hooks, calls } = setup()
+    await hooks.handlePushSubscriptionChange({
+      oldSubscription: { endpoint: "https://fcm.googleapis.com/old" },
+    })
+    expect(calls).toEqual([])
+  })
+
+  it("fetch が落ちても throw せぬ（waitUntil を壊さぬ）", async () => {
+    const hooks = loadSw(
+      {
+        fetch: () => Promise.reject(new Error("offline")),
+      },
+      { registration: { pushManager: { getSubscription: () => Promise.resolve(null) } } },
+    )
+    await expect(
+      hooks.handlePushSubscriptionChange({ newSubscription: subscription(NEW_SUB) }),
+    ).resolves.toBeUndefined()
+  })
+
+  describe("isResubscribeAccepted — **`res.ok` を信じてはならぬ**", () => {
+    it("JSON の { ok: true } だけを受理とする", async () => {
+      const hooks = loadSw()
+      await expect(hooks.isResubscribeAccepted(jsonResponse({ ok: true }))).resolves.toBe(
+        true,
+      )
+    })
+
+    it("proxy の承認ゲートが返す HTML 200 は受理せぬ（**これが V8 型の罠じゃ**）", async () => {
+      const hooks = loadSw()
+      // セッション切れ → /login へ 307 → fetch が追えば HTML の 200 が返り、
+      // `res.ok` は true になる。何も登録されておらぬのに成功と記録してしまう。
+      await expect(hooks.isResubscribeAccepted(htmlResponse(200))).resolves.toBe(false)
+    })
+
+    it("redirect: manual の opaqueredirect（status 0）も受理せぬ", async () => {
+      const hooks = loadSw()
+      await expect(
+        hooks.isResubscribeAccepted({
+          status: 0,
+          headers: { get: () => null },
+          json: () => Promise.reject(new Error("opaque")),
+        }),
+      ).resolves.toBe(false)
+    })
+
+    it("JSON でも { ok: false } は受理せぬ", async () => {
+      const hooks = loadSw()
+      await expect(
+        hooks.isResubscribeAccepted(jsonResponse({ ok: false })),
+      ).resolves.toBe(false)
+    })
+
+    it("応答が無い（null）でも throw せぬ", async () => {
+      const hooks = loadSw()
+      await expect(hooks.isResubscribeAccepted(null)).resolves.toBe(false)
+    })
+  })
+
+  describe("buildResubscribeBody", () => {
+    const hooks = loadSw()
+
+    it("鍵が欠けておれば null（送らぬ）", () => {
+      expect(
+        hooks.buildResubscribeBody({ endpoint: "https://x/y", keys: { p256dh: "k" } }),
+      ).toBeNull()
+      expect(hooks.buildResubscribeBody({ keys: { p256dh: "k", auth: "a" } })).toBeNull()
+      expect(hooks.buildResubscribeBody(null)).toBeNull()
+    })
+
+    it("oldEndpoint が新しい endpoint と同じなら載せぬ（消す対象が無い）", () => {
+      expect(
+        hooks.buildResubscribeBody(NEW_SUB, NEW_SUB.endpoint),
+      ).toEqual({ endpoint: NEW_SUB.endpoint, p256dh: "k-new", auth: "a-new" })
+    })
+
+    it("oldEndpoint が無くても body は組める", () => {
+      expect(hooks.buildResubscribeBody(NEW_SUB, null)).toEqual({
+        endpoint: NEW_SUB.endpoint,
+        p256dh: "k-new",
+        auth: "a-new",
+      })
+    })
+  })
+
+  it("登録先パスは Route Handler と一致する（手動同期の綻びを殺す）", () => {
+    const hooks = loadSw()
+    expect(hooks.RESUBSCRIBE_PATH).toBe("/api/push/resubscribe")
   })
 })
 
