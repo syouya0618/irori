@@ -5,7 +5,9 @@
  * - オンラインで訪問済みの APP_PAGES の HTML / RSC payload をオフラインでも閲覧可能にする
  * - 復帰後は network-first により常に最新を取得してキャッシュを更新する
  * - 別オリジン (Supabase 等) と非 GET (Server Action POST) は一切触らない
- * - オフライン書き込み・Push 通知はスコープ外
+ * - オフライン書き込みはスコープ外
+ * - **Push 通知**: push / notificationclick / pushsubscriptionchange を扱う。
+ *   受け取ったら**必ず可視通知を出すこと** — 出さねば Safari が権限を剥奪する。
  */
 
 // キャッシュスキーマ (キャッシュ名・分類ロジック・キー形式) を変更した時のみ手動で bump する。
@@ -405,6 +407,78 @@ self.addEventListener("message", (event) => {
   )
 })
 
+// ───────────────────────── push ハンドラ ─────────────────────────
+
+// ⚠️ **受け取ったら必ず可視通知を出すこと。** Apple 公式:
+//   "Safari doesn't support invisible push notifications. ... If you don't
+//    [present immediately], Safari revokes the push notification permission
+//    for your site."
+// ペイロードが壊れていても・空でも、汎用文言で必ず showNotification する。
+// ここで例外を投げたり無言で return したりすると、権限そのものを失う。
+function parsePushPayload(event) {
+  const fallback = { title: "irori", body: "新しいお知らせがあります" }
+  if (!event || !event.data) return fallback
+  try {
+    const parsed = event.data.json()
+    if (!parsed || typeof parsed !== "object") return fallback
+    return {
+      title: typeof parsed.title === "string" && parsed.title ? parsed.title : fallback.title,
+      body: typeof parsed.body === "string" && parsed.body ? parsed.body : fallback.body,
+      url: typeof parsed.url === "string" ? parsed.url : undefined,
+      tag: typeof parsed.tag === "string" ? parsed.tag : undefined,
+    }
+  } catch {
+    // json() が落ちたらテキストとして拾う。それも駄目なら汎用文言。
+    try {
+      const text = event.data.text()
+      return text ? { ...fallback, body: text } : fallback
+    } catch {
+      return fallback
+    }
+  }
+}
+
+self.addEventListener("push", (event) => {
+  const payload = parsePushPayload(event)
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body: payload.body,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
+      tag: payload.tag,
+      data: { url: payload.url || "/calendar" },
+    })
+  )
+})
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close()
+  const target = (event.notification.data && event.notification.data.url) || "/calendar"
+  event.waitUntil(
+    (async () => {
+      const clientList = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      })
+      for (const client of clientList) {
+        if ("focus" in client) {
+          await client.focus()
+          // 既存タブは focus しても日付が動かぬため navigate まで行う
+          if ("navigate" in client) {
+            try {
+              await client.navigate(target)
+            } catch {
+              // navigate 不可（別オリジン等）なら focus のみで諦める
+            }
+          }
+          return
+        }
+      }
+      await self.clients.openWindow(target)
+    })()
+  )
+})
+
 // ───────────────────────── テストフック ─────────────────────────
 // vitest (node:vm) から純粋関数を検証するための公開。実行時挙動には影響しない。
 self.__TEST_HOOKS__ = {
@@ -412,6 +486,7 @@ self.__TEST_HOOKS__ = {
   makeCacheKey,
   trimCache,
   extractAssetUrls,
+  parsePushPayload,
   CACHE_NAMES,
   APP_PAGES,
   PRECACHE_URLS,
