@@ -409,6 +409,13 @@ self.addEventListener("message", (event) => {
 
 // ───────────────────────── push ハンドラ ─────────────────────────
 
+// 着地先が読めぬ通知（旧いペイロード・壊れた data）の退化先。
+// src/lib/domain/calendar-link.ts の CALENDAR_PATH と**手動同期**すること
+// (classic script ゆえ import できぬ。APP_PAGES と同じ約束じゃ)。
+// **push ハンドラより前に置く**: 下の notificationclick 節へ戻すと、`const` の
+// TDZ ゆえ「評価中に読む」経路を将来足した瞬間に落ちる。
+const DEFAULT_NOTIFICATION_URL = "/calendar"
+
 // ⚠️ **受け取ったら必ず可視通知を出すこと。** Apple 公式:
 //   "Safari doesn't support invisible push notifications. ... If you don't
 //    [present immediately], Safari revokes the push notification permission
@@ -446,37 +453,69 @@ self.addEventListener("push", (event) => {
       icon: "/icons/icon-192.png",
       badge: "/icons/icon-192.png",
       tag: payload.tag,
-      data: { url: payload.url || "/calendar" },
+      // B-6: `url` は `?date=` を含む（`calendarUrlForDate()`）。既定値は
+      // `notificationTargetUrl` と同じ定数を使う（綴りを 2 箇所に持たぬ）。
+      data: { url: payload.url || DEFAULT_NOTIFICATION_URL },
     })
   )
 })
 
-self.addEventListener("notificationclick", (event) => {
-  event.notification.close()
-  const target = (event.notification.data && event.notification.data.url) || "/calendar"
-  event.waitUntil(
-    (async () => {
-      const clientList = await self.clients.matchAll({
-        type: "window",
-        includeUncontrolled: true,
-      })
-      for (const client of clientList) {
-        if ("focus" in client) {
-          await client.focus()
-          // 既存タブは focus しても日付が動かぬため navigate まで行う
-          if ("navigate" in client) {
-            try {
-              await client.navigate(target)
-            } catch {
-              // navigate 不可（別オリジン等）なら focus のみで諦める
-            }
-          }
-          return
+/**
+ * 通知の着地先 URL。`push` が `data.url` へ入れた値をそのまま使う。
+ *
+ * サーバは `calendarUrlForDate()` で `/calendar?date=YYYY-MM-DD` を組む（B-6）。
+ * **この関数がクエリを落とすと、通知は正しい日を運んでおるのに今日が開く** ——
+ * ゆえに pathname だけを取り出すような「正規化」を足してはならぬ。
+ */
+function notificationTargetUrl(notification) {
+  const url = notification && notification.data && notification.data.url
+  return typeof url === "string" && url ? url : DEFAULT_NOTIFICATION_URL
+}
+
+/**
+ * 通知タップの本体。**既存タブがあっても必ず `navigate` まで行う**のが要点じゃ。
+ *
+ * `focus()` だけでは開いておるタブがそのまま前に出るだけで、URL は動かぬ。
+ * 「前日20時」の通知や毎朝のまとめは**今日でない日**を指すゆえ、focus だけでは
+ * 主は違う日のカレンダーを見せられる（B-6 の直す対象そのものじゃ）。
+ *
+ * navigate は SW に制御されておらぬ client では reject する。そのときは focus だけで
+ * 諦める —— ここで `openWindow` へ落とすとタブが二重に開く（同じ画面が 2 つ並ぶ
+ * 方が、日付が動かぬより始末が悪い）。ただし**黙って諦めてはならぬ**:
+ * 「通知を叩いたのに日が動かぬ」を後から追える唯一の証跡ゆえ warn を残す。
+ */
+async function handleNotificationClick(event) {
+  // async 関数の body は最初の await までは同期に走る。ゆえにここで閉じてよい
+  // （通知はタップ直後に消えねば、押しても残るように見える）。
+  if (event && event.notification && typeof event.notification.close === "function") {
+    event.notification.close()
+  }
+  const target = notificationTargetUrl(event && event.notification)
+  const clientList = await self.clients.matchAll({
+    type: "window",
+    includeUncontrolled: true,
+  })
+  for (const client of clientList) {
+    if ("focus" in client) {
+      await client.focus()
+      // 既存タブは focus しても日付が動かぬため navigate まで行う
+      if ("navigate" in client) {
+        try {
+          await client.navigate(target)
+        } catch (err) {
+          console.warn("[sw] 既存タブを navigate できなかった:", target, err)
         }
+      } else {
+        console.warn("[sw] client.navigate が無く日付を動かせなかった:", target)
       }
-      await self.clients.openWindow(target)
-    })()
-  )
+      return
+    }
+  }
+  await self.clients.openWindow(target)
+}
+
+self.addEventListener("notificationclick", (event) => {
+  event.waitUntil(handleNotificationClick(event))
 })
 
 // ─────────────────── pushsubscriptionchange (失効処理・B-4) ───────────────────
@@ -612,6 +651,8 @@ self.__TEST_HOOKS__ = {
   trimCache,
   extractAssetUrls,
   parsePushPayload,
+  notificationTargetUrl,
+  handleNotificationClick,
   buildResubscribeBody,
   isResubscribeAccepted,
   handlePushSubscriptionChange,
@@ -619,4 +660,5 @@ self.__TEST_HOOKS__ = {
   APP_PAGES,
   PRECACHE_URLS,
   RESUBSCRIBE_PATH,
+  DEFAULT_NOTIFICATION_URL,
 }

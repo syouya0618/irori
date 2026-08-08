@@ -78,9 +78,18 @@ describe("buildDigestNotification — 本文", () => {
     expect(payload).toEqual({
       title: "今日の予定 2件",
       body: "歯医者 10:00 / 買い物 14:00",
-      url: "/calendar",
+      // B-6: 着地先は**そのまとめの日**。素の "/calendar" は「開いた時の今日」ゆえ、
+      // grace の中で日を跨いで叩かれると本文と違う日を映す。
+      url: `/calendar?date=${DAY}`,
       tag: `digest:${DAY}`,
     })
+  })
+
+  it("**着地先はまとめの日**（dedupe_day と同じ JST 暦日）", () => {
+    const payload = buildDigestNotification("2026-09-01", [
+      event({ title: "検診", start_date: "2026-09-01", is_all_day: true, start_at: null }),
+    ])
+    expect(payload?.url).toBe("/calendar?date=2026-09-01")
   })
 
   it("終日は先に出し、時刻の代わりに「終日」と書く", () => {

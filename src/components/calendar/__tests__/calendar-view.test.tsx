@@ -59,7 +59,7 @@ import {
   fetchEventReminder,
   setEventReminder,
 } from "@/app/(main)/calendar/actions"
-import { jstWallClockToIso } from "@/lib/utils/date-jst"
+import { jstWallClockToIso, todayJstString } from "@/lib/utils/date-jst"
 
 function ev(o: Partial<CalendarEventRecord> & { id: string }): CalendarEventRecord {
   return {
@@ -195,6 +195,81 @@ describe("CalendarView", () => {
     expect(screen.getByText("2026年8月")).toBeInTheDocument()
     // アジェンダの対象日が 8月1日 に寄る(今日=7月のままにしない)
     expect(screen.getByText(/8月1日 の予定/)).toBeInTheDocument()
+  })
+})
+
+/**
+ * B-6: 通知の着地日（`/calendar?date=`）。
+ *
+ * サーバは `resolveCalendarDateView` で **選択日と月を対で** 導き、両方を渡す。
+ * ここは受け取り側 —— 渡された日で開くこと・省略時は従来どおり今日であること・
+ * 壊れた値で画面を落とさぬことを固定する（`initialSelectedDate` を無視する実装は
+ * 「日をタップする」既存テストを全部緑で通り抜ける）。
+ */
+describe("CalendarView — initialSelectedDate（B-6）", () => {
+  it("渡された日でアジェンダが開き、その日のセルが選択状態になる", () => {
+    render(
+      <CalendarView
+        householdId="house-1"
+        initialMonthFirst="2026-09-01"
+        initialSelectedDate="2026-09-01"
+        initialEvents={[ev({ id: "e1", title: "検診", start_date: "2026-09-01" })]}
+      />,
+    )
+    expect(screen.getByText("2026年9月")).toBeInTheDocument()
+    expect(screen.getByText(/9月1日 の予定/)).toBeInTheDocument()
+    // 色だけでなく aria-pressed でも選択が分かること（設計規約: 色依存の禁止）。
+    expect(screen.getByRole("button", { name: "2026-09-01 を選択" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    )
+    const agenda = screen.getByText(/9月1日 の予定/).closest("section")!
+    expect(within(agenda).getByText("検診")).toBeInTheDocument()
+  })
+
+  it("月の途中の日でも、その日が選ばれる（月初へ丸めぬ）", () => {
+    render(
+      <CalendarView
+        householdId="house-1"
+        initialMonthFirst="2026-09-01"
+        initialSelectedDate="2026-09-20"
+        initialEvents={[]}
+      />,
+    )
+    expect(screen.getByText(/9月20日 の予定/)).toBeInTheDocument()
+  })
+
+  it("省略すれば従来どおり今日（既存の振る舞いを変えぬ）", () => {
+    const today = todayJstString()
+    render(
+      <CalendarView
+        householdId="house-1"
+        initialMonthFirst={`${today.slice(0, 7)}-01`}
+        initialEvents={[]}
+      />,
+    )
+    expect(screen.getByRole("button", { name: `${today} を選択` })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    )
+  })
+
+  it("不正な日付が届いても画面は死なず今日へ倒れる（二重の防御）", () => {
+    // サーバ側で既に締めておるゆえ本来到達せぬが、ここが throw すると
+    // buildMonthGrid まで巻き込んで**カレンダーが白紙**になる。
+    const today = todayJstString()
+    render(
+      <CalendarView
+        householdId="house-1"
+        initialMonthFirst={`${today.slice(0, 7)}-01`}
+        initialSelectedDate="2026-02-30"
+        initialEvents={[]}
+      />,
+    )
+    expect(screen.getByRole("button", { name: `${today} を選択` })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    )
   })
 })
 

@@ -3,7 +3,8 @@ import { logSupabaseError } from "@/lib/supabase/log-error"
 import { CalendarView } from "@/components/calendar/calendar-view"
 import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
 import { CALENDAR_EVENT_COLUMNS } from "@/lib/domain/calendar-event-columns"
-import { currentMonthFirstJst, gridRangeOf } from "@/lib/domain/calendar-grid"
+import { gridRangeOf } from "@/lib/domain/calendar-grid"
+import { resolveCalendarDateView } from "@/lib/domain/calendar-link"
 import { maybeScheduleSync } from "@/lib/google/sync-trigger"
 
 /**
@@ -13,12 +14,36 @@ import { maybeScheduleSync } from "@/lib/google/sync-trigger"
  */
 export const maxDuration = 30
 
-export default async function CalendarPage() {
+/**
+ * B-6: 通知の着地先。`?date=YYYY-MM-DD` でその日のカレンダーを開く。
+ *
+ * **サーバ側で読む**のが要点じゃ（`settings/page.tsx` の `?google=` と同じ判断）:
+ * 選択日は月グリッドの取得範囲そのものを決めるゆえ、client で
+ * `useSearchParams()` してから直すと、**必ず一度は違う月を描いて**から
+ * 差し替わる（＝ 通知から開いた瞬間に今月がちらつき、範囲外の日を
+ * 「予定はありません」と見せる窓が空く）。
+ *
+ * Next.js 16 では `searchParams` は **Promise** じゃ（await 必須）。
+ * 一次情報: node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/page.md
+ * > "Since the `searchParams` prop is a promise. You must use `async/await` or
+ * >  React's `use` function to access the values."
+ *
+ * 検証は `resolveCalendarDateView` に閉じてある（不正な日付は今日へ倒れ、
+ * 月は必ず選択日から導かれる）。ここで日と月を別々に決めてはならぬ。
+ */
+export default async function CalendarPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>
+}) {
   const { context } = await getAuthContext()
   if (!context) return null
   const { supabase, householdId, userId } = context
 
-  const monthFirst = currentMonthFirstJst()
+  const resolvedSearchParams = await searchParams
+  const { selectedDate, monthFirst } = resolveCalendarDateView(
+    resolvedSearchParams.date,
+  )
   const { gridStart, gridEnd } = gridRangeOf(monthFirst)
 
   // 同期トリガは **getAuthContext を通った後**に置く。同梱 docs の
@@ -63,6 +88,8 @@ export default async function CalendarPage() {
       initialEvents={(events as unknown as CalendarEventRecord[]) ?? []}
       householdId={householdId}
       initialMonthFirst={monthFirst}
+      // B-6: `?date=` の着地日。**月と対で渡す**（片方だけでは月跨ぎで割れる）。
+      initialSelectedDate={selectedDate}
       // V7: Realtime を使わぬ代わりに、同期を予約したときだけ client が
       // last_synced_at の前進をポーリングして refetch する。削除のみの
       // 同期サイクルは calendar_events に INSERT/UPDATE を生まぬため、

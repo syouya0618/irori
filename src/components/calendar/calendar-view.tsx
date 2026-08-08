@@ -45,6 +45,12 @@ interface CalendarViewProps {
   householdId: string
   initialMonthFirst: string
   /**
+   * B-6: 最初に開く日（通知の `/calendar?date=`）。省略なら今日。
+   * `initialMonthFirst` と**同じ月**でなければ月グリッドと乖離する
+   * （サーバは `resolveCalendarDateView` で両方を同時に導いておる）。
+   */
+  initialSelectedDate?: string
+  /**
    * V7: サーバが `after()` で Google 同期を予約したか。
    * true のときだけ `last_synced_at` を数回ポーリングして前進を待つ。
    */
@@ -76,11 +82,17 @@ export function CalendarView({
   initialEvents,
   householdId,
   initialMonthFirst,
+  initialSelectedDate,
   syncScheduled = false,
   initialGoogleSyncedAt = null,
   defaultReminderMinutes = null,
 }: CalendarViewProps) {
-  const m = useMonthEvents({ initialEvents, householdId, initialMonthFirst })
+  const m = useMonthEvents({
+    initialEvents,
+    householdId,
+    initialMonthFirst,
+    initialSelectedDate,
+  })
   const [pending, startTransition] = useTransition()
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editing, setEditing] = useState<CalendarEventRecord | null>(null)

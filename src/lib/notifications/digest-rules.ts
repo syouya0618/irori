@@ -15,6 +15,7 @@
 
 import { formatJstTimeInput, jstWallClockToIso } from "@/lib/utils/date-jst"
 import { parseDigestTimeHm } from "@/lib/domain/notification-digest"
+import { calendarUrlForDate } from "@/lib/domain/calendar-link"
 import {
   DELIVERY_GRACE_MS,
   type NotificationPayload,
@@ -132,7 +133,10 @@ export function buildDigestNotification(
   return {
     title: `今日の予定 ${events.length}件`,
     body: rest > 0 ? `${shown.join(" / ")} ほか${rest}件` : shown.join(" / "),
-    url: "/calendar",
+    // B-6: **その日**を明示して着地させる。素の `/calendar` は「開いた時の今日」
+    // ゆえ、grace の中で日を跨いで叩かれた通知（23:5x のまとめを 00:0x に開く）は
+    // 本文と違う日を映す。`day` は dedupe_day と同じ JST 暦日じゃ。
+    url: calendarUrlForDate(day),
     // 同じ日のダイジェストが万一 2 通届いても、端末側で 1 つに畳ませる
     // （本命は DB の UNIQUE と claim。これは最後の受け皿じゃ）。
     tag: `digest:${day}`,

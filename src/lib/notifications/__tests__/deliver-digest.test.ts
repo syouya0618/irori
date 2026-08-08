@@ -266,6 +266,8 @@ describe("catch-up — cron を 1 回落としても届く", () => {
       title: "今日の予定 2件",
       body: "歯医者 10:00 / 買い物 14:00",
       tag: `digest:${DAY}`,
+      // B-6: 着地先が送信の直前まで残っておること（間引かれておらぬこと）。
+      url: `/calendar?date=${DAY}`,
     })
     expect(digestRows(db)[0].sent_at).toBe(TICK_LATE)
   })

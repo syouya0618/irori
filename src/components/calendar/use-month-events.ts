@@ -16,7 +16,7 @@ import {
 } from "@/lib/domain/calendar-grid"
 import { CALENDAR_EVENT_COLUMNS } from "@/lib/domain/calendar-event-columns"
 import { useVisibilityRefetch } from "@/lib/hooks/use-visibility-refetch"
-import { todayJstString } from "@/lib/utils/date-jst"
+import { isValidYmd, todayJstString } from "@/lib/utils/date-jst"
 import type { CalendarEventSource } from "@/lib/types/database"
 
 /** 作成の楽観行に使うローカル擬似 id の prefix。 */
@@ -39,16 +39,28 @@ interface UseMonthEventsArgs {
   initialEvents: CalendarEventRecord[]
   householdId: string
   initialMonthFirst: string
+  /**
+   * B-6: 最初に開く日（通知の `?date=`）。省略・不正なら今日。
+   *
+   * **`initialMonthFirst` と同じ月であること**が前提じゃ。両方
+   * `resolveCalendarDateView` から取れば構造的に守られる（サーバがそうしておる）。
+   */
+  initialSelectedDate?: string
 }
 
 export function useMonthEvents({
   initialEvents,
   householdId,
   initialMonthFirst,
+  initialSelectedDate,
 }: UseMonthEventsArgs) {
   const [events, setEvents] = useState<CalendarEventRecord[]>(initialEvents)
   const [monthFirst, setMonthFirst] = useState(monthFirstOf(initialMonthFirst))
-  const [selectedDate, setSelectedDate] = useState<string>(todayJstString())
+  // 不正値は今日へ倒す。サーバ（`resolveCalendarDateView`）が既に締めておるゆえ
+  // ここは二重の防御じゃが、`isValidYmd` は同じ 1 実装を呼んでおる（二重実装ではない）。
+  const [selectedDate, setSelectedDate] = useState<string>(
+    isValidYmd(initialSelectedDate) ? initialSelectedDate : todayJstString(),
+  )
 
   const monthFirstRef = useRef(monthFirst)
   useEffect(() => {

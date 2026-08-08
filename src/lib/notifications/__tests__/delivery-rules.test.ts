@@ -247,9 +247,24 @@ describe("buildEventNotification", () => {
     expect(buildEventNotification(event())).toEqual({
       title: "歯医者",
       body: "8月15日 10:00 開始",
-      url: "/calendar",
+      // B-6: 着地先は**予定の開始日**。素の "/calendar" だと prev_day_20 の通知は
+      // 「翌日の予定を報しながら今日」を開く。
+      url: "/calendar?date=2026-08-15",
       tag: "event:e1",
     })
+  })
+
+  it("**着地先が予定の日を指す**（本文の日付と画面が一致する）", () => {
+    // prev_day_20 は前日に鳴るゆえ、ここが今日を指すと必ず外れる。
+    expect(buildEventNotification(event({ start_date: "2026-09-01" })).url).toBe(
+      "/calendar?date=2026-09-01",
+    )
+  })
+
+  it("start_date が壊れておれば素の /calendar へ倒す（在りもせぬ日を指さぬ）", () => {
+    expect(buildEventNotification(event({ start_date: "2026-02-30" })).url).toBe(
+      "/calendar",
+    )
   })
 
   it("終日は「終日」と出す（start_at が無くとも本文が作れる）", () => {

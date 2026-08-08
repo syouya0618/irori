@@ -16,6 +16,7 @@
  */
 
 import { toJstDateString, formatJstTimeInput } from "@/lib/utils/date-jst"
+import { calendarUrlForDate } from "@/lib/domain/calendar-link"
 
 /**
  * grace window。**この幅を超えて遅れた通知は送らずに捨てる。**
@@ -193,6 +194,10 @@ function formatYmdLabel(ymd: string): string {
  *
  * `tag` は端末側で同じ通知を畳ませるための鍵。万一同じ行が 2 度届いても
  * ロック画面に 2 つ積まれぬ最後の受け皿じゃ（本命は DB の UNIQUE と claim）。
+ *
+ * `url` に**予定の開始日を載せる**（B-6）。素の `/calendar` だと `prev_day_20` は
+ * 前日に鳴るゆえ、叩いた主は**翌日の予定を報されながら今日**を開く。日付は
+ * 本文が既に語っておるのに画面が違う日を出す ＝ 通知が嘘に見える。
  */
 export function buildEventNotification(event: EventSnapshot): NotificationPayload {
   const when =
@@ -203,7 +208,7 @@ export function buildEventNotification(event: EventSnapshot): NotificationPayloa
   return {
     title: event.title,
     body: when,
-    url: "/calendar",
+    url: calendarUrlForDate(event.start_date),
     tag: `event:${event.event_uid}`,
   }
 }

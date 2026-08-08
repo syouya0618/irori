@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { runInNewContext } from "node:vm"
+// classic script の sw.js は import できぬゆえ、手動同期の綻びをここで殺す
+// （既定の着地先がアプリ側の定数と一致することを機械で縛る）。
+import { CALENDAR_PATH } from "@/lib/domain/calendar-link"
 
 /**
  * public/sw.js の純粋関数 (self.__TEST_HOOKS__) を node:vm で実行して検証する。
@@ -61,6 +64,12 @@ interface TestHooks {
   ) => ResubscribeBody | null
   isResubscribeAccepted: (res: DuckResponse | null) => Promise<boolean>
   handlePushSubscriptionChange: (event: unknown) => Promise<void>
+  // B-6: 通知の着地先。`unknown` で受けるのは duck 実装（notification も client も
+  // 最小のスタブ）を渡すためじゃ。**戻りは string / Promise<void> で締める** ——
+  // 全部 `unknown` にすると「クエリを落としておらぬ」を型が助けてくれぬ。
+  notificationTargetUrl: (notification: unknown) => string
+  handleNotificationClick: (event: unknown) => Promise<void>
+  DEFAULT_NOTIFICATION_URL: string
   CACHE_NAMES: Record<string, string>
   APP_PAGES: string[]
   PRECACHE_URLS: string[]
@@ -702,5 +711,144 @@ describe("parsePushPayload", () => {
       title: "irori",
       body: "新しいお知らせがあります",
     })
+  })
+})
+
+/**
+ * notificationclick — **通知の着地日**（B-6）。
+ *
+ * ここが「focus だけ」に戻ると、通知は正しい日（`?date=`）を運んでおるのに
+ * 既存タブは開いたままの日を映す —— 「前日20時」の通知と毎朝のまとめは
+ * **今日でない日**を指すゆえ、それは毎回外れることを意味する。
+ * 純粋関数のテストでは捕まらぬ（本文も URL も正しいのに画面だけ違う）ゆえ、
+ * ハンドラ本体を `__TEST_HOOKS__` から呼んで navigate 先まで見る。
+ */
+describe("notificationclick — 既存タブの日付を動かす（B-6）", () => {
+  const TARGET = "/calendar?date=2026-09-01"
+
+  interface ClientCall {
+    focused: boolean
+    navigated: string[]
+  }
+
+  function makeClient(options: { canNavigate?: boolean; navigateFails?: boolean } = {}) {
+    const record: ClientCall = { focused: false, navigated: [] }
+    const client: Record<string, unknown> = {
+      focus: () => {
+        record.focused = true
+        return Promise.resolve(client)
+      },
+    }
+    if (options.canNavigate !== false) {
+      client.navigate = (url: string) => {
+        record.navigated.push(url)
+        return options.navigateFails
+          ? Promise.reject(new Error("not controlled"))
+          : Promise.resolve(client)
+      }
+    }
+    return { client, record }
+  }
+
+  function setup(clients: unknown[]) {
+    const opened: string[] = []
+    const hooks = loadSw(
+      {},
+      {
+        clients: {
+          matchAll: () => Promise.resolve(clients),
+          openWindow: (url: string) => {
+            opened.push(url)
+            return Promise.resolve(null)
+          },
+        },
+      },
+    )
+    return { hooks, opened }
+  }
+
+  const clickEvent = (url?: unknown, onClose?: () => void) => ({
+    notification: {
+      data: url === undefined ? {} : { url },
+      close: onClose ?? (() => {}),
+    },
+  })
+
+  it("既存タブを focus し、**`?date=` 付きの URL へ navigate する**", async () => {
+    const { client, record } = makeClient()
+    const { hooks, opened } = setup([client])
+
+    await hooks.handleNotificationClick(clickEvent(TARGET))
+
+    expect(record.focused).toBe(true)
+    // focus だけで満足しておらぬこと = B-6 の核心。
+    expect(record.navigated).toEqual([TARGET])
+    // 既存タブが在るのに窓を増やさぬ（同じ画面が 2 つ並ぶのは始末が悪い）。
+    expect(opened).toEqual([])
+  })
+
+  it("通知を閉じておる（押しても残るように見せぬ）", async () => {
+    let closed = 0
+    const { client } = makeClient()
+    const { hooks } = setup([client])
+    await hooks.handleNotificationClick(clickEvent(TARGET, () => (closed += 1)))
+    expect(closed).toBe(1)
+  })
+
+  it("タブが無ければ `?date=` 付きで新しく開く", async () => {
+    const { hooks, opened } = setup([])
+    await hooks.handleNotificationClick(clickEvent(TARGET))
+    expect(opened).toEqual([TARGET])
+  })
+
+  it("navigate が拒まれても throw せぬ（waitUntil を壊さぬ）", async () => {
+    // 対で置く: 制御外の client では navigate が reject する。focus までは効く。
+    const { client, record } = makeClient({ navigateFails: true })
+    const { hooks, opened } = setup([client])
+
+    await expect(hooks.handleNotificationClick(clickEvent(TARGET))).resolves.toBeUndefined()
+    expect(record.focused).toBe(true)
+    expect(record.navigated).toEqual([TARGET])
+    // 二重に窓を開かぬ（日付が動かぬ方がまだ軽い、という判断を固定する）。
+    expect(opened).toEqual([])
+  })
+
+  it("navigate を持たぬ client でも落ちぬ", async () => {
+    const { client, record } = makeClient({ canNavigate: false })
+    const { hooks, opened } = setup([client])
+    await expect(hooks.handleNotificationClick(clickEvent(TARGET))).resolves.toBeUndefined()
+    expect(record.focused).toBe(true)
+    expect(opened).toEqual([])
+  })
+
+  describe("notificationTargetUrl — 着地先の読み取り", () => {
+    const hooks = loadSw()
+
+    it("`?date=` を含む URL をそのまま使う（クエリを落とさぬ）", () => {
+      // ⚠️ ここで pathname だけを取る「正規化」を足すと、通知は正しい日を
+      // 運んでおるのに今日が開く（B-6 が直した不具合そのものへ戻る）。
+      expect(hooks.notificationTargetUrl(clickEvent(TARGET).notification)).toBe(TARGET)
+    })
+
+    it.each([
+      ["url が無い", undefined],
+      ["空文字", ""],
+      ["文字列でない", 42],
+      ["null", null],
+    ])("%s なら既定の /calendar へ倒す", (_label, url) => {
+      expect(hooks.notificationTargetUrl(clickEvent(url).notification)).toBe(
+        hooks.DEFAULT_NOTIFICATION_URL,
+      )
+    })
+
+    it("notification 自体が無くても落ちぬ", () => {
+      expect(hooks.notificationTargetUrl(undefined)).toBe("/calendar")
+      expect(hooks.notificationTargetUrl(null)).toBe("/calendar")
+    })
+  })
+
+  it("既定の着地先はアプリの /calendar と一致する（手動同期の綻びを殺す）", () => {
+    // src/lib/domain/calendar-link.ts の CALENDAR_PATH（classic script ゆえ import 不可）
+    expect(loadSw().DEFAULT_NOTIFICATION_URL).toBe(CALENDAR_PATH)
   })
 })

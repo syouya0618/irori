@@ -135,6 +135,11 @@ describe("deliverDueNotifications — 展開と送信", () => {
     expect(sent[0].payload).toMatchObject({
       title: "歯医者",
       body: "8月15日 10:00 開始",
+      // B-6: **着地先が線の端まで残ることを見る**。組み立て側の単体テストは
+      // 「作った形」しか見ておらぬゆえ、送る直前で payload を間引く実装
+      // （title/body/tag だけ渡す等）を素通しする。送信は payload 全体を
+      // JSON.stringify するゆえ、ここに url が居れば端末まで届く。
+      url: "/calendar?date=2026-08-15",
     })
 
     const row = db.notification_deliveries[0]
