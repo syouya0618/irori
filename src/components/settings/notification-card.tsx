@@ -209,6 +209,23 @@ export function NotificationCard({
   )
   const [digestSaving, setDigestSaving] = useState(false)
 
+  /**
+   * この利用者に**まとめを届けられる先が在るか**。
+   *
+   * 配信側は `subscriptions.filter(row => digestTimes.has(row.user_id))` が空なら
+   * その日の行すら立てぬ（`deliver.ts` の `expandDigests`）。ゆえに購読が 1 つも
+   * 無い利用者に「毎朝 07:00 にお届けします」と言えば**画面が嘘をつく** ——
+   * VAPID 未設定でボタンを消しておるのと同じ筋じゃ。
+   *
+   * ⚠️ **判定は `devices`（＝この利用者の全端末）で行う。`supported` / `denied` で
+   * 判定するな。** あれは**この**ブラウザの話ゆえ、「ノートパソコンで時刻を選び、
+   * iPhone で受け取る」という真っ当な使い方を誤って塞ぐ（`page.tsx` の
+   * `push_subscriptions` は `.eq("user_id", userId)` のみで端末を絞っておらぬ）。
+   * `subscribedHere` を or で足すのは、登録直後（`devices` は再描画までサーバの
+   * 古い値）に「届かぬ」と偽らぬためじゃ。
+   */
+  const digestReachable = devices.length > 0 || subscribedHere
+
   // ⚠️ setState は **promise のコールバック内**で呼ぶ（effect 本体で同期的に呼ぶと
   // React Compiler の「effect 内の同期 setState」規則に触れる）。
   useEffect(() => {
@@ -299,10 +316,16 @@ export function NotificationCard({
           toast.error(result.error)
           return
         }
+        // ⚠️ **届く先が無いときに「お届けします」と言うてはならぬ。** 保存は
+        // 本当に成功しておる（設定は残る）ゆえ、成功として伝えつつ届かぬ理由を
+        // 添える。ここを 1 文に戻すと、購読ゼロの主は毎朝待ち続け、原因を
+        // cron や通知基盤の故障と読む（診断表示は健康を示すゆえ切り分けが詰む）。
         toast.success(
           next === DIGEST_TIME_NONE
             ? "毎朝のまとめを止めました。"
-            : `毎朝 ${next} にまとめをお届けします。`,
+            : digestReachable
+              ? `毎朝 ${next} にまとめをお届けします。`
+              : `毎朝 ${next} に設定しました。通知を受け取る端末がないため、まだ届きません。`,
         )
       } catch (error) {
         // reject は「サーバーへ届いてすらおらぬ」＝ result.error より確実に未反映。
@@ -312,7 +335,7 @@ export function NotificationCard({
         setDigestSaving(false)
       }
     },
-    [digestChoice],
+    [digestChoice, digestReachable],
   )
 
   /**
@@ -531,6 +554,19 @@ export function NotificationCard({
               ))}
             </SelectContent>
           </Select>
+          {/* ⚠️ **届かぬことを画面に出す**（toast は消えるゆえ、それだけでは足りぬ）。
+              購読が 1 つも無い利用者には配信側が行すら立てぬ ＝ 時刻が選ばれておっても
+              毎朝何も来ぬ。「07:00 に設定済み」の顔だけを残せば、主は通知基盤の
+              故障を疑って追えぬ道へ入る。**Select は塞がぬ** —— 時刻は利用者ごとの
+              設定ゆえ、受け取る端末を後から足す順序（ノートで選び、iPhone で受ける）を
+              妨げてはならぬ。 */}
+          {digestChoice !== DIGEST_TIME_NONE && !digestReachable && (
+            <p className="flex items-start gap-2 text-xs text-muted-foreground">
+              <TriangleAlert size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+              通知を受け取る端末がないため、この時刻に設定してもまだ届きません。
+              先にこの端末（または受け取りたい端末）で通知を受け取れるようにしてください。
+            </p>
+          )}
           {/* ⚠️ **「読めなかった」を「送らない」と描かぬ**（B-4 の診断と同じ筋）。
               取得に失敗しておるのに選択肢を触らせると、主の 1 クリックが
               「知らぬ間に設定を上書きした」ことになる。ゆえに理由を出して止める。 */}

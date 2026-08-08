@@ -343,6 +343,66 @@ describe("設定の変更に追随する", () => {
     expect(digestRows(db)).toHaveLength(1)
   })
 
+  /**
+   * ⚠️ **上の「後ろへ動かす」と対で置いてある。片方だけにするな。**
+   *
+   * 前方向（早める）は後ろ方向と**機構が別物**じゃ。裁定は
+   * `scheduled_at <= now` で行を拾うゆえ、狙いが古い（遅い）ままだと新しい時刻が
+   * 来ても行は裁定の視界に入らぬ —— 旧い時刻が来てから過去へ付け替え、次の実行の
+   * 期限切れ掃除が `expired` にする ＝ **その日のまとめが 1 通も来ぬ**。しかも
+   * 冪等キーが終端行に取られておるゆえ、同じ日に何度設定し直しても戻らぬ。
+   * 30 分刻みの選択肢では前方向の変更は必ず 30 分以上過去へ落ちる ＝ 例外ではなく
+   * 既定の挙動じゃった。
+   */
+  it("**時刻を早めた日も、その日のまとめは失われぬ**（前方向の対照）", async () => {
+    const db = seed()
+    await tick(db, TICK_MIDNIGHT).promise
+    // 主が朝 05:00 に「07:00 は遅い、06:30 にしよう」と変えた。
+    db.notification_preferences[0].digest_time = "06:30:00"
+
+    // JST 05:05。新しい時刻はまだ来ておらぬが、狙いは**この時点で**付け替わる
+    // （来てから付け替えるのでは、もう間に合わぬ）。
+    const before: SentRecord[] = []
+    await tick(db, "2026-08-09T20:05:00.000Z", { sent: before }).promise
+    expect(before).toHaveLength(0)
+    expect(digestRows(db)).toHaveLength(1)
+    expect(digestRows(db)[0].scheduled_at).toBe("2026-08-09T21:30:00.000Z")
+
+    // 06:30 に届く。狙いが 07:00 のまま眠っておれば、ここは 0 通じゃ。
+    const at: SentRecord[] = []
+    await tick(db, "2026-08-09T21:30:00.000Z", { sent: at }).promise
+    expect(at).toHaveLength(1)
+    expect(at[0].payload).toMatchObject({ title: "今日の予定 2件" })
+    // **`expired` で終端しておらぬこと**まで見る（穴が開いた時の姿がこれじゃ）。
+    expect(digestRows(db)[0]).toMatchObject({
+      sent_at: "2026-08-09T21:30:00.000Z",
+      skipped_at: null,
+      skip_reason: null,
+    })
+  })
+
+  it("望みの無い時刻へは付け替えぬ（思い直して未来へ戻せば、その日はまだ届く）", async () => {
+    const db = seed()
+    await tick(db, TICK_MIDNIGHT).promise
+
+    // JST 06:05 に「05:00」（もう過ぎておる）へ変えた。付け替えれば即 expired ゆえ、
+    // 行は旧い狙いのまま**生かしておく** —— 殺せば復帰の余地まで失う。
+    db.notification_preferences[0].digest_time = "05:00:00"
+    await tick(db, "2026-08-09T21:05:00.000Z").promise
+    expect(digestRows(db)[0]).toMatchObject({
+      scheduled_at: DIGEST_AT,
+      skipped_at: null,
+    })
+
+    // 思い直して 08:00 へ。行が生きておるゆえ付け替わり、その日のまとめは届く。
+    db.notification_preferences[0].digest_time = "08:00:00"
+    await tick(db, "2026-08-09T21:10:00.000Z").promise
+    const sent: SentRecord[] = []
+    await tick(db, "2026-08-09T23:00:00.000Z", { sent }).promise
+    expect(sent).toHaveLength(1)
+    expect(digestRows(db)).toHaveLength(1)
+  })
+
   it("行を立てた後に予定が全部消えても畳まぬ（入り直せば届く）", async () => {
     const db = seed()
     await tick(db, TICK_MIDNIGHT).promise

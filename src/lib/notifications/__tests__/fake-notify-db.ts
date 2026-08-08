@@ -43,7 +43,7 @@ export function emptyNotifyDb(): FakeNotifyDb {
 }
 
 type Filter =
-  | { kind: "eq" | "lt" | "lte" | "gt" | "gte"; column: string; value: unknown }
+  | { kind: "eq" | "neq" | "lt" | "lte" | "gt" | "gte"; column: string; value: unknown }
   | { kind: "isNull"; column: string }
   | { kind: "isNotNull"; column: string }
   | { kind: "in"; column: string; values: unknown[] }
@@ -78,8 +78,13 @@ function matches(row: Row, filters: Filter[]): boolean {
       return row[f.column] !== null && row[f.column] !== undefined
     if (f.kind === "in") return f.values.includes(row[f.column])
     const value = row[f.column]
+    // Postgres の三値論理: NULL との比較は NULL ＝ 行は当たらぬ（`neq` も同じ）。
     if (value === null || value === undefined) return false
     const cmp = compare(value, f.value)
+    // ⚠️ **`!==` で済ませるな。** 本物は timestamptz を**瞬間**で比べるゆえ、
+    // "…T21:30:00+00:00" と "…T21:30:00.000Z" は同じ行を指す。文字列で比べる fake は
+    // 「表記が違うだけの行を付け替え続ける」無限の書込を見逃す（`compare` は epoch）。
+    if (f.kind === "neq") return cmp !== 0
     if (f.kind === "lt") return cmp < 0
     if (f.kind === "lte") return cmp <= 0
     if (f.kind === "gte") return cmp >= 0
@@ -271,6 +276,12 @@ export function createFakeNotifySupabase(
       },
       eq(column: string, value: unknown) {
         record.filters.push({ kind: "eq", column, value })
+        return builder
+      },
+      // ダイジェストの狙いの付け替え（`realignDigestAims`）が「既に合っておる行は
+      // 触らぬ」を表すのに使う。
+      neq(column: string, value: unknown) {
+        record.filters.push({ kind: "neq", column, value })
         return builder
       },
       lt(column: string, value: unknown) {

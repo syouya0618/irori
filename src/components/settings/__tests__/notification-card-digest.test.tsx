@@ -23,7 +23,7 @@ vi.mock("@/app/(main)/settings/actions", () => ({
   updateDigestTime: vi.fn(),
 }))
 
-import { NotificationCard } from "../notification-card"
+import { NotificationCard, type PushDeviceView } from "../notification-card"
 import { updateDigestTime } from "@/app/(main)/settings/actions"
 import { toast } from "sonner"
 import type { NotificationHealthView } from "@/lib/domain/notification-health"
@@ -55,10 +55,32 @@ const digestValueText = () =>
     ?.querySelector('[data-slot="select-value"]')
     ?.textContent?.trim() ?? null
 
-function renderCard(props: { digestTime?: string | null; unknown?: boolean } = {}) {
+/**
+ * 通知を受け取れる端末が 1 台在る状態。
+ *
+ * ⚠️ **`devices` はこの利用者の全端末じゃ**（`page.tsx` は `.eq("user_id", userId)`
+ * のみ）。空配列は「この人は絶対に受け取れぬ」と同義ゆえ、届く前提の assert を
+ * `devices={[]}` で書くと**画面が嘘をつく状態を正解として固定してしまう**。
+ */
+const DEVICE: PushDeviceView = {
+  id: "sub-1",
+  userAgent: "iPhone",
+  createdAt: "2026-08-01T00:00:00.000Z",
+  lastSuccessLabel: "3分前",
+  lastFailureLabel: null,
+  failureCount: 0,
+}
+
+function renderCard(
+  props: {
+    digestTime?: string | null
+    unknown?: boolean
+    devices?: PushDeviceView[]
+  } = {},
+) {
   return render(
     <NotificationCard
-      devices={[]}
+      devices={props.devices ?? []}
       health={health}
       digestTime={props.digestTime ?? null}
       digestTimeUnknown={props.unknown ?? false}
@@ -158,7 +180,9 @@ describe("保存", () => {
 
   it("選んだ時刻で Server Action を呼び、結果を伝える", async () => {
     mockedUpdate.mockResolvedValue({ success: true })
-    renderCard()
+    // ⚠️ **端末を 1 台持たせる。** 購読ゼロで「お届けします」を固定すると、
+    // 届かぬ状態の嘘を正解として据えることになる（下の対を見よ）。
+    renderCard({ devices: [DEVICE] })
 
     await choose("07:00")
 
@@ -205,5 +229,55 @@ describe("保存", () => {
 
     await waitFor(() => expect(mockedToast.error).toHaveBeenCalled())
     await waitFor(() => expect(digestTrigger()).toHaveTextContent("07:00"))
+  })
+
+  /**
+   * ⚠️ **両向きの対で置く。** 購読ゼロ側だけを書けば「常に届かぬと言う」実装でも
+   * 緑になり、届く側だけを書けば嘘の約束が戻ってきても緑になる。
+   */
+  it("**受け取る端末が無ければ「お届けします」と言わぬ**（届かぬことを述べる）", async () => {
+    mockedUpdate.mockResolvedValue({ success: true })
+    renderCard({ devices: [] })
+
+    await choose("07:00")
+
+    // 保存自体は成功しておる（設定は残る）ゆえ success で伝えるが、約束はせぬ。
+    await waitFor(() => expect(mockedUpdate).toHaveBeenCalledWith("07:00"))
+    await waitFor(() =>
+      expect(mockedToast.success).toHaveBeenCalledWith(
+        "毎朝 07:00 に設定しました。通知を受け取る端末がないため、まだ届きません。",
+      ),
+    )
+  })
+})
+
+describe("届かぬのに届くと描かぬ（購読ゼロ）", () => {
+  it("端末が無く時刻が選ばれておれば、届かぬ理由が画面に残る", () => {
+    // toast は消える。毎朝待つ主が見るのは**この行**じゃ。
+    renderCard({ digestTime: "07:00", devices: [] })
+    expect(
+      screen.getByText(/この時刻に設定してもまだ届きません/),
+    ).toBeInTheDocument()
+  })
+
+  it("端末が在れば出さぬ（本当の警告を薄めぬ）", () => {
+    renderCard({ digestTime: "07:00", devices: [DEVICE] })
+    expect(
+      screen.queryByText(/この時刻に設定してもまだ届きません/),
+    ).not.toBeInTheDocument()
+  })
+
+  it("「送らない」のままなら出さぬ（守れぬ約束が無いゆえ）", () => {
+    renderCard({ digestTime: null, devices: [] })
+    expect(
+      screen.queryByText(/この時刻に設定してもまだ届きません/),
+    ).not.toBeInTheDocument()
+  })
+
+  it("時刻は選べる（ノートで選び iPhone で受け取る道を塞がぬ）", () => {
+    // ⚠️ **`disabled` にはせぬ。** `digest_time` は利用者ごとの設定ゆえ、
+    // 受け取る端末を後から足す順序を妨げてはならぬ（「読めなかった」ときだけ止める）。
+    renderCard({ digestTime: "07:00", devices: [] })
+    expect(digestTrigger()).not.toBeDisabled()
   })
 })

@@ -585,7 +585,7 @@ async function loadDigestEvents(
 /**
  * 毎朝のまとめ（B-5）を、その JST 暦日ぶん 1 行だけ立てる。
  *
- * ## この関数が守っておる 3 つのこと
+ * ## この関数が守っておる 4 つのこと
  *
  * 1. **窓一致にせぬ**。時刻が来たかは一切見ず、「その日の行が在るか」だけを
  *    `ON CONFLICT DO NOTHING` に判じさせる。ゆえに JST 0 時を跨いだ最初の実行が
@@ -597,6 +597,10 @@ async function loadDigestEvents(
  *    復帰）は、作れば即 `expired` になるだけじゃ。予定通知の展開が
  *    `remind_at > graceStart` で締めておるのと同じ**下限**を置く
  *    （⚠️ 上限を足せば窓一致に戻る。足すな）。
+ * 4. **既に立っておる行の狙いを毎回揃える**（{@link realignDigestAims}）。
+ *    `ON CONFLICT DO NOTHING` は行を**触らぬ**ゆえ、設定が変わっても upsert では
+ *    狙いが動かぬ。裁定側（`classifyPendingDigest` の reaim）だけでは
+ *    **前方向（早める）の変更を救えぬ** —— 理由は下の関数に書いた。
  */
 async function expandDigests(
   supabase: Client,
@@ -615,31 +619,40 @@ async function expandDigests(
   const day = todayJstString(now)
   const graceStartMs = now.getTime() - DELIVERY_GRACE_MS
 
-  const events = await loadDigestEvents(supabase, householdId, day)
-  if (events.length === 0) return
-
-  const rows = []
+  // 「今の設定が指す狙い」を利用者ぶん求める。**望みの在るものだけ**を残す
+  // （上の 3 と同じ下限。行の作成と付け替えで別の物差しを使えば必ずずれる）。
+  const aims: { subscriptionId: string; scheduledAt: string }[] = []
   for (const subscription of targets) {
     const time = digestTimes.get(subscription.user_id) as string
     const scheduledAt = digestScheduledAtForDay(day, time)
     if (scheduledAt === null) continue
     const scheduledMs = Date.parse(scheduledAt)
     if (Number.isNaN(scheduledMs) || scheduledMs <= graceStartMs) continue
-
-    rows.push({
-      household_id: householdId,
-      kind: "digest",
-      // ⚠️ **明示的に null を置く。** 冪等キーは
-      // `UNIQUE NULLS NOT DISTINCT (kind, event_key, subscription_key, dedupe_day)`
-      // ゆえ、この NULL 同士が衝突することが「1 日 1 通」を成り立たせておる。
-      event_key: null,
-      subscription_id: subscription.id,
-      subscription_key: subscription.id,
-      dedupe_day: day,
-      scheduled_at: scheduledAt,
-    })
+    aims.push({ subscriptionId: subscription.id, scheduledAt })
   }
-  if (rows.length === 0) return
+  if (aims.length === 0) return
+
+  // ⚠️ **予定の件数を見る前に付け替える。** 予定が 0 件の日は下で return するが、
+  // 狙いだけは今の設定に揃えておく —— 日中に予定が入り直したとき、行が旧い狙いの
+  // まま眠っておれば前方向の変更がそこで死ぬ。
+  await realignDigestAims(supabase, householdId, day, aims)
+
+  const events = await loadDigestEvents(supabase, householdId, day)
+  if (events.length === 0) return
+
+  const rows = aims.map((aim) => ({
+    household_id: householdId,
+    kind: "digest",
+    // ⚠️ **明示的に null を置く。** 冪等キーは
+    // `UNIQUE NULLS NOT DISTINCT (kind, event_key, subscription_key, dedupe_day)`
+    // ゆえ、この NULL 同士が衝突することが「1 日 1 通」を成り立たせておる。
+    event_key: null,
+    subscription_id: aim.subscriptionId,
+    subscription_key: aim.subscriptionId,
+    dedupe_day: day,
+    scheduled_at: aim.scheduledAt,
+  }))
+  // （`aims` が空なら上で返しておるゆえ、ここに 0 行の枝は無い。）
 
   const { error: insertError } = await supabase
     .from("notification_deliveries")
@@ -654,6 +667,70 @@ async function expandDigests(
     throw new Error("[cron-notify] まとめの配信行の作成に失敗しました")
   }
   counters.scheduled += rows.length
+}
+
+/**
+ * ★ その日の**未終端**のダイジェスト行の狙いを、今の設定へ揃える。
+ *
+ * ## なぜ裁定側の reaim だけでは足りぬのか（前方向の変更が消える機構）
+ * 裁定（`processPending`）は `scheduled_at <= now()` で行を拾う。ゆえに主が同じ日の
+ * うちに時刻を**早めた**とき、行は旧い（遅い）狙いを持ったまま**裁定の視界に
+ * 入らぬ**:
+ *   1. 新しい時刻（06:30）が来ても行は選ばれぬ → その時刻には鳴らぬ
+ *   2. 旧い時刻（07:00）が来て初めて `classifyPendingDigest` が reaim するが、
+ *      そのとき新しい時刻は必ず過去 → 狙いは過去へ動く
+ *   3. 次の実行の期限切れ掃除が `scheduled_at < now-GRACE` で `expired` にする
+ * → **その日のまとめは新旧どちらの時刻にも来ぬ**。しかも冪等キー
+ * （kind, event_key, subscription_key, dedupe_day）は終端行が握ったままゆえ、
+ * 同じ日に何度設定し直しても `DO NOTHING` に吸われて戻らぬ。選択肢は 30 分刻み
+ * ゆえ、前方向の変更は**必ず** grace（15 分）より深く過去へ落ちる ＝ 例外ではなく
+ * 既定の挙動じゃった。ここで「時刻が来る前に」付け替えることで、あとは通常の
+ * 送信経路（`scheduled_at <= now` → send）に乗る。
+ *
+ * ## ⚠️ 裁定側のクエリを未来の行まで広げて解くな
+ * `.lte("scheduled_at", now)` を外せば reaim は撃てるようになるが、**まだ時の
+ * 来ておらぬ行が毎 tick 裁定へ流れ込む** —— 未来の行に対して裁定が返せる答えは
+ * `wait` だけゆえ、引き直す意味が無い。「裁定＝時が来た行」という意味も失う。
+ * 付け替えは展開の仕事じゃ。
+ *
+ * ## ⚠️ 望みの無い時刻へは付け替えぬ（この下限を消すな）
+ * 呼び手が `aims` から grace 外の狙いを落としてある。付け替えてしまえばその行は
+ * 次の掃除で `expired` になり、**行を殺すだけ**で誰も救われぬ。生かしておけば
+ * 「05:00（もう過ぎた）に変え、思い直して 08:00 にした」日でも、後の付け替えで
+ * その日のまとめはまだ届く。旧い狙いのまま鳴ってしまう心配は無い —
+ * 旧い時刻が来た瞬間に `classifyPendingDigest` が reaim → 掃除が畳む（fail-closed）。
+ *
+ * 0 行は正常（狙いが既に合っておる・その日の行がまだ無い）ゆえ**行数は見ぬ**。
+ * 失敗しても throw せぬ: 付け替えは次の tick が撃ち直せるが、ここで throw すると
+ * 世帯の予定通知の送信まで 1 周ぶん止まる（裁定側の reaim と同じ扱いじゃ）。
+ */
+async function realignDigestAims(
+  supabase: Client,
+  householdId: string,
+  day: string,
+  aims: { subscriptionId: string; scheduledAt: string }[],
+): Promise<void> {
+  for (const aim of aims) {
+    const { error } = await supabase
+      .from("notification_deliveries")
+      .update({ scheduled_at: aim.scheduledAt })
+      .eq("household_id", householdId)
+      .eq("kind", "digest")
+      // 冪等キーと**同じ列**で絞る（subscription_id は失効で NULL になりうる）。
+      .eq("subscription_key", aim.subscriptionId)
+      .eq("dedupe_day", day)
+      // 送った行・畳んだ行は歴史じゃ。触れば「いつ鳴らす予定だったか」が消える。
+      .is("sent_at", null)
+      .is("skipped_at", null)
+      // 既に狙いが合っておる行は触らぬ（timestamptz ゆえ比較は瞬間で行われる）。
+      .neq("scheduled_at", aim.scheduledAt)
+      .select("id")
+    if (error) {
+      logSupabaseError("cron-notify", "まとめの狙いの付け替えに失敗", error, {
+        householdId,
+      })
+    }
+  }
 }
 
 async function processPending(

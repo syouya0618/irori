@@ -149,10 +149,18 @@ export function buildDigestNotification(
  * 判断順（先に来たものが勝つ）:
  *   1. grace 切れ        → expired（遅れて鳴るダイジェストは害にしかならぬ）
  *   2. 設定が消えた      → rescheduled（主が「送らない」に戻した）
- *   3. 時刻が動いた      → reaim（**同じ JST 日の中でしか動けぬ**ゆえ常に再照準）
+ *   3. 時刻が動いた      → reaim（dedupe_day を動かさず狙いだけ変える）
  *   4. 時刻がまだ来ておらぬ → wait
  *   5. 予定が 0 件       → wait（畳まず据え置く。下の注記を見よ）
  *   6. それ以外          → send
+ *
+ * ⚠️ **3 は「常に再照準できる」の意味ではない。** ここが呼ばれるのは
+ * `scheduled_at <= now()` の行だけゆえ、時刻を**早めた**変更（新しい時刻が
+ * まだ未来）はここへ届く前に取り逃す。ゆえに狙いを揃える主役は展開側
+ * （`deliver.ts` の `realignDigestAims`）で、この枝はその**後詰め**じゃ
+ * （展開と裁定の間に設定が変わった 1 周ぶんを拾う）。過去へ動いた狙いは
+ * 次の実行の期限切れ掃除が `expired` として畳む —— 旧い時刻で鳴らさぬための
+ * fail-closed であって、届けるための道ではない。
  *
  * ⚠️ **5 を skip にせぬ理由。** 「作った後に全部消えた」は、当日中に予定が
  * 入り直せば送るべき状態へ戻る。ここで畳むと `skipped_at` が立ち、同じ冪等キーの
@@ -191,6 +199,7 @@ export function classifyPendingDigest(input: {
   if (expectedMs !== scheduledMs) {
     // TIME の変更は**同じ JST 日の中でしか動けぬ**（dedupe_day = その日そのもの）
     // ゆえ、予定通知に在った「日を跨いだら rescheduled」の枝はここには無い。
+    // 上の注記どおり、これは展開側の付け替えの後詰めじゃ。
     return { action: "reaim", scheduledAt: expected }
   }
 
