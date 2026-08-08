@@ -631,6 +631,87 @@ export interface Database {
         Relationships: []
       }
       /**
+       * 通知の配信キュー兼履歴（**世帯単位**・B-3）。
+       *
+       * ⚠️ **書き手は service role の配信ジョブただ 1 つ**じゃ。IUD の RLS ポリシーも
+       * GRANT も無く、authenticated から撃てば 42501 で落ちる（型が書けるように
+       * 見えるのは `google_connections` と同じ事情）。
+       *
+       * ⚠️ 冪等キーは `(kind, event_key, subscription_key, dedupe_day)` の
+       * **UNIQUE NULLS NOT DISTINCT**。`subscription_id` を鍵に入れてはならぬ
+       * （FK の ON DELETE SET NULL が 2 台目の端末失効で 23505 を起こし、
+       * DELETE ごと中断する。migration 20260808100003 の核 ③）。
+       */
+      notification_deliveries: {
+        Row: {
+          id: string
+          household_id: string
+          kind: string
+          /** `event_reminders.event_uid` の不変コピー（FK は張らぬ）。digest は null */
+          event_key: string | null
+          /** 生きておる購読への指し先。失効すると SET NULL で null になる */
+          subscription_id: string | null
+          /** 冪等キー用の不変コピー。購読が消えても動かぬ */
+          subscription_key: string
+          /** scheduled_at の JST 暦日（**実行日ではない**） */
+          dedupe_day: string
+          scheduled_at: string
+          /** claim 兼 送信済み印 */
+          sent_at: string | null
+          skipped_at: string | null
+          skip_reason: string | null
+          created_at: string
+        }
+        Insert: {
+          household_id: string
+          kind: string
+          event_key?: string | null
+          subscription_id?: string | null
+          subscription_key: string
+          dedupe_day: string
+          scheduled_at: string
+          sent_at?: string | null
+          skipped_at?: string | null
+          skip_reason?: string | null
+        }
+        Update: {
+          scheduled_at?: string
+          sent_at?: string | null
+          skipped_at?: string | null
+          skip_reason?: string | null
+        }
+        Relationships: []
+      }
+      /**
+       * 配信ジョブの心拍（**1 行固定**・id = 1 を CHECK が強制する）。
+       *
+       * 「最終配信」（MAX(sent_at)）だけでは**故障と無風を区別できぬ**ゆえに在る。
+       * 認証済みなら誰でも読めるが、書き手は service role のみ。
+       */
+      notification_heartbeat: {
+        Row: {
+          id: number
+          ran_at: string
+          sent_count: number
+          skipped_count: number
+          failed_count: number
+        }
+        Insert: {
+          id: number
+          ran_at: string
+          sent_count: number
+          skipped_count: number
+          failed_count: number
+        }
+        Update: {
+          ran_at?: string
+          sent_count?: number
+          skipped_count?: number
+          failed_count?: number
+        }
+        Relationships: []
+      }
+      /**
        * Google カレンダー接続（ユーザー単位・非機密）。
        * authenticated は SELECT と「本人の行の DELETE」だけができる。
        * **INSERT / UPDATE は RLS ポリシーも GRANT も無い = service role 専用**

@@ -1,0 +1,186 @@
+# 通知配信 cron の登録手順（pg_cron → `/api/cron/notify`）
+
+**これは手順書であって migration ではない。** そう決めた理由から書く。
+
+## なぜ migration にせぬのか
+
+登録に要る URL と secret は **Supabase Vault** に置く。このリポジトリは公開ゆえ
+ベタ書きできぬ。そして Vault の秘密は**ローカルにも CI にも存在せぬ**ため、
+`vault.decrypted_secrets` を参照する migration を書くと `supabase db reset` では
+必ず「秘密が無い」経路を通る。pgTAP でそれを検証しても、緑でも赤でも本番の姿を
+何も語らぬ — **意味を持たぬテスト**が増えるだけじゃ。ゆえに Dashboard での手作業に
+し、その代わり手順をここへ全部書く。
+
+## 全体像
+
+```
+Supabase (pg_cron, 5 分ごと)
+  └─ net.http_post → https://<本番ドメイン>/api/cron/notify
+       Authorization: Bearer <NOTIFY_CRON_SECRET>
+         └─ Vercel Function (nodejs, maxDuration 60)
+              └─ deliverDueNotifications()  … 展開 → claim → 送信 → 心拍
+```
+
+**Vercel の cron ではない。** Hobby プランの cron は 1 日 1 回までで、5 分ごとの
+式はデプロイ自体が失敗する（`google-sync` が 1 日 1 回なのはそれゆえ）。
+「10 分前に通知」を守るには 5 分粒度が要るため、Supabase 側から叩く。
+
+---
+
+## 手順
+
+### 0. 順序が命じゃ（**先に env、後で schedule**）
+
+pg_cron の schedule は登録した瞬間から動き出す。秘密が入る前に発火すると、
+`net.http_post` は空の Authorization を送り、**401 が延々と積もる**（しかも
+`cron.job_run_details` は "succeeded" と記録する。後述）。必ずこの順で:
+
+1. Vercel に `NOTIFY_CRON_SECRET` を入れて**再デプロイ**する
+2. Supabase Vault に URL と secret を入れる
+3. schedule を登録する
+
+### 1. secret を作って Vercel へ
+
+```bash
+# 32 バイトの乱数（google-sync の CRON_SECRET とは**必ず別値**にすること）
+openssl rand -base64 32
+
+vercel env add NOTIFY_CRON_SECRET production
+```
+
+⚠️ **`vercel env add` は自動で再デプロイせぬ。** 入れただけでは動いておる
+Function に新しい env は載らぬ。必ず再デプロイして、反映を確かめてから次へ進むこと。
+
+⚠️ **`CRON_SECRET` を使い回すな。** pg_net は Authorization ヘッダを
+`net.http_request_queue` に保存する（応答も `net._http_response` に残る）。
+つまり **Dashboard の SQL Editor から読める場所に秘密が滞留する**。同じ値を使えば、
+その滞留 1 つで google-sync の cron も同時に開く。
+
+### 2. Vault へ URL と secret を入れる
+
+Dashboard → Project Settings → Vault → Add new secret。
+
+| Name | Secret |
+|---|---|
+| `notify_cron_url` | `https://<本番ドメイン>/api/cron/notify` |
+| `notify_cron_secret` | 手順 1 で作った値 |
+
+### 3. 拡張を有効化する
+
+Dashboard → Database → Extensions で `pg_cron` と `pg_net` を有効にする
+（`pg_net` は `extensions` スキーマに入る）。
+
+### 4. schedule を登録する（SQL Editor）
+
+```sql
+select cron.schedule(
+  'notify-deliveries',
+  '*/5 * * * *',                      -- 5 分ごと
+  $$
+  select net.http_post(
+    url     := (select decrypted_secret from vault.decrypted_secrets
+                 where name = 'notify_cron_url'),
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'Authorization', 'Bearer ' || (select decrypted_secret
+                                       from vault.decrypted_secrets
+                                      where name = 'notify_cron_secret')
+    ),
+    body    := '{}'::jsonb,
+    timeout_milliseconds := 5000
+  );
+  $$
+);
+```
+
+**`*/5 * * * *`（5 分粒度）である理由**: 毎分にすると `cron.job_run_details` が
+1 日 1440 行たまる。Free tier の 500MB を通知の記録で食い潰すのは割に合わぬ。
+5 分なら 288 行/日で、grace window（15 分）は取りこぼし 2 回ぶんを吸収できる。
+
+**`timeout_milliseconds := 5000` を必ず書く**: pg_net の既定は 2 秒で、Vercel の
+コールドスタートには短すぎる。既定のままだと、朝いちばん（＝一番通知が要る時刻）の
+実行だけが恒常的に落ちる。
+
+> ハンドラは **GET** も受ける。上は pg_net の既定に素直に従って POST で書いてある。
+> GET で登録したい場合は `net.http_get` を使い、同じ headers を渡すこと。
+
+### 5. `cron.job_run_details` の掃除ジョブも登録する
+
+公式が「自動削除されない」と明記しておる。放置すれば無限に積もる。
+
+```sql
+select cron.schedule(
+  'purge-cron-history',
+  '0 3 * * *',                        -- JST 12:00（UTC 03:00）
+  $$ delete from cron.job_run_details where end_time < now() - interval '7 days' $$
+);
+```
+
+---
+
+## 監視 — ⚠️ `cron.job_run_details` は**配達を監視せぬ**
+
+これが一番の落とし穴じゃ。`net.http_post` は **request_id を即座に返して終わる**。
+HTTP のやり取りが始まるのはトランザクションが commit された後ゆえ、
+**HTTP が 500 でも 401 でも接続不能でも、`cron.job_run_details` には `succeeded` が
+記録される**。ここだけを見ておると「毎回成功しておるのに通知が来ぬ」になる。
+
+配達を見るのは `net._http_response` じゃ（**保持 6 時間・unlogged テーブル**）。
+
+```sql
+-- 直近の応答（status_code を見る。401 なら secret、5xx ならアプリ側）
+select id, status_code, error_msg, created
+  from net._http_response
+ order by created desc
+ limit 20;
+```
+
+アプリ側の真実は 2 つ:
+
+```sql
+-- 心拍: 「走ったこと」そのもの。ran_at が 10 分以上前なら止まっておる
+select * from notification_heartbeat;
+
+-- 最終配信: 送るものが無かった日も進まぬゆえ、心拍と**両方**見ること
+select max(sent_at) from notification_deliveries;
+```
+
+`skip_reason` の内訳を見れば、壊れ方の種類が分かる:
+
+| 値 | 意味 |
+|---|---|
+| `expired` | grace（15 分）を過ぎた。cron が止まっておった証拠 |
+| `event_started` | 予定が始まってしまった。catch-up の正常な振る舞い |
+| `gone` | 端末の購読が失効した（410/404）。購読は削除済み |
+| `rescheduled` | 指しておった通知設定・予定が消えたか、日を跨いで動いた |
+
+---
+
+## secret の回転
+
+`NOTIFY_CRON_SECRET` は **Vercel と Vault の 2 箇所に複製されておる**。
+片方だけ変えると通知が全部 401 になる（しかも上記のとおり
+`cron.job_run_details` は成功と言い張る）。必ずこの順で:
+
+1. 新しい値を `vercel env add NOTIFY_CRON_SECRET production`（旧値は消さぬ）
+2. **再デプロイ**して新しい値を載せる
+3. Vault の `notify_cron_secret` を新しい値へ更新する
+4. 5 分待ち、`net._http_response` の `status_code` が 200 であることを確かめる
+5. Vercel から旧値を削除し、**もう一度再デプロイ**する
+   （`vercel env rm` も自動再デプロイせぬ。怠ると旧 env を焼き込んだ build が
+   動き続ける）
+
+止め方:
+
+```sql
+select cron.unschedule('notify-deliveries');
+```
+
+---
+
+## 関連
+
+- ハンドラ: `src/app/api/cron/notify/route.ts`
+- 配信本体: `src/lib/notifications/deliver.ts`
+- テーブル: `supabase/migrations/20260808100003_notification_deliveries.sql`
+- 認可の機械検査: `e2e/cron-routes-auth.spec.ts`（proxy に食われぬこと + 鍵の分離）
