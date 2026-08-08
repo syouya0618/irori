@@ -38,6 +38,7 @@ import {
   type ReminderSnapshot,
 } from "./delivery-rules"
 import {
+  isProvenNotDelivered,
   readVapidConfig,
   sendPushNotification,
   type PushSendResult,
@@ -601,6 +602,14 @@ async function markSkipped(
  * ⚠️ **at-most-once の割り切り。** `sent_at` を claim に兼用しておるゆえ、
  * claim 後・送信前にプロセスが落ちるとその 1 通は恒久喪失する。
  * 二重に鳴らすより 1 通落とす方を選んだ（Safari の権限剥奪と、主の信頼を守るため）。
+ *
+ * **同じ割り切りを、送信の失敗にも通す。** 落ちるのは異常時だけ、と思うてはならぬ
+ * —— ソケットタイムアウトは「push サービスは受理したのに応答だけ落ちた」を
+ * 含みうる**日常の**失敗じゃ。ゆえに claim を解いて再送するのは
+ * {@link isProvenNotDelivered} が真を返す失敗（status が返っておる ＝ 明示的に
+ * 拒まれた）に限り、証明の無い失敗は claim を握ったまま落とす。
+ * 「gone でなければ再送」に戻せば、この関数が上で宣言しておる at-most-once は
+ * 嘘になる（実装とコメントが食い違っておった状態がまさにそれじゃった）。
  */
 async function claimAndSend(
   supabase: Client,
@@ -696,18 +705,36 @@ async function claimAndSend(
     return
   }
 
-  // 一過性の失敗（通信断・タイムアウト・5xx）。**claim を解いて次回に賭ける。**
+  // 送信の失敗。**再送するかは「届いておらぬ」と証明できるかで決める**
+  // （at-most-once。この関数の docstring が宣言しておる割り切りじゃ）。
+  //   * status が返った ＝ push サービスが明示的に拒んだ ＝ 届いておらぬ証明が在る
+  //     → claim を解いて次の実行へ回す
+  //   * status が無い（ソケットタイムアウト等）＝ 受理されたのに応答だけ落ちた、が
+  //     有りうる ＝ 証明が無い → **claim を握ったまま落とす**（再送せぬ）
   // ⚠️ 4xx を一括で「恒久」と見なして購読を消してはならぬ。401/403 は VAPID の
   // 設定ミスで全端末に一斉に出るゆえ、破棄側に入れると 1 回の事故で購読が全滅する
-  // （CLAUDE.md「再試行は広く、破棄は狭く」）。
-  await releaseClaim(supabase, delivery.id)
+  // （CLAUDE.md「破棄は狭く」）。ここで判じておるのは**行の再送**であって購読の
+  // 生死ではない —— 購読を消すのは上の `gone` の枝ただ 1 つじゃ。
+  const retryable = isProvenNotDelivered(result)
+  if (retryable) await releaseClaim(supabase, delivery.id)
   counters.failed += 1
   // ⚠️ endpoint とペイロードは出さぬ。status と世帯だけ。
-  console.error("[cron-notify] 送信に失敗（次の実行で再試行）", {
-    householdId,
-    status: result.status,
-    message: result.message,
-  })
+  //
+  // ⚠️ **落とした側は `sent_at` が立ったまま残る。** 診断の「最終配信」
+  // （MAX(sent_at)）は届いておらぬ瞬間を指しうる —— それを補うのがこの
+  // `counters.failed` じゃ（設定カードが「直近の配信で N 件の失敗」と並べて出す）。
+  // skip_reason を新設して分ける手も在るが、CHECK の migration が要るゆえ B-3 では
+  // 採らぬ（据え置きの明示記録）。
+  console.error(
+    retryable
+      ? "[cron-notify] 送信に失敗（次の実行で再試行）"
+      : "[cron-notify] 送信の結果が不明ゆえ再送せぬ（at-most-once・この 1 通は落とす）",
+    {
+      householdId,
+      status: result.status,
+      message: result.message,
+    },
+  )
 
   // PostgREST に原子的な increment は無い。読んだ値からの +1 ゆえ、実行が重なれば
   // 数え落としうる（診断用の目安であって、破棄などの判断には一切使わぬ）。

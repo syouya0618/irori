@@ -157,6 +157,16 @@ select * from notification_heartbeat;
 select max(sent_at) from notification_deliveries;
 ```
 
+⚠️ **`sent_at` は「送信を試みて claim した瞬間」であって「端末が受け取った瞬間」
+ではない。** 送信が status を返さずに失敗したとき（ソケットタイムアウト等）、
+その 1 通は **at-most-once の割り切りで落とし、`sent_at` は立ったまま残す** ——
+届いたか分からぬものを再送すれば二度鳴り、Safari は可視通知の雪崩で権限そのものを
+剥奪するゆえじゃ（`send-push.ts` の `isProvenNotDelivered`）。ゆえに
+「`max(sent_at)` は新しいのに端末へ来ておらぬ」は起こりうる。そのときは同じ実行の
+`failed_count` が 1 以上になっておるはずゆえ、**この 2 つを対で読め**（下の ① と
+同じ作法じゃ）。Vercel のログには
+`送信の結果が不明ゆえ再送せぬ` が残る。
+
 心拍の読み方に 2 つ約束がある。
 
 **① `ran_at` の鮮度だけを見るな。`failed_count` と対で読め。**

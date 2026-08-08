@@ -531,7 +531,7 @@ describe("送信の失敗", () => {
     expect(db.notification_deliveries[0].skipped_at).toBe(NOW)
   })
 
-  it("一過性の失敗は claim を解いて次回へ回す（購読は消さぬ）", async () => {
+  it("**status が返った失敗**は claim を解いて次回へ回す（購読は消さぬ）", async () => {
     const db = seed()
     const result = await run(db, {
       result: { ok: false, gone: false, status: 500, message: "boom" },
@@ -545,6 +545,75 @@ describe("送信の失敗", () => {
       sent_at: null,
       skipped_at: null,
     })
+  })
+
+  /**
+   * ★ **届いたか分からぬ失敗は再送せぬ（at-most-once）。**
+   *
+   * ⚠️ **上の「status が返った失敗は再送する」と対で置いてある。片方だけにするな。**
+   * 落とす側だけなら「常に落とす」実装で緑になり、再送側だけなら「常に再送する」
+   * ——まさに直そうとしておる姿——で緑になる。**弁別しておるのは status の有無
+   * ただ 1 つ**ゆえ、その 2 本が対を成して初めて意味を持つ。
+   *
+   * なぜ落とすのか: ソケットタイムアウトは「push サービスは受理したのに応答だけ
+   * 落ちた」を含みうる。再送すれば同じ通知が二度鳴り、**Safari は可視通知の雪崩で
+   * 権限そのものを剥奪する**（Apple 公式）—— 失うのは 1 通ではなくその端末の
+   * 通知全部じゃ。
+   */
+  it("**status の無い失敗（ソケットタイムアウト等）は再送せぬ**（claim を握ったまま落とす）", async () => {
+    const db = seed()
+    const result = await run(db, {
+      // `sendPushNotification` が WebPushError 以外を捕らえた時の姿そのままじゃ。
+      result: { ok: false, gone: false, status: null, message: "socket timeout" },
+    }).promise
+
+    // 失敗としては数える（心拍・診断が「平穏」に見えぬため）。
+    expect(result.failed).toBe(1)
+    expect(result.sent).toBe(0)
+    // 購読は消さぬ（破棄は 'gone' の枝ただ 1 つ）。診断には失敗として残る。
+    expect(db.push_subscriptions).toHaveLength(1)
+    expect(db.push_subscriptions[0].failure_count).toBe(1)
+    // ★ **claim が解かれておらぬこと** ＝ 次の実行がこの行を拾わぬ。
+    expect(db.notification_deliveries[0]).toMatchObject({
+      sent_at: NOW,
+      skipped_at: null,
+      skip_reason: null,
+    })
+  })
+
+  it("落とした 1 通は次の実行でも鳴らぬ（sent_at の assert が「拾われぬ」まで届いておることの証明）", async () => {
+    // ⚠️ 上のテストは行の**姿**しか見ておらぬ。姿が正しくとも次の実行が
+    // 拾い直せば二度鳴る（それを止めるのが claim を握ったままにする目的じゃ）。
+    // ゆえに実際に 2 周目を回して 0 通を確かめる。
+    const db = seed()
+    const fake = createFakeNotifySupabase(db)
+    await deliverDueNotifications(fake.client, {
+      now: () => new Date(NOW),
+      readVapid: () => VAPID,
+      sendPush: async () => ({
+        ok: false,
+        gone: false,
+        status: null,
+        message: "socket timeout",
+      }),
+    })
+
+    const sent: SentRecord[] = []
+    const second = await deliverDueNotifications(fake.client, {
+      // 5 分後。grace（15 分）の内ゆえ、拾えるなら必ず拾う時点じゃ。
+      now: () => new Date("2026-08-15T00:55:00Z"),
+      readVapid: () => VAPID,
+      sendPush: async (target, _v, payload) => {
+        sent.push({ target, payload })
+        return { ok: true }
+      },
+    })
+
+    expect(sent).toHaveLength(0)
+    expect(second.sent).toBe(0)
+    // 行は 1 本のまま（冪等キーが効いて作り直されてもおらぬ）。
+    expect(db.notification_deliveries).toHaveLength(1)
+    expect(db.notification_deliveries[0].sent_at).toBe(NOW)
   })
 
   it("**401 では購読を消さぬ**（VAPID 設定ミス 1 つで全端末が消し飛ぶのを止める）", async () => {

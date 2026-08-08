@@ -28,11 +28,49 @@ export type PushSendResult =
   | { ok: true }
   /**
    * `gone` は 404 / 410 — **購読が恒久的に消えた**という push サービスの宣言じゃ。
-   * ここだけが購読を削除してよい合図で、他は全て再試行側へ倒す
-   * （CLAUDE.md「再試行は広く、破棄は狭く」。401/403 を破棄側に混ぜると、
-   * VAPID の設定ミス 1 つで全端末の購読が消し飛ぶ）。
+   * ここだけが購読を削除してよい合図で、他で購読を消してはならぬ
+   * （CLAUDE.md「破棄は狭く」。401/403 を破棄側に混ぜると、VAPID の設定ミス
+   * 1 つで全端末の購読が消し飛ぶ）。
+   *
+   * ⚠️ **「その配信行を再送するか」は別の判断じゃ** —— `gone` でないこと（＝
+   * 購読を消さぬこと）は再送してよいことを意味せぬ。そちらは
+   * {@link isProvenNotDelivered} が at-most-once の向きで決める。
    */
   | { ok: false; gone: boolean; status: number | null; message: string }
+
+/**
+ * ★ **再送してよいのは「確実に届いておらぬ」と証明できる失敗だけ**（at-most-once）。
+ *
+ * ## なぜ「怪しきは再送」ではなく「怪しきは落とす」なのか
+ * 送信の失敗には**届いたか分からぬ**ものが在る（ソケットタイムアウト —— push
+ * サービスは受理したのに応答だけが落ちた、が有りうる）。ここで再送に倒すと
+ * 同じ通知が二度鳴る。**Safari は可視通知の雪崩で権限そのものを剥奪する**
+ * （Apple 公式）ゆえ、重複は「1 通落とす」より高くつく —— 落ちるのはその 1 通
+ * じゃが、剥奪されればその端末の通知が**全て**止まり、主が設定から入り直すまで
+ * 戻らぬ。`claimAndSend` の docstring が最初から宣言しておる割り切りに、実装を
+ * 揃えたものじゃ。
+ *
+ * ## 判定は allowlist の向き（証明の責は再送側に在る）
+ * RFC 8030 §5 では push サービスは**受理を 2xx（201）で表す**。ゆえに status が
+ * 返っておるということは、サービスが我々の要求を見て**明示的に拒んだ**という
+ * ことじゃ ＝ 届いておらぬことの証明になる。status が無い（例外に status が
+ * 付かぬ）失敗は「応答を一度も見ておらぬ」ゆえ証明が無い → 落とす。
+ *
+ * ⚠️ **DNS 解決失敗や `ECONNREFUSED` も、この向きでは道連れに落ちる。**
+ * それらは実際には「確実に届いておらぬ」側じゃが、`PushSendResult` は今
+ * Node のエラーコードを運んでおらぬゆえ、タイムアウトと**区別できぬ**。
+ * 区別できぬものを再送側へ入れれば allowlist が blocklist に化ける。
+ * コードを運んで取り戻すのは**意図して据え置く**（B-3 の関心事ではない）。
+ *
+ * ⚠️ **`>= 400` 等の範囲比較や「gone でなければ再送」に書き換えるな。** 後者は
+ * denylist ゆえ、新しい失敗の形が増えるたび**既定で再送側へ落ちる**。
+ */
+export function isProvenNotDelivered(result: PushSendResult): boolean {
+  if (result.ok) return false
+  // `typeof` で見る。`result.status !== null` では、将来 undefined が混ざった時に
+  // 「証明あり」へ倒れる（欠落は証明ではない）。
+  return typeof result.status === "number"
+}
 
 /**
  * VAPID 設定。3 つ揃わねば null（fail-closed）。
@@ -107,8 +145,12 @@ export async function sendPushNotification(
     }
     return {
       ok: false,
-      // 通信断・タイムアウトは**恒久的失敗ではない**。次の実行で再試行させる。
+      // 購読は消さぬ（通信断・タイムアウトは購読の失効ではない）。
       gone: false,
+      // ⚠️ **`status: null` は「応答を一度も見ておらぬ」の印じゃ。**
+      // ここへ既定値の数字を置くな —— {@link isProvenNotDelivered} がこの null を
+      // 「届いておらぬ証明が無い」と読んで再送を止めておる。数字を置けば、
+      // 届いたか分からぬ通知が二度鳴る側へ黙って倒れる。
       status: null,
       message: error instanceof Error ? error.message : String(error),
     }
