@@ -29,7 +29,7 @@
 --     **2 世帯ぶんの行が入ったこと**を assert する。
 -- (C) 対照: 「見えぬ／書けぬ」だけでなく「見える／書ける」を同じ文脈で assert する。
 BEGIN;
-SELECT plan(44);
+SELECT plan(47);
 
 -- ══════════════════════════════════════════════════════════════
 -- A. 権限カタログ・スキーマ（静的・ロール切替なし）
@@ -188,7 +188,12 @@ INSERT INTO households (id, name) VALUES
 INSERT INTO auth.users (id, email) VALUES
   ('22222222-2222-2222-2222-222222222222', 'u1@example.com'),
   ('88888888-8888-8888-8888-888888888888', 'u2@example.com'),
-  ('44444444-4444-4444-4444-444444444444', 'u3@example.com');
+  ('44444444-4444-4444-4444-444444444444', 'u3@example.com'),
+  -- U4 は**サインアップしただけの赤の他人**（承認待ち・世帯無所属）。
+  -- ⚠️ **profiles を手で UPDATE せぬのが肝じゃ。** `handle_new_user` トリガが
+  -- `(id, display_name)` しか書かぬゆえ、行は household_id=NULL / is_approved=false
+  -- で生まれる — これが本番の実状態そのものであり、手で組み立てた状態より強い。
+  ('66666666-6666-6666-6666-666666666666', 'u4@example.com');
 UPDATE profiles SET household_id = '11111111-1111-1111-1111-111111111111',
                     display_name = 'U1', role = 'owner', is_approved = true
   WHERE id = '22222222-2222-2222-2222-222222222222';
@@ -242,6 +247,17 @@ SELECT is(
                            '33333333-3333-3333-3333-333333333333')),
   3::bigint,
   'B-0: seed が 3 件（2 世帯ぶん。1 世帯 seed だと分離の縮退を見逃す）');
+
+-- (S) **U4 が「承認待ち・世帯無所属」で実在すること**を先に固定する。
+-- ⚠️ これが無いと D-8b/D-8c は偽緑になる — トリガが profile を作っておらねば
+-- `get_my_household_id()` は同じく NULL を返し、0 件は「閉じておるから」ではなく
+-- 「そもそも誰も居らぬから」で成立してしまう。
+SELECT is(
+  (SELECT (household_id IS NULL) AND (is_approved = false) FROM profiles
+    WHERE id = '66666666-6666-6666-6666-666666666666'),
+  true,
+  'B-1: U4 は household_id NULL・is_approved false（サインアップ直後の実状態）'
+);
 
 -- ══════════════════════════════════════════════════════════════
 -- C. 冪等キーと FK の**実挙動**（owner 権限。RLS は関係せぬ）
@@ -484,6 +500,20 @@ SELECT set_config('request.jwt.claims',
                     'role', 'authenticated')::text, true);
 SELECT is((SELECT count(*) FROM notification_deliveries), 1::bigint,
   'D-11: 他世帯からは自世帯の 1 件のみ（対照）');
+
+-- ── **承認待ち・世帯無所属（U4）からは心拍も配信行も見えぬ** ──
+-- ⚠️ ここが唯一「認証さえ通れば読める」に緩みうる箇所じゃ。心拍の SELECT ポリシーを
+-- `auth.uid() IS NOT NULL` に戻すと、`/pending-approval` に留め置かれた赤の他人が
+-- 配信基盤の稼働（ran_at / 各カウント）を覗き続けられる — 承認ゲートを迂回する
+-- 読み経路が 1 本開く。**D-8（承認済みは 1 件読める）と対で読め**: 片方だけでは
+-- 「緩めても永久に緑」か「閉め過ぎて画面が常に空」のどちらかを見逃す。
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', '66666666-6666-6666-6666-666666666666',
+                    'role', 'authenticated')::text, true);
+SELECT is((SELECT count(*) FROM notification_heartbeat), 0::bigint,
+  'D-11b: **未承認・世帯無所属からは心拍が見えぬ**（D-8 の対照。緩めるとここが割れる）');
+SELECT is((SELECT count(*) FROM notification_deliveries), 0::bigint,
+  'D-11c: 同じユーザーから配信行も 0 件（household_id = NULL 比較で既に閉じておる）');
 
 -- ── 未認証（anon）は何も触れぬ ───────────────────────────────
 SET LOCAL role anon;

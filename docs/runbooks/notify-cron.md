@@ -157,6 +157,29 @@ select * from notification_heartbeat;
 select max(sent_at) from notification_deliveries;
 ```
 
+心拍の読み方に 2 つ約束がある。
+
+**① `ran_at` の鮮度だけを見るな。`failed_count` と対で読め。**
+配信基盤が全面停止しても（例: PostgREST 障害や policy 変化で対象世帯の列挙 SELECT が
+恒常的に失敗する）、心拍は `finally` が必ず書くゆえ `ran_at` は 5 分ごとに新しくなる。
+このとき `deliverDueNotifications` は**完走しておらぬ**ため `failed_count >= 1` になる
+（`ran_at` だけが新しく `sent=skipped=failed=0` という組み合わせは「送るものが
+無かった」＝平穏の意味じゃ）。**両者は次の 3 通りで読み分ける**:
+
+| ran_at | failed_count | 意味 |
+|---|---|---|
+| 新しい | 0 | 平穏（送るものが無かった、または全部送れた） |
+| 新しい | 1 以上 | **走ってはおるが壊れておる**（`net._http_response` と Vercel のログを見よ） |
+| 10 分以上前 | — | 起動しておらぬ（pg_cron / secret / proxy を疑う） |
+
+**② `ran_at` は「最後に *終わった* 実行の開始時刻」じゃ。**
+書込は無条件の upsert（last-writer-wins）ゆえ、cron の重複起動が重なると
+**遅い実行が後から古い `ran_at` を書き戻しうる**（巻き戻り幅は最大で 1 回の実行時間
+＝ `maxDuration` の 60 秒ぶん。上の 10 分の閾値には届かぬ）。ゆえに `ran_at` は
+「最近何かが走ったか」を見る値であって、実行の開始時刻を厳密に追う値ではない。
+同じ理由で `failed_count` も**最後に終わった実行のもの**ゆえ、重複起動下では
+壊れた実行の 1 が平穏な実行の 0 に上書きされうる。連続 2 回の観測で判断せよ。
+
 `skip_reason` の内訳を見れば、壊れ方の種類が分かる:
 
 | 値 | 意味 |

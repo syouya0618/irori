@@ -153,6 +153,8 @@ export async function deliverDueNotifications(
   }
   const now = deps.now()
   const counters: Counters = { scheduled: 0, sent: 0, skipped: 0, failed: 0 }
+  // ⚠️ **`failed` の契約を機械で守るための旗じゃ。** 下の finally を見よ。
+  let completed = false
 
   try {
     const vapid = deps.readVapid()
@@ -182,13 +184,28 @@ export async function deliverDueNotifications(
       }
     }
 
-    return {
+    const result: DeliveryRunResult = {
       ranAt: now.toISOString(),
       ...counters,
     }
+    completed = true
+    return result
   } finally {
     // ⚠️ **finally で書く。** 途中で throw しても「走ったこと」だけは残さねば、
     // 停止した配信基盤と平穏な一日が画面の上で同じに見える。
+    //
+    // ⚠️ **だが `ran_at` だけを残すのでは足りぬ。** 完走せずに抜けたなら
+    // `failed` を最低 1 にする — さもなくば「全面停止」が
+    // `sent=skipped=failed=0` の心拍として書かれ続け、runbook の一次監視
+    // （「ran_at が 10 分以上前なら止まっておる」）から**永久に平穏に見える**。
+    // `DeliveryRunResult.failed` の docstring が明記しておる契約はこれじゃ。
+    //
+    // ⚠️ **throw する箇所を名指しで包むな。** 「世帯の列挙」だけを try/catch で
+    // 包むのは allowlist であり、`readVapid()` 自身の例外や、この try に後から
+    // 足される throw を素通しする。旗を立てるのは「完走した」ただ 1 箇所ゆえ、
+    // 数え漏れは構造的に起こらぬ。VAPID 分岐が自前で +1 しておるのは意図の記録で、
+    // ここの下駄（0 のときだけ 1 にする）とは二重に数えぬ。
+    if (!completed && counters.failed === 0) counters.failed = 1
     await writeHeartbeat(supabase, now, counters)
   }
 }

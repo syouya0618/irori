@@ -618,7 +618,7 @@ describe("心拍", () => {
     expect(db.notification_deliveries[0].sent_at).toBe(NOW)
   })
 
-  it("世帯の列挙で落ちても心拍だけは残る（finally）", async () => {
+  it("世帯の列挙で落ちても心拍だけは残り、**failed が 1 以上になる**", async () => {
     const db = seed()
     const fake = createFakeNotifySupabase(db)
     fake.failOn("event_reminders", "select", { message: "boom", code: "XX000" })
@@ -631,6 +631,43 @@ describe("心拍", () => {
         sendPush: async () => ({ ok: true }),
       }),
     ).rejects.toThrow()
-    expect(db.notification_heartbeat[0].ran_at).toBe(NOW)
+    // ⚠️ **`ran_at` だけを見てはならぬ。** ran_at だけの assert は、
+    // `failed_count: 0` で書かれる（＝恒久的な全面停止が「平穏」に見える）
+    // 欠落を素通しする — 実際にこの形で欠落しておったのを敵対レビューが拾った。
+    // runbook の一次監視は ran_at の鮮度ゆえ、failed が 0 のままなら
+    // 「5 分ごとに走っておるが 1 通も届かぬ」状態が永久に緑になる。
+    expect(db.notification_heartbeat[0]).toMatchObject({
+      ran_at: NOW,
+      sent_count: 0,
+      failed_count: 1,
+    })
+    // 対照は上の「送るものが無くとも必ず書かれる」が持つ（`failed_count: 0` を
+    // 完全一致で見ておる）。下駄を「常に 1」へ緩めると**あちらが赤くなる** —
+    // 実測で確認済みゆえ、ここに同じ assert を重ねはせぬ。
+  })
+
+  it("**列挙以外の想定外の throw でも failed が残る**（数え上げが allowlist へ退化せぬ）", async () => {
+    const db = seed()
+    const fake = createFakeNotifySupabase(db)
+
+    // ⚠️ このテストが守っておるのは「どこで throw しても数える」という**形**じゃ。
+    // 数え上げを「世帯の列挙」だけ try/catch で包む書き方（＝ throw 箇所の
+    // allowlist）に戻すと、この経路が素通りして `failed_count: 0` になる。
+    // `readVapid` は `null` を返す契約じゃが、env 読取が例外を投げる改修は
+    // いつでも起こりうる — そのとき無音で監視が盲になってはならぬ。
+    await expect(
+      deliverDueNotifications(fake.client, {
+        now: () => new Date(NOW),
+        readVapid: () => {
+          throw new Error("env 読取が壊れた")
+        },
+        sendPush: async () => ({ ok: true }),
+      }),
+    ).rejects.toThrow(/env 読取/)
+
+    expect(db.notification_heartbeat[0]).toMatchObject({
+      ran_at: NOW,
+      failed_count: 1,
+    })
   })
 })

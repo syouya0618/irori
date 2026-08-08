@@ -238,10 +238,25 @@ ALTER TABLE notification_heartbeat ENABLE ROW LEVEL SECURITY;
 
 -- ⚠️ **ポリシーを書き忘れると RLS 有効 + ポリシー 0 本 = deny-all** になり、
 -- 画面が常に空になる（しかも「まだ走っておらぬ」と区別がつかぬ = 最悪の壊れ方）。
--- 世帯を跨ぐ値ではない（配信基盤は 1 つ）ゆえ、認証済みなら誰でも読んでよい。
--- 書き込みポリシーは置かぬ = service role 専用。
+-- ゆえに**消すのではなく、述語を絞る**。書き込みポリシーは置かぬ = service role 専用。
+--
+-- ⚠️ **述語を `auth.uid() IS NOT NULL` にしてはならぬ。** 値そのものは世帯を
+-- 跨がぬ（配信基盤は 1 つ）が、`auth.uid()` は**サインアップした瞬間に埋まる** —
+-- `handle_new_user` は `(id, display_name)` しか書かず `is_approved` は既定 false、
+-- `household_id` は NULL じゃ（実測: 新規行は household_id=NULL / is_approved=f）。
+-- 公開サインアップが開いた本番では、`/pending-approval` に留め置かれた**赤の他人**が
+-- 配信基盤の稼働（ran_at / 各カウント）を継続して覗ける。漏れる値は整数 4 つでも、
+-- **承認ゲートを迂回する読み経路が 1 本開く**こと自体が禍根じゃ（次に列が増えたとき
+-- 誰も気付けぬ）。
+--
+-- → 錨は他表と同じ `get_my_household_id()` に揃える。
+--   「承認待ち(is_approved=false)ユーザーは必ず household_id=NULL」は
+--   20260603000001_security_hardening_rls.sql:115-117 が明文化しておる不変条件ゆえ、
+--   `IS NOT NULL` は「承認済みかつ世帯に属する」と同値になる。**世帯を跨いで 1 行を
+--   共有する**という設計意図（= household_id 列を持たせぬ）はそのまま保たれる。
+--   対照は pgTAP の D-8（承認済みは読める）と D-11b/D-11c（未承認は 0 件）が持つ。
 CREATE POLICY "notification_heartbeat_select" ON notification_heartbeat
-  FOR SELECT USING (auth.uid() IS NOT NULL);
+  FOR SELECT USING (get_my_household_id() IS NOT NULL);
 
 REVOKE ALL ON public.notification_heartbeat FROM anon, authenticated;
 GRANT SELECT ON public.notification_heartbeat TO authenticated;
