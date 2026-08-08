@@ -330,6 +330,7 @@ describe("端末の解除は恒久的に効く", () => {
       <NotificationCard
         devices={[device({ id: "sub-1", userAgent: "この端末" })]}
         health={health()}
+        {...digestOff}
       />,
     )
     fireEvent.click(screen.getByRole("button", { name: "この端末を一覧から外す" }))
@@ -357,6 +358,7 @@ describe("端末の解除は恒久的に効く", () => {
       <NotificationCard
         devices={[device({ id: "sub-2", userAgent: "配偶者の端末" })]}
         health={health()}
+        {...digestOff}
       />,
     )
     fireEvent.click(screen.getByRole("button", { name: "配偶者の端末を一覧から外す" }))
@@ -409,6 +411,7 @@ describe("端末の解除は恒久的に効く", () => {
         {...digestOff}
         devices={[device({ id: "sub-2", userAgent: "配偶者の端末" })]}
         health={health()}
+        {...digestOff}
       />,
     )
     fireEvent.click(screen.getByRole("button", { name: "配偶者の端末を一覧から外す" }))

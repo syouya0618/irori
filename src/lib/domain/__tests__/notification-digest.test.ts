@@ -10,6 +10,7 @@
 
 import { describe, it, expect } from "vitest"
 import {
+  DIGEST_TIME_DEFAULT,
   DIGEST_TIME_NONE,
   DIGEST_TIME_OPTIONS,
   DIGEST_TIME_SLOTS,
@@ -17,13 +18,22 @@ import {
   parseDigestTimeHm,
 } from "../notification-digest"
 
-describe("選択肢（30 分刻み）", () => {
-  it("00:00 から 23:30 までの 48 個で、重複が無い", () => {
-    expect(DIGEST_TIME_SLOTS).toHaveLength(48)
-    expect(DIGEST_TIME_SLOTS[0]).toBe("00:00")
-    expect(DIGEST_TIME_SLOTS[1]).toBe("00:30")
-    expect(DIGEST_TIME_SLOTS.at(-1)).toBe("23:30")
-    expect(new Set(DIGEST_TIME_SLOTS).size).toBe(48)
+describe("選択肢（朝の帯・30 分刻み）", () => {
+  it("05:00 から 10:00 までの 11 個で、重複が無い", () => {
+    // ⚠️ **両端を含む。** 「10:00 まで」と言いながら 09:30 で切れておる実装を
+    // 長さだけでは弁別できぬゆえ、端の値そのものを見る。
+    expect(DIGEST_TIME_SLOTS).toHaveLength(11)
+    expect(DIGEST_TIME_SLOTS[0]).toBe("05:00")
+    expect(DIGEST_TIME_SLOTS[1]).toBe("05:30")
+    expect(DIGEST_TIME_SLOTS.at(-1)).toBe("10:00")
+    expect(new Set(DIGEST_TIME_SLOTS).size).toBe(11)
+  })
+
+  it("既定の時刻は**帯の中に在る**（画面が出せぬ値を勧めぬ）", () => {
+    // 導線が保存する値と、Select が提示・Server Action が受け付ける集合が
+    // ずれれば、「07:00 で始める」を押した瞬間に「無効な時刻です」が返る。
+    expect(DIGEST_TIME_SLOTS).toContain(DIGEST_TIME_DEFAULT)
+    expect(isDigestTimeSlot(DIGEST_TIME_DEFAULT)).toBe(true)
   })
 
   it("全て HH:MM（0 埋め）で、そのまま parse を通る", () => {
@@ -47,9 +57,21 @@ describe("選択肢（30 分刻み）", () => {
 })
 
 describe("isDigestTimeSlot — Server Action の allowlist", () => {
-  it("刻みに乗った値だけを通す", () => {
+  it("帯の中で刻みに乗った値だけを通す（両端を含む）", () => {
+    expect(isDigestTimeSlot("05:00")).toBe(true)
     expect(isDigestTimeSlot("07:00")).toBe(true)
     expect(isDigestTimeSlot("07:30")).toBe(true)
+    expect(isDigestTimeSlot("10:00")).toBe(true)
+  })
+
+  it("**帯の外は、形が正しくとも通さぬ**（画面が出さぬ値は保存させぬ）", () => {
+    // ⚠️ 上の「通る側」と対で置く。片方だけなら「常に true」「常に false」の
+    // どちらかで緑になる。ここは帯を絞った時に**新たに**外へ出た値じゃ。
+    expect(isDigestTimeSlot("04:30")).toBe(false)
+    expect(isDigestTimeSlot("00:00")).toBe(false)
+    expect(isDigestTimeSlot("10:30")).toBe(false)
+    expect(isDigestTimeSlot("12:00")).toBe(false)
+    expect(isDigestTimeSlot("23:30")).toBe(false)
   })
 
   it("刻みを外れた値・別物は通さぬ", () => {

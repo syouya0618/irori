@@ -131,6 +131,36 @@ describe("表示", () => {
     expect(digestTrigger()).toHaveTextContent("07:13")
   })
 
+  /**
+   * ★ **帯を朝（05:00〜10:00）へ絞ったことで新たに「外」へ出た値**（12:00）。
+   *
+   * ⚠️ **上の 2 本（07:13 / 07:00:00）はこの回帰を弁別できぬ。**
+   * `digestItemsFor` を消しても**トリガの文字は変わらぬ** —— base-ui の
+   * `Select.Value` は `items` に一致が無いとき生の値をそのまま描くゆえじゃ
+   * （このリポジトリの版で計測。docstring が言うておった「空欄になる」は**誤り**
+   * じゃった。仕込みで実測: 配慮を外しても 07:13 のテストは緑のまま）。
+   *
+   * 実際に壊れるのは**開いた時**じゃ。今の設定が一覧のどこにも無く、印も付かぬ。
+   * 主は「一覧に無い ＝ 設定が消えた」と読んで選び直し、**本人の意図でなく毎朝の
+   * 時刻が動く**（12:00 は昨日まで選べた値ゆえ、実際に設定しておった人が居りうる）。
+   * ゆえにここは**開いて option の実在まで**見る。
+   */
+  it("**帯の外になった保存済みの時刻も、開けば一覧に在る**（12:00）", async () => {
+    renderCard({ digestTime: "12:00" })
+    // 表示（安い側）。これだけでは配慮の有無を弁別できぬ —— 下が本体じゃ。
+    expect(digestValueText()).toBe("12:00")
+
+    const trigger = digestTrigger() as HTMLButtonElement
+    fireEvent.pointerDown(trigger, { button: 0 })
+    fireEvent.click(trigger)
+
+    // ★ 本体: 帯の外の値が選択肢として足されておること。
+    expect(await screen.findByRole("option", { name: "12:00" })).toBeInTheDocument()
+    // 帯そのものが広がってしもうておらぬこと（この 1 行が無いと、帯を戻す
+    // 変更でもこのテストが緑になる）。
+    expect(screen.queryByRole("option", { name: "12:30" })).not.toBeInTheDocument()
+  })
+
   it("**読めなかったときは「送らない」と描かず、理由を出して止める**", () => {
     renderCard({ unknown: true })
     expect(
@@ -248,6 +278,68 @@ describe("保存", () => {
         "毎朝 07:00 に設定しました。通知を受け取る端末がないため、まだ届きません。",
       ),
     )
+  })
+})
+
+/**
+ * ## 「既定は 7 時」を、画面が嘘をつかぬ形で満たす
+ *
+ * 未設定（DB が NULL）のとき Select の**選択**を 07:00 にすれば、主は
+ * 「設定済み」と読む —— そして毎朝来ぬ通知を待つ。ゆえに選択は「送らない」の
+ * ままに保ち、代わりに **1 タップの導線**を出す。押されて初めて保存されるゆえ
+ * opt-in は割れておらぬ。
+ *
+ * ここは 3 本で挟む（1 本では「常に出す」「常に出さぬ」実装が素通りする）:
+ *   1. 未設定なら出る、しかも Select は「送らない」のまま（＝嘘をついておらぬ）
+ *   2. 設定済みなら出さぬ
+ *   3. 押せば 07:00 が保存され、導線は消える
+ */
+describe("07:00 で始める（未設定のときだけの導線）", () => {
+  const startButton = () =>
+    screen.queryByRole("button", { name: "07:00 で始める" })
+
+  it("未設定なら導線が出る。**それでも選択は「送らない」のまま**", () => {
+    renderCard({ digestTime: null })
+    expect(startButton()).toBeInTheDocument()
+    // ★ ここが要じゃ。ボタンが在っても、設定済みには見せておらぬ。
+    expect(digestValueText()).toBe("送らない")
+  })
+
+  it("設定済みなら出さぬ（済んだ主に勧め続けぬ）", () => {
+    renderCard({ digestTime: "08:00" })
+    expect(startButton()).not.toBeInTheDocument()
+  })
+
+  it("**読めなかったときは出さぬ**（1 タップで知らぬ間に上書きさせぬ）", () => {
+    // B-4 の診断と同じ筋。Select を disabled にしておきながら、隣のボタンで
+    // 書けてしまえば守りの意味が無い。
+    renderCard({ unknown: true })
+    expect(startButton()).not.toBeInTheDocument()
+  })
+
+  it("押すと 07:00 が保存され、導線は消える", async () => {
+    mockedUpdate.mockResolvedValue({ success: true })
+    renderCard({ digestTime: null, devices: [DEVICE] })
+
+    fireEvent.click(startButton() as HTMLButtonElement)
+
+    await waitFor(() => expect(mockedUpdate).toHaveBeenCalledWith("07:00"))
+    await waitFor(() => expect(digestValueText()).toBe("07:00"))
+    expect(startButton()).not.toBeInTheDocument()
+  })
+
+  it("保存に失敗したら導線は残る（押せば直るゆえ）", async () => {
+    mockedUpdate.mockResolvedValue({ error: "通知の設定に失敗しました" })
+    renderCard({ digestTime: null, devices: [DEVICE] })
+
+    fireEvent.click(startButton() as HTMLButtonElement)
+
+    await waitFor(() =>
+      expect(mockedToast.error).toHaveBeenCalledWith("通知の設定に失敗しました"),
+    )
+    // 巻き戻しが効いておれば「送らない」へ戻り、導線もまた出る。
+    await waitFor(() => expect(digestValueText()).toBe("送らない"))
+    expect(startButton()).toBeInTheDocument()
   })
 })
 

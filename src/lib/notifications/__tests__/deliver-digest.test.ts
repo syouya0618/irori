@@ -322,7 +322,7 @@ describe("設定の変更に追随する", () => {
     })
   })
 
-  it("**時刻を動かした日も、その日のまとめは失われぬ**（行は付け替わる）", async () => {
+  it("**時刻を後ろへ動かした日も、その日のまとめは失われぬ**（行は付け替わる）", async () => {
     const db = seed()
     await tick(db, TICK_MIDNIGHT).promise
     // 主が 07:00 → 08:00 へ変えた。
@@ -353,8 +353,13 @@ describe("設定の変更に追随する", () => {
    * 冪等キーが終端行に取られておるゆえ、同じ日に何度設定し直しても戻らぬ。
    * 30 分刻みの選択肢では前方向の変更は必ず 30 分以上過去へ落ちる ＝ 例外ではなく
    * 既定の挙動じゃった。
+   *
+   * ⚠️ **救えるのは「新しい時刻がまだ来ておらぬ」場合だけじゃ。** 既に過ぎた
+   * （grace より深く過去の）時刻へ早めた日は、下の対照テストのとおり**届かぬ**
+   * —— それは主が承知のうえで採った fail-closed で、直すべき穴ではない。
+   * 名前を「早めた日は失われぬ」と広く書くと、その承知が消える。
    */
-  it("**時刻を早めた日も、その日のまとめは失われぬ**（前方向の対照）", async () => {
+  it("**まだ来ておらぬ時刻へ早めた日は、その日のまとめは失われぬ**（前方向の対照）", async () => {
     const db = seed()
     await tick(db, TICK_MIDNIGHT).promise
     // 主が朝 05:00 に「07:00 は遅い、06:30 にしよう」と変えた。
@@ -401,6 +406,60 @@ describe("設定の変更に追随する", () => {
     await tick(db, "2026-08-09T23:00:00.000Z", { sent }).promise
     expect(sent).toHaveLength(1)
     expect(digestRows(db)).toHaveLength(1)
+  })
+
+  /**
+   * ★ **既に過ぎた時刻へ早めた日は届かぬ（fail-closed）。主が承知で採った姿じゃ。**
+   *
+   * ⚠️ **これは「穴」ではなく決定じゃ。** 上の 2 本（後ろへ動かす／まだ来ておらぬ
+   * 時刻へ早める）は「失われぬ」を守っておるが、**過ぎた時刻へ早めた日だけは
+   * 別物**で、そこを埋めるには「旧い時刻で鳴らす」か「grace を無視して遅れて
+   * 鳴らす」しかない —— どちらも主が最も嫌う「頼んでおらぬ時刻に鳴る」じゃ。
+   * ゆえに届けぬ側へ倒しておる。
+   *
+   * ⚠️ **テストが無ければ、この決定は次の改修で無音で反転する。** 展開側の下限
+   * （`scheduledMs <= graceStartMs` で aims から落とす）を外せば「過ぎた時刻へ
+   * 付け替える」ようになり、旧い時刻を過ぎた行がそのまま送られて**朝 5 時の
+   * まとめが 7 時に鳴る**。それを誰も赤で気付けぬ形にせぬために置く。
+   *
+   * 経路（3 tick 要る。2 tick では `expired` まで届かぬ）:
+   *   1. JST 00:05 … 07:00 を狙う行が立つ
+   *   2. JST 06:05 … 05:00（もう過ぎた）へ変更 → 望みが無いゆえ**付け替えぬ**
+   *   3. JST 07:00 … 旧い狙いで拾われ、裁定が過去（05:00）へ reaim。**送らぬ**
+   *   4. JST 07:20 … 期限切れ掃除（`scheduled_at < now - GRACE`）が `expired`
+   */
+  it("**既に過ぎた時刻へ早めた日は届かぬ**（fail-closed。承知のうえの対照）", async () => {
+    const db = seed()
+    await tick(db, TICK_MIDNIGHT).promise
+    expect(digestRows(db)[0].scheduled_at).toBe(DIGEST_AT)
+
+    // JST 06:05 に「05:00」（15 分の grace より深く過去）へ変えた。
+    db.notification_preferences[0].digest_time = "05:00:00"
+    const atSix: SentRecord[] = []
+    await tick(db, "2026-08-09T21:05:00.000Z", { sent: atSix }).promise
+    expect(atSix).toHaveLength(0)
+    // 付け替えておらぬ（望みの無い狙いへ動かせば行を殺すだけゆえ）。
+    expect(digestRows(db)[0].scheduled_at).toBe(DIGEST_AT)
+
+    // 旧い時刻（07:00）が来ても**鳴らぬ**。裁定が過去へ reaim するだけじゃ。
+    const atSeven: SentRecord[] = []
+    await tick(db, DIGEST_AT, { sent: atSeven }).promise
+    expect(atSeven).toHaveLength(0)
+    expect(digestRows(db)[0]).toMatchObject({
+      scheduled_at: "2026-08-09T20:00:00.000Z",
+      sent_at: null,
+      skipped_at: null,
+    })
+
+    // 次の実行の期限切れ掃除が畳む。**その日のまとめは 1 通も来ぬ。**
+    const after: SentRecord[] = []
+    await tick(db, "2026-08-09T22:20:00.000Z", { sent: after }).promise
+    expect(after).toHaveLength(0)
+    expect(digestRows(db)).toHaveLength(1)
+    expect(digestRows(db)[0]).toMatchObject({
+      sent_at: null,
+      skip_reason: "expired",
+    })
   })
 
   it("行を立てた後に予定が全部消えても畳まぬ（入り直せば届く）", async () => {

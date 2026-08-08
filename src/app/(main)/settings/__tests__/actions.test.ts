@@ -421,11 +421,41 @@ describe("updateDigestTime", () => {
     const { client, upsert } = makeUpsertSupabase({ data: [], error: null })
     setContext(client)
 
-    for (const bad of ["07:13", "07:00:00", "24:00", "", "なし"]) {
+    // ⚠️ 前半は「形が壊れておる値」、後半は**形は正しいが朝の帯の外**の値じゃ。
+    // 帯を絞ったとき Server Action 側を揃え忘れると、後半だけが素通りする
+    // （画面は出さぬのに保存はできる ＝ allowlist が画面より広い）。
+    for (const bad of [
+      "07:13",
+      "07:00:00",
+      "24:00",
+      "",
+      "なし",
+      "04:30",
+      "00:00",
+      "10:30",
+      "12:00",
+      "23:30",
+    ]) {
       expect(await updateDigestTime(bad)).toEqual({ error: "無効な時刻です" })
     }
     // **DB を一度も触っておらぬ**（検証が素通りしておらぬ証拠）。
     expect(upsert).not.toHaveBeenCalled()
+  })
+
+  it("帯の**両端**は保存できる（絞りすぎておらぬことの対照）", async () => {
+    // 上の reject 群だけでは「全部弾く」実装でも緑になる。
+    for (const good of ["05:00", "10:00"]) {
+      const { client, upsert } = makeUpsertSupabase({
+        data: [{ user_id: "user-1" }],
+        error: null,
+      })
+      setContext(client)
+      expect(await updateDigestTime(good)).toEqual({ success: true })
+      expect(upsert).toHaveBeenCalledWith(
+        { user_id: "user-1", digest_time: good },
+        { onConflict: "user_id" },
+      )
+    }
   })
 
   it("0 行を成功と偽らぬ（RLS 拒否・行が作られなかった）", async () => {

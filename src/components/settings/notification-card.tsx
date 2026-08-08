@@ -54,6 +54,7 @@ import {
 } from "@/app/(main)/settings/push-actions"
 import { updateDigestTime } from "@/app/(main)/settings/actions"
 import {
+  DIGEST_TIME_DEFAULT,
   DIGEST_TIME_NONE,
   DIGEST_TIME_OPTIONS,
   parseDigestTimeHm,
@@ -169,9 +170,21 @@ function deviceStatusOf(device: PushDeviceView): string {
  * Select に出す選択肢。
  *
  * ⚠️ **保存済みの値が選択肢に無いときは、その値を足して見せる。** `digest_time` は
- * DB では任意の TIME を許すゆえ（SQL から直に入れた 07:13 等）、30 分刻みの
- * 選択肢だけを渡すと base-ui Select はどの item にも一致せず**空欄**を描く —
- * 主は「設定が消えた」と読み、実際には毎朝 07:13 に届き続ける。
+ * DB では任意の TIME を許す（SQL から直に入れた 07:13）うえ、B-5 で提示する帯を
+ * 朝（05:00〜10:00）へ絞ったゆえ、**昨日まで選べた 12:00 も今は選択肢の外**じゃ。
+ *
+ * ⚠️ **失われるのは「一覧に出ること」であって、トリガの表示ではない（実測）。**
+ * base-ui の `Select.Value` は `items` に一致が無いとき**生の値をそのまま描く**
+ * （このリポジトリの版で計測。空欄にはならぬ）。ゆえに:
+ *   * トリガの文字だけを見るテストでは、この配慮を消しても**緑のまま**になる
+ *   * 実際に壊れるのは**開いた時**じゃ —— 今の設定が一覧のどこにも無く、印も
+ *     付かぬ。主は「一覧に無い ＝ 設定が消えた」と読んで選び直し、**本人の意図
+ *     でなく毎朝の時刻が動く**
+ * ゆえに回帰は `notification-card-digest.test.tsx` が**開いて option を数える**
+ * 形で固定しておる。トリガの表示だけを見る assert に戻すな。
+ *
+ * （なお `parseDigestTimeHm` を落として "07:00:00" が来た場合は、その生の値が
+ * トリガへ出るゆえ完全一致の assert で捕まる —— あちらは別の検出器じゃ。）
  */
 function digestItemsFor(current: string): { value: string; label: string }[] {
   if (DIGEST_TIME_OPTIONS.some((option) => option.value === current)) {
@@ -201,9 +214,11 @@ export function NotificationCard({
   // 主が自ら選ぶまで毎朝の通知は出さぬ、が B-5 の約束じゃ。
   //
   // ⚠️ **ここでも正規化を通す。** ページ側が既に "HH:MM" へ均しておるが、DB の
-  // TIME は "07:00:00" で返る値ゆえ、上流の 1 箇所が抜けただけで Select が
-  // **空欄**になり「設定が消えた」と読まれる。同じ純関数を二度通すだけの安さで、
-  // その壊れ方をこの階層でも塞げる（値は同じゆえ真値源は増えぬ）。
+  // TIME は "07:00:00" で返る値ゆえ、上流の 1 箇所が抜けると Select に
+  // **"07:00:00" がそのまま出る**（base-ui は一致せぬ値を生のまま描く。実測）。
+  // 見慣れぬ表記は「壊れておる」と読まれ、しかもその値は Server Action の
+  // allowlist の外じゃ。同じ純関数を二度通すだけの安さでこの階層でも塞げる
+  // （値は同じゆえ真値源は増えぬ）。
   const [digestChoice, setDigestChoice] = useState(
     parseDigestTimeHm(digestTime) ?? DIGEST_TIME_NONE,
   )
@@ -566,6 +581,29 @@ export function NotificationCard({
               通知を受け取る端末がないため、この時刻に設定してもまだ届きません。
               先にこの端末（または受け取りたい端末）で通知を受け取れるようにしてください。
             </p>
+          )}
+          {/* ── 既定の時刻へ 1 タップで入る導線 ────────────────────────
+              ⚠️ **Select の初期選択を 07:00 にはせぬ。** DB が NULL のとき Select が
+              07:00 を選んで見えれば「設定しておらぬのに設定済みに見える」＝ 画面が
+              嘘をつき、主は毎朝来ぬ通知を待つ（B-5 が意図して避けた形じゃ）。
+              「既定は 7 時」を満たすのはこのボタンで、**押されて初めて保存される**
+              ゆえ opt-in は保たれる。
+
+              ⚠️ 出す条件は**プロップではなく state**（`digestChoice`）で見る。
+              プロップは `revalidatePath` の再描画まで古いままゆえ、保存した直後に
+              導線が残って二度押しを誘う。state で見れば、主が自ら「送らない」へ
+              戻した時にも再び出る —— それは**本当に未設定**ゆえ正しい。 */}
+          {digestChoice === DIGEST_TIME_NONE && !digestTimeUnknown && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void handleDigestChange(DIGEST_TIME_DEFAULT)}
+              disabled={digestSaving}
+              className="min-h-11 self-start"
+            >
+              <Sunrise size={16} />
+              {`${DIGEST_TIME_DEFAULT} で始める`}
+            </Button>
           )}
           {/* ⚠️ **「読めなかった」を「送らない」と描かぬ**（B-4 の診断と同じ筋）。
               取得に失敗しておるのに選択肢を触らせると、主の 1 クリックが

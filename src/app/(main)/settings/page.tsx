@@ -288,8 +288,9 @@ export default async function SettingsPage({
         failureCount: device.failure_count,
       }))}
       // B-5: DB の TIME（"07:00:00"）を画面の選択肢と同じ "HH:MM" へ正規化する。
-      // ⚠️ **省くと保存済みの設定が空欄に見える**（base-ui Select はどの item にも
-      // 一致せぬ値を空として描く）。主は「保存できておらぬ」と誤解する。
+      // ⚠️ **省くと画面に "07:00:00" がそのまま出る**（base-ui Select は一致せぬ
+      // 値を空ではなく**生のまま**描く。実測。詳細は `parseDigestTimeHm` の
+      // docstring）。主は見慣れぬ表記を「壊れておる」と読んで設定し直す。
       digestTime={parseDigestTimeHm(notificationPrefs?.digest_time ?? null)}
       // ⚠️ **「読めなかった」を「無効」として描かせぬ。** 取得に失敗した時に
       // 「送らない」と表示すれば、実際には毎朝届く設定が画面の上では切れて見える
