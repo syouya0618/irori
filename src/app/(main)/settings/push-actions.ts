@@ -184,38 +184,64 @@ export async function unsubscribeCurrentDevice(
 /**
  * 自分の端末の登録を解除する。
  *
- * RLS の DELETE ポリシー（`user_id = auth.uid()`）が他人の行を守るため、
- * id だけ受け取れば足りる。0 行削除でも `error: null` が返る仕様ゆえ、
- * 削除できたことを `.select("id")` で確かめる。
+ * ## ⚠️ 行を消すだけでは解除にならぬ
+ * ブラウザの購読が生きたままなら、起動時の突き合わせ
+ * （`push-subscription-reconciler.tsx`）が `upsert_push_subscription` を叩いて
+ * **行を作り直す**（`failure_count = 0` で健康な顔をして戻る）。ゆえにこの Action は
+ * 「消した行が呼び出し元のブラウザの購読だったか」を返し、**呼び出し側が
+ * `subscription.unsubscribe()` を続けて呼ぶ**ことで初めて解除が成立する。
+ * サインアウト経路（`push-unsubscribe.ts`）が守っておる「サーバ先 → ブラウザ後」の
+ * 順序と同じじゃ。
+ *
+ * ## endpoint を受け取り、返さぬ
+ * `endpoint` は列 GRANT の外（送信能力そのもの）ゆえ、どの行が自分かは
+ * サーバでしか判定できぬ。かといって endpoint を返せば端末 A のブラウザへ
+ * 端末 B の送信先を渡すことになる。→ RPC が **一致したかの 1 ビットだけ**返す。
+ *
+ * ⚠️ endpoint はログに出さぬ（この Action の中で唯一の禁則じゃ）。
  */
 export async function deletePushSubscription(
   subscriptionId: string,
-): Promise<ActionResult> {
-  if (!subscriptionId) return { error: "端末が指定されていません。" }
+  /** 呼び出し元のブラウザが今持っておる購読の endpoint（無ければ null）。 */
+  currentEndpoint?: string | null,
+): Promise<ActionResult & { deletedCurrentDevice: boolean }> {
+  if (!subscriptionId) {
+    return { error: "端末が指定されていません。", deletedCurrentDevice: false }
+  }
 
   const result = await getAuthContext()
-  if (result.error !== null) return { error: result.error }
+  if (result.error !== null) {
+    return { error: result.error, deletedCurrentDevice: false }
+  }
   const { supabase, userId } = result.context
 
-  const { data, error } = await supabase
-    .from("push_subscriptions")
-    .delete()
-    .eq("id", subscriptionId)
-    // 列 GRANT ゆえ `select("*")` は落ちる。返す列は必ず明示する。
-    .select("id")
+  // 比較にしか使わぬが、DB の CHECK と同じ上限で丸めておく（長大な値を
+  // そのまま RPC へ渡さぬ）。判定できねば「別端末」へ倒す ＝ ブラウザ側の
+  // 購読を誤って畳まぬ向きじゃ。
+  const endpoint =
+    currentEndpoint && currentEndpoint.length <= 2048 ? currentEndpoint : null
+
+  const { data, error } = await supabase.rpc(
+    "delete_my_push_subscription_by_id",
+    { p_id: subscriptionId, p_endpoint: endpoint },
+  )
 
   if (error) {
     logSupabaseError("push", "購読の解除に失敗", error, {
       userId,
       subscriptionId,
     })
-    return { error: "通知の解除に失敗しました。" }
+    return { error: "通知の解除に失敗しました。", deletedCurrentDevice: false }
   }
-  // `.delete()` は 0 行でも error: null を返す（既知の罠）。行数で確かめる。
-  if (!data || data.length === 0) {
-    return { error: "対象の端末が見つかりませんでした。" }
+  // RPC は 0 行削除を 'not-found' として返す（`.delete()` が 0 行でも
+  // `error: null` を返す罠を、返り値の 3 値で塞いである）。
+  if (data === "not-found") {
+    return {
+      error: "対象の端末が見つかりませんでした。",
+      deletedCurrentDevice: false,
+    }
   }
 
   revalidatePath("/settings")
-  return { error: null }
+  return { error: null, deletedCurrentDevice: data === "deleted-this-device" }
 }

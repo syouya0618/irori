@@ -43,6 +43,10 @@ import {
   savePushSubscriptionAndSendTest,
   deletePushSubscription,
 } from "@/app/(main)/settings/push-actions"
+import {
+  clearPushOptOut,
+  writePushOptOut,
+} from "@/lib/pwa/push-reconcile"
 import { toastOfflineError } from "@/lib/utils/offline-error"
 import type { NotificationHealthView } from "@/lib/domain/notification-health"
 
@@ -79,6 +83,21 @@ function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   const output = new Uint8Array(new ArrayBuffer(raw.length))
   for (let i = 0; i < raw.length; i++) output[i] = raw.charCodeAt(i)
   return output
+}
+
+/**
+ * このブラウザが今持っておる購読。無ければ null。
+ *
+ * ⚠️ `navigator.serviceWorker.ready` を使わぬ。SW が 1 つも登録されておらぬ環境
+ * （`next dev` は `ServiceWorkerManager` が unregister する）では**永久に解決せぬ**
+ * promise になり、解除ボタンが黙って固まる。`getRegistration()` は未登録なら
+ * undefined で解決する（`push-unsubscribe.ts` と同じ判断じゃ）。
+ */
+async function getCurrentSubscription(): Promise<PushSubscription | null> {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null
+  const registration = await navigator.serviceWorker.getRegistration()
+  if (!registration) return null
+  return registration.pushManager.getSubscription()
 }
 
 function formatDate(iso: string): string {
@@ -191,6 +210,10 @@ export function NotificationCard({ devices, health }: NotificationCardProps) {
         toast.error(result.error)
         return
       }
+      // 主が改めて「受け取る」と言うたのじゃから、以前の解除の印は畳む。
+      // 残したままにすると、この端末の購読が 410 で消えた時に突き合わせが
+      // 復旧できなくなる（自分で新しい穴を開けることになる）。
+      clearPushOptOut()
       setSubscribedHere(true)
       setDenied(false)
       toast.success("この端末で通知を受け取れるようになりました。")
@@ -201,12 +224,45 @@ export function NotificationCard({ devices, health }: NotificationCardProps) {
     }
   }, [vapidPublicKey])
 
+  /**
+   * 端末の解除。
+   *
+   * ## ⚠️ 行を消すだけでは解除にならぬ
+   * ブラウザの購読が生きたままなら、起動時の突き合わせ
+   * （`PushSubscriptionReconciler`）が同じ endpoint を登録し直し、**主が切った
+   * はずの通知が戻る**（しかも `failure_count = 0` の健康な顔でな）。ゆえに
+   * サインアウト経路（`push-unsubscribe.ts`）と**同じ順序** —— サーバ削除が先、
+   * ブラウザの `unsubscribe()` が後 —— を踏む。
+   *
+   * どの行がこのブラウザの購読かは endpoint でしか分からず、その列は GRANT の
+   * 外じゃ。ゆえに endpoint を**渡して**、一致したかだけを受け取る。
+   */
   const handleDelete = useCallback((id: string) => {
     startTransition(async () => {
-      const result = await deletePushSubscription(id)
+      // endpoint を失う前に掴んでおく（消した後では二度と取れぬ）。
+      const subscription = await getCurrentSubscription().catch((err) => {
+        console.warn("[notification-card] 現在の購読を取得できず:", err)
+        return null
+      })
+
+      const result = await deletePushSubscription(id, subscription?.endpoint ?? null)
       if (result.error) {
         toast.error(result.error)
         return
+      }
+
+      if (result.deletedCurrentDevice && subscription) {
+        // 印が先。`unsubscribe()` は圏外や権限で落ちうるゆえ、落ちた時に
+        // 突き合わせを止められるのはこの印だけじゃ。
+        writePushOptOut(subscription.endpoint)
+        try {
+          await subscription.unsubscribe()
+        } catch (err) {
+          // 解除自体は成立しておる（行は消えた）。握り潰さず理由を残す。
+          console.warn("[notification-card] ブラウザ側の購読解除に失敗:", err)
+        }
+        // 「テスト通知を送る」表示のまま購読が無い、を作らぬ。
+        setSubscribedHere(false)
       }
       toast.success("この端末の通知を解除しました。")
     })

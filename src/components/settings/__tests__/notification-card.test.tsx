@@ -12,7 +12,14 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { render, screen, cleanup, within } from "@testing-library/react"
+import {
+  render,
+  screen,
+  cleanup,
+  within,
+  waitFor,
+  fireEvent,
+} from "@testing-library/react"
 
 vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
@@ -26,6 +33,8 @@ import {
   NotificationCard,
   type PushDeviceView,
 } from "../notification-card"
+import { deletePushSubscription } from "@/app/(main)/settings/push-actions"
+import { PUSH_OPT_OUT_MARKER_KEY } from "@/lib/pwa/push-reconcile"
 import type { NotificationHealthView } from "@/lib/domain/notification-health"
 
 function health(overrides: Partial<NotificationHealthView> = {}): NotificationHealthView {
@@ -234,5 +243,139 @@ describe("端末ごとの failure_count（B-1 で列は在ったが誰も読ん�
     expect(
       screen.getByRole("button", { name: "Mac の Chromeの通知を解除" }),
     ).toBeInTheDocument()
+  })
+})
+
+/**
+ * ## 「解除」が恒久的に効くこと（SEC-1 / B1）
+ *
+ * DB 行を消すだけでは解除にならぬ。ブラウザの購読が生きたままなら、起動時の
+ * 突き合わせ（`PushSubscriptionReconciler`）が同じ endpoint を登録し直し、
+ * **主が切ったはずの通知が戻る**（`upsert_push_subscription` は
+ * `failure_count = 0` を書くゆえ、健康な顔で戻ってくる）。
+ *
+ * ゆえにここで縛るのは 3 つ:
+ *   1. 自分の endpoint を**添えて**消す（サーバ側でしか「どの行が自分か」は
+ *      判定できぬ。endpoint は列 GRANT の外ゆえ返させぬ）
+ *   2. この端末だった時だけ `unsubscribe()` を呼ぶ（他端末を消した拍子に
+ *      自分の購読を畳んではならぬ）
+ *   3. 併せて localStorage に解除の印を残す（`unsubscribe()` が圏外・権限で
+ *      落ちた時、突き合わせを止められるのはこの印だけじゃ）
+ */
+describe("端末の解除は恒久的に効く", () => {
+  const ENDPOINT = "https://fcm.googleapis.com/fcm/send/this-device"
+
+  function stubSubscribedBrowser() {
+    const unsubscribe = vi.fn().mockResolvedValue(true)
+    const subscription = { endpoint: ENDPOINT, unsubscribe }
+    vi.stubGlobal("navigator", {
+      userAgent: "node",
+      serviceWorker: {
+        getRegistration: () =>
+          Promise.resolve({
+            pushManager: { getSubscription: () => Promise.resolve(subscription) },
+          }),
+        // ⚠️ `ready` へ戻した実装は、この永久に解決せぬ promise で赤くなる。
+        ready: new Promise<never>(() => {}),
+      },
+    })
+    vi.stubGlobal("PushManager", class {})
+    return { unsubscribe }
+  }
+
+  beforeEach(() => {
+    localStorage.clear()
+    vi.mocked(deletePushSubscription).mockReset()
+  })
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it("この端末の行を消したら、ブラウザ側の購読も畳み、解除の印を残す", async () => {
+    const { unsubscribe } = stubSubscribedBrowser()
+    vi.mocked(deletePushSubscription).mockResolvedValue({
+      error: null,
+      deletedCurrentDevice: true,
+    })
+
+    render(
+      <NotificationCard
+        devices={[device({ id: "sub-1", userAgent: "この端末" })]}
+        health={health()}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "この端末の通知を解除" }))
+
+    // 自分の endpoint を添えて呼ぶ（サーバはこれと突き合わせて 1 ビットを返す）。
+    await waitFor(() =>
+      expect(deletePushSubscription).toHaveBeenCalledWith("sub-1", ENDPOINT),
+    )
+    // ★ 本丸: ブラウザ側も畳む。ここが無いと次の起動で行が復活する。
+    await waitFor(() => expect(unsubscribe).toHaveBeenCalled())
+    expect(localStorage.getItem(PUSH_OPT_OUT_MARKER_KEY)).toBe(ENDPOINT)
+  })
+
+  it("**他端末**の行を消した時は自分の購読を畳まぬ（印も残さぬ）", async () => {
+    const { unsubscribe } = stubSubscribedBrowser()
+    vi.mocked(deletePushSubscription).mockResolvedValue({
+      error: null,
+      deletedCurrentDevice: false,
+    })
+
+    render(
+      <NotificationCard
+        devices={[device({ id: "sub-2", userAgent: "配偶者の端末" })]}
+        health={health()}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "配偶者の端末の通知を解除" }))
+
+    await waitFor(() => expect(deletePushSubscription).toHaveBeenCalled())
+    expect(unsubscribe).not.toHaveBeenCalled()
+    expect(localStorage.getItem(PUSH_OPT_OUT_MARKER_KEY)).toBeNull()
+  })
+
+  it("`unsubscribe()` が落ちても解除は成立扱い（印は残る）", async () => {
+    const { unsubscribe } = stubSubscribedBrowser()
+    unsubscribe.mockRejectedValue(new Error("offline"))
+    vi.spyOn(console, "warn").mockImplementation(() => {})
+    vi.mocked(deletePushSubscription).mockResolvedValue({
+      error: null,
+      deletedCurrentDevice: true,
+    })
+
+    render(
+      <NotificationCard
+        devices={[device({ id: "sub-1", userAgent: "この端末" })]}
+        health={health()}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "この端末の通知を解除" }))
+
+    // 印が残っておれば、突き合わせは次の起動でも退く（最後の砦）。
+    await waitFor(() =>
+      expect(localStorage.getItem(PUSH_OPT_OUT_MARKER_KEY)).toBe(ENDPOINT),
+    )
+    vi.mocked(console.warn).mockRestore()
+  })
+
+  it("サーバが失敗を返したら、ブラウザ側は何も畳まぬ", async () => {
+    const { unsubscribe } = stubSubscribedBrowser()
+    vi.mocked(deletePushSubscription).mockResolvedValue({
+      error: "対象の端末が見つかりませんでした。",
+      deletedCurrentDevice: false,
+    })
+
+    render(
+      <NotificationCard
+        devices={[device({ id: "sub-1", userAgent: "この端末" })]}
+        health={health()}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "この端末の通知を解除" }))
+
+    await waitFor(() => expect(deletePushSubscription).toHaveBeenCalled())
+    expect(unsubscribe).not.toHaveBeenCalled()
+    expect(localStorage.getItem(PUSH_OPT_OUT_MARKER_KEY)).toBeNull()
   })
 })

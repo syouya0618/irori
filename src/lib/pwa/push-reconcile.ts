@@ -57,6 +57,52 @@ export function buildReconcileMarker(userId: string, endpoint: string): string {
   return `${userId}:${endpoint}`
 }
 
+/**
+ * 「主がこの端末の通知を明示的に切った」印（**localStorage**）。
+ *
+ * ## なぜ sessionStorage ではないか
+ * 上の突き合わせ印はセッション内の再走を止めるだけゆえ session で足りる。
+ * こちらは**主の意思**じゃ。タブを閉じただけで巻き戻ってよいものではない。
+ *
+ * ## なぜ要るか（`unsubscribe()` だけでは足りぬ）
+ * 解除の本体はブラウザ側の `subscription.unsubscribe()` じゃ（購読が消えれば
+ * 突き合わせは `no-subscription` で退く）。だが圏外・権限周りで**それが失敗し
+ * うる**。その時この印が無ければ、次の起動で突き合わせが同じ endpoint を
+ * 登録し直し、主が切ったはずの通知が戻る。印は endpoint 単位（購読は
+ * ブラウザ単位ゆえ）で、主が「この端末で通知を受け取る」を押せば消える。
+ */
+export const PUSH_OPT_OUT_MARKER_KEY = "irori.push.opted-out-endpoint"
+
+/**
+ * 以下 3 つは**ブラウザ文脈からのみ**呼ぶ（module scope では触らぬゆえ SSR で
+ * 評価されても安全）。プライベートモード等で localStorage が使えねば、
+ * 「印が無い」へ退化する（＝ 従来どおりの挙動に戻るだけで、画面は壊れぬ）。
+ */
+export function readPushOptOut(): string | null {
+  try {
+    return localStorage.getItem(PUSH_OPT_OUT_MARKER_KEY)
+  } catch (err) {
+    console.warn("[push] 解除の印を読めなかった:", err)
+    return null
+  }
+}
+
+export function writePushOptOut(endpoint: string): void {
+  try {
+    localStorage.setItem(PUSH_OPT_OUT_MARKER_KEY, endpoint)
+  } catch (err) {
+    console.warn("[push] 解除の印を書けなかった:", err)
+  }
+}
+
+export function clearPushOptOut(): void {
+  try {
+    localStorage.removeItem(PUSH_OPT_OUT_MARKER_KEY)
+  } catch (err) {
+    console.warn("[push] 解除の印を消せなかった:", err)
+  }
+}
+
 export interface PushSubscriptionJsonLike {
   endpoint?: string | null
   keys?: { p256dh?: string | null; auth?: string | null } | null
@@ -76,6 +122,8 @@ export interface ResubscribeRequestBody {
 export type PushReconcileOutcome =
   | "no-subscription"
   | "already-reconciled"
+  /** 主がこの端末の通知を明示的に切っておる（復活させてはならぬ） */
+  | "opted-out"
   | "incomplete"
   | "registered"
   | "rejected"
@@ -85,6 +133,8 @@ export interface PushReconcileDeps {
   getSubscriptionJson: () => Promise<PushSubscriptionJsonLike | null>
   /** セッション付きで再登録を叩く。**受理された時だけ** true。 */
   register: (body: ResubscribeRequestBody) => Promise<boolean>
+  /** 「主が切った」印（`readPushOptOut` の値）。 */
+  readOptOut: () => string | null
   readMarker: () => string | null
   /** 引数は `buildReconcileMarker` の出力（endpoint 単体ではない）。 */
   writeMarker: (marker: string) => void
@@ -107,6 +157,13 @@ export async function reconcilePushSubscription(
   const json = await deps.getSubscriptionJson()
   const endpoint = json?.endpoint ?? null
   if (!endpoint) return "no-subscription"
+
+  // ⚠️ **主が切ったものを、こちらの都合で戻さぬ。** 設定カードの解除は
+  // ブラウザ側の `unsubscribe()` と対じゃが、それが失敗しうる（圏外・権限）。
+  // 印が残っておれば、ここが最後の砦になる。印は endpoint 単位ゆえ、購読が
+  // 回れば（＝ 別の endpoint になれば）自動で効かなくなる — 恒久的に
+  // 通知を殺してしまわぬための設計じゃ。
+  if (deps.readOptOut() === endpoint) return "opted-out"
 
   // セッション内の再走を止める（上の「代償」を参照）。
   // ⚠️ 印は **利用者 × endpoint** じゃ。どちらかが変われば必ずもう一度走る。

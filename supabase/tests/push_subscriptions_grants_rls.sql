@@ -33,7 +33,7 @@
 -- これは検知であって防止ではない。GRANT を緩める migration を書けばこのテストが
 -- 赤くなるだけで、書くこと自体は止められぬ。
 BEGIN;
-SELECT plan(32);
+SELECT plan(43);
 
 -- ══════════════════════════════════════════════════════════════
 -- A. 権限カタログ（静的・ロール切替なし）
@@ -146,6 +146,20 @@ SELECT ok(
   'A-7b: upsert_push_subscription に SET search_path=public が付いておる'
 );
 
+-- ── A-7c/d. id 指定の解除 RPC も同じ型で守られておる ─────────
+-- こちらは SECURITY DEFINER ゆえ RLS が効かぬ。所有者チェックは関数本文の
+-- `AND user_id = auth.uid()` だけが担う（実挙動は C-2 が撃つ）。
+SELECT is(
+  (SELECT prosecdef FROM pg_proc WHERE proname = 'delete_my_push_subscription_by_id'),
+  true,
+  'A-7c: delete_my_push_subscription_by_id は SECURITY DEFINER'
+);
+SELECT ok(
+  (SELECT proconfig FROM pg_proc WHERE proname = 'delete_my_push_subscription_by_id')
+    @> ARRAY['search_path=public'],
+  'A-7d: delete_my_push_subscription_by_id に SET search_path=public が付いておる'
+);
+
 -- ── A-8. Realtime publication に載せておらぬ ─────────────────
 -- 秘密列を持つゆえ walrus の列フィルタに安全性を賭けたくない。
 SELECT is_empty(
@@ -177,13 +191,18 @@ UPDATE profiles SET household_id = '11111111-1111-1111-1111-111111111111',
                     display_name = 'U3', role = 'member', is_approved = false
   WHERE id = '99999999-9999-9999-9999-999999999999';
 
-INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, user_agent) VALUES
-  ('22222222-2222-2222-2222-222222222222',
+-- id は固定値にする。C-2（他人の行を **id 当て推量で** 消せぬこと）を撃つには、
+-- U1 の文脈から U2 の行 id を名指しできねばならぬ（RLS ゆえ SELECT では引けぬ）。
+INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, user_agent) VALUES
+  ('10000000-0000-4000-8000-000000000001',
+   '22222222-2222-2222-2222-222222222222',
    'https://fcm.googleapis.com/fcm/send/u1-device', 'p256dh-u1', 'auth-u1', 'U1 の Android'),
-  ('88888888-8888-8888-8888-888888888888',
+  ('20000000-0000-4000-8000-000000000002',
+   '88888888-8888-8888-8888-888888888888',
    'https://web.push.apple.com/u2-device', 'p256dh-u2', 'auth-u2', 'U2 の iPhone'),
-  -- B-18 用: 最後まで U2 のまま残る行（奪取・解除の対象にせぬ）
-  ('88888888-8888-8888-8888-888888888888',
+  -- B-18 / C-2 用: 最後まで U2 のまま残る行（奪取・解除の対象にせぬ）
+  ('20000000-0000-4000-8000-000000000003',
+   '88888888-8888-8888-8888-888888888888',
    'https://web.push.apple.com/u2-other', 'p256dh-u2b', 'auth-u2b', 'U2 の iPad');
 
 -- ── B-0. seed が効いておること（これが赤いなら以降は行が無いだけの偽緑）──
@@ -280,6 +299,63 @@ SELECT is(
   false,
   'B-19: 未登録の endpoint でも例外を投げぬ（サインアウト経路を止めぬ）');
 
+-- ══ C. id 指定の解除（設定カードの「解除」の経路）═════════════
+-- カードの解除は **ブラウザ側の unsubscribe と対で**なければ意味を成さぬ
+-- （DB 行だけ消しても、起動時の突き合わせが同じ購読を作り直す）。
+-- ブラウザを畳んでよいのは「消した行がこのブラウザの購読だった」時だけゆえ、
+-- RPC は endpoint を**受け取り**、一致したかだけを返す（endpoint は返さぬ）。
+
+-- ── C-1. 存在せぬ id は not-found（「消えた」と偽らぬ）──────────
+SELECT is(
+  delete_my_push_subscription_by_id(
+    '00000000-0000-4000-8000-000000000000',
+    'https://fcm.googleapis.com/fcm/send/u1-device'),
+  'not-found',
+  'C-1: 存在せぬ id は not-found（カードの「見つかりませんでした」を残す）');
+
+-- ── C-2. **他人の行は id を知っておっても消せぬ** ───────────────
+-- SECURITY DEFINER ゆえ RLS は効かぬ。関数本文の `AND user_id = auth.uid()`
+-- だけが防壁じゃ。ここが落ちれば、id の当て推量で世帯の外の端末まで解除できる。
+SELECT is(
+  delete_my_push_subscription_by_id(
+    '20000000-0000-4000-8000-000000000003',
+    'https://web.push.apple.com/u2-other'),
+  'not-found',
+  'C-2: **別人の購読は id 指定でも消せぬ**（SECURITY DEFINER の唯一の所有者チェック）');
+
+-- ── C-3. 自分の行 × 一致する endpoint → この端末（対照）─────────
+SELECT is(
+  delete_my_push_subscription_by_id(
+    '10000000-0000-4000-8000-000000000001',
+    'https://fcm.googleapis.com/fcm/send/u1-device'),
+  'deleted-this-device',
+  'C-3: 自分の行を消し、それがこの端末の購読だったと分かる（ブラウザ側 unsubscribe の合図）');
+SELECT is((SELECT count(*) FROM push_subscriptions), 0::bigint,
+  'C-4: 消えておる（対照: 判定だけして消しておらぬ、ではない）');
+SELECT is(
+  delete_my_push_subscription_by_id(
+    '10000000-0000-4000-8000-000000000001',
+    'https://fcm.googleapis.com/fcm/send/u1-device'),
+  'not-found',
+  'C-5: 二度目は not-found（0 行削除を「消した」と言わぬ）');
+
+-- ── C-6. endpoint が違えば別端末（ブラウザを畳ませぬ）───────────
+-- ここを取り違えると、配偶者の端末を解除した拍子に**自分の**購読が消える。
+SELECT is(
+  delete_my_push_subscription_by_id(
+    upsert_push_subscription('https://fcm.googleapis.com/fcm/send/u1-c', 'k', 'a', 'U1 c'),
+    'https://fcm.googleapis.com/fcm/send/some-other-device'),
+  'deleted-other-device',
+  'C-6: endpoint が一致せねば deleted-other-device（このブラウザは畳ませぬ）');
+
+-- ── C-7. endpoint を渡さねば「別端末」へ倒す（fail-safe の向き）─
+-- 判定不能を「この端末」に倒すと、生きた購読を誤って畳んで通知が止まる。
+SELECT is(
+  delete_my_push_subscription_by_id(
+    upsert_push_subscription('https://fcm.googleapis.com/fcm/send/u1-d', 'k', 'a', 'U1 d')),
+  'deleted-other-device',
+  'C-7: endpoint 未指定は deleted-other-device（判定不能は unsubscribe させぬ方へ倒す）');
+
 -- ══ 未承認ユーザーは RPC を拒まれる（fail-closed）═════════════
 SELECT set_config('request.jwt.claims',
   json_build_object('sub', '99999999-9999-9999-9999-999999999999', 'role', 'authenticated')::text, true);
@@ -295,6 +371,22 @@ SELECT throws_like(
   $$ SELECT upsert_push_subscription('https://fcm.googleapis.com/fcm/send/anon', 'k', 'a', 'anon') $$,
   '%permission denied for function upsert_push_subscription%',
   'B-21: anon は RPC を実行できぬ（EXECUTE を GRANT しておらぬ）');
+SELECT throws_like(
+  $$ SELECT delete_my_push_subscription_by_id('20000000-0000-4000-8000-000000000003') $$,
+  '%permission denied for function delete_my_push_subscription_by_id%',
+  'C-8: anon は id 指定の解除も実行できぬ（EXECUTE を GRANT しておらぬ）');
+
+-- ══ 世帯の外から確かめる（RLS を外して実体を見る）═════════════
+-- C-2 は「not-found が返った」ことしか言うておらぬ。**行が本当に残っておる**
+-- ことは、RLS の効かぬ文脈で数えて初めて分かる（返り値だけを信じると、
+-- 消した上で not-found を返す実装を見逃す）。
+RESET role;
+SELECT set_config('request.jwt.claims', NULL, true);
+SELECT is(
+  (SELECT count(*) FROM push_subscriptions
+    WHERE id = '20000000-0000-4000-8000-000000000003'),
+  1::bigint,
+  'C-9: 他人の行は実際に残っておる（C-2 の not-found は「消した上での嘘」ではない）');
 
 SELECT * FROM finish();
 ROLLBACK;

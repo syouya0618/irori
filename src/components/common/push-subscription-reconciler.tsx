@@ -5,6 +5,7 @@ import {
   PUSH_RECONCILE_MARKER_KEY,
   PUSH_RESUBSCRIBE_PATH,
   isResubscribeAccepted,
+  readPushOptOut,
   reconcilePushSubscription,
   type ResubscribeRequestBody,
 } from "@/lib/pwa/push-reconcile"
@@ -26,8 +27,10 @@ import {
  *   "The server update applies to the current React tree, re-rendering, mounting,
  *    or unmounting components, as needed. Client state is preserved for
  *    re-rendered components, and **effects re-run if their dependencies changed**."
- * この effect の依存は `[]` ゆえ再実行されぬ。主が「この端末で通知を受け取る」を
- * 押した直後に、こちらの upsert が割り込んで `failure_count` を畳むことは無い。
+ * この effect の依存は `[userId]` ただ 1 つで、`revalidatePath` では変わらぬゆえ
+ * 再実行されぬ（利用者が同一ページの途中で入れ替わることは無い）。主が
+ * 「この端末で通知を受け取る」を押した直後に、こちらの upsert が割り込んで
+ * `failure_count` を畳むことは無い。
  *
  * ## ⚠️ effect 内で同期的に setState をせぬ
  * この component は state を一切持たぬ（返すのは null）。React Compiler の
@@ -67,6 +70,8 @@ export function PushSubscriptionReconciler({ userId }: { userId: string }) {
           })
           return isResubscribeAccepted(res)
         },
+        // 主が設定カードで「解除」を押した端末は復活させぬ（localStorage）。
+        readOptOut: readPushOptOut,
         readMarker: () => {
           try {
             return sessionStorage.getItem(PUSH_RECONCILE_MARKER_KEY)

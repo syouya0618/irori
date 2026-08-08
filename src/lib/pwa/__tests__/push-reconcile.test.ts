@@ -10,6 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import {
+  PUSH_OPT_OUT_MARKER_KEY,
   PUSH_RECONCILE_MARKER_KEY,
   PUSH_RESUBSCRIBE_PATH,
   buildReconcileMarker,
@@ -35,6 +36,7 @@ function setup(
     subscription?: PushSubscriptionJsonLike | null
     accepted?: boolean
     marker?: string | null
+    optOut?: string | null
     userId?: string
   } = {},
 ) {
@@ -47,6 +49,7 @@ function setup(
       registered.push(body)
       return options.accepted ?? true
     },
+    readOptOut: () => options.optOut ?? null,
     readMarker: () => marker,
     writeMarker: (value) => {
       marker = value
@@ -115,6 +118,34 @@ describe("reconcilePushSubscription", () => {
     const { deps, registered } = setup({ marker: ENDPOINT })
     await expect(reconcilePushSubscription(deps)).resolves.toBe("registered")
     expect(registered).toHaveLength(1)
+  })
+
+  // ── 主が明示的に切った端末を復活させぬ（SEC-1 / B1）────────────
+  // カードの「解除」は行を消すだけでは成立せぬ。ブラウザの購読が生きたまま
+  // ならここが同じ endpoint を登録し直し、**主が切ったはずの通知が戻る**
+  // （しかも failure_count = 0 の健康な顔でな）。ブラウザ側の unsubscribe が
+  // 圏外・権限で落ちた時に、それを止められるのはこの印だけじゃ。
+  it("**解除した端末は復活させぬ**（主の意思を自動で巻き戻さぬ）", async () => {
+    const { deps, registered } = setup({ optOut: ENDPOINT })
+    await expect(reconcilePushSubscription(deps)).resolves.toBe("opted-out")
+    expect(registered).toEqual([])
+  })
+
+  it("解除の印は endpoint 単位（購読が回れば効かなくなる）", async () => {
+    // 恒久的に通知を殺してしまわぬための設計。別の endpoint なら普通に走る。
+    const { deps, registered } = setup({ optOut: "https://fcm.googleapis.com/old" })
+    await expect(reconcilePushSubscription(deps)).resolves.toBe("registered")
+    expect(registered).toHaveLength(1)
+  })
+
+  it("解除の印は突き合わせの印より強い（順序が逆なら復活する）", async () => {
+    const { deps, registered } = setup({
+      optOut: ENDPOINT,
+      marker: buildReconcileMarker(USER_B, ENDPOINT),
+      userId: USER_A,
+    })
+    await expect(reconcilePushSubscription(deps)).resolves.toBe("opted-out")
+    expect(registered).toEqual([])
   })
 
   it("鍵が欠けた購読は送らぬ（DB の CHECK で落ちるだけゆえ）", async () => {
@@ -196,6 +227,11 @@ describe("定数", () => {
 
   it("印のキーは endpoint を持つ（購読が回れば値が変わる設計）", () => {
     expect(PUSH_RECONCILE_MARKER_KEY).toBe("irori.push.reconciled-endpoint")
+  })
+
+  it("解除の印は突き合わせの印と**別のキー**（片方を消してもう片方が消えぬ）", () => {
+    expect(PUSH_OPT_OUT_MARKER_KEY).toBe("irori.push.opted-out-endpoint")
+    expect(PUSH_OPT_OUT_MARKER_KEY).not.toBe(PUSH_RECONCILE_MARKER_KEY)
   })
 
   it("印の値は 利用者 と endpoint の両方を含む（分解せず丸ごと比較する）", () => {

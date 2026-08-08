@@ -889,6 +889,18 @@ export interface Database {
         Args: { p_endpoint: string }
         Returns: boolean
       }
+      /**
+       * 設定カードの「解除」。id で自分の行を消し、それが**呼び出し元の
+       * ブラウザの購読だったか**だけを返す（endpoint そのものは返さぬ —
+       * 端末 A のブラウザへ端末 B の送信先を渡さぬため）。
+       *
+       * 戻り値は 3 値。BOOLEAN + NULL にすると「消えなかった」と
+       * 「消えたが別端末」が呼び出し側の `if (data)` で畳まれる。
+       */
+      delete_my_push_subscription_by_id: {
+        Args: { p_id: string; p_endpoint?: string | null }
+        Returns: "not-found" | "deleted-this-device" | "deleted-other-device"
+      }
       get_my_household_id: {
         Args: Record<string, never>
         Returns: string
