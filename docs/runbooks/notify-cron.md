@@ -15,11 +15,19 @@
 
 ```
 Supabase (pg_cron, 5 分ごと)
-  └─ net.http_post → https://<本番ドメイン>/api/cron/notify
+  └─ net.http_get → https://<本番ドメイン>/api/cron/notify
        Authorization: Bearer <NOTIFY_CRON_SECRET>
          └─ Vercel Function (nodejs, maxDuration 60)
               └─ deliverDueNotifications()  … 展開 → claim → 送信 → 心拍
 ```
+
+⚠️ **`net.http_post` ではない。** ハンドラは `GET` だけを export しておる
+（Vercel Cron が GET を送るため。`google-sync` も同じ形）。Next.js の Route Handler は
+**export しておらぬメソッドに 405 を返す** — 実測: `POST /api/cron/notify` = **405**、
+`GET` = 401（secret 無し）。405 はハンドラの手前で返るゆえ、
+**認可ログすら出ぬ**。そして後述のとおり `cron.job_run_details` は
+それでも `succeeded` と記録する。**pg_net の既定に素直に従って POST で登録すると、
+通知は 1 通も出ぬまま全ての監視が緑になる。**
 
 **Vercel の cron ではない。** Hobby プランの cron は 1 日 1 回までで、5 分ごとの
 式はデプロイ自体が失敗する（`google-sync` が 1 日 1 回なのはそれゆえ）。
@@ -32,7 +40,7 @@ Supabase (pg_cron, 5 分ごと)
 ### 0. 順序が命じゃ（**先に env、後で schedule**）
 
 pg_cron の schedule は登録した瞬間から動き出す。秘密が入る前に発火すると、
-`net.http_post` は空の Authorization を送り、**401 が延々と積もる**（しかも
+`net.http_get` は空の Authorization を送り、**401 が延々と積もる**（しかも
 `cron.job_run_details` は "succeeded" と記録する。後述）。必ずこの順で:
 
 1. Vercel に `NOTIFY_CRON_SECRET` を入れて**再デプロイ**する
@@ -77,32 +85,35 @@ select cron.schedule(
   'notify-deliveries',
   '*/5 * * * *',                      -- 5 分ごと
   $$
-  select net.http_post(
+  select net.http_get(
     url     := (select decrypted_secret from vault.decrypted_secrets
                  where name = 'notify_cron_url'),
     headers := jsonb_build_object(
-      'Content-Type', 'application/json',
       'Authorization', 'Bearer ' || (select decrypted_secret
                                        from vault.decrypted_secrets
                                       where name = 'notify_cron_secret')
     ),
-    body    := '{}'::jsonb,
     timeout_milliseconds := 5000
   );
   $$
 );
 ```
 
+**`net.http_get` である理由**: 上に書いたとおりハンドラは GET のみ。
+`net.http_post` に書き換えると **405 が返って通知が全滅する**（実測済み）。
+この 1 行が食い違うことを機械で止めるため、
+`src/app/api/cron/notify/__tests__/runbook-contract.test.ts` が
+**この手順書の SQL とハンドラの export を突き合わせておる**。手順書の verb を
+変えるなら、先にハンドラへその export を足すこと。
+
 **`*/5 * * * *`（5 分粒度）である理由**: 毎分にすると `cron.job_run_details` が
 1 日 1440 行たまる。Free tier の 500MB を通知の記録で食い潰すのは割に合わぬ。
 5 分なら 288 行/日で、grace window（15 分）は取りこぼし 2 回ぶんを吸収できる。
 
-**`timeout_milliseconds := 5000` を必ず書く**: pg_net の既定は 2 秒で、Vercel の
-コールドスタートには短すぎる。既定のままだと、朝いちばん（＝一番通知が要る時刻）の
-実行だけが恒常的に落ちる。
-
-> ハンドラは **GET** も受ける。上は pg_net の既定に素直に従って POST で書いてある。
-> GET で登録したい場合は `net.http_get` を使い、同じ headers を渡すこと。
+**`timeout_milliseconds := 5000` を必ず明示する**: 既定値は pg_net の版で違う
+（手元の 0.20.3 は 5000ms じゃが、古い版は 2000ms じゃった）。Vercel の
+コールドスタートに 2 秒は短すぎ、既定に任せると朝いちばん（＝一番通知が要る時刻）の
+実行だけが恒常的に落ちる。**我々の管理外の既定値に賭けず、明示的に書け。**
 
 ### 5. `cron.job_run_details` の掃除ジョブも登録する
 
@@ -120,7 +131,8 @@ select cron.schedule(
 
 ## 監視 — ⚠️ `cron.job_run_details` は**配達を監視せぬ**
 
-これが一番の落とし穴じゃ。`net.http_post` は **request_id を即座に返して終わる**。
+これが一番の落とし穴じゃ。pg_net の `net.http_get` / `net.http_post` は
+**request_id を即座に返して終わる**。
 HTTP のやり取りが始まるのはトランザクションが commit された後ゆえ、
 **HTTP が 500 でも 401 でも接続不能でも、`cron.job_run_details` には `succeeded` が
 記録される**。ここだけを見ておると「毎回成功しておるのに通知が来ぬ」になる。
@@ -184,3 +196,5 @@ select cron.unschedule('notify-deliveries');
 - 配信本体: `src/lib/notifications/deliver.ts`
 - テーブル: `supabase/migrations/20260808100003_notification_deliveries.sql`
 - 認可の機械検査: `e2e/cron-routes-auth.spec.ts`（proxy に食われぬこと + 鍵の分離）
+- 登録 verb の機械検査: `src/app/api/cron/notify/__tests__/runbook-contract.test.ts`
+  （この手順書の `net.http_*()` とハンドラの export が食い違えば赤になる）

@@ -262,6 +262,38 @@ describe("grace window（期限内は送る / 期限切れは畳む — 対で�
     expect(db.notification_deliveries).toHaveLength(0)
   })
 
+  it("**世帯が別件で回っておっても、古い通知設定は展開されぬ**（展開側の下端が単独で効く）", async () => {
+    // ⚠️ この 1 本が要る理由を書き残す。上の「15 分を超えた遅れは展開もされぬ」は、
+    // 世帯の**列挙**（collectHouseholdIds）と**展開**（expandDueReminders）の
+    // 両方が同じ `remind_at > now - GRACE` を持つゆえ、**片方を消しても緑のまま**じゃ
+    // （実測: 展開側だけ削っても 73 本すべて緑だった）。列挙は「積み残しを持つ世帯」も
+    // 拾う設計ゆえ、世帯が別件で回りさえすれば古い通知設定が展開へ流れ込む。
+    // ここでは在庫の予定 e1 で世帯を回しつつ、1 時間前の e2 が**行にならぬ**ことを見る。
+    const db = seed()
+    db.calendar_events.push({
+      household_id: H1,
+      event_uid: "e2",
+      title: "とうに過ぎた用事",
+      is_all_day: false,
+      start_date: "2026-08-15",
+      start_at: "2026-08-15T02:00:00Z", // 開始は未来（start_at ガードでは弾かれぬ）
+    })
+    db.event_reminders.push({
+      household_id: H1,
+      event_uid: "e2",
+      remind_at: new Date(Date.parse(NOW) - 60 * 60_000).toISOString(),
+    })
+
+    const sent: SentRecord[] = []
+    const result = await run(db, { sent }).promise
+
+    expect(db.notification_deliveries.map((row) => row.event_key)).toEqual(["e1"])
+    expect(result.scheduled).toBe(1)
+    // 展開側の下端が消えると e2 の行が生まれ、その場で expired へ落ちる。
+    expect(result.skipped).toBe(0)
+    expect(sent).toHaveLength(1)
+  })
+
   it("作り置きの行が grace を過ぎておれば expired で畳む（送らぬ）", async () => {
     const db = seed()
     const old = new Date(Date.parse(NOW) - 20 * 60_000).toISOString()
