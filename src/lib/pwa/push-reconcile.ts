@@ -34,10 +34,28 @@
 export const PUSH_RESUBSCRIBE_PATH = "/api/push/resubscribe"
 
 /**
- * 「このセッションで突き合わせ済み」の印。値は endpoint そのもの —
- * 購読が回れば値が変わり、同じセッション内でも自動でもう一度走る。
+ * 「このセッションで突き合わせ済み」の印。
+ *
+ * 値は **`${userId}:${endpoint}`** じゃ（`buildReconcileMarker`）。
+ * - 購読が回れば endpoint が変わり、同じセッション内でも自動でもう一度走る。
+ * - **利用者が代われば userId が変わり、必ずもう一度走る**。ここが load-bearing:
+ *   sessionStorage は同じタブ内の遷移（セッション切れ → `/login` → 再ログイン）で
+ *   保持されるゆえ、endpoint だけを印にすると**共用端末で持ち主が代わっても退いて
+ *   しまう**。DB 行の `user_id` は前の利用者のまま残り、`upsert_push_subscription`
+ *   の付け替え（`DELETE ... WHERE endpoint = ... AND user_id <> auth.uid()`）が
+ *   発火せぬ ＝ **前の利用者の世帯の通知が、今の利用者の端末へ届き続ける**。
+ *   同じ layout の `CacheUserGuard` が `userId` を受けて利用者交代を見ておるのと
+ *   同じ脅威じゃ。
+ *
+ * ⚠️ 値は**丸ごと 1 つの文字列として比較する**（分解して読まぬ）。endpoint は
+ * `:` も `/` も含むゆえ、パースしようとした瞬間に壊れる。
  */
 export const PUSH_RECONCILE_MARKER_KEY = "irori.push.reconciled-endpoint"
+
+/** 印の値。**ここでしか組まぬ**（組み方が 2 箇所に散ると比較が食い違う）。 */
+export function buildReconcileMarker(userId: string, endpoint: string): string {
+  return `${userId}:${endpoint}`
+}
 
 export interface PushSubscriptionJsonLike {
   endpoint?: string | null
@@ -68,7 +86,10 @@ export interface PushReconcileDeps {
   /** セッション付きで再登録を叩く。**受理された時だけ** true。 */
   register: (body: ResubscribeRequestBody) => Promise<boolean>
   readMarker: () => string | null
-  writeMarker: (endpoint: string) => void
+  /** 引数は `buildReconcileMarker` の出力（endpoint 単体ではない）。 */
+  writeMarker: (marker: string) => void
+  /** 今ログインしておる利用者。印を利用者で区切るために要る。 */
+  userId: string
   userAgent: string | null
 }
 
@@ -88,7 +109,9 @@ export async function reconcilePushSubscription(
   if (!endpoint) return "no-subscription"
 
   // セッション内の再走を止める（上の「代償」を参照）。
-  if (deps.readMarker() === endpoint) return "already-reconciled"
+  // ⚠️ 印は **利用者 × endpoint** じゃ。どちらかが変われば必ずもう一度走る。
+  const marker = buildReconcileMarker(deps.userId, endpoint)
+  if (deps.readMarker() === marker) return "already-reconciled"
 
   const p256dh = json?.keys?.p256dh ?? null
   const auth = json?.keys?.auth ?? null
@@ -104,7 +127,7 @@ export async function reconcilePushSubscription(
   // ⚠️ **成功した時だけ印を付ける。** 失敗で印を付けると、セッションの間ずっと
   // 再試行できなくなる（＝ 直す機会を自分で捨てる）。
   if (!accepted) return "rejected"
-  deps.writeMarker(endpoint)
+  deps.writeMarker(marker)
   return "registered"
 }
 

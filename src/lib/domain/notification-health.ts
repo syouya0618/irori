@@ -18,6 +18,13 @@
  * ここに 4 つ目 —— **行そのものが無い**（migration が初期行を置かぬ設計ゆえ、
  * pg_cron を登録する前は必ずこれじゃ）—— を足す。古い相対時刻として描くと
  * 「止まった」と誤読させるゆえ、別の状態として扱う。
+ *
+ * そして 5 つ目 —— **診断そのものが読めなかった**（migration 未適用の 42P01・
+ * RLS 拒否・一過性の DB エラー）。これを 4 つ目に畳むと、画面は「まだ一度も
+ * 実行されていません」と**断言**する。主は pg_cron を疑って調べ始め、真因
+ * （読めなかっただけ）へは辿り着かぬ。しかも動いておる基盤を止めに行く誤操作を
+ * 誘発する。この機能が在る理由は「故障」と「無風」の弁別ゆえ、その弁別を
+ * 自分で潰しては本末転倒じゃ。
  */
 
 /**
@@ -28,6 +35,8 @@
 export const HEARTBEAT_STALE_MS = 10 * 60 * 1000
 
 export type NotificationRunState =
+  /** **診断そのものが読めなかった**（migration 未適用・RLS 拒否・一過性エラー） */
+  | "unknown"
   /** 心拍の行が無い ＝ まだ一度も走っておらぬ（pg_cron 未登録） */
   | "never"
   /** ran_at が古い ＝ 起動しておらぬ */
@@ -37,7 +46,7 @@ export type NotificationRunState =
   /** 平穏 */
   | "healthy"
 
-export type NotificationDeliveryState = "never" | "sent"
+export type NotificationDeliveryState = "unknown" | "never" | "sent"
 
 export interface NotificationHealthInput {
   /** `notification_heartbeat.ran_at`。行が無ければ null。 */
@@ -46,6 +55,17 @@ export interface NotificationHealthInput {
   failedCount: number | null
   /** 世帯の `MAX(sent_at)`。1 件も送っておらねば null。 */
   lastSentAt: string | null
+  /**
+   * 心拍の**取得自体に失敗した**か（呼び出し側の `error` の有無）。
+   *
+   * ⚠️ **これを渡さねば「読めなかった」が「まだ一度も走っておらぬ」に化ける。**
+   * 両者は正反対の対処を要する（前者は表示の故障、後者は pg_cron 未登録）。
+   * B-3 の migration が「しかも『まだ走っておらぬ』と区別がつかぬ ＝ 最悪の壊れ方」
+   * と名指しして RLS 層で防いだ取り違えを、アプリ層で再導入せぬための入力じゃ。
+   */
+  ranAtUnknown?: boolean
+  /** 最終配信の取得自体に失敗したか。同上。 */
+  lastSentUnknown?: boolean
   now: Date
 }
 
@@ -94,16 +114,21 @@ export function formatRelativeJa(iso: string | null, now: Date): string | null {
 export function summarizeNotificationHealth(
   input: NotificationHealthInput,
 ): NotificationHealthView {
-  const { ranAt, failedCount, lastSentAt, now } = input
+  const { ranAt, failedCount, lastSentAt, ranAtUnknown, lastSentUnknown, now } =
+    input
   const ranAtTime = ranAt ? new Date(ranAt).getTime() : NaN
   const failed = failedCount ?? 0
 
   // 判定の順は load-bearing じゃ。
-  // 「行が無い」→「古い」→「失敗が在る」の順に強く、最後に平穏へ落ちる。
-  // 逆順にすると、止まっておる cron の古い failed_count を「壊れておる」と
-  // 読んでしまい、**本当の症状（起動しておらぬ）が隠れる**。
+  // 「読めなかった」→「行が無い」→「古い」→「失敗が在る」の順に強く、最後に
+  // 平穏へ落ちる。**「読めなかった」を先頭に置くのが要**: 読み取りに失敗した時も
+  // `ranAt` は null で来るゆえ、後ろに置けば never に食われて「まだ一度も走って
+  // おらぬ」と断言してしまう。逆順にすると、止まっておる cron の古い failed_count を
+  // 「壊れておる」と読んでしまい、**本当の症状（起動しておらぬ）が隠れる**。
   let runState: NotificationRunState
-  if (!ranAt || Number.isNaN(ranAtTime)) {
+  if (ranAtUnknown) {
+    runState = "unknown"
+  } else if (!ranAt || Number.isNaN(ranAtTime)) {
     runState = "never"
   } else if (now.getTime() - ranAtTime >= HEARTBEAT_STALE_MS) {
     runState = "stale"
@@ -113,11 +138,21 @@ export function summarizeNotificationHealth(
     runState = "healthy"
   }
 
+  // 最終配信も同じ理由で 3 値じゃ（読めなかった ≠ 1 件も送っておらぬ）。
+  const deliveryState: NotificationDeliveryState = lastSentUnknown
+    ? "unknown"
+    : lastSentAt
+      ? "sent"
+      : "never"
+
   return {
     runState,
-    ranAtLabel: runState === "never" ? null : formatRelativeJa(ranAt, now),
+    ranAtLabel:
+      runState === "never" || runState === "unknown"
+        ? null
+        : formatRelativeJa(ranAt, now),
     failedCount: failed,
-    deliveryState: lastSentAt ? "sent" : "never",
-    lastSentLabel: formatRelativeJa(lastSentAt, now),
+    deliveryState,
+    lastSentLabel: deliveryState === "unknown" ? null : formatRelativeJa(lastSentAt, now),
   }
 }

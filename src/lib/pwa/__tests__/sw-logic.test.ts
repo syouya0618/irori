@@ -36,6 +36,7 @@ interface ResubscribeBody {
   p256dh: string
   auth: string
   oldEndpoint?: string
+  userAgent?: string
 }
 
 interface DuckResponse {
@@ -50,9 +51,13 @@ interface TestHooks {
   trimCache: (cacheName: string, max?: number) => Promise<void>
   extractAssetUrls: (html: string) => string[]
   parsePushPayload: (event: DuckPushEvent | null) => PushPayload
+  // ⚠️ 実体は 3 引数（public/sw.js の `buildResubscribeBody(json, oldEndpoint,
+  // userAgent)`）。ここを 2 引数のまま宣言すると、**UA を渡す呼び方が型で塞がれ**、
+  // 「UA が body に載る」ことを誰も検査できなくなる。
   buildResubscribeBody: (
     json: { endpoint?: string; keys?: { p256dh?: string; auth?: string } } | null,
     oldEndpoint?: string | null,
+    userAgent?: string | null,
   ) => ResubscribeBody | null
   isResubscribeAccepted: (res: DuckResponse | null) => Promise<boolean>
   handlePushSubscriptionChange: (event: unknown) => Promise<void>
@@ -394,12 +399,21 @@ describe("pushsubscriptionchange（購読の張り直し・B-4）", () => {
     }
   }
 
+  /**
+   * SW の `self.navigator.userAgent`。**既定で在ることにする** ——
+   * 実機（Chrome / Safari の WorkerNavigator）は必ず持っておるゆえ、既定を
+   * 「無い」にすると UA が body に載る経路が**一度も実行されぬ**まま緑になる。
+   */
+  const SW_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/140.0"
+
   function setup(
     options: {
       response?: DuckResponse | (() => DuckResponse)
       existing?: unknown
       subscribeResult?: unknown
       onSubscribe?: (options: unknown) => void
+      /** null を渡せば `self.navigator` 自体を置かぬ（UA が取れぬ端末）。 */
+      userAgent?: string | null
     } = {},
   ) {
     const calls: FetchCall[] = []
@@ -415,7 +429,14 @@ describe("pushsubscriptionchange（購読の張り直し・B-4）", () => {
         return Promise.resolve(options.subscribeResult ?? null)
       },
     }
-    const hooks = loadSw({ fetch }, { registration: { pushManager } })
+    const userAgent = options.userAgent === undefined ? SW_UA : options.userAgent
+    const hooks = loadSw(
+      { fetch },
+      {
+        registration: { pushManager },
+        ...(userAgent === null ? {} : { navigator: { userAgent } }),
+      },
+    )
     return { hooks, calls }
   }
 
@@ -433,12 +454,34 @@ describe("pushsubscriptionchange（購読の張り直し・B-4）", () => {
     expect(calls[0].init.method).toBe("POST")
     // ⚠️ 承認ゲートの 307 を追わせぬ（追うと HTML の 200 を成功と誤読する）。
     expect(calls[0].init.redirect).toBe("manual")
+    // ⚠️ `userAgent` を落とすと `ON CONFLICT ... SET user_agent =
+    // EXCLUDED.user_agent` が既存の端末名を NULL で潰し、設定カードの全端末が
+    // 「不明な端末」に化ける（どれを解除すればよいか主に分からなくなる）。
     expect(JSON.parse(calls[0].init.body as string)).toEqual({
       endpoint: NEW_SUB.endpoint,
       p256dh: "k-new",
       auth: "a-new",
       oldEndpoint: "https://fcm.googleapis.com/old",
+      userAgent: SW_UA,
     })
+  })
+
+  it("UA が取れぬ端末では **載せぬ**（空文字や undefined を送らぬ）", async () => {
+    // 対で置く。片側だけでは「常に UA を載せる」実装と区別がつかぬ
+    // （＝ 向きが決まらぬ）。
+    const { hooks, calls } = setup({ userAgent: null })
+    await hooks.handlePushSubscriptionChange({
+      newSubscription: subscription(NEW_SUB),
+    })
+
+    expect(calls).toHaveLength(1)
+    const body = JSON.parse(calls[0].init.body as string)
+    expect(body).toEqual({
+      endpoint: NEW_SUB.endpoint,
+      p256dh: "k-new",
+      auth: "a-new",
+    })
+    expect("userAgent" in body).toBe(false)
   })
 
   it("newSubscription が無ければ `getSubscription()` を使う（Firefox 等）", async () => {
@@ -547,6 +590,26 @@ describe("pushsubscriptionchange（購読の張り直し・B-4）", () => {
 
     it("oldEndpoint が無くても body は組める", () => {
       expect(hooks.buildResubscribeBody(NEW_SUB, null)).toEqual({
+        endpoint: NEW_SUB.endpoint,
+        p256dh: "k-new",
+        auth: "a-new",
+      })
+    })
+
+    it("userAgent は在れば載る・無ければ載らぬ（NULL で端末名を潰さぬ）", () => {
+      expect(hooks.buildResubscribeBody(NEW_SUB, null, "Mac の Chrome")).toEqual({
+        endpoint: NEW_SUB.endpoint,
+        p256dh: "k-new",
+        auth: "a-new",
+        userAgent: "Mac の Chrome",
+      })
+      // 空文字・null は「取れなかった」と同じ扱い（サーバ側で null へ退化する）。
+      expect(hooks.buildResubscribeBody(NEW_SUB, null, "")).toEqual({
+        endpoint: NEW_SUB.endpoint,
+        p256dh: "k-new",
+        auth: "a-new",
+      })
+      expect(hooks.buildResubscribeBody(NEW_SUB, null, null)).toEqual({
         endpoint: NEW_SUB.endpoint,
         p256dh: "k-new",
         auth: "a-new",

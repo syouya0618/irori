@@ -93,6 +93,12 @@ function formatDate(iso: string): string {
  * 平穏なら null —— 何も起きておらぬ時に警告を出すと、本当の警告が薄まる。
  */
 function healthMessageOf(health: NotificationHealthView): string | null {
+  // ⚠️ **「読めなかった」を最初に見る。** 心拍と最終配信のどちらが読めなくとも、
+  // 画面は「止まっておる」とも「まだ走っておらぬ」とも言うてはならぬ。
+  // 断言すれば、主は動いておる基盤を止めに行く。
+  if (health.runState === "unknown" || health.deliveryState === "unknown") {
+    return "配信の状況を取得できませんでした。通知が止まっているとは限りません。"
+  }
   switch (health.runState) {
     case "never":
       return "通知の配信はまだ一度も実行されていません。"
@@ -325,9 +331,13 @@ export function NotificationCard({ devices, health }: NotificationCardProps) {
                 最終実行
               </dt>
               <dd>
-                {health.runState === "never"
-                  ? "まだありません"
-                  : (health.ranAtLabel ?? "不明")}
+                {/* 「取得できませんでした」と「まだありません」は別物じゃ
+                    （前者は診断の故障・後者は pg_cron 未登録）。混ぜぬこと。 */}
+                {health.runState === "unknown"
+                  ? "取得できませんでした"
+                  : health.runState === "never"
+                    ? "まだありません"
+                    : (health.ranAtLabel ?? "不明")}
               </dd>
             </div>
             <div className="flex items-center justify-between gap-2">
@@ -336,9 +346,11 @@ export function NotificationCard({ devices, health }: NotificationCardProps) {
                 最終配信
               </dt>
               <dd>
-                {health.deliveryState === "never"
-                  ? "まだありません"
-                  : (health.lastSentLabel ?? "不明")}
+                {health.deliveryState === "unknown"
+                  ? "取得できませんでした"
+                  : health.deliveryState === "never"
+                    ? "まだありません"
+                    : (health.lastSentLabel ?? "不明")}
               </dd>
             </div>
           </dl>

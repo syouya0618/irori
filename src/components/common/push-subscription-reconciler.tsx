@@ -32,8 +32,13 @@ import {
  * ## ⚠️ effect 内で同期的に setState をせぬ
  * この component は state を一切持たぬ（返すのは null）。React Compiler の
  * 「effect 内の同期 setState」規則に触れる余地を構造から消してある。
+ *
+ * ## `userId` を受け取る理由
+ * 印を**利用者で区切る**ためじゃ（`CacheUserGuard` と同じ配線）。共用端末で
+ * 持ち主が代わった時に必ず 1 回走らせる。詳細は `push-reconcile.ts` の
+ * `PUSH_RECONCILE_MARKER_KEY` を見よ。
  */
-export function PushSubscriptionReconciler() {
+export function PushSubscriptionReconciler({ userId }: { userId: string }) {
   useEffect(() => {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) return
 
@@ -71,13 +76,14 @@ export function PushSubscriptionReconciler() {
             return null
           }
         },
-        writeMarker: (endpoint) => {
+        writeMarker: (marker) => {
           try {
-            sessionStorage.setItem(PUSH_RECONCILE_MARKER_KEY, endpoint)
+            sessionStorage.setItem(PUSH_RECONCILE_MARKER_KEY, marker)
           } catch (err) {
             console.warn("[push-reconciler] sessionStorage の書き込みに失敗:", err)
           }
         },
+        userId,
         userAgent: navigator.userAgent,
       })
 
@@ -97,7 +103,9 @@ export function PushSubscriptionReconciler() {
     return () => {
       cancelled = true
     }
-  }, [])
+    // 依存は userId のみ。layout はクライアント遷移で再マウントされぬゆえ、実質は
+    // ハードロードごとに 1 回じゃ（同一ページ内で利用者が変わることは無い）。
+  }, [userId])
 
   return null
 }

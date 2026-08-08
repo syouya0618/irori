@@ -113,6 +113,66 @@ describe("summarizeNotificationHealth", () => {
   })
 })
 
+// ── 「読めなかった」と「まだ走っておらぬ」の弁別（SEC-3）─────────────
+// 診断の読み取りが失敗した時（migration 未適用の 42P01・RLS 拒否・一過性の
+// DB エラー）も `ranAt` は null で来る。ここで never へ落とすと、画面が
+// 「まだ一度も実行されていません」と**断言**し、主は pg_cron を疑って真因
+// （読めなかっただけ）へ辿り着けぬ。しかも動いておる基盤を止めに行く。
+describe("読み取り失敗を never/never と取り違えぬ", () => {
+  it("心拍の error 時は never にならぬ（unknown で、時刻も出さぬ）", () => {
+    const view = summarizeNotificationHealth({
+      ranAt: null,
+      failedCount: null,
+      lastSentAt: null,
+      ranAtUnknown: true,
+      now: NOW,
+    })
+    expect(view.runState).toBe("unknown")
+    expect(view.runState).not.toBe("never")
+    expect(view.ranAtLabel).toBeNull()
+  })
+
+  it("最終配信の error 時は never にならぬ（「1 件も送っておらぬ」と言わぬ）", () => {
+    const view = summarizeNotificationHealth({
+      ranAt: iso(60 * 1000),
+      failedCount: 0,
+      lastSentAt: null,
+      lastSentUnknown: true,
+      now: NOW,
+    })
+    expect(view.deliveryState).toBe("unknown")
+    expect(view.lastSentLabel).toBeNull()
+    // 心拍は読めておるゆえ、そちらは平穏のまま（片方の故障で全部を塗り潰さぬ）。
+    expect(view.runState).toBe("healthy")
+  })
+
+  it("unknown は他の判定より強い（値が在っても読み取り失敗が勝つ）", () => {
+    const view = summarizeNotificationHealth({
+      ranAt: iso(60 * 1000),
+      failedCount: 0,
+      lastSentAt: iso(60 * 1000),
+      ranAtUnknown: true,
+      lastSentUnknown: true,
+      now: NOW,
+    })
+    expect(view.runState).toBe("unknown")
+    expect(view.deliveryState).toBe("unknown")
+  })
+
+  it("error が無ければ従来どおり（unknown へ倒れぬ）", () => {
+    const view = summarizeNotificationHealth({
+      ranAt: null,
+      failedCount: null,
+      lastSentAt: null,
+      ranAtUnknown: false,
+      lastSentUnknown: false,
+      now: NOW,
+    })
+    expect(view.runState).toBe("never")
+    expect(view.deliveryState).toBe("never")
+  })
+})
+
 describe("formatRelativeJa", () => {
   it.each([
     [0, "たった今"],

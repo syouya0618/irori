@@ -273,6 +273,11 @@ export default async function SettingsPage({
         ranAt: heartbeat?.ran_at ?? null,
         failedCount: heartbeat?.failed_count ?? null,
         lastSentAt: lastDelivery?.sent_at ?? null,
+        // ⚠️ **error を必ず渡す。** 渡さねば「読めなかった」が「まだ一度も
+        // 走っておらぬ」として描かれ、主は pg_cron を疑って真因（読めなかった
+        // だけ）へ永久に辿り着けぬ。診断が診断を騙るのが一番悪い壊れ方じゃ。
+        ranAtUnknown: Boolean(heartbeatError),
+        lastSentUnknown: Boolean(lastDeliveryError),
         now,
       })}
     />

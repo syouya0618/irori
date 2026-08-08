@@ -135,6 +135,43 @@ describe("診断表示 — 最終実行 と 最終配信 を並べて出す", ()
     expect(within(diagnostics()).getAllByText("まだありません")).toHaveLength(2)
   })
 
+  // ── 診断が読めなかった時（SEC-3）─────────────────────────────
+  // 「取得できませんでした」と「まだ一度も実行されていません」は、主の次の一手が
+  // 正反対になる（前者は表示の故障・後者は pg_cron 未登録）。断言してはならぬ。
+  it("心拍が読めなかった: **「まだ一度も」と言わぬ**", () => {
+    render(
+      <NotificationCard
+        devices={[]}
+        health={health({ runState: "unknown", ranAtLabel: null })}
+      />,
+    )
+
+    expect(within(diagnostics()).getByText("取得できませんでした")).toBeInTheDocument()
+    expect(
+      screen.queryByText("通知の配信はまだ一度も実行されていません。"),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText(
+        "配信の状況を取得できませんでした。通知が止まっているとは限りません。",
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it("最終配信だけ読めなかった: そちらだけ「取得できませんでした」", () => {
+    render(
+      <NotificationCard
+        devices={[]}
+        health={health({ deliveryState: "unknown", lastSentLabel: null })}
+      />,
+    )
+
+    const block = diagnostics()
+    // 心拍は読めておるゆえ相対表記のまま（片方の故障で全部を塗り潰さぬ）。
+    expect(within(block).getByText("3分前")).toBeInTheDocument()
+    expect(within(block).getByText("取得できませんでした")).toBeInTheDocument()
+    expect(within(block).queryByText("まだありません")).not.toBeInTheDocument()
+  })
+
   it("走ってはおるが失敗が在る: 件数を出す（ran_at だけ見て平穏と誤読させぬ）", () => {
     render(
       <NotificationCard
