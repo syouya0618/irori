@@ -4,7 +4,7 @@ import { resolve } from "node:path"
 import { runInNewContext } from "node:vm"
 // classic script の sw.js は import できぬゆえ、手動同期の綻びをここで殺す
 // （既定の着地先がアプリ側の定数と一致することを機械で縛る）。
-import { CALENDAR_PATH } from "@/lib/domain/calendar-link"
+import { CALENDAR_DATE_PARAM, CALENDAR_PATH } from "@/lib/domain/calendar-link"
 
 /**
  * public/sw.js の純粋関数 (self.__TEST_HOOKS__) を node:vm で実行して検証する。
@@ -51,6 +51,13 @@ interface DuckResponse {
 interface TestHooks {
   classifyRequest: (request: DuckRequest, originHref: string) => string | null
   makeCacheKey: (rawUrl: string) => string
+  // B-6: document 専用キー（`?date=` を落とす）。
+  makeDocumentCacheKey: (rawUrl: string) => string
+  // ⚠️ 戻りを `unknown` にすると「オフラインで何が返ったか」を型が助けてくれぬ
+  // （上の buildResubscribeBody の傷と同じ轍じゃ）。status と本文で締める。
+  handleDocument: (
+    request: DuckRequest,
+  ) => Promise<{ status: number; text: () => Promise<string> }>
   trimCache: (cacheName: string, max?: number) => Promise<void>
   extractAssetUrls: (html: string) => string[]
   parsePushPayload: (event: DuckPushEvent | null) => PushPayload
@@ -71,18 +78,32 @@ interface TestHooks {
   handleNotificationClick: (event: unknown) => Promise<void>
   DEFAULT_NOTIFICATION_URL: string
   CACHE_NAMES: Record<string, string>
+  MAX_ENTRIES: Record<string, number>
   APP_PAGES: string[]
   PRECACHE_URLS: string[]
   RESUBSCRIBE_PATH: string
+  CALENDAR_DATE_PARAM: string
+}
+
+/** 登録された `addEventListener(type, listener)` の対。 */
+interface RecordedListener {
+  type: string
+  listener: (event: unknown) => void
 }
 
 /**
- * sw.js を評価し、`__TEST_HOOKS__` と **登録されたイベント名の一覧**を返す。
+ * sw.js を評価し、`__TEST_HOOKS__` と **登録されたイベント名の一覧**、
+ * そして**リスナ関数そのもの**を返す。
  *
  * ⚠️ `addEventListener` を no-op スタブにすると、**リスナ登録そのものを検証できぬ**。
  * `"push"` を `"pushnotification"` と綴り間違えても純粋関数のテストは全部緑のまま、
  * 本番では 1 通も届かぬ — CLAUDE.md の「規約ファイルは在るだけでは効いておらぬ」と
  * 同 family じゃ。ゆえに記録関数にして集合を assert できるようにする。
+ *
+ * ⚠️ さらに**リスナ関数を捨ててはならぬ**（B-6 のレビュー指摘）。名前だけ記録して
+ * 関数を捨てると、`data: { url: payload.url }` を `data: {}` に戻しても・
+ * `event.waitUntil(handleNotificationClick(event))` を書き崩しても全部緑のまま、
+ * 通知タップは 100% 今日を開く。**クエリを運ぶ継ぎ目はここでしか撃てぬ。**
  */
 function loadSwWithEvents(
   extraGlobals: Record<string, unknown> = {},
@@ -90,12 +111,15 @@ function loadSwWithEvents(
 ): {
   hooks: TestHooks
   events: string[]
+  listeners: RecordedListener[]
 } {
   const code = readFileSync(SW_PATH, "utf8")
   const events: string[] = []
+  const listeners: RecordedListener[] = []
   const self: Record<string, unknown> = {
-    addEventListener: (type: string) => {
+    addEventListener: (type: string, listener: (event: unknown) => void) => {
       events.push(type)
+      listeners.push({ type, listener })
     },
     location: { href: ORIGIN },
     skipWaiting: () => Promise.resolve(),
@@ -114,7 +138,19 @@ function loadSwWithEvents(
   runInNewContext(code, sandbox)
   const hooks = self.__TEST_HOOKS__ as TestHooks | undefined
   if (!hooks) throw new Error("sw.js が self.__TEST_HOOKS__ を公開していません")
-  return { hooks, events }
+  return { hooks, events, listeners }
+}
+
+/** 登録済みリスナを 1 本取り出す（無ければ落とす — 空回りを緑にせぬ）。 */
+function listenerFor(
+  listeners: RecordedListener[],
+  type: string,
+): (event: unknown) => void {
+  const found = listeners.filter((l) => l.type === type)
+  if (found.length !== 1) {
+    throw new Error(`"${type}" リスナが ${found.length} 本（1 本であるべき）`)
+  }
+  return found[0].listener
 }
 
 function loadSw(
@@ -179,6 +215,13 @@ describe("sw.js __TEST_HOOKS__", () => {
         const req = makeReq(abs(page), { mode: "navigate" })
         expect(hooks.classifyRequest(req, ORIGIN)).toBe("document")
       }
+    })
+
+    it("navigate × `/calendar?date=` (通知の着地先) → document", () => {
+      // B-6: 通知タップはこの分類を通る。ここが null / nav-passthrough に化けると
+      // キャッシュされず、オフラインで必ず /offline が出る。
+      const req = makeReq(abs("/calendar?date=2026-09-01"), { mode: "navigate" })
+      expect(hooks.classifyRequest(req, ORIGIN)).toBe("document")
     })
 
     it("navigate × 末尾スラッシュ付き APP_PAGES → document (正規化)", () => {
@@ -270,7 +313,12 @@ describe("sw.js __TEST_HOOKS__", () => {
       expect(hooks.makeCacheKey(abs("/meals?_rsc=abc12"))).toBe(abs("/meals"))
     })
 
-    it("他のクエリは維持する", () => {
+    // ⚠️ **この 2 本と下の makeDocumentCacheKey 節は対で読むこと。**
+    // rsc は日を残さねばならぬ（落とせば別の日の flight payload をルーターへ返す）。
+    // document は日を落とさねばならぬ（残せばオフラインで当たらず、キーが際限なく
+    // 増えて他ページを追い出す）。「同じことを 2 回書いておる」と見て統合すると、
+    // どちら向きでも必ず片方が壊れる。
+    it("他のクエリは維持する（rsc はこのキーを共有する）", () => {
       expect(hooks.makeCacheKey(abs("/meals?date=2026-06-01&_rsc=abc"))).toBe(
         abs("/meals?date=2026-06-01")
       )
@@ -284,6 +332,40 @@ describe("sw.js __TEST_HOOKS__", () => {
 
     it("クエリなし URL はそのまま", () => {
       expect(hooks.makeCacheKey(abs("/stock"))).toBe(abs("/stock"))
+    })
+  })
+
+  describe("makeDocumentCacheKey（B-6: document 専用。日を落とす）", () => {
+    it("`?date=` を落とす（濃度を APP_PAGES 相当に保つ）", () => {
+      expect(hooks.makeDocumentCacheKey(abs("/calendar?date=2026-09-01"))).toBe(
+        abs("/calendar"),
+      )
+    })
+
+    it("日付が違っても同一キーへ正規化される", () => {
+      expect(hooks.makeDocumentCacheKey(abs("/calendar?date=2026-09-01"))).toBe(
+        hooks.makeDocumentCacheKey(abs("/calendar?date=2027-01-31")),
+      )
+    })
+
+    it("_rsc も落とす（makeCacheKey に委ねておる）", () => {
+      expect(hooks.makeDocumentCacheKey(abs("/calendar?date=2026-09-01&_rsc=abc"))).toBe(
+        abs("/calendar"),
+      )
+    })
+
+    it("date 以外のクエリは維持する（勝手に広げておらぬ）", () => {
+      // `/settings?google=connected` は接続直後の着地先じゃ。ここまで落とすと
+      // 別の意味のページを 1 つのキーに混ぜることになる。
+      expect(hooks.makeDocumentCacheKey(abs("/settings?google=connected"))).toBe(
+        abs("/settings?google=connected"),
+      )
+    })
+
+    it("クエリ名はアプリ側の定数と一致する（手動同期の綻びを殺す）", () => {
+      // src/lib/domain/calendar-link.ts の CALENDAR_DATE_PARAM（classic script ゆえ
+      // import 不可）。改名すると sw 側が日を落とさなくなり、オフラインの着地が壊れる。
+      expect(hooks.CALENDAR_DATE_PARAM).toBe(CALENDAR_DATE_PARAM)
     })
   })
 
@@ -353,6 +435,230 @@ describe("sw.js __TEST_HOOKS__", () => {
       await trimHooks.trimCache("irori-v1-precache")
       expect(deleted).toEqual([])
     })
+  })
+})
+
+/**
+ * document キャッシュ — **通知の着地を実際に描く経路**（B-6 のレビュー指摘）。
+ *
+ * 通知の着地先を `?date=` にしただけでは足りぬ。`handleDocument` のキーが日付を
+ * 抱えたままだと、同じ 1 つの変更で 2 つ壊れる:
+ *   (a) オフラインで cached の `/calendar` に当たらず `/offline` が出る
+ *       —— 通知タップは最も圏外になりやすい瞬間ゆえ実害じゃ
+ *   (b) キー濃度が日付ぶん無制限に増え、上限 16 の FIFO が他ページを追い出す
+ * どちらも純粋関数のテストでは 1 本も落ちぬ。ゆえに **fetch リスナへ実際に
+ * navigate を投げて**、返った本文とキャッシュのキー集合を見る。
+ */
+describe("document キャッシュ — `?date=` の着地（B-6）", () => {
+  /** sw.js が触る範囲だけを満たす Response の代役。 */
+  class FakeRes {
+    status: number
+    ok: boolean
+    redirected: boolean
+    body: string
+    headers: { get: (name: string) => string | null }
+    private headerMap: Record<string, string>
+
+    constructor(
+      body: string,
+      init: {
+        status?: number
+        headers?: Record<string, string>
+        redirected?: boolean
+      } = {},
+    ) {
+      this.body = body
+      this.status = init.status ?? 200
+      this.ok = this.status >= 200 && this.status < 300
+      this.redirected = init.redirected ?? false
+      this.headerMap = {}
+      for (const [k, v] of Object.entries(init.headers ?? {})) {
+        this.headerMap[k.toLowerCase()] = v
+      }
+      this.headers = { get: (name) => this.headerMap[name.toLowerCase()] ?? null }
+    }
+
+    clone(): FakeRes {
+      return new FakeRes(this.body, {
+        status: this.status,
+        headers: this.headerMap,
+        redirected: this.redirected,
+      })
+    }
+
+    text(): Promise<string> {
+      return Promise.resolve(this.body)
+    }
+  }
+
+  const HTML = { "content-type": "text/html; charset=utf-8" }
+  const OFFLINE_BODY = "オフライン画面じゃ"
+
+  interface Entry {
+    url: string
+    res: FakeRes
+  }
+
+  /** CacheStorage の代役。`open` は同名なら**同じ配列**を返す（挿入順 = FIFO 順）。 */
+  function makeCacheStorage() {
+    const stores = new Map<string, Entry[]>()
+    const keyOf = (req: string | { url: string }) =>
+      typeof req === "string" ? new URL(req, ORIGIN).href : req.url
+    const entriesOf = (name: string) => {
+      if (!stores.has(name)) stores.set(name, [])
+      return stores.get(name)!
+    }
+    const open = (name: string) => {
+      const entries = entriesOf(name)
+      return Promise.resolve({
+        keys: () => Promise.resolve(entries.map((e) => ({ url: e.url }))),
+        match: (req: string | { url: string }) => {
+          const url = keyOf(req)
+          return Promise.resolve(entries.find((e) => e.url === url)?.res)
+        },
+        put: (req: string | { url: string }, res: FakeRes) => {
+          const url = keyOf(req)
+          const i = entries.findIndex((e) => e.url === url)
+          if (i >= 0) entries[i] = { url, res }
+          else entries.push({ url, res })
+          return Promise.resolve()
+        },
+        delete: (req: string | { url: string }) => {
+          const url = keyOf(req)
+          const i = entries.findIndex((e) => e.url === url)
+          if (i >= 0) entries.splice(i, 1)
+          return Promise.resolve(i >= 0)
+        },
+      })
+    }
+    return {
+      caches: {
+        open,
+        keys: () => Promise.resolve([...stores.keys()]),
+        delete: (name: string) => Promise.resolve(stores.delete(name)),
+      },
+      seed: (name: string, url: string, res: FakeRes) =>
+        entriesOf(name).push({ url: new URL(url, ORIGIN).href, res }),
+      urlsIn: (name: string) => entriesOf(name).map((e) => e.url),
+    }
+  }
+
+  function setup() {
+    const store = makeCacheStorage()
+    let online = true
+    const fetched: string[] = []
+    const fetchImpl = (input: string | DuckRequest) => {
+      const href = typeof input === "string" ? new URL(input, ORIGIN).href : input.url
+      fetched.push(href)
+      if (!online) return Promise.reject(new Error("offline"))
+      const u = new URL(href)
+      return Promise.resolve(new FakeRes(`server:${u.pathname}${u.search}`, { headers: HTML }))
+    }
+    const { hooks, listeners } = loadSwWithEvents({
+      caches: store.caches,
+      fetch: fetchImpl,
+      Response: FakeRes,
+    })
+    // precache に /offline を仕込む。**退化先を判別可能にする要**じゃ ——
+    // 無いと offlineFallback が素の 503 を返し、「キャッシュに当たった」と
+    // 「/offline が出た」の区別が本文から付かなくなる。
+    // date ヘッダを新鮮にして maybeRefreshOffline の再取得を止める（余計な fetch を混ぜぬ）。
+    store.seed(
+      hooks.CACHE_NAMES.precache,
+      "/offline",
+      new FakeRes(OFFLINE_BODY, {
+        headers: { ...HTML, date: new Date().toUTCString() },
+      }),
+    )
+
+    async function navigate(path: string): Promise<{ status: number; body: string }> {
+      let responded: Promise<{ status: number; text: () => Promise<string> }> | null = null
+      const waits: Promise<unknown>[] = []
+      listenerFor(listeners, "fetch")({
+        request: makeReq(abs(path), { mode: "navigate" }),
+        respondWith: (p: Promise<{ status: number; text: () => Promise<string> }>) => {
+          responded = p
+        },
+        waitUntil: (p: Promise<unknown>) => waits.push(p),
+      })
+      // 空回りを緑にせぬ: 分類が null に化けたらここで落ちる。
+      if (!responded) throw new Error(`fetch リスナが respondWith を呼ばなかった: ${path}`)
+      const res = await (responded as Promise<{
+        status: number
+        text: () => Promise<string>
+      }>)
+      // maybeRefreshOffline は自分で catch するが、未 await の reject を残さぬ。
+      await Promise.all(waits.map((p) => Promise.resolve(p).catch(() => undefined)))
+      return { status: res.status, body: await res.text() }
+    }
+
+    return {
+      hooks,
+      navigate,
+      goOffline: () => {
+        online = false
+      },
+      documentUrls: () => store.urlsIn(hooks.CACHE_NAMES.documents),
+      fetched,
+    }
+  }
+
+  it("harness が空回りしておらぬ（オンライン訪問で documents に 1 件入る）", async () => {
+    const sw = setup()
+    const res = await sw.navigate("/calendar")
+    expect(res.body).toBe("server:/calendar")
+    expect(sw.documentUrls()).toEqual([abs("/calendar")])
+  })
+
+  it("オフラインで cached が無ければ /offline へ倒れる（対照: 退化先は実際に出る）", async () => {
+    const sw = setup()
+    sw.goOffline()
+    const res = await sw.navigate("/meals")
+    expect(res.body).toBe(OFFLINE_BODY)
+  })
+
+  it("**オフラインの `?date=` は cached のカレンダーを返す**（/offline へ落ちぬ）", async () => {
+    const sw = setup()
+    await sw.navigate("/calendar") // オンラインで一度開いておく
+    sw.goOffline()
+    const res = await sw.navigate("/calendar?date=2026-09-01")
+    // 日付付きのキーで探すと**構造的に必ずミス**する（B-6 が直した経路そのものが
+    // オフラインで死ぬ）。ここが OFFLINE_BODY なら退行じゃ。
+    expect(res.body).toBe("server:/calendar")
+    expect(res.status).toBe(200)
+  })
+
+  it("オンラインの `?date=` 訪問も cached を作る（通知しか使わぬ端末を見捨てぬ）", async () => {
+    const sw = setup()
+    await sw.navigate("/calendar?date=2026-09-01")
+    expect(sw.documentUrls()).toEqual([abs("/calendar")])
+    sw.goOffline()
+    expect((await sw.navigate("/calendar")).body).toBe("server:/calendar?date=2026-09-01")
+  })
+
+  it("`?date=` を 16 回叩いても他の APP_PAGES がオフラインキャッシュから消えぬ", async () => {
+    const sw = setup()
+    for (const page of sw.hooks.APP_PAGES) await sw.navigate(page)
+    // 毎朝のまとめ ≒ 2 週間ぶん。上限（16）を超える回数を叩く。
+    const taps = sw.hooks.MAX_ENTRIES.documents
+    expect(taps).toBeGreaterThan(0)
+    for (let i = 1; i <= taps; i++) {
+      await sw.navigate(`/calendar?date=2026-09-${String(i).padStart(2, "0")}`)
+    }
+
+    const urls = sw.documentUrls()
+    // (1) 日付がキーに 1 つも残っておらぬ（put 側も正規化されておる証拠）。
+    //     match だけ直した半端な修正はここで落ちる。
+    expect(urls.filter((u) => u.includes("date="))).toEqual([])
+    // (2) キー濃度は APP_PAGES の本数どまり。
+    expect(urls.length).toBe(sw.hooks.APP_PAGES.length)
+    // (3) 追い出されておらぬこと（オフライン閲覧が全滅せぬ）。
+    for (const page of sw.hooks.APP_PAGES) {
+      expect(urls, `${page} が documents から消えておる`).toContain(abs(page))
+    }
+    // (4) 実際にオフラインで開けること（キー集合だけでなく振る舞いで見る）。
+    sw.goOffline()
+    expect((await sw.navigate("/meals")).body).toBe("server:/meals")
   })
 })
 
@@ -640,16 +946,23 @@ describe("parsePushPayload", () => {
   const hooks = loadSw()
 
   it("正常なペイロードをそのまま通す", () => {
+    // ⚠️ url は **`?date=` 付きの実値**で撃つこと（B-6）。`"/calendar"` で撃つと
+    // 「クエリを落とす正規化」が入っても永久に緑のままじゃ。
     const result = hooks.parsePushPayload({
       data: {
-        json: () => ({ title: "予定", body: "10分前です", url: "/calendar", tag: "e1" }),
+        json: () => ({
+          title: "予定",
+          body: "10分前です",
+          url: "/calendar?date=2026-09-01",
+          tag: "e1",
+        }),
         text: () => "",
       },
     })
     expect(result).toEqual({
       title: "予定",
       body: "10分前です",
-      url: "/calendar",
+      url: "/calendar?date=2026-09-01",
       tag: "e1",
     })
   })
@@ -715,6 +1028,79 @@ describe("parsePushPayload", () => {
 })
 
 /**
+ * push リスナ — **`?date=` を通知へ載せる継ぎ目**（B-6 のレビュー指摘）。
+ *
+ * 鎖は「組立 → 送信 → **push リスナ** → **notificationclick リスナ** → navigate →
+ * page → CalendarView」じゃ。両端は縛られておるのに、真ん中の 2 本のリスナは
+ * リスナ関数を捨てる harness のせいで一度も起動されておらなかった。
+ * ゆえに `data: { url: payload.url }` を `data: {}` に戻しても vitest 全数が緑のまま、
+ * 通知タップは 100% 今日を開く（CLAUDE.md「テスト緑・本番不発」型）。
+ */
+describe("push リスナ — 通知の data.url（B-6）", () => {
+  interface Shown {
+    title: string
+    options: { body?: string; tag?: string; data?: { url?: string } }
+  }
+
+  function setup() {
+    const shown: Shown[] = []
+    const { hooks, listeners } = loadSwWithEvents(
+      {},
+      {
+        registration: {
+          showNotification: (title: string, options: Shown["options"]) => {
+            shown.push({ title, options })
+            return Promise.resolve()
+          },
+        },
+      },
+    )
+    async function dispatch(payload: unknown) {
+      const waits: Promise<unknown>[] = []
+      listenerFor(listeners, "push")({
+        data: { json: () => payload, text: () => "" },
+        waitUntil: (p: Promise<unknown>) => waits.push(p),
+      })
+      // ⚠️ waitUntil を通さぬ実装は、SW が寝た瞬間に通知を出せず Safari が
+      // 権限を剥奪する。空回りを緑にせぬためここで落とす。
+      if (waits.length === 0) throw new Error("push リスナが waitUntil を呼ばなかった")
+      await Promise.all(waits)
+    }
+    return { hooks, shown, dispatch }
+  }
+
+  it("配信ジョブの url を**そのまま** data.url へ載せる（クエリを落とさぬ）", async () => {
+    const { shown, dispatch } = setup()
+    await dispatch({
+      title: "検診",
+      body: "9月1日 10:00",
+      url: "/calendar?date=2026-09-01",
+      tag: "event:abc",
+    })
+
+    expect(shown).toHaveLength(1)
+    expect(shown[0].title).toBe("検診")
+    expect(shown[0].options.body).toBe("9月1日 10:00")
+    expect(shown[0].options.tag).toBe("event:abc")
+    // ここが `/calendar` に化けたら B-6 は丸ごと死ぬ（通知は正しい日を運んでおるのに）。
+    expect(shown[0].options.data?.url).toBe("/calendar?date=2026-09-01")
+  })
+
+  it("url を持たぬ古いペイロードは既定の /calendar へ倒す（data を空にせぬ）", async () => {
+    const { hooks, shown, dispatch } = setup()
+    await dispatch({ title: "お知らせ", body: "本文" })
+    expect(shown[0].options.data?.url).toBe(hooks.DEFAULT_NOTIFICATION_URL)
+  })
+
+  it("壊れたペイロードでも必ず可視通知を出す（Safari の権限剥奪を避ける）", async () => {
+    const { shown, dispatch } = setup()
+    await dispatch("文字列だった")
+    expect(shown).toHaveLength(1)
+    expect(shown[0].title).toBe("irori")
+  })
+})
+
+/**
  * notificationclick — **通知の着地日**（B-6）。
  *
  * ここが「focus だけ」に戻ると、通知は正しい日（`?date=`）を運んでおるのに
@@ -752,7 +1138,7 @@ describe("notificationclick — 既存タブの日付を動かす（B-6）", () 
 
   function setup(clients: unknown[]) {
     const opened: string[] = []
-    const hooks = loadSw(
+    const { hooks, listeners } = loadSwWithEvents(
       {},
       {
         clients: {
@@ -764,7 +1150,7 @@ describe("notificationclick — 既存タブの日付を動かす（B-6）", () 
         },
       },
     )
-    return { hooks, opened }
+    return { hooks, opened, listeners }
   }
 
   const clickEvent = (url?: unknown, onClose?: () => void) => ({
@@ -819,6 +1205,27 @@ describe("notificationclick — 既存タブの日付を動かす（B-6）", () 
     await expect(hooks.handleNotificationClick(clickEvent(TARGET))).resolves.toBeUndefined()
     expect(record.focused).toBe(true)
     expect(opened).toEqual([])
+  })
+
+  it("**リスナが handler を呼び `waitUntil` で待たれておる**（継ぎ目そのもの）", async () => {
+    // ⚠️ ハンドラ本体をいくら縛っても、`e.waitUntil(handleNotificationClick(e))` を
+    // `handleNotificationClick()` に書き崩す・リスナ本体を空にする、で全部緑のまま
+    // 通知タップが死ぬ。ゆえにリスナ関数を直接叩いて navigate まで見る。
+    const { client, record } = makeClient()
+    const { listeners } = setup([client])
+    const waits: Promise<unknown>[] = []
+    let closed = 0
+
+    listenerFor(listeners, "notificationclick")({
+      notification: { data: { url: TARGET }, close: () => (closed += 1) },
+      waitUntil: (p: Promise<unknown>) => waits.push(p),
+    })
+
+    // waitUntil を通さねば、SW が寝て navigate 前に処理が打ち切られうる。
+    expect(waits).toHaveLength(1)
+    await Promise.all(waits)
+    expect(record.navigated).toEqual([TARGET])
+    expect(closed).toBe(1)
   })
 
   describe("notificationTargetUrl — 着地先の読み取り", () => {

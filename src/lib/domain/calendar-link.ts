@@ -35,6 +35,11 @@ export function calendarUrlForDate(ymd: string | null | undefined): string {
   return `${CALENDAR_PATH}?${CALENDAR_DATE_PARAM}=${ymd}`
 }
 
+/** Next.js の `searchParams`（await 済み）。 */
+export type CalendarSearchParams = {
+  [key: string]: string | string[] | undefined
+}
+
 /** `/calendar` が最初に描く状態。選択日と、それを含む月グリッドは**常に同じ月**。 */
 export interface CalendarDateView {
   /** アジェンダが開く日（"YYYY-MM-DD"）。 */
@@ -53,16 +58,23 @@ export interface CalendarDateView {
  * ゆえに `monthFirst` はここで `monthFirstOf(selectedDate)` から導き、
  * 呼び出し側に月を決める自由を残さぬ。
  *
+ * **クエリ名も呼び出し側に決めさせぬ。** `searchParams` 全体を受け取り、
+ * `CALENDAR_DATE_PARAM` を**この関数が**引く。値 1 つだけ渡す形にすると、書く側は
+ * 定数を使うのに読む側（page）は `searchParams.date` とリテラルで書く、という
+ * **片側だけの契約**になる —— 定数を改名しても全テストが緑のまま、通知の着地は
+ * 全件今日へ戻る（往復テストも定数で取り出すなら、その不一致を原理的に検出できぬ）。
+ *
  * 検証は `isValidYmd`（PR #199 で確立した唯一の実装）に委ねる。形式だけの正規表現では
  * `2026-02-30` が通り、`Date.UTC` が 3/2 へ繰り上げて**静かに違う日**を開く。
  *
- * @param dateParam Next.js の `searchParams.date`（`?date=a&date=b` は配列で来る）
- * @param now       今日の判定基準（テストのため注入可能。既定は実時刻）
+ * @param searchParams Next.js の `searchParams`（await 済み。`?date=a&date=b` は配列）
+ * @param now          今日の判定基準（テストのため注入可能。既定は実時刻）
  */
 export function resolveCalendarDateView(
-  dateParam: string | string[] | undefined,
+  searchParams: CalendarSearchParams | undefined,
   now: Date = new Date(),
 ): CalendarDateView {
+  const dateParam = searchParams?.[CALENDAR_DATE_PARAM]
   // `?date=a&date=b` は配列、`?date=` は空文字。どちらも文字列以外／不正として
   // 今日へ倒す（`settings/page.tsx` の `?google=` と同じ narrowing じゃ）。
   const raw = typeof dateParam === "string" ? dateParam : null

@@ -33,7 +33,7 @@ describe("resolveCalendarDateView — ?date= の解釈", () => {
   })
 
   it("`?date=2026-09-01` は 9 月を開く（**月跨ぎ**。日だけ動かす実装では割れる）", () => {
-    expect(resolveCalendarDateView("2026-09-01", NOW)).toEqual({
+    expect(resolveCalendarDateView({ date: "2026-09-01" }, NOW)).toEqual({
       selectedDate: "2026-09-01",
       monthFirst: "2026-09-01",
     })
@@ -42,19 +42,35 @@ describe("resolveCalendarDateView — ?date= の解釈", () => {
   it("月末→翌月頭（7/31 に届く「前日20時」の通知）でも月が追随する", () => {
     // 通知を出す側の日（7/31）とは無関係に、着地は指された日の月で開く。
     expect(
-      resolveCalendarDateView("2026-08-01", new Date("2026-07-31T11:00:00.000Z")),
+      resolveCalendarDateView({ date: "2026-08-01" }, new Date("2026-07-31T11:00:00.000Z")),
     ).toEqual({ selectedDate: "2026-08-01", monthFirst: "2026-08-01" })
   })
 
   it("同じ月の別の日はその日を選び、月は動かさぬ", () => {
-    expect(resolveCalendarDateView("2026-08-20", NOW)).toEqual({
+    expect(resolveCalendarDateView({ date: "2026-08-20" }, NOW)).toEqual({
       selectedDate: "2026-08-20",
       monthFirst: THIS_MONTH,
     })
   })
 
-  it("date 無し（undefined）なら従来どおり今日", () => {
+  it("date 無し（クエリ空）なら従来どおり今日", () => {
+    expect(resolveCalendarDateView({}, NOW)).toEqual({
+      selectedDate: TODAY,
+      monthFirst: THIS_MONTH,
+    })
+  })
+
+  it("searchParams 自体が無くても落ちぬ（今日へ倒れる）", () => {
     expect(resolveCalendarDateView(undefined, NOW)).toEqual({
+      selectedDate: TODAY,
+      monthFirst: THIS_MONTH,
+    })
+  })
+
+  it("**別のクエリ名では効かぬ**（読み側が引くのは 1 つの綴りだけじゃ）", () => {
+    // 「どのキーでも拾う」実装（Object.values を漁る等）は、`?d=` や
+    // `?google=` を日付と誤読しうる。契約は `date` の 1 本のみ。
+    expect(resolveCalendarDateView({ d: "2026-09-01", on: "2026-09-01" }, NOW)).toEqual({
       selectedDate: TODAY,
       monthFirst: THIS_MONTH,
     })
@@ -71,14 +87,14 @@ describe("resolveCalendarDateView — ?date= の解釈", () => {
     ["前後に空白", " 2026-09-01 "],
     ["時刻付き", "2026-09-01T00:00:00Z"],
   ])("不正な date（%s）は今日へ倒れる", (_label, raw) => {
-    expect(resolveCalendarDateView(raw, NOW)).toEqual({
+    expect(resolveCalendarDateView({ date: raw }, NOW)).toEqual({
       selectedDate: TODAY,
       monthFirst: THIS_MONTH,
     })
   })
 
   it("`?date=a&date=b`（配列）も今日へ倒れる（先頭を拾って信じたりせぬ）", () => {
-    expect(resolveCalendarDateView(["2026-09-01", "2026-10-01"], NOW)).toEqual({
+    expect(resolveCalendarDateView({ date: ["2026-09-01", "2026-10-01"] }, NOW)).toEqual({
       selectedDate: TODAY,
       monthFirst: THIS_MONTH,
     })
@@ -107,11 +123,14 @@ describe("calendarUrlForDate — 通知が運ぶ着地先", () => {
   })
 
   it("**往復が閉じておる**: 書いた URL を読み直すと同じ日が出る", () => {
-    // 2028 は閏年（2026-02-29 は実在せぬゆえここへ混ぜてはならぬ）。
+    // ⚠️ ここで `searchParams.get(CALENDAR_DATE_PARAM)` と**定数で**取り出しては
+    // ならぬ。それでは「URL のキー」と「読み側が引くキー」の不一致を原理的に
+    // 検出できず、往復を名乗るだけの循環テストになる（レビュー指摘 B2）。
+    // Next.js が page へ渡す形（キー→値の record）へ素で潰してから読ませる。
     for (const day of ["2026-01-01", "2028-02-29", "2026-09-01", "2026-12-31"]) {
       const url = new URL(calendarUrlForDate(day), "https://example.test")
-      const param = url.searchParams.get(CALENDAR_DATE_PARAM) ?? undefined
-      expect(resolveCalendarDateView(param, NOW)).toEqual({
+      const searchParams = Object.fromEntries(url.searchParams)
+      expect(resolveCalendarDateView(searchParams, NOW)).toEqual({
         selectedDate: day,
         monthFirst: `${day.slice(0, 7)}-01`,
       })

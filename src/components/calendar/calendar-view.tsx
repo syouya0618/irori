@@ -30,6 +30,8 @@ import {
 // startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）。
 // 楽観挿入/削除を持つため、reject 経路でも result.error と同じ巻き戻しを行う。
 import { toastOfflineError } from "@/lib/utils/offline-error"
+// 型のみの import ゆえ "use client" 境界を跨いでも安全（値ではない）。
+import type { CalendarDateView } from "@/lib/domain/calendar-link"
 import {
   useMonthEvents,
   OPTIMISTIC_EVENT_ID_PREFIX,
@@ -43,13 +45,14 @@ import { useGoogleSyncPoll } from "./use-google-sync-poll"
 interface CalendarViewProps {
   initialEvents: CalendarEventRecord[]
   householdId: string
-  initialMonthFirst: string
   /**
-   * B-6: 最初に開く日（通知の `/calendar?date=`）。省略なら今日。
-   * `initialMonthFirst` と**同じ月**でなければ月グリッドと乖離する
-   * （サーバは `resolveCalendarDateView` で両方を同時に導いておる）。
+   * B-6: 最初に描く「日と月」。`resolveCalendarDateView` の戻り値をそのまま渡す。
+   *
+   * **日と月を別々の prop にせぬ**のが要点じゃ: 別々なら「9月20日を選びながら
+   * 7月のグリッドを描く」を型が許してしまい、どのセルも光らぬまま
+   * 「9月20日 の予定」が出る割れが呼び出し側の自由として残る。
    */
-  initialSelectedDate?: string
+  initialView: CalendarDateView
   /**
    * V7: サーバが `after()` で Google 同期を予約したか。
    * true のときだけ `last_synced_at` を数回ポーリングして前進を待つ。
@@ -81,8 +84,7 @@ let optimisticSeq = 0
 export function CalendarView({
   initialEvents,
   householdId,
-  initialMonthFirst,
-  initialSelectedDate,
+  initialView,
   syncScheduled = false,
   initialGoogleSyncedAt = null,
   defaultReminderMinutes = null,
@@ -90,8 +92,7 @@ export function CalendarView({
   const m = useMonthEvents({
     initialEvents,
     householdId,
-    initialMonthFirst,
-    initialSelectedDate,
+    initialView,
   })
   const [pending, startTransition] = useTransition()
   const [sheetOpen, setSheetOpen] = useState(false)

@@ -12,6 +12,12 @@
 
 // キャッシュスキーマ (キャッシュ名・分類ロジック・キー形式) を変更した時のみ手動で bump する。
 // bump すると activate 時に旧バージョンのキャッシュが全削除される。
+//
+// B-6 で document のキー形式を変えた (`?date=` を落とす) が **bump しておらぬ**。
+// 新しいキーは旧キーの**部分集合**（クエリを 1 つ減らすだけ）ゆえ、既存端末の
+// `/meals` 等のエントリは今のキーでもそのまま当たる。`?date=` 付きの document を
+// 作る版は一度も配っておらぬ（この PR が初出）ゆえ、旧スキーマの残骸も存在せぬ。
+// 一方 bump すれば全端末のオフラインキャッシュを無駄に捨てることになる。
 const CACHE_VERSION = "v1"
 const PREFIX = "irori-"
 
@@ -27,6 +33,12 @@ const CACHE_NAMES = {
 // src/lib/constants/pages.ts の VALID_PAGES (+ /settings, /calendar) と手動同期すること。
 // (classic script のため import できない — ページ追加時はここも更新する)
 const APP_PAGES = ["/meals", "/shopping", "/stock", "/baby", "/calendar", "/settings"]
+
+// 通知の着地日を運ぶクエリ名 (B-6)。document キャッシュのキーからはこれを落とす
+// (→ makeDocumentCacheKey)。src/lib/domain/calendar-link.ts の CALENDAR_DATE_PARAM と
+// **手動同期**すること (classic script ゆえ import できぬ。APP_PAGES と同じ約束じゃ)。
+// 綻びは sw-logic.test.ts が両者の一致を assert して殺しておる。
+const CALENDAR_DATE_PARAM = "date"
 
 // install 時に precache する静的リソース
 const PRECACHE_URLS = [
@@ -61,6 +73,31 @@ const OFFLINE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 function makeCacheKey(rawUrl) {
   const url = new URL(rawUrl)
   url.searchParams.delete("_rsc")
+  return url.href
+}
+
+/**
+ * **document** キャッシュ専用のキー。`makeCacheKey` に加えて `?date=` も落とす。
+ *
+ * 通知の着地先は `/calendar?date=YYYY-MM-DD` じゃ (B-6)。生の URL をキーにすると
+ * 1 つの変更で 2 つ壊れる:
+ *   (a) オフラインで cached の `/calendar` に**構造的に当たらぬ** → `/offline` が出る。
+ *       通知タップは最も圏外になりやすい瞬間ゆえ、これは実害じゃ。
+ *   (b) キーの濃度が日付ぶん無制限に増える → documents は上限 16 の FIFO ゆえ、
+ *       毎朝のまとめを 16 回叩くだけで /meals /shopping … が全て追い出される。
+ *       しかも居座るのは「二度と開かぬ過去の日付」＝キャッシュとして無価値。
+ * 日付はサーバが描く**中身**の違いでしかない。ゆえに保存されるのは
+ * 「最後にオンラインで開いた日のカレンダー」となり、オフラインでは指された日と
+ * 違う日が映りうる —— それは承知のうえの退化じゃ。オフラインに指定日の HTML は
+ * そもそも存在せぬゆえ、選択肢は「別の日のカレンダー」か「/offline 画面」しかない。
+ *
+ * ⚠️ **`makeCacheKey` 側で落としてはならぬ。** あちらは `handleRsc` が共有しており、
+ * 日を落とすと**別の日の flight payload** をルーターへ返して無音で違う日を描く
+ * （今より悪い）。ゆえに document 限定の関数として分けておる。
+ */
+function makeDocumentCacheKey(rawUrl) {
+  const url = new URL(makeCacheKey(rawUrl))
+  url.searchParams.delete(CALENDAR_DATE_PARAM)
   return url.href
 }
 
@@ -293,10 +330,16 @@ async function maybeRefreshOffline() {
   }
 }
 
-/** APP_PAGES への navigate: network-first → cache → /offline */
+/**
+ * APP_PAGES への navigate: network-first → cache → /offline。
+ *
+ * キーは `makeDocumentCacheKey` (＝ `?date=` を落とす)。**put と match の両方で
+ * 同じ関数を使うこと** — 片方だけ直すと「保存はするのに当たらぬ」or
+ * 「当たるのに濃度が増える」のどちらかが残る。
+ */
 async function handleDocument(request) {
   const cache = await caches.open(CACHE_NAMES.documents)
-  const key = makeCacheKey(request.url)
+  const key = makeDocumentCacheKey(request.url)
   try {
     const res = await fetch(request)
     const contentType = res.headers.get("content-type") || ""
@@ -648,6 +691,11 @@ self.addEventListener("pushsubscriptionchange", (event) => {
 self.__TEST_HOOKS__ = {
   classifyRequest,
   makeCacheKey,
+  makeDocumentCacheKey,
+  // B-6: document キャッシュ本体。純粋関数だけ公開しておると
+  // 「通知の着地先は縛れておるのに、その着地を描く経路は無検査」になる
+  // （オフラインで /offline が出る・他ページが追い出される、が両方緑で通る）。
+  handleDocument,
   trimCache,
   extractAssetUrls,
   parsePushPayload,
@@ -657,8 +705,10 @@ self.__TEST_HOOKS__ = {
   isResubscribeAccepted,
   handlePushSubscriptionChange,
   CACHE_NAMES,
+  MAX_ENTRIES,
   APP_PAGES,
   PRECACHE_URLS,
   RESUBSCRIBE_PATH,
   DEFAULT_NOTIFICATION_URL,
+  CALENDAR_DATE_PARAM,
 }

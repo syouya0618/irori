@@ -28,6 +28,17 @@ function pageSource(): string {
   return readFileSync(PAGE, "utf8")
 }
 
+/**
+ * コメントを落としたコード部分だけ。**否定形の assert はこちらで見る** ——
+ * 「その書き方をしてはならぬ」と**注意書きに書いた文言**そのものが引っかかって
+ * 落ちるのでは、掟を書いた者が罰せられるだけで検出器にならぬ。
+ */
+function pageCode(): string {
+  return pageSource()
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^[ \t]*\/\/.*$/gm, "")
+}
+
 /** `<CalendarView ... />` の props ブロックだけを切り出す。 */
 function calendarViewProps(): string {
   const source = pageSource()
@@ -74,16 +85,34 @@ describe("calendar/page → ?date= の配線", () => {
     ).not.toContain("currentMonthFirstJst")
   })
 
-  it("**選択日と月を対で渡しておる**（片方だけでは月跨ぎで割れる）", () => {
-    const props = calendarViewProps()
-    expect(props).toContain("initialSelectedDate={selectedDate}")
-    expect(props).toContain("initialMonthFirst={monthFirst}")
+  it("**選択日と月を 1 本の値で渡しておる**（片方だけでは月跨ぎで割れる）", () => {
+    // 解釈の結果を受けた変数名を実体から取り、その**同じ変数**が
+    // `initialView` に渡っておることを見る（変数名だけの偽物を弾く）。
+    const source = pageSource()
+    const assigned = source.match(/const\s+(\w+)\s*=\s*resolveCalendarDateView\(/)
+    expect(assigned, "resolveCalendarDateView の結果を変数で受けておらぬ").not.toBeNull()
+    const viewVar = assigned![1]
+    expect(calendarViewProps()).toContain(`initialView={${viewVar}}`)
   })
 
-  it("その 2 つは同じ 1 回の解釈から取っておる（変数名だけの偽物でない）", () => {
-    // 分割代入で両方を受けておること = 月が選択日から導かれておることの担保。
-    expect(pageSource()).toMatch(
-      /const\s*\{\s*selectedDate\s*,\s*monthFirst\s*\}\s*=\s*resolveCalendarDateView\(/,
-    )
+  it("events の取得範囲も同じ解釈の月から取っておる（描く月と範囲を一致させる）", () => {
+    // ここが別の月から来ると、9 月のグリッドに 8 月ぶんの events を載せた
+    // 「予定が無いように見える」画面になる。
+    const source = pageSource()
+    const viewVar = source.match(/const\s+(\w+)\s*=\s*resolveCalendarDateView\(/)![1]
+    expect(source).toContain(`gridRangeOf(${viewVar}.monthFirst)`)
+  })
+
+  it("**クエリ名を page が持っておらぬ**（読み側も契約の中に居る）", () => {
+    // 添字でクエリ名を書くと、CALENDAR_DATE_PARAM を改名しても全テストが緑のまま
+    // 通知の着地が全件今日へ戻る（レビュー指摘 B2）。
+    const code = pageCode()
+    // 走査が空回りしておらぬこと（コメント除去で本体まで消しておらぬ）。
+    expect(code).toContain("export default async function CalendarPage")
+    expect(code).toMatch(/resolveCalendarDateView\(\s*await\s+searchParams\s*\)/)
+    expect(
+      code,
+      "クエリ名の綴りを page が持ってはならぬ（calendar-link.ts の定数に決めさせる）",
+    ).not.toMatch(/\.date\b|\[\s*["']date["']\s*\]/)
   })
 })

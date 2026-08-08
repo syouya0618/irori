@@ -78,9 +78,13 @@ function ev(o: Partial<CalendarEventRecord> & { id: string }): CalendarEventReco
 
 beforeEach(() => cleanup())
 
+// ⚠️ **既存の振る舞いを一字も変えぬ形で 1 本の prop へ移す。** 旧 base は
+// `initialMonthFirst: "2026-07-01"` だけを渡し、選択日は「今日」に倒れておった
+// （＝月と日が食い違った対じゃ）。「月送りで選択日がその月へ寄る」テストは
+// その前提に依っておるゆえ、ここで同じ対を**明示して**渡す。
 const base = {
   householdId: "house-1",
-  initialMonthFirst: "2026-07-01",
+  initialView: { monthFirst: "2026-07-01", selectedDate: todayJstString() },
 }
 
 describe("CalendarView", () => {
@@ -201,18 +205,22 @@ describe("CalendarView", () => {
 /**
  * B-6: 通知の着地日（`/calendar?date=`）。
  *
- * サーバは `resolveCalendarDateView` で **選択日と月を対で** 導き、両方を渡す。
- * ここは受け取り側 —— 渡された日で開くこと・省略時は従来どおり今日であること・
- * 壊れた値で画面を落とさぬことを固定する（`initialSelectedDate` を無視する実装は
- * 「日をタップする」既存テストを全部緑で通り抜ける）。
+ * サーバは `resolveCalendarDateView` で **選択日と月を対で** 導き、`initialView`
+ * として 1 本で渡す。ここは受け取り側 —— 渡された日で開くこと・今日を渡せば
+ * 従来どおり今日であること・壊れた値で画面を落とさぬことを固定する
+ * （`initialView.selectedDate` を無視する実装は「日をタップする」既存テストを
+ * 全部緑で通り抜ける）。
+ *
+ * 「月と日が食い違う対」を撃つテストは**置かぬ**: 対で受ける型にした時点で
+ * 定義された振る舞いが無く、何を期待値にしても実装の写しになるゆえ
+ * （分離を型で塞いだことがそのまま検出器じゃ）。
  */
-describe("CalendarView — initialSelectedDate（B-6）", () => {
+describe("CalendarView — initialView.selectedDate（B-6）", () => {
   it("渡された日でアジェンダが開き、その日のセルが選択状態になる", () => {
     render(
       <CalendarView
         householdId="house-1"
-        initialMonthFirst="2026-09-01"
-        initialSelectedDate="2026-09-01"
+        initialView={{ monthFirst: "2026-09-01", selectedDate: "2026-09-01" }}
         initialEvents={[ev({ id: "e1", title: "検診", start_date: "2026-09-01" })]}
       />,
     )
@@ -231,20 +239,19 @@ describe("CalendarView — initialSelectedDate（B-6）", () => {
     render(
       <CalendarView
         householdId="house-1"
-        initialMonthFirst="2026-09-01"
-        initialSelectedDate="2026-09-20"
+        initialView={{ monthFirst: "2026-09-01", selectedDate: "2026-09-20" }}
         initialEvents={[]}
       />,
     )
     expect(screen.getByText(/9月20日 の予定/)).toBeInTheDocument()
   })
 
-  it("省略すれば従来どおり今日（既存の振る舞いを変えぬ）", () => {
+  it("今日を渡せば今日が選ばれる（既存の振る舞いを変えぬ）", () => {
     const today = todayJstString()
     render(
       <CalendarView
         householdId="house-1"
-        initialMonthFirst={`${today.slice(0, 7)}-01`}
+        initialView={{ monthFirst: `${today.slice(0, 7)}-01`, selectedDate: today }}
         initialEvents={[]}
       />,
     )
@@ -261,8 +268,7 @@ describe("CalendarView — initialSelectedDate（B-6）", () => {
     render(
       <CalendarView
         householdId="house-1"
-        initialMonthFirst={`${today.slice(0, 7)}-01`}
-        initialSelectedDate="2026-02-30"
+        initialView={{ monthFirst: `${today.slice(0, 7)}-01`, selectedDate: "2026-02-30" }}
         initialEvents={[]}
       />,
     )
