@@ -179,6 +179,21 @@ BEGIN
     RETURN (((v_start_date - 1) + TIME '20:00') AT TIME ZONE 'Asia/Tokyo');
   END IF;
 
+  -- ⚠️ **未知の kind を黙って 'minutes' として導出せぬ**（fail-open の禁止）。
+  -- ここを素通しにすると、将来 chk_event_reminders_kind に 3 つ目の kind を足して
+  -- **この関数の更新を忘れた**とき、その行は例外も警告も出さず
+  -- `start_at - N 分` として INSERT に成功し、**間違った時刻で通知が鳴る**。
+  -- 2 ファイル別ゆえレビューでも目に付かず、CHECK も pgTAP も緑のまま通る —
+  -- 核 ②/⑤ が潰そうとした「静かに壊れる」型が導出関数の内側に残る。
+  -- CHECK と冗長に見えるが**二重防御ではなく順序上の必然**じゃ:
+  -- CHECK は BEFORE トリガより**後**に効くゆえ、導出の時点では kind は未検証。
+  -- `IS DISTINCT FROM` なのは NULL 経路のため（`NULL <> 'minutes'` は NULL =
+  -- 偽扱いになり、そのまま素通ししてしまう）。
+  IF p_remind_kind IS DISTINCT FROM 'minutes' THEN
+    RAISE EXCEPTION 'unknown remind_kind: %', p_remind_kind
+      USING ERRCODE = '22023';
+  END IF;
+
   IF p_minutes IS NULL THEN
     -- CHECK 制約と同じ契約の二重防御（CHECK は BEFORE トリガより後に効くため）。
     RAISE EXCEPTION 'remind_minutes_before is required when remind_kind = minutes'
@@ -240,8 +255,27 @@ CREATE TABLE event_reminders (
   CONSTRAINT chk_event_reminders_minutes_range
     CHECK (remind_minutes_before IS NULL
            OR (remind_minutes_before BETWEEN 0 AND 40320)),
+  -- ⚠️ **上限を書き足すな。** この列は `calendar_events.event_uid`（生成列）が
+  -- 生む値の受け皿ゆえ、CHECK の定義域が**生成器の値域より狭い**と
+  -- 「予定は在るのに通知だけ付けられぬ」が恒久的に成立する。しかも利用者には
+  -- `setEventReminder` の汎用文しか出ぬため、何度試しても同じで真因はログの中だけじゃ。
+  -- かつては 512 上限が付いておった。google 側の値域はそれより広い:
+  --   * event id は Google の仕様で **5..1024 文字**（自動採番は約 26 文字ゆえ日常の
+  --     予定では発火せぬが、.ics 購読や Outlook / Zoom 招待の**取り込み予定**は
+  --     iCalUID 由来の長い id を持つ）
+  --   * calendar id はメールアドレス形（`holidays@group.v.calendar.google.com` 等）で、
+  --     `google_calendar_subscriptions` 側の CHECK は 1..1024
+  -- 実測: calendar id 36 文字 + event id 600 文字 → event_uid = 637 文字で 23514。
+  -- **1300 等の数字へ置き直しても同じ種類の推測が残る**ゆえ、上限そのものを外す。
+  --
+  -- 上限を外しても btree の行サイズ上限（約 2704 バイト）で詰まらぬ根拠:
+  -- `uq_calendar_events_uid` と `uq_event_reminders_event` は**どちらも
+  -- (household_id uuid, event_uid text) の btree** ゆえ鍵の形が同一で、上流
+  -- （calendar_events）に入った uid はここにも必ず入る。かつ
+  -- `derive_event_remind_at` が「対応する予定が無い uid」を 23503 で拒む（E-6）ゆえ、
+  -- ここへ来る uid は**必ず上流の索引を通っておる**。新しい失敗経路は生じぬ。
   CONSTRAINT chk_event_reminders_event_uid
-    CHECK (char_length(btrim(event_uid)) BETWEEN 1 AND 512)
+    CHECK (char_length(btrim(event_uid)) >= 1)
 );
 
 -- 配信ジョブ（B-3）の主クエリ: remind_at <= now() AND 未送信。

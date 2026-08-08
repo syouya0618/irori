@@ -31,7 +31,7 @@
 --   * 制約そのものは `pg_get_constraintdef` で**定義を**固定する
 -- の二本立てにする。片方だけだと「制約が消えても別の層が落とすから緑」になる。
 BEGIN;
-SELECT plan(71);
+SELECT plan(74);
 
 -- ══════════════════════════════════════════════════════════════
 -- A. 権限カタログ・スキーマ（静的・ロール切替なし）
@@ -215,15 +215,33 @@ SELECT ok(
 );
 
 -- ── A-12. 導出関数はクライアントへ開かぬ ─────────────────────
+-- ⚠️ **grantee に PUBLIC(oid 0) を必ず含めよ。** `authenticated` は PUBLIC の一員ゆえ、
+-- `GRANT EXECUTE ON FUNCTION derive_event_remind_at ... TO PUBLIC;` 一発で
+-- SECURITY DEFINER のこの関数を直に呼べるようになるが、grantee を anon/authenticated
+-- だけで濾すと**全数緑のまま通る**（実測。同じ文脈で `SET LOCAL role authenticated`
+-- から実際に呼べることも確かめた）。開けば RLS を跨いで calendar_events を引く
+-- **照会窓口**になる — 他世帯の household_id + event_uid を与えれば「その予定が在るか」
+-- （23503 が出るか）と「開始時刻から導いた timestamptz」が返る。核 ④ が名指しした
+-- PostgREST 直叩きの脅威モデルそのものじゃ。
+--
+-- なお冒頭の (P) positive control は **proacl には要らぬ**（relacl とは事情が違う）:
+-- 素の Postgres なら `CREATE FUNCTION` 直後の proacl は NULL で `aclexplode(NULL)` が
+-- 0 行ゆえ偽緑になるが、Supabase は `ALTER DEFAULT PRIVILEGES` で
+-- anon/authenticated/service_role へ EXECUTE を撒くため、migration の REVOKE を
+-- 消しても proacl は NULL にならず **anon/authenticated が明示で載る**
+-- （実測: `{=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,
+-- service_role=X/postgres}` となり、この assert が赤くなる）。ゆえに
+-- 「proacl が NULL でない」はこの DB では**常に真で赤くできぬ = 検出器にならぬ**。
 SELECT is_empty(
   $$
   SELECT acl.privilege_type::text
   FROM pg_proc p
   CROSS JOIN LATERAL aclexplode(p.proacl) acl
   WHERE p.proname = 'derive_event_remind_at'
-    AND acl.grantee IN ('anon'::regrole, 'authenticated'::regrole)
+    AND acl.grantee IN (0::oid,  -- 0 = PUBLIC（authenticated を含む）
+                        'anon'::regrole::oid, 'authenticated'::regrole::oid)
   $$,
-  'A-12: derive_event_remind_at は anon / authenticated に EXECUTE を与えておらぬ'
+  'A-12: derive_event_remind_at は anon / authenticated / **PUBLIC** に EXECUTE を与えておらぬ'
 );
 
 -- ── A-13. トリガが 3 本とも生きておる ────────────────────────
@@ -276,6 +294,18 @@ SELECT is(
     WHERE attrelid = 'event_reminders'::regclass AND attname = 'remind_minutes_before'),
   'integer',
   'A-14d: remind_minutes_before は integer（smallint だと上限 40320 に届かぬ）'
+);
+-- **event_uid の CHECK に上限を書き足させぬ。** この列は `calendar_events.event_uid`
+--（生成列）が生む値の受け皿ゆえ、定義域が生成器の値域より狭いと「予定は在るのに
+-- 通知だけ付けられぬ」が恒久成立する（かつて 512 上限が付いており、Google の
+-- event id は仕様上 1024 文字まで在りうる）。E-11 が「通る側」を実挙動で撃ち、
+-- ここは**制約が消されたとき**と**上限が復活したとき**の両方を定義で捕まえる。
+SELECT is(
+  (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+    WHERE conrelid = 'event_reminders'::regclass
+      AND conname = 'chk_event_reminders_event_uid'),
+  'CHECK ((char_length(btrim(event_uid)) >= 1))',
+  'A-14e: event_uid CHECK は下限のみ（上限を足すと生成器の値域より狭くなる）'
 );
 
 -- ── A-15. Realtime publication へ載せておらぬ ────────────────
@@ -338,6 +368,12 @@ VALUES
   ('aaaaaaaa-0000-0000-0000-000000000004', '11111111-1111-1111-1111-111111111111',
    '不動の時刻付き', false, '2026-08-15', '2026-08-15', '2026-08-15T00:00:00Z',
    'native', NULL, NULL),
+  -- **取り込み予定**（.ics 購読 / Outlook・Zoom 招待の転記）は iCalUID 由来の長い
+  -- event id を持つ。Google の仕様上の上限 1024 文字 + calendar id 36 文字 で
+  -- event_uid = 1061 文字になる。E-11 の的。ここは一度も動かさぬ。
+  ('aaaaaaaa-0000-0000-0000-000000000005', '11111111-1111-1111-1111-111111111111',
+   '取り込み（長い id）', false, '2026-08-15', '2026-08-15', '2026-08-15T00:00:00Z',
+   'google', 'holidays@group.v.calendar.google.com', repeat('a', 1024)),
   ('bbbbbbbb-0000-0000-0000-000000000001', '33333333-3333-3333-3333-333333333333',
    '他世帯', true, '2026-08-15', '2026-08-15', NULL, 'native', NULL, NULL);
 
@@ -448,8 +484,11 @@ SELECT throws_like(
   $$ INSERT INTO event_reminders (event_uid, household_id, remind_kind, remind_minutes_before)
      VALUES ('aaaaaaaa-0000-0000-0000-000000000001',
              '11111111-1111-1111-1111-111111111111', 'bogus', 10) $$,
-  '%chk_event_reminders_%',
-  'E-1: 未知の remind_kind は CHECK で弾かれる（kind と pairing の両方を破るため片方を名指しせぬ）'
+  '%unknown remind_kind%',
+  -- **落とす層が変わった**: 以前は CHECK（`%chk_event_reminders_%`）が報告しておったが、
+  -- 導出関数へ未知 kind の RAISE を足したため BEFORE トリガが**先に**落とす。
+  -- CHECK が消えても緑になるが、それは A-14b が定義で捕まえる（本ファイル冒頭の二本立て）。
+  'E-1: 未知の remind_kind は書込経路で弾かれる（CHECK より BEFORE トリガが先に走るため導出関数が報告する）'
 );
 SELECT throws_like(
   $$ INSERT INTO event_reminders (event_uid, household_id, remind_kind, remind_minutes_before)
@@ -519,6 +558,45 @@ SELECT throws_like(
   '%uq_event_reminders_event%',
   'E-9: 同じ予定に 2 件目の通知は作れぬ（1 予定 1 設定）'
 );
+
+-- ── E-10. 導出関数**そのもの**の未知 kind 契約 ───────────────
+-- E-1 は書込経路（トリガ → CHECK）を通るゆえ、どの層が落としたかに依存する。
+-- こちらは CHECK を一切経ぬ**純粋な導出契約**じゃ。関数が未知 kind を黙って
+-- 'minutes' として導出する（= ELSE 無しの fall-through）と、将来 3 つ目の kind を
+-- chk_event_reminders_kind に足して**この関数の更新を忘れた**とき、その行は
+-- 例外も警告も出さず INSERT に成功し**間違った時刻で通知が鳴る**のに全層が緑になる。
+-- postgres の役で呼ぶ（authenticated へ切り替えた後だと EXECUTE 権限で落ち、
+-- kind ではないものを測る緑になる — A-12 が保証しておるとおり権限は無い）。
+SELECT throws_like(
+  $$ SELECT derive_event_remind_at(
+       '11111111-1111-1111-1111-111111111111',
+       'aaaaaaaa-0000-0000-0000-000000000001', 'bogus', 10) $$,
+  '%unknown remind_kind%',
+  'E-10: 未知の kind は導出関数自身が落とす（黙って minutes として導出せぬ）'
+);
+
+-- ── E-11. 長い event_uid（取り込み予定）にも通知を付けられる ──
+-- **かつて 512 上限が付いており、ここが赤かった。** Google の event id は仕様上
+-- 5..1024 文字で、自動採番は約 26 文字ゆえ日常の予定では発火せぬ。踏むのは iCalUID
+-- 由来の長い id を持つ**取り込み予定**（.ics 購読 / Outlook・Zoom 招待の転記）と、
+-- 長い calendar id の組み合わせじゃ。しかも source='google' の予定に通知を付けられる
+-- ことが本設計の眼目ゆえ、**被害はまさに眼目の側に出る**（利用者には
+-- `setEventReminder` の汎用文しか見えず、何度試しても同じで真因はログの中だけ）。
+--
+-- **uid を literal で書くのが load-bearing**: `INSERT ... SELECT` で calendar_events
+-- から引く形にすると、seed 行が消えたとき 0 行 INSERT になり lives_ok が**偽緑**になる。
+-- literal なら derive_event_remind_at が 23503 で落ちて赤くなる（自己保証）。
+SELECT lives_ok(
+  format(
+    $$ INSERT INTO event_reminders (event_uid, household_id, remind_kind, remind_minutes_before)
+       VALUES (%L, '11111111-1111-1111-1111-111111111111', 'minutes', 10) $$,
+    'holidays@group.v.calendar.google.com|' || repeat('a', 1024)
+  ),
+  'E-11: 1061 文字の event_uid（Google 上限 1024 の event id）を持つ取り込み予定にも通知を付けられる'
+);
+-- 以降の件数 assert（F-1 は 3 件）を崩さぬよう戻す。戻し損ねれば F-1 が赤くなる。
+DELETE FROM event_reminders
+  WHERE event_uid = 'holidays@group.v.calendar.google.com|' || repeat('a', 1024);
 
 -- ══════════════════════════════════════════════════════════════
 -- F. 実挙動（authenticated + JWT claims）
