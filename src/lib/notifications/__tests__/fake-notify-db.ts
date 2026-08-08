@@ -24,6 +24,8 @@ export interface FakeNotifyDb {
   push_subscriptions: Row[]
   calendar_events: Row[]
   event_reminders: Row[]
+  /** B-5 の毎朝ダイジェスト（`digest_time` は **JST 壁時計**の TIME）。 */
+  notification_preferences: Row[]
   notification_deliveries: Row[]
   notification_heartbeat: Row[]
 }
@@ -34,13 +36,14 @@ export function emptyNotifyDb(): FakeNotifyDb {
     push_subscriptions: [],
     calendar_events: [],
     event_reminders: [],
+    notification_preferences: [],
     notification_deliveries: [],
     notification_heartbeat: [],
   }
 }
 
 type Filter =
-  | { kind: "eq" | "lt" | "lte" | "gt"; column: string; value: unknown }
+  | { kind: "eq" | "lt" | "lte" | "gt" | "gte"; column: string; value: unknown }
   | { kind: "isNull"; column: string }
   | { kind: "isNotNull"; column: string }
   | { kind: "in"; column: string; values: unknown[] }
@@ -79,6 +82,7 @@ function matches(row: Row, filters: Filter[]): boolean {
     const cmp = compare(value, f.value)
     if (f.kind === "lt") return cmp < 0
     if (f.kind === "lte") return cmp <= 0
+    if (f.kind === "gte") return cmp >= 0
     return cmp > 0
   })
 }
@@ -279,6 +283,12 @@ export function createFakeNotifySupabase(
       },
       gt(column: string, value: unknown) {
         record.filters.push({ kind: "gt", column, value })
+        return builder
+      },
+      // ダイジェストの「その日にかかる予定」は start_date <= day <= end_date で
+      // 引く（またがる予定を落とさぬため）。gte はそのために要る。
+      gte(column: string, value: unknown) {
+        record.filters.push({ kind: "gte", column, value })
         return builder
       },
       is(column: string, value: unknown) {

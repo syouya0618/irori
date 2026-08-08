@@ -21,6 +21,12 @@ Supabase (pg_cron, 5 分ごと)
               └─ deliverDueNotifications()  … 展開 → claim → 送信 → 心拍
 ```
 
+**毎朝のまとめ（B-5）も、この 1 本に相乗りしておる。** 別の cron を足してはならぬ:
+まとめは「その JST 暦日ぶんのキュー行を先に立て、`scheduled_at <= now()` で拾う」形
+ゆえ、予定通知と**同じ展開・同じ grace・同じ重複排除**に乗る。別経路にすれば、
+取りこぼしの拾い直しと二重通知の防止をもう一組作ることになる。
+ゆえにこの手順書が 1 本を守れば、まとめの配信も守られる。
+
 ⚠️ **`net.http_post` ではない。** ハンドラは `GET` だけを export しておる
 （Vercel Cron が GET を送るため。`google-sync` も同じ形）。Next.js の Route Handler は
 **export しておらぬメソッドに 405 を返す** — 実測: `POST /api/cron/notify` = **405**、

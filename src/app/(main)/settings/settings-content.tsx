@@ -74,6 +74,10 @@ interface SettingsContentProps {
   pushDevices: PushDeviceView[]
   /** 配信パイプラインの診断（B-4）。相対表記はサーバで確定済み。 */
   pushHealth: NotificationHealthView
+  /** 毎朝のまとめの時刻（B-5）。**"HH:MM" へ正規化済み**。null = 送らない。 */
+  digestTime: string | null
+  /** まとめの設定を**読めなかった**（＝「送らない」とは限らぬ）。 */
+  digestTimeUnknown: boolean
 }
 
 const roleLabels: Record<HouseholdRole, string> = {
@@ -93,6 +97,8 @@ export function SettingsContent({
   googleNotice,
   pushDevices,
   pushHealth,
+  digestTime,
+  digestTimeUnknown,
 }: SettingsContentProps) {
   const [, startTransition] = useTransition()
   const [isSigningOut, setIsSigningOut] = useState(false)
@@ -172,7 +178,12 @@ export function SettingsContent({
       />
 
       {/* 通知（Web Push） */}
-      <NotificationCard devices={pushDevices} health={pushHealth} />
+      <NotificationCard
+        devices={pushDevices}
+        health={pushHealth}
+        digestTime={digestTime}
+        digestTimeUnknown={digestTimeUnknown}
+      />
 
       {/* 記録エクスポート */}
       <ExportCard />

@@ -49,6 +49,12 @@ function health(overrides: Partial<NotificationHealthView> = {}): NotificationHe
   }
 }
 
+/**
+ * 毎朝のまとめ（B-5）は無効の既定。**この診断テストの関心ではない**ゆえ、
+ * 固定値をまとめて渡す（まとめ自体の検査は `notification-card-digest.test.tsx`）。
+ */
+const digestOff = { digestTime: null, digestTimeUnknown: false } as const
+
 function device(overrides: Partial<PushDeviceView> = {}): PushDeviceView {
   return {
     id: "sub-1",
@@ -80,7 +86,7 @@ afterEach(() => {
 
 describe("診断表示 — 最終実行 と 最終配信 を並べて出す", () => {
   it("両方在る（健康）: 2 つの相対表記が並び、警告は出ぬ", () => {
-    render(<NotificationCard devices={[]} health={health()} />)
+    render(<NotificationCard devices={[]} health={health()} {...digestOff} />)
 
     const block = diagnostics()
     expect(within(block).getByText("最終実行")).toBeInTheDocument()
@@ -96,6 +102,7 @@ describe("診断表示 — 最終実行 と 最終配信 を並べて出す", ()
   it("心拍が古い（停止）: **文言で**「動いていません」と言う（色だけに頼らぬ）", () => {
     render(
       <NotificationCard
+        {...digestOff}
         devices={[]}
         health={health({ runState: "stale", ranAtLabel: "3時間前" })}
       />,
@@ -113,6 +120,7 @@ describe("診断表示 — 最終実行 と 最終配信 を並べて出す", ()
   it("配信が無い（が心拍は新しい）: 『まだありません』と出し、**警告はせぬ**", () => {
     render(
       <NotificationCard
+        {...digestOff}
         devices={[]}
         health={health({ deliveryState: "never", lastSentLabel: null })}
       />,
@@ -128,6 +136,7 @@ describe("診断表示 — 最終実行 と 最終配信 を並べて出す", ()
   it("一度も走っておらぬ（心拍の行が無い）: 古い時刻ではなく専用の文言", () => {
     render(
       <NotificationCard
+        {...digestOff}
         devices={[]}
         health={health({
           runState: "never",
@@ -151,6 +160,7 @@ describe("診断表示 — 最終実行 と 最終配信 を並べて出す", ()
   it("心拍が読めなかった: **「まだ一度も」と言わぬ**", () => {
     render(
       <NotificationCard
+        {...digestOff}
         devices={[]}
         health={health({ runState: "unknown", ranAtLabel: null })}
       />,
@@ -170,6 +180,7 @@ describe("診断表示 — 最終実行 と 最終配信 を並べて出す", ()
   it("最終配信だけ読めなかった: そちらだけ「取得できませんでした」", () => {
     render(
       <NotificationCard
+        {...digestOff}
         devices={[]}
         health={health({ deliveryState: "unknown", lastSentLabel: null })}
       />,
@@ -185,6 +196,7 @@ describe("診断表示 — 最終実行 と 最終配信 を並べて出す", ()
   it("走ってはおるが失敗が在る: 件数を出す（ran_at だけ見て平穏と誤読させぬ）", () => {
     render(
       <NotificationCard
+        {...digestOff}
         devices={[]}
         health={health({ runState: "failing", failedCount: 4 })}
       />,
@@ -197,6 +209,7 @@ describe("端末ごとの failure_count（B-1 で列は在ったが誰も読ん�
   it("失敗が在る端末は回数と最終エラーを出す", () => {
     render(
       <NotificationCard
+        {...digestOff}
         devices={[device({ failureCount: 3, lastFailureLabel: "5分前" })]}
         health={health()}
       />,
@@ -205,13 +218,14 @@ describe("端末ごとの failure_count（B-1 で列は在ったが誰も読ん�
   })
 
   it("失敗が 0 なら最終受信を出す", () => {
-    render(<NotificationCard devices={[device()]} health={health()} />)
+    render(<NotificationCard devices={[device()]} health={health()} {...digestOff} />)
     expect(screen.getByText("最終受信 1時間前")).toBeInTheDocument()
   })
 
   it("一度も届いておらぬ端末はそう書く（空欄にせぬ）", () => {
     render(
       <NotificationCard
+        {...digestOff}
         devices={[device({ lastSuccessLabel: null })]}
         health={health()}
       />,
@@ -222,6 +236,7 @@ describe("端末ごとの failure_count（B-1 で列は在ったが誰も読ん�
   it("端末ごとに独立して出る（1 台だけ死んでおるを切り分けられる）", () => {
     render(
       <NotificationCard
+        {...digestOff}
         devices={[
           device({ id: "a", userAgent: "Android の Chrome", failureCount: 0 }),
           device({
@@ -366,6 +381,7 @@ describe("端末の解除は恒久的に効く", () => {
 
     render(
       <NotificationCard
+        {...digestOff}
         devices={[device({ id: "sub-1", userAgent: "この端末" })]}
         health={health()}
       />,
@@ -390,6 +406,7 @@ describe("端末の解除は恒久的に効く", () => {
 
     render(
       <NotificationCard
+        {...digestOff}
         devices={[device({ id: "sub-2", userAgent: "配偶者の端末" })]}
         health={health()}
       />,
@@ -412,6 +429,7 @@ describe("端末の解除は恒久的に効く", () => {
 
     render(
       <NotificationCard
+        {...digestOff}
         devices={[device({ id: "sub-1", userAgent: "この端末" })]}
         health={health()}
       />,
@@ -434,6 +452,7 @@ describe("端末の解除は恒久的に効く", () => {
 
     render(
       <NotificationCard
+        {...digestOff}
         devices={[device({ id: "sub-1", userAgent: "この端末" })]}
         health={health()}
       />,

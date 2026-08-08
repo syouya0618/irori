@@ -1,5 +1,5 @@
 /**
- * 配信キューを 1 周回す（B-3 の本体）。
+ * 配信キューを 1 周回す（B-3 の本体 ＋ B-5 の毎朝ダイジェスト）。
  *
  * 呼ぶのは `src/app/api/cron/notify/route.ts` ただ 1 つで、そこは
  * `NOTIFY_CRON_SECRET` を検証した**後**に service role クライアントを渡す
@@ -9,10 +9,11 @@
  *
  * ## 1 周の流れ
  * ```
- * 1. 対象世帯を集める（期限の来た通知設定 ∪ 積み残しの配信行）
+ * 1. 対象世帯を集める（期限の来た通知設定 ∪ 積み残しの配信行 ∪ まとめの利用者）
  * 2. 世帯ごとに:
  *    a. 期限切れ掃除   scheduled_at < now - GRACE → skipped 'expired'
  *    b. 展開           通知設定 × 世帯の購読 → 配信行を INSERT ... DO NOTHING
+ *                      まとめ（B-5）も**同じ形で**その日のぶんを 1 行立てる
  *    c. 裁定と送信     未送信行を今の DB と突き合わせ、claim してから送る
  * 3. 心拍を必ず書く（finally）
  * ```
@@ -21,11 +22,23 @@
  * 期限の来た通知設定だけで世帯を選ぶと、**静かな世帯の再試行行が永久に拾われぬ**。
  * 送信に失敗した行は次の実行で拾い直す約束（キューにした理由の 1 つ）ゆえ、
  * 積み残しを持つ世帯は必ず回る側に入れる。期限切れ掃除も同じ理由で要る。
+ *
+ * ## ⚠️ ダイジェストを「窓一致」で選ぶな（B-5 の核）
+ * 「`digest_time` が今の 5 分窓に入る利用者」で展開すると、**cron が 1 回落ちた
+ * その日のダイジェストは永久に来ぬ** —— キューにした甲斐（取りこぼしは次の実行が
+ * 拾う）が、まとめだけ成立しなくなる。ゆえに予定通知と**同じ形**にする:
+ *   * 展開は「その JST 暦日ぶんの行を立てる」だけ（時刻が来ておるかは見ぬ）
+ *   * 送るか否かは `scheduled_at <= now()` と grace が決める
+ * すなわち JST 0 時を跨いだ最初の実行がその日の行を立て、以降の実行は
+ * `ON CONFLICT DO NOTHING` に吸われる。**上限側の窓（「あと N 分以内なら作る」）を
+ * 足すな** —— それは窓一致に別の名を付けただけじゃ。
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database } from "@/lib/types/database"
 import { logSupabaseError } from "@/lib/supabase/log-error"
+import { todayJstString } from "@/lib/utils/date-jst"
+import { parseDigestTimeHm } from "@/lib/domain/notification-digest"
 import {
   DELIVERY_GRACE_MS,
   buildEventNotification,
@@ -34,9 +47,16 @@ import {
   graceStartIso,
   isEventPending,
   type EventSnapshot,
+  type NotificationPayload,
   type PendingDelivery,
   type ReminderSnapshot,
 } from "./delivery-rules"
+import {
+  buildDigestNotification,
+  classifyPendingDigest,
+  digestScheduledAtForDay,
+  type DigestEventSnapshot,
+} from "./digest-rules"
 import {
   isProvenNotDelivered,
   readVapidConfig,
@@ -141,6 +161,14 @@ const SUBSCRIPTION_COLUMNS = "id, user_id, endpoint, p256dh, auth, failure_count
 const DELIVERY_COLUMNS =
   "id, kind, event_key, subscription_id, subscription_key, scheduled_at, dedupe_day"
 const EVENT_COLUMNS = "event_uid, title, is_all_day, start_date, start_at"
+/**
+ * ダイジェストが読む予定の列。
+ *
+ * ⚠️ **`memo` を足すな。** ロック画面は施錠されたままでも中身を映すゆえ、メモを
+ * 通知へ載せると通知そのものが漏洩経路になる。載せぬことを注記だけで守るのは
+ * 弱いゆえ、`select` からも `DigestEventSnapshot` 型からも外してある。
+ */
+const DIGEST_EVENT_COLUMNS = "title, is_all_day, start_date, start_at"
 
 export async function deliverDueNotifications(
   supabase: Client,
@@ -246,8 +274,53 @@ async function collectHouseholdIds(supabase: Client, now: Date): Promise<string[
     ...new Set([
       ...(dueReminders ?? []).map((row) => row.household_id),
       ...(pending ?? []).map((row) => row.household_id),
+      ...(await collectDigestHouseholdIds(supabase)),
     ]),
   ]
+}
+
+/**
+ * 毎朝のまとめを有効にしておる利用者の世帯（B-5）。
+ *
+ * ⚠️ **時刻で絞らぬ**。「今まさに digest_time の窓に入っておる利用者」で選ぶと、
+ * cron が 1 回落ちた日のダイジェストが永久に消える（この機能を窓一致で書くなという
+ * 掟そのものじゃ）。有効な利用者の世帯は**毎回**回る側に入れ、その日ぶんの行が
+ * 既に在るかは `ON CONFLICT DO NOTHING` に判じさせる。
+ */
+async function collectDigestHouseholdIds(supabase: Client): Promise<string[]> {
+  const { data: prefs, error: prefsError } = await supabase
+    .from("notification_preferences")
+    .select("user_id")
+    .not("digest_time", "is", null)
+  if (prefsError) {
+    logSupabaseError(
+      "cron-notify",
+      "対象世帯（まとめの設定）の取得に失敗",
+      prefsError,
+    )
+    throw new Error("[cron-notify] 対象世帯の取得に失敗しました")
+  }
+  const userIds = (prefs ?? []).map((row) => row.user_id)
+  if (userIds.length === 0) return []
+
+  const { data: members, error: memberError } = await supabase
+    .from("profiles")
+    .select("household_id")
+    .in("id", userIds)
+  if (memberError) {
+    logSupabaseError(
+      "cron-notify",
+      "対象世帯（まとめの利用者）の取得に失敗",
+      memberError,
+    )
+    throw new Error("[cron-notify] 対象世帯の取得に失敗しました")
+  }
+  // ⚠️ `profiles.household_id` は **nullable** じゃ（未承認・世帯離脱の利用者は
+  // NULL）。落とさねば `.eq("household_id", null)` の空回りが世帯 1 件ぶんの
+  // 無駄な周回として毎回走る。
+  return (members ?? [])
+    .map((row) => row.household_id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0)
 }
 
 async function runHousehold(
@@ -288,12 +361,24 @@ async function runHousehold(
   // ユーザーはこの `.eq()` に掛からず、自然に fail-closed になる。
   const subscriptions = await loadSubscriptions(supabase, householdId)
 
+  // まとめの時刻は**利用者ごと**（世帯ではない）。展開にも裁定にも要るゆえ
+  // 1 度だけ引いて回す。
+  const digestTimes = await loadDigestTimes(supabase, subscriptions)
+
   // ── b. 展開 ───────────────────────────────────────────────
   await expandDueReminders(
     supabase,
     householdId,
     now,
     subscriptions,
+    counters,
+  )
+  await expandDigests(
+    supabase,
+    householdId,
+    now,
+    subscriptions,
+    digestTimes,
     counters,
   )
 
@@ -305,8 +390,43 @@ async function runHousehold(
     vapid,
     deps,
     subscriptions,
+    digestTimes,
     counters,
   )
+}
+
+/**
+ * 世帯の購読者について、今の `digest_time` を引く（無効・不正な値は持たぬ）。
+ *
+ * 購読を持たぬ利用者は問い合わせぬ —— 送り先が無い者の設定を引いても使い道が
+ * 無いゆえ。返り値は `user_id → "HH:MM"`（**JST 壁時計**。`notification-digest.ts`
+ * の契約を見よ）。
+ */
+async function loadDigestTimes(
+  supabase: Client,
+  subscriptions: SubscriptionRow[],
+): Promise<Map<string, string>> {
+  const userIds = [...new Set(subscriptions.map((row) => row.user_id))]
+  if (userIds.length === 0) return new Map()
+
+  const { data, error } = await supabase
+    .from("notification_preferences")
+    .select("user_id, digest_time")
+    .in("user_id", userIds)
+  if (error) {
+    logSupabaseError("cron-notify", "まとめの設定の取得に失敗", error)
+    throw new Error("[cron-notify] まとめの設定の取得に失敗しました")
+  }
+
+  const times = new Map<string, string>()
+  for (const row of data ?? []) {
+    // Postgres の TIME は "07:00:00" で返る。**正規化を省くな** —— 素の値を
+    // 持ち回すと画面（"07:00"）と食い違い、変更の検出（reaim）が毎回発火して
+    // 送信が永久に先送りされる。
+    const hm = parseDigestTimeHm(row.digest_time)
+    if (hm !== null) times.set(row.user_id, hm)
+  }
+  return times
 }
 
 async function loadSubscriptions(
@@ -436,6 +556,106 @@ async function expandDueReminders(
   counters.scheduled += rows.length
 }
 
+/**
+ * その JST 暦日の予定（ダイジェスト用）。
+ *
+ * 「今日の予定」は**またがる予定も含む**（`start_date <= day <= end_date`）。
+ * 索引 `idx_calendar_events_household_range` がこの形に合わせて在る。
+ */
+async function loadDigestEvents(
+  supabase: Client,
+  householdId: string,
+  day: string,
+): Promise<DigestEventSnapshot[]> {
+  const { data, error } = await supabase
+    .from("calendar_events")
+    .select(DIGEST_EVENT_COLUMNS)
+    .eq("household_id", householdId)
+    .lte("start_date", day)
+    .gte("end_date", day)
+  if (error) {
+    logSupabaseError("cron-notify", "まとめ対象の予定の取得に失敗", error, {
+      householdId,
+    })
+    throw new Error("[cron-notify] まとめ対象の予定の取得に失敗しました")
+  }
+  return (data ?? []) as unknown as DigestEventSnapshot[]
+}
+
+/**
+ * 毎朝のまとめ（B-5）を、その JST 暦日ぶん 1 行だけ立てる。
+ *
+ * ## この関数が守っておる 3 つのこと
+ *
+ * 1. **窓一致にせぬ**。時刻が来たかは一切見ず、「その日の行が在るか」だけを
+ *    `ON CONFLICT DO NOTHING` に判じさせる。ゆえに JST 0 時を跨いだ最初の実行が
+ *    行を立て、cron が digest_time の瞬間に落ちても行は既に在る ＝ 次の実行が
+ *    `scheduled_at <= now()` で拾う（catch-up が予定通知と共用になる）。
+ * 2. **0 件の日は行を作らぬ**。空のまとめは通知の価値を薄め、Safari では
+ *    権限そのものを失わせる。
+ * 3. **望みの無い行を作らぬ**。grace を過ぎた時刻（cron が何時間も止まった後の
+ *    復帰）は、作れば即 `expired` になるだけじゃ。予定通知の展開が
+ *    `remind_at > graceStart` で締めておるのと同じ**下限**を置く
+ *    （⚠️ 上限を足せば窓一致に戻る。足すな）。
+ */
+async function expandDigests(
+  supabase: Client,
+  householdId: string,
+  now: Date,
+  subscriptions: SubscriptionRow[],
+  digestTimes: Map<string, string>,
+  counters: Counters,
+): Promise<void> {
+  if (digestTimes.size === 0) return
+  const targets = subscriptions.filter((row) => digestTimes.has(row.user_id))
+  if (targets.length === 0) return
+
+  // dedupe_day も scheduled_at の起点も**JST 暦日**じゃ（UTC で取ると 9 時間ぶん
+  // 別の日の行を立てる）。
+  const day = todayJstString(now)
+  const graceStartMs = now.getTime() - DELIVERY_GRACE_MS
+
+  const events = await loadDigestEvents(supabase, householdId, day)
+  if (events.length === 0) return
+
+  const rows = []
+  for (const subscription of targets) {
+    const time = digestTimes.get(subscription.user_id) as string
+    const scheduledAt = digestScheduledAtForDay(day, time)
+    if (scheduledAt === null) continue
+    const scheduledMs = Date.parse(scheduledAt)
+    if (Number.isNaN(scheduledMs) || scheduledMs <= graceStartMs) continue
+
+    rows.push({
+      household_id: householdId,
+      kind: "digest",
+      // ⚠️ **明示的に null を置く。** 冪等キーは
+      // `UNIQUE NULLS NOT DISTINCT (kind, event_key, subscription_key, dedupe_day)`
+      // ゆえ、この NULL 同士が衝突することが「1 日 1 通」を成り立たせておる。
+      event_key: null,
+      subscription_id: subscription.id,
+      subscription_key: subscription.id,
+      dedupe_day: day,
+      scheduled_at: scheduledAt,
+    })
+  }
+  if (rows.length === 0) return
+
+  const { error: insertError } = await supabase
+    .from("notification_deliveries")
+    .upsert(rows, {
+      onConflict: "kind,event_key,subscription_key,dedupe_day",
+      ignoreDuplicates: true,
+    })
+  if (insertError) {
+    logSupabaseError("cron-notify", "まとめの配信行の作成に失敗", insertError, {
+      householdId,
+    })
+    throw new Error("[cron-notify] まとめの配信行の作成に失敗しました")
+  }
+  counters.scheduled += rows.length
+}
+
 async function processPending(
   supabase: Client,
   householdId: string,
@@ -443,6 +663,7 @@ async function processPending(
   vapid: VapidConfig,
   deps: DeliveryDeps,
   subscriptions: SubscriptionRow[],
+  digestTimes: Map<string, string>,
   counters: Counters,
 ): Promise<void> {
   const nowIso = now.toISOString()
@@ -475,21 +696,56 @@ async function processPending(
   const events = await loadEvents(supabase, householdId, eventKeys)
   const subscriptionById = new Map(subscriptions.map((row) => [row.id, row]))
 
+  // ダイジェスト行（B-5）は**その日の予定の集合**を材料にする。行の dedupe_day が
+  // そのまま対象日ゆえ、日ごとに 1 度だけ引く（通常は 1 日ぶんしか無い）。
+  const digestEventsByDay = new Map<string, DigestEventSnapshot[]>()
+  for (const day of new Set(
+    pending.filter((row) => row.kind === "digest").map((row) => row.dedupe_day),
+  )) {
+    digestEventsByDay.set(day, await loadDigestEvents(supabase, householdId, day))
+  }
+
   for (const row of pending) {
     const delivery = row as PendingDelivery
-    // B-5 のダイジェスト行はこの経路では扱わぬ（判断材料が別物）。
-    if (row.kind !== "event") continue
+    // 未知の kind は触らぬ（allowlist）。将来 3 つ目の kind を足したとき、
+    // 判断材料を持たぬまま送ってしまうより「据え置いて grace が畳む」方が安全じゃ。
+    if (row.kind !== "event" && row.kind !== "digest") continue
 
-    const decision = classifyPendingDelivery({
-      delivery,
-      reminder:
-        delivery.event_key === null
-          ? undefined
-          : reminders.get(delivery.event_key),
-      event:
-        delivery.event_key === null ? undefined : events.get(delivery.event_key),
-      now,
-    })
+    // ダイジェストの宛先が失われた行（購読が失効し SET NULL になった等）は
+    // **触らぬ**。送れる見込みは無いが、'rescheduled'（＝主が設定を消した）と
+    // 記録するのは嘘じゃ。予定通知と同じく、期限切れ掃除が grace の後に
+    // `expired` として畳む。
+    const subscriptionOfRow = delivery.subscription_id
+      ? subscriptionById.get(delivery.subscription_id)
+      : undefined
+    if (row.kind === "digest" && !subscriptionOfRow) continue
+
+    const digestEvents = digestEventsByDay.get(delivery.dedupe_day) ?? []
+    const decision =
+      row.kind === "digest"
+        ? classifyPendingDigest({
+            delivery,
+            // ⚠️ **展開時の値を持ち回さず、今の設定を引き直す。** 主が朝の時刻を
+            // 07:00 → 08:00 へ変えた日に、07:00 の行をそのまま鳴らしては嘘になる。
+            // しかも同じ冪等キーの行はもう作れぬゆえ、08:00 のぶんは永久に来ぬ。
+            digestTime: subscriptionOfRow
+              ? (digestTimes.get(subscriptionOfRow.user_id) ?? null)
+              : null,
+            eventCount: digestEvents.length,
+            now,
+          })
+        : classifyPendingDelivery({
+            delivery,
+            reminder:
+              delivery.event_key === null
+                ? undefined
+                : reminders.get(delivery.event_key),
+            event:
+              delivery.event_key === null
+                ? undefined
+                : events.get(delivery.event_key),
+            now,
+          })
 
     if (decision.action === "wait") continue
 
@@ -523,13 +779,20 @@ async function processPending(
       continue
     }
 
-    const event = events.get(delivery.event_key as string)
-    if (!event) continue // classify が既に弾いておるが型のために置く
+    // 本文の組み立て。`null` は「送る材料が無い」＝ 触らず据え置く
+    // （classify が既に弾いておるが、型のためと二重の守りのために置く）。
+    const payload = buildPayload(
+      row.kind,
+      delivery,
+      events,
+      digestEvents,
+    )
+    if (payload === null) continue
 
     await claimAndSend(
       supabase,
       delivery,
-      event,
+      payload,
       subscriptionById,
       nowIso,
       vapid,
@@ -538,6 +801,21 @@ async function processPending(
       householdId,
     )
   }
+}
+
+/** 行の種別ごとに通知の中身を組む。送る材料が無ければ null。 */
+function buildPayload(
+  kind: string,
+  delivery: PendingDelivery,
+  events: Map<string, EventSnapshot>,
+  digestEvents: DigestEventSnapshot[],
+): NotificationPayload | null {
+  if (kind === "digest") {
+    return buildDigestNotification(delivery.dedupe_day, digestEvents)
+  }
+  const event =
+    delivery.event_key === null ? undefined : events.get(delivery.event_key)
+  return event ? buildEventNotification(event) : null
 }
 
 async function loadReminders(
@@ -614,7 +892,12 @@ async function markSkipped(
 async function claimAndSend(
   supabase: Client,
   delivery: PendingDelivery,
-  event: EventSnapshot,
+  /**
+   * 送る中身。**予定通知とダイジェストで共有する** —— claim・410 の掃除・
+   * 再試行の作法は種別に依らぬゆえ、ここで分岐を作らせぬ
+   * （分ければ必ず片方だけが直る）。
+   */
+  payload: NotificationPayload,
   subscriptionById: Map<string, SubscriptionRow>,
   nowIso: string,
   vapid: VapidConfig,
@@ -658,7 +941,7 @@ async function claimAndSend(
       auth: target.auth,
     },
     vapid,
-    buildEventNotification(event),
+    payload,
   )
 
   if (result.ok) {

@@ -3,7 +3,12 @@ import { createAdminClient } from "@/lib/supabase/admin"
 import { deliverDueNotifications } from "@/lib/notifications/deliver"
 
 /**
- * 予定通知の配信ジョブ（B-3）。**毎朝ダイジェストは B-5** ゆえここでは扱わぬ。
+ * 通知の配信ジョブ（B-3）。**毎朝ダイジェスト（B-5）もこの 1 本が担う。**
+ *
+ * ダイジェストへ別の cron を足さぬのは、あれが「その日ぶんのキュー行を先に立てて
+ * `scheduled_at <= now()` で拾う」形＝予定通知と同じ規律に乗っておるからじゃ
+ * （`deliver.ts` の冒頭を見よ）。別経路にすれば、取りこぼしの拾い直しと
+ * 二重通知の防止をもう一組作ることになる。
  *
  * ## スケジュールは `vercel.json` ではなく **pg_cron** じゃ
  * Vercel Hobby の cron は**1 日 1 回まで**で、5 分ごとの式はデプロイごと失敗する

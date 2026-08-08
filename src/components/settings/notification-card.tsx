@@ -30,6 +30,7 @@ import {
   Loader2,
   Send,
   Smartphone,
+  Sunrise,
   TriangleAlert,
 } from "lucide-react"
 import {
@@ -39,10 +40,24 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   savePushSubscriptionAndSendTest,
   deletePushSubscription,
 } from "@/app/(main)/settings/push-actions"
+import { updateDigestTime } from "@/app/(main)/settings/actions"
+import {
+  DIGEST_TIME_NONE,
+  DIGEST_TIME_OPTIONS,
+  parseDigestTimeHm,
+} from "@/lib/domain/notification-digest"
 import {
   clearPushOptOut,
   writePushOptOut,
@@ -71,6 +86,16 @@ interface NotificationCardProps {
    * 毎リクエスト描かれるゆえ、サーバで組んで困ることは無い）。
    */
   health: NotificationHealthView
+  /**
+   * 毎朝のまとめの時刻（B-5）。**"HH:MM" へ正規化済み**（DB は "07:00:00" で返す）。
+   * null = 送らない。
+   */
+  digestTime: string | null
+  /**
+   * まとめの設定を**読めなかった**。`digestTime === null` と混ぜてはならぬ —
+   * 前者は「分からぬ」、後者は「送らないと決まっておる」じゃ。
+   */
+  digestTimeUnknown: boolean
 }
 
 /** base64url の VAPID 公開鍵を `applicationServerKey` 用の Uint8Array へ変換する。 */
@@ -140,7 +165,27 @@ function deviceStatusOf(device: PushDeviceView): string {
   return "まだ届いていません"
 }
 
-export function NotificationCard({ devices, health }: NotificationCardProps) {
+/**
+ * Select に出す選択肢。
+ *
+ * ⚠️ **保存済みの値が選択肢に無いときは、その値を足して見せる。** `digest_time` は
+ * DB では任意の TIME を許すゆえ（SQL から直に入れた 07:13 等）、30 分刻みの
+ * 選択肢だけを渡すと base-ui Select はどの item にも一致せず**空欄**を描く —
+ * 主は「設定が消えた」と読み、実際には毎朝 07:13 に届き続ける。
+ */
+function digestItemsFor(current: string): { value: string; label: string }[] {
+  if (DIGEST_TIME_OPTIONS.some((option) => option.value === current)) {
+    return DIGEST_TIME_OPTIONS
+  }
+  return [...DIGEST_TIME_OPTIONS, { value: current, label: current }]
+}
+
+export function NotificationCard({
+  devices,
+  health,
+  digestTime,
+  digestTimeUnknown,
+}: NotificationCardProps) {
   // 公開鍵はビルド時に埋まる（`NEXT_PUBLIC_` ゆえレンダー中に読んで安全）。
   // 未設定のまま subscribe すると、環境によっては購読が成立して「有効」に見えるのに
   // 送信が全て 403 になる ＝ **画面が嘘をつく**。ゆえに押させぬ。
@@ -152,6 +197,17 @@ export function NotificationCard({ devices, health }: NotificationCardProps) {
   const [pending, startTransition] = useTransition()
   const [working, setWorking] = useState(false)
   const healthMessage = healthMessageOf(health)
+  // 保存の往復を待たずに選択を映す（失敗したら元へ戻す）。既定は「送らない」 —
+  // 主が自ら選ぶまで毎朝の通知は出さぬ、が B-5 の約束じゃ。
+  //
+  // ⚠️ **ここでも正規化を通す。** ページ側が既に "HH:MM" へ均しておるが、DB の
+  // TIME は "07:00:00" で返る値ゆえ、上流の 1 箇所が抜けただけで Select が
+  // **空欄**になり「設定が消えた」と読まれる。同じ純関数を二度通すだけの安さで、
+  // その壊れ方をこの階層でも塞げる（値は同じゆえ真値源は増えぬ）。
+  const [digestChoice, setDigestChoice] = useState(
+    parseDigestTimeHm(digestTime) ?? DIGEST_TIME_NONE,
+  )
+  const [digestSaving, setDigestSaving] = useState(false)
 
   // ⚠️ setState は **promise のコールバック内**で呼ぶ（effect 本体で同期的に呼ぶと
   // React Compiler の「effect 内の同期 setState」規則に触れる）。
@@ -223,6 +279,41 @@ export function NotificationCard({ devices, health }: NotificationCardProps) {
       setWorking(false)
     }
   }, [vapidPublicKey])
+
+  /**
+   * 毎朝のまとめの時刻を変える（B-5）。
+   *
+   * 表示は先に動かし、失敗したら**必ず巻き戻す** —— 保存できておらぬ設定が
+   * 保存済みに見える嘘を残さぬためじゃ（google-calendar-card と同じ作法）。
+   */
+  const handleDigestChange = useCallback(
+    async (next: string) => {
+      const previous = digestChoice
+      if (next === previous) return
+      setDigestChoice(next)
+      setDigestSaving(true)
+      try {
+        const result = await updateDigestTime(next)
+        if (result.error) {
+          setDigestChoice(previous)
+          toast.error(result.error)
+          return
+        }
+        toast.success(
+          next === DIGEST_TIME_NONE
+            ? "毎朝のまとめを止めました。"
+            : `毎朝 ${next} にまとめをお届けします。`,
+        )
+      } catch (error) {
+        // reject は「サーバーへ届いてすらおらぬ」＝ result.error より確実に未反映。
+        setDigestChoice(previous)
+        toastOfflineError("[notification-card] updateDigestTime", error)
+      } finally {
+        setDigestSaving(false)
+      }
+    },
+    [digestChoice],
+  )
 
   /**
    * 端末を一覧から外す。
@@ -396,6 +487,64 @@ export function NotificationCard({ devices, health }: NotificationCardProps) {
             </ul>
           </div>
         )}
+
+        {/* ── 毎朝のまとめ（B-5）────────────────────────────────
+            その日の予定を 1 通にまとめて送る。**既定は無効**（主が自ら選ぶまで
+            出さぬ）。予定の無い日は送らぬゆえ、静かな日に無意味な通知は来ぬ。 */}
+        <div className="flex flex-col gap-2">
+          <Label
+            htmlFor="digest-time"
+            className="flex items-center gap-1.5 text-sm font-medium"
+          >
+            <Sunrise size={14} className="shrink-0" aria-hidden="true" />
+            毎朝のまとめ
+          </Label>
+          <p className="text-xs text-muted-foreground">
+            その日の予定を、指定した時刻にまとめて 1 通お知らせします
+            （予定がない日は送りません）。
+          </p>
+          <Select
+            items={digestItemsFor(digestChoice)}
+            value={digestChoice}
+            onValueChange={(value) => void handleDigestChange(value as string)}
+            disabled={digestSaving || digestTimeUnknown}
+          >
+            {/* ⚠️ **`h-11` ではなく `min-h-11` じゃ。** プリミティブ側が
+                `data-[size=default]:h-8` を持っており、修飾子つきのそれと素の
+                `h-11` は tailwind-merge の別キーゆえ**両方が残る** — そして CSS の
+                詳細度は属性セレクタを伴う変種が勝つ（32px になる）。`min-height` なら
+                どちらが勝っても 44px を下回らぬ。カレンダーの通知 Select が
+                `h-11` なのは閉じたシートの中で実測されぬためで、こちらは
+                /settings に常時出るゆえ `e2e/touch-targets.spec.ts` の対象じゃ。 */}
+            <SelectTrigger
+              id="digest-time"
+              aria-label="毎朝のまとめを送る時刻"
+              className="min-h-11 w-full"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {digestItemsFor(digestChoice).map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {/* ⚠️ **「読めなかった」を「送らない」と描かぬ**（B-4 の診断と同じ筋）。
+              取得に失敗しておるのに選択肢を触らせると、主の 1 クリックが
+              「知らぬ間に設定を上書きした」ことになる。ゆえに理由を出して止める。 */}
+          {digestTimeUnknown && (
+            <p className="flex items-start gap-2 text-xs text-muted-foreground">
+              <TriangleAlert size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+              まとめの設定を取得できませんでした。今の設定は変更できません
+              （送られていないとは限りません）。
+            </p>
+          )}
+          {digestSaving && (
+            <p className="text-xs text-muted-foreground">保存しています…</p>
+          )}
+        </div>
 
         {/* ── 配信の状況（診断・B-4）──────────────────────────────
             ⚠️ **「最終実行」と「最終配信」は必ず並べて出す。** 片方だけでは

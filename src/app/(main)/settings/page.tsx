@@ -7,6 +7,7 @@ import {
   formatRelativeJa,
   summarizeNotificationHealth,
 } from "@/lib/domain/notification-health"
+import { parseDigestTimeHm } from "@/lib/domain/notification-digest"
 import { SettingsContent } from "./settings-content"
 
 /**
@@ -77,6 +78,7 @@ export default async function SettingsPage({
     { data: pushDevices, error: pushDevicesError },
     { data: heartbeat, error: heartbeatError },
     { data: lastDelivery, error: lastDeliveryError },
+    { data: notificationPrefs, error: notificationPrefsError },
   ] = await Promise.all([
     supabase
       .from("households")
@@ -129,6 +131,14 @@ export default async function SettingsPage({
       .order("sent_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
+    // B-5: 毎朝のまとめの時刻。**ユーザー単位**ゆえ userId で引く
+    // （通知そのものは世帯単位だが、いつ受け取るかは個人の設定）。
+    // 未設定なら行が無いのが正常ゆえ `.maybeSingle()` で 0 行を error にせぬ。
+    supabase
+      .from("notification_preferences")
+      .select("digest_time")
+      .eq("user_id", userId)
+      .maybeSingle(),
   ])
 
   if (pushDevicesError) {
@@ -151,6 +161,14 @@ export default async function SettingsPage({
       "last notification delivery lookup failed",
       lastDeliveryError,
       { householdId: profile.household_id },
+    )
+  }
+  if (notificationPrefsError) {
+    logSupabaseError(
+      "settings",
+      "notification preferences lookup failed",
+      notificationPrefsError,
+      { userId },
     )
   }
 
@@ -269,6 +287,14 @@ export default async function SettingsPage({
         lastFailureLabel: formatRelativeJa(device.last_failure_at, now),
         failureCount: device.failure_count,
       }))}
+      // B-5: DB の TIME（"07:00:00"）を画面の選択肢と同じ "HH:MM" へ正規化する。
+      // ⚠️ **省くと保存済みの設定が空欄に見える**（base-ui Select はどの item にも
+      // 一致せぬ値を空として描く）。主は「保存できておらぬ」と誤解する。
+      digestTime={parseDigestTimeHm(notificationPrefs?.digest_time ?? null)}
+      // ⚠️ **「読めなかった」を「無効」として描かせぬ。** 取得に失敗した時に
+      // 「送らない」と表示すれば、実際には毎朝届く設定が画面の上では切れて見える
+      // （B-4 の診断が「読めなかった」を never と偽らぬのと同じ筋じゃ）。
+      digestTimeUnknown={Boolean(notificationPrefsError)}
       pushHealth={summarizeNotificationHealth({
         ranAt: heartbeat?.ran_at ?? null,
         failedCount: heartbeat?.failed_count ?? null,
