@@ -37,8 +37,15 @@ echo 'NEXT_PUBLIC_APP_URL="http://127.0.0.1:3000"' >> "$ENV_FILE"
 # 未設定だと「正しい secret」側のテストが skip され、V8 の検査が半分抜ける。
 echo 'CRON_SECRET="e2e-cron-secret-do-not-use-in-production"' >> "$ENV_FILE"
 
-# 検証: 5 キーが揃っているか
-for key in NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY NEXT_PUBLIC_APP_URL CRON_SECRET; do
+# 通知配信 cron の認可 secret（B-3）。**CRON_SECRET とは別値にする** —
+# pg_net は Authorization ヘッダを DB のキューテーブルへ保存するゆえ、
+# 片方の漏洩が両方の cron を開けてはならぬ。e2e/cron-routes-auth.spec.ts が
+# 「google-sync の secret では notify が開かぬ」ことを実ビルドで確かめるため、
+# **2 つが違う値であることがテストの前提**じゃ（同じ値にすると分離の検査が死ぬ）。
+echo 'NOTIFY_CRON_SECRET="e2e-notify-secret-do-not-use-in-production"' >> "$ENV_FILE"
+
+# 検証: 6 キーが揃っているか
+for key in NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY NEXT_PUBLIC_APP_URL CRON_SECRET NOTIFY_CRON_SECRET; do
   if ! grep -q "^${key}=" "$ENV_FILE"; then
     echo "error: ${key} を ${ENV_FILE} に書き出せませんでした。\`supabase status -o env\` の出力を確認してください。" >&2
     exit 1

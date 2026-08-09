@@ -16,7 +16,8 @@ import {
 } from "@/lib/domain/calendar-grid"
 import { CALENDAR_EVENT_COLUMNS } from "@/lib/domain/calendar-event-columns"
 import { useVisibilityRefetch } from "@/lib/hooks/use-visibility-refetch"
-import { todayJstString } from "@/lib/utils/date-jst"
+import type { CalendarDateView } from "@/lib/domain/calendar-link"
+import { isValidYmd, todayJstString } from "@/lib/utils/date-jst"
 import type { CalendarEventSource } from "@/lib/types/database"
 
 /** 作成の楽観行に使うローカル擬似 id の prefix。 */
@@ -38,17 +39,30 @@ export interface CalendarEventRecord extends CalendarEventLite {
 interface UseMonthEventsArgs {
   initialEvents: CalendarEventRecord[]
   householdId: string
-  initialMonthFirst: string
+  /**
+   * B-6: 最初に描く「日と月」。**1 本の値で受けるのが要点じゃ**（`CalendarDateView`）。
+   *
+   * 日と月を別々の prop で受けると「8 月の日を 7 月のグリッドで選んだ」状態
+   * ——どのセルも光らぬまま「8月1日 の予定」が出る割れ——が型で表現可能に残る。
+   * サーバは `resolveCalendarDateView` が対で導いた値をそのまま渡す。
+   * 月だけをここで導き直してはならぬ: `initialEvents` は `gridRangeOf(monthFirst)`
+   * で既に取得済みゆえ、月を黙って動かすと**別範囲の events** を描くことになる。
+   */
+  initialView: CalendarDateView
 }
 
 export function useMonthEvents({
   initialEvents,
   householdId,
-  initialMonthFirst,
+  initialView,
 }: UseMonthEventsArgs) {
   const [events, setEvents] = useState<CalendarEventRecord[]>(initialEvents)
-  const [monthFirst, setMonthFirst] = useState(monthFirstOf(initialMonthFirst))
-  const [selectedDate, setSelectedDate] = useState<string>(todayJstString())
+  const [monthFirst, setMonthFirst] = useState(monthFirstOf(initialView.monthFirst))
+  // 不正値は今日へ倒す。サーバ（`resolveCalendarDateView`）が既に締めておるゆえ
+  // ここは二重の防御じゃが、`isValidYmd` は同じ 1 実装を呼んでおる（二重実装ではない）。
+  const [selectedDate, setSelectedDate] = useState<string>(
+    isValidYmd(initialView.selectedDate) ? initialView.selectedDate : todayJstString(),
+  )
 
   const monthFirstRef = useRef(monthFirst)
   useEffect(() => {

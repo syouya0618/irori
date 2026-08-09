@@ -3,6 +3,11 @@ import { createClient } from "@/lib/supabase/server"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { getVerifiedUser } from "@/lib/supabase/verified-user"
 import { FEEDING_INTERVAL_DEFAULT } from "@/lib/domain/baby-feeding-interval"
+import {
+  formatRelativeJa,
+  summarizeNotificationHealth,
+} from "@/lib/domain/notification-health"
+import { parseDigestTimeHm } from "@/lib/domain/notification-digest"
 import { SettingsContent } from "./settings-content"
 
 /**
@@ -71,6 +76,9 @@ export default async function SettingsPage({
     { data: pendingData, error: pendingError },
     { data: googleConnections, error: googleConnectionsError },
     { data: pushDevices, error: pushDevicesError },
+    { data: heartbeat, error: heartbeatError },
+    { data: lastDelivery, error: lastDeliveryError },
+    { data: notificationPrefs, error: notificationPrefsError },
   ] = await Promise.all([
     supabase
       .from("households")
@@ -98,15 +106,70 @@ export default async function SettingsPage({
     // `42501` で落ちる（pgTAP B-6 が固定）。列は必ず明示すること。
     supabase
       .from("push_subscriptions")
-      .select("id, user_agent, created_at, last_success_at, failure_count")
+      .select(
+        "id, user_agent, created_at, last_success_at, last_failure_at, failure_count",
+      )
       .eq("user_id", userId)
       .order("created_at"),
+    // 心拍は**世帯を跨いで 1 行**（配信基盤は 1 つ）。RLS は
+    // `get_my_household_id() IS NOT NULL` ゆえ承認済みの世帯員だけが読める。
+    // ⚠️ 行が無いのは異常ではない —— migration が初期行を置かぬ設計じゃ
+    // （「まだ一度も走っておらぬ」の正直な表現）。ゆえに `.maybeSingle()`。
+    supabase
+      .from("notification_heartbeat")
+      .select("ran_at, failed_count")
+      .eq("id", 1)
+      .maybeSingle(),
+    // 「最終配信」= 世帯の MAX(sent_at)。索引
+    // `idx_notification_deliveries_sent` がこの形（household_id, sent_at DESC
+    // の部分索引）に合わせて在る。
+    supabase
+      .from("notification_deliveries")
+      .select("sent_at")
+      .eq("household_id", profile.household_id)
+      .not("sent_at", "is", null)
+      .order("sent_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    // B-5: 毎朝のまとめの時刻。**ユーザー単位**ゆえ userId で引く
+    // （通知そのものは世帯単位だが、いつ受け取るかは個人の設定）。
+    // 未設定なら行が無いのが正常ゆえ `.maybeSingle()` で 0 行を error にせぬ。
+    supabase
+      .from("notification_preferences")
+      .select("digest_time")
+      .eq("user_id", userId)
+      .maybeSingle(),
   ])
 
   if (pushDevicesError) {
     logSupabaseError("settings", "push subscriptions lookup failed", pushDevicesError, {
       userId,
     })
+  }
+
+  // 診断の取得に失敗しても画面は出す（診断が見えぬこと自体は通知を止めぬ）。
+  // ただし**握り潰さぬ** —— 見えぬ理由がログに残らねば、次に「通知が来ぬ」と
+  // 言われた時に何も辿れなくなる。
+  if (heartbeatError) {
+    logSupabaseError("settings", "notification heartbeat lookup failed", heartbeatError, {
+      userId,
+    })
+  }
+  if (lastDeliveryError) {
+    logSupabaseError(
+      "settings",
+      "last notification delivery lookup failed",
+      lastDeliveryError,
+      { householdId: profile.household_id },
+    )
+  }
+  if (notificationPrefsError) {
+    logSupabaseError(
+      "settings",
+      "notification preferences lookup failed",
+      notificationPrefsError,
+      { userId },
+    )
   }
 
   if (googleConnectionsError) {
@@ -172,6 +235,10 @@ export default async function SettingsPage({
     })
   }
 
+  // 相対表記の基準時刻は 1 つに揃える（各所で `new Date()` を呼ぶと、
+  // 同じ画面の中で「3分前」と「4分前」が混ざりうる）。
+  const now = new Date()
+
   // ownerのみ: 承認待ちユーザー取得
   let pendingUsers: { id: string; display_name: string; email: string; created_at: string }[] = []
   if (profile.role === "owner") {
@@ -214,9 +281,32 @@ export default async function SettingsPage({
         id: device.id,
         userAgent: device.user_agent,
         createdAt: device.created_at,
-        lastSuccessAt: device.last_success_at,
+        // 相対表記は**サーバで確定させる**。クライアントのレンダー中に
+        // `Date.now()` を読むと SSR とハイドレーションで別の文字列になり得る。
+        lastSuccessLabel: formatRelativeJa(device.last_success_at, now),
+        lastFailureLabel: formatRelativeJa(device.last_failure_at, now),
         failureCount: device.failure_count,
       }))}
+      // B-5: DB の TIME（"07:00:00"）を画面の選択肢と同じ "HH:MM" へ正規化する。
+      // ⚠️ **省くと画面に "07:00:00" がそのまま出る**（base-ui Select は一致せぬ
+      // 値を空ではなく**生のまま**描く。実測。詳細は `parseDigestTimeHm` の
+      // docstring）。主は見慣れぬ表記を「壊れておる」と読んで設定し直す。
+      digestTime={parseDigestTimeHm(notificationPrefs?.digest_time ?? null)}
+      // ⚠️ **「読めなかった」を「無効」として描かせぬ。** 取得に失敗した時に
+      // 「送らない」と表示すれば、実際には毎朝届く設定が画面の上では切れて見える
+      // （B-4 の診断が「読めなかった」を never と偽らぬのと同じ筋じゃ）。
+      digestTimeUnknown={Boolean(notificationPrefsError)}
+      pushHealth={summarizeNotificationHealth({
+        ranAt: heartbeat?.ran_at ?? null,
+        failedCount: heartbeat?.failed_count ?? null,
+        lastSentAt: lastDelivery?.sent_at ?? null,
+        // ⚠️ **error を必ず渡す。** 渡さねば「読めなかった」が「まだ一度も
+        // 走っておらぬ」として描かれ、主は pg_cron を疑って真因（読めなかった
+        // だけ）へ永久に辿り着けぬ。診断が診断を騙るのが一番悪い壊れ方じゃ。
+        ranAtUnknown: Boolean(heartbeatError),
+        lastSentUnknown: Boolean(lastDeliveryError),
+        now,
+      })}
     />
   )
 }

@@ -12,6 +12,12 @@
 
 // キャッシュスキーマ (キャッシュ名・分類ロジック・キー形式) を変更した時のみ手動で bump する。
 // bump すると activate 時に旧バージョンのキャッシュが全削除される。
+//
+// B-6 で document のキー形式を変えた (`?date=` を落とす) が **bump しておらぬ**。
+// 新しいキーは旧キーの**部分集合**（クエリを 1 つ減らすだけ）ゆえ、既存端末の
+// `/meals` 等のエントリは今のキーでもそのまま当たる。`?date=` 付きの document を
+// 作る版は一度も配っておらぬ（この PR が初出）ゆえ、旧スキーマの残骸も存在せぬ。
+// 一方 bump すれば全端末のオフラインキャッシュを無駄に捨てることになる。
 const CACHE_VERSION = "v1"
 const PREFIX = "irori-"
 
@@ -27,6 +33,12 @@ const CACHE_NAMES = {
 // src/lib/constants/pages.ts の VALID_PAGES (+ /settings, /calendar) と手動同期すること。
 // (classic script のため import できない — ページ追加時はここも更新する)
 const APP_PAGES = ["/meals", "/shopping", "/stock", "/baby", "/calendar", "/settings"]
+
+// 通知の着地日を運ぶクエリ名 (B-6)。document キャッシュのキーからはこれを落とす
+// (→ makeDocumentCacheKey)。src/lib/domain/calendar-link.ts の CALENDAR_DATE_PARAM と
+// **手動同期**すること (classic script ゆえ import できぬ。APP_PAGES と同じ約束じゃ)。
+// 綻びは sw-logic.test.ts が両者の一致を assert して殺しておる。
+const CALENDAR_DATE_PARAM = "date"
 
 // install 時に precache する静的リソース
 const PRECACHE_URLS = [
@@ -61,6 +73,31 @@ const OFFLINE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 function makeCacheKey(rawUrl) {
   const url = new URL(rawUrl)
   url.searchParams.delete("_rsc")
+  return url.href
+}
+
+/**
+ * **document** キャッシュ専用のキー。`makeCacheKey` に加えて `?date=` も落とす。
+ *
+ * 通知の着地先は `/calendar?date=YYYY-MM-DD` じゃ (B-6)。生の URL をキーにすると
+ * 1 つの変更で 2 つ壊れる:
+ *   (a) オフラインで cached の `/calendar` に**構造的に当たらぬ** → `/offline` が出る。
+ *       通知タップは最も圏外になりやすい瞬間ゆえ、これは実害じゃ。
+ *   (b) キーの濃度が日付ぶん無制限に増える → documents は上限 16 の FIFO ゆえ、
+ *       毎朝のまとめを 16 回叩くだけで /meals /shopping … が全て追い出される。
+ *       しかも居座るのは「二度と開かぬ過去の日付」＝キャッシュとして無価値。
+ * 日付はサーバが描く**中身**の違いでしかない。ゆえに保存されるのは
+ * 「最後にオンラインで開いた日のカレンダー」となり、オフラインでは指された日と
+ * 違う日が映りうる —— それは承知のうえの退化じゃ。オフラインに指定日の HTML は
+ * そもそも存在せぬゆえ、選択肢は「別の日のカレンダー」か「/offline 画面」しかない。
+ *
+ * ⚠️ **`makeCacheKey` 側で落としてはならぬ。** あちらは `handleRsc` が共有しており、
+ * 日を落とすと**別の日の flight payload** をルーターへ返して無音で違う日を描く
+ * （今より悪い）。ゆえに document 限定の関数として分けておる。
+ */
+function makeDocumentCacheKey(rawUrl) {
+  const url = new URL(makeCacheKey(rawUrl))
+  url.searchParams.delete(CALENDAR_DATE_PARAM)
   return url.href
 }
 
@@ -293,10 +330,16 @@ async function maybeRefreshOffline() {
   }
 }
 
-/** APP_PAGES への navigate: network-first → cache → /offline */
+/**
+ * APP_PAGES への navigate: network-first → cache → /offline。
+ *
+ * キーは `makeDocumentCacheKey` (＝ `?date=` を落とす)。**put と match の両方で
+ * 同じ関数を使うこと** — 片方だけ直すと「保存はするのに当たらぬ」or
+ * 「当たるのに濃度が増える」のどちらかが残る。
+ */
 async function handleDocument(request) {
   const cache = await caches.open(CACHE_NAMES.documents)
-  const key = makeCacheKey(request.url)
+  const key = makeDocumentCacheKey(request.url)
   try {
     const res = await fetch(request)
     const contentType = res.headers.get("content-type") || ""
@@ -409,6 +452,13 @@ self.addEventListener("message", (event) => {
 
 // ───────────────────────── push ハンドラ ─────────────────────────
 
+// 着地先が読めぬ通知（旧いペイロード・壊れた data）の退化先。
+// src/lib/domain/calendar-link.ts の CALENDAR_PATH と**手動同期**すること
+// (classic script ゆえ import できぬ。APP_PAGES と同じ約束じゃ)。
+// **push ハンドラより前に置く**: 下の notificationclick 節へ戻すと、`const` の
+// TDZ ゆえ「評価中に読む」経路を将来足した瞬間に落ちる。
+const DEFAULT_NOTIFICATION_URL = "/calendar"
+
 // ⚠️ **受け取ったら必ず可視通知を出すこと。** Apple 公式:
 //   "Safari doesn't support invisible push notifications. ... If you don't
 //    [present immediately], Safari revokes the push notification permission
@@ -446,37 +496,194 @@ self.addEventListener("push", (event) => {
       icon: "/icons/icon-192.png",
       badge: "/icons/icon-192.png",
       tag: payload.tag,
-      data: { url: payload.url || "/calendar" },
+      // B-6: `url` は `?date=` を含む（`calendarUrlForDate()`）。既定値は
+      // `notificationTargetUrl` と同じ定数を使う（綴りを 2 箇所に持たぬ）。
+      data: { url: payload.url || DEFAULT_NOTIFICATION_URL },
     })
   )
 })
 
-self.addEventListener("notificationclick", (event) => {
-  event.notification.close()
-  const target = (event.notification.data && event.notification.data.url) || "/calendar"
-  event.waitUntil(
-    (async () => {
-      const clientList = await self.clients.matchAll({
-        type: "window",
-        includeUncontrolled: true,
-      })
-      for (const client of clientList) {
-        if ("focus" in client) {
-          await client.focus()
-          // 既存タブは focus しても日付が動かぬため navigate まで行う
-          if ("navigate" in client) {
-            try {
-              await client.navigate(target)
-            } catch {
-              // navigate 不可（別オリジン等）なら focus のみで諦める
-            }
-          }
-          return
+/**
+ * 通知の着地先 URL。`push` が `data.url` へ入れた値をそのまま使う。
+ *
+ * サーバは `calendarUrlForDate()` で `/calendar?date=YYYY-MM-DD` を組む（B-6）。
+ * **この関数がクエリを落とすと、通知は正しい日を運んでおるのに今日が開く** ——
+ * ゆえに pathname だけを取り出すような「正規化」を足してはならぬ。
+ */
+function notificationTargetUrl(notification) {
+  const url = notification && notification.data && notification.data.url
+  return typeof url === "string" && url ? url : DEFAULT_NOTIFICATION_URL
+}
+
+/**
+ * 通知タップの本体。**既存タブがあっても必ず `navigate` まで行う**のが要点じゃ。
+ *
+ * `focus()` だけでは開いておるタブがそのまま前に出るだけで、URL は動かぬ。
+ * 「前日20時」の通知や毎朝のまとめは**今日でない日**を指すゆえ、focus だけでは
+ * 主は違う日のカレンダーを見せられる（B-6 の直す対象そのものじゃ）。
+ *
+ * navigate は SW に制御されておらぬ client では reject する。そのときは focus だけで
+ * 諦める —— ここで `openWindow` へ落とすとタブが二重に開く（同じ画面が 2 つ並ぶ
+ * 方が、日付が動かぬより始末が悪い）。ただし**黙って諦めてはならぬ**:
+ * 「通知を叩いたのに日が動かぬ」を後から追える唯一の証跡ゆえ warn を残す。
+ */
+async function handleNotificationClick(event) {
+  // async 関数の body は最初の await までは同期に走る。ゆえにここで閉じてよい
+  // （通知はタップ直後に消えねば、押しても残るように見える）。
+  if (event && event.notification && typeof event.notification.close === "function") {
+    event.notification.close()
+  }
+  const target = notificationTargetUrl(event && event.notification)
+  const clientList = await self.clients.matchAll({
+    type: "window",
+    includeUncontrolled: true,
+  })
+  for (const client of clientList) {
+    if ("focus" in client) {
+      await client.focus()
+      // 既存タブは focus しても日付が動かぬため navigate まで行う
+      if ("navigate" in client) {
+        try {
+          await client.navigate(target)
+        } catch (err) {
+          console.warn("[sw] 既存タブを navigate できなかった:", target, err)
         }
+      } else {
+        console.warn("[sw] client.navigate が無く日付を動かせなかった:", target)
       }
-      await self.clients.openWindow(target)
-    })()
-  )
+      return
+    }
+  }
+  await self.clients.openWindow(target)
+}
+
+self.addEventListener("notificationclick", (event) => {
+  event.waitUntil(handleNotificationClick(event))
+})
+
+// ─────────────────── pushsubscriptionchange (失効処理・B-4) ───────────────────
+
+// ⚠️ **拾わねば購読が黙って死ぬ。** Chrome / Android はブラウザ都合で購読を回す
+// (鍵の更新・ストレージ逼迫・長期未使用など)。その瞬間に古い endpoint は 410 になり、
+// 配信ジョブが DB 行を消す。ここで新しい購読を登録し直さねば、主は「いつの間にか
+// 通知が来なくなった」としか分からぬ。
+//
+// SW から Server Action は呼べぬ (RSC のプロトコルに乗らぬ) ゆえ、セッション認証の
+// Route Handler へ POST する。SW の fetch は cookie を運ぶため、これで足りる。
+// パスは src/app/api/push/resubscribe/route.ts と**手動同期**すること
+// (classic script ゆえ import できぬ。APP_PAGES と同じ約束じゃ)。
+const RESUBSCRIBE_PATH = "/api/push/resubscribe"
+
+/**
+ * 購読 JSON からサーバへ送る body を組む。3 つ揃わねば null (送らぬ)。
+ * `oldEndpoint` は**新しい endpoint と違う時だけ**載せる (同じなら消す対象が無い)。
+ *
+ * ⚠️ **`userAgent` を必ず載せること。** `upsert_push_subscription` は
+ * `ON CONFLICT ... SET user_agent = EXCLUDED.user_agent` ゆえ、省くと既存行の
+ * 端末名が NULL で潰れ、設定カードの全端末が「不明な端末」に化ける
+ * (どれを解除すればよいか主に分からなくなる)。
+ */
+function buildResubscribeBody(subscriptionJson, oldEndpoint, userAgent) {
+  if (!subscriptionJson) return null
+  const endpoint = subscriptionJson.endpoint
+  const keys = subscriptionJson.keys || {}
+  if (!endpoint || !keys.p256dh || !keys.auth) return null
+  const body = { endpoint, p256dh: keys.p256dh, auth: keys.auth }
+  if (typeof userAgent === "string" && userAgent) body.userAgent = userAgent
+  if (typeof oldEndpoint === "string" && oldEndpoint && oldEndpoint !== endpoint) {
+    body.oldEndpoint = oldEndpoint
+  }
+  return body
+}
+
+/**
+ * ⚠️ **`res.ok` を成功の証拠にしてはならぬ。**
+ *
+ * このパスは `src/proxy.ts` の承認ゲートを通る (`isPublicRoute` に入れておらぬ
+ * ＝ 認証が要るゆえ正しい)。セッション切れなら proxy は `/login` へ、未承認なら
+ * `/pending-approval` へ **307 redirect** を返す。fetch は既定でそれを追い、
+ * **HTML の 200** が返る — `res.ok` は true じゃ。信じれば「登録された」と
+ * 記録して何も登録されておらぬ。
+ * ゆえに (a) `redirect: "manual"` で追わせず (b) JSON の `{ ok: true }` を確かめる。
+ */
+async function isResubscribeAccepted(res) {
+  if (!res || res.status !== 200) return false
+  const contentType = (res.headers && res.headers.get("content-type")) || ""
+  if (!contentType.includes("application/json")) return false
+  try {
+    const body = await res.json()
+    return Boolean(body && body.ok === true)
+  } catch (err) {
+    console.warn("[sw] 再登録の応答を JSON として読めなかった:", err)
+    return false
+  }
+}
+
+/**
+ * 新しい購読を得る。3 段構え:
+ *   1. `event.newSubscription` (仕様どおりの実装。Chrome はこれを渡す)
+ *   2. 既に張り直されておればそれ (`getSubscription()`)
+ *   3. 旧購読の `applicationServerKey` で subscribe し直す
+ *      (Firefox 等はイベントに何も載せぬため、鍵の出所がここしかない)
+ *
+ * 3 つとも取れねば null を返して**何もせぬ**。ここで推測の鍵を使って subscribe
+ * すると、送信が全て 403 になる購読を自分で作ることになる。復旧は起動時の
+ * 突き合わせ (`push-subscription-reconciler.tsx`) が担う。
+ */
+async function resolveChangedSubscription(event) {
+  if (event && event.newSubscription) return event.newSubscription
+  const existing = await self.registration.pushManager.getSubscription()
+  if (existing) return existing
+  const oldOptions = event && event.oldSubscription && event.oldSubscription.options
+  const applicationServerKey = oldOptions && oldOptions.applicationServerKey
+  if (!applicationServerKey) return null
+  return self.registration.pushManager.subscribe({
+    // Safari は不可視 push を許さぬ。登録時と同じ条件で張り直す。
+    userVisibleOnly: true,
+    applicationServerKey,
+  })
+}
+
+async function handlePushSubscriptionChange(event) {
+  try {
+    const subscription = await resolveChangedSubscription(event)
+    if (!subscription) {
+      console.warn("[sw] pushsubscriptionchange: 新しい購読を作れなかった")
+      return
+    }
+    const oldEndpoint =
+      (event && event.oldSubscription && event.oldSubscription.endpoint) || null
+    // WorkerNavigator も userAgent を持つ。取れねば null で退化させる。
+    const userAgent = (self.navigator && self.navigator.userAgent) || null
+    const body = buildResubscribeBody(subscription.toJSON(), oldEndpoint, userAgent)
+    if (!body) {
+      console.warn("[sw] pushsubscriptionchange: 購読情報が欠けておる")
+      return
+    }
+    const res = await fetch(RESUBSCRIBE_PATH, {
+      method: "POST",
+      credentials: "same-origin",
+      redirect: "manual",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+    if (!(await isResubscribeAccepted(res))) {
+      // ⚠️ ここで購読を消したり unsubscribe したりせぬ。認証切れ・一時障害でも
+      // 同じ経路を通るゆえ、破棄は不可逆な過剰反応じゃ (「破棄は狭く」)。
+      // 次にアプリを開いた時の突き合わせが拾い直す。
+      console.warn(
+        "[sw] 購読の再登録が受理されなかった:",
+        res ? res.status : "応答なし",
+      )
+    }
+  } catch (err) {
+    // 握り潰さぬ。ここが唯一の証跡じゃ (endpoint は出さぬ)。
+    console.warn("[sw] pushsubscriptionchange の処理に失敗:", err)
+  }
+}
+
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(handlePushSubscriptionChange(event))
 })
 
 // ───────────────────────── テストフック ─────────────────────────
@@ -484,10 +691,24 @@ self.addEventListener("notificationclick", (event) => {
 self.__TEST_HOOKS__ = {
   classifyRequest,
   makeCacheKey,
+  makeDocumentCacheKey,
+  // B-6: document キャッシュ本体。純粋関数だけ公開しておると
+  // 「通知の着地先は縛れておるのに、その着地を描く経路は無検査」になる
+  // （オフラインで /offline が出る・他ページが追い出される、が両方緑で通る）。
+  handleDocument,
   trimCache,
   extractAssetUrls,
   parsePushPayload,
+  notificationTargetUrl,
+  handleNotificationClick,
+  buildResubscribeBody,
+  isResubscribeAccepted,
+  handlePushSubscriptionChange,
   CACHE_NAMES,
+  MAX_ENTRIES,
   APP_PAGES,
   PRECACHE_URLS,
+  RESUBSCRIBE_PATH,
+  DEFAULT_NOTIFICATION_URL,
+  CALENDAR_DATE_PARAM,
 }

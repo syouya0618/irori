@@ -128,7 +128,9 @@ describe("CalendarEventFormSheet - 繰り返し(作成モードのみ)", () => {
 
     // 繰り返しラベル + trigger 表示値「なし」
     expect(screen.getByText("繰り返し")).toBeInTheDocument()
-    expect(screen.getByText("なし")).toBeInTheDocument()
+    // B-2 で「通知」Select も既定「なし」を出すようになったため、素の getByText では
+    // multiple-match で割れる。trigger を id で名指しして**繰り返し側の**表示値を見る。
+    expect(document.getElementById("cal-repeat")).toHaveTextContent("なし")
     // repeat=none のため終了日入力は出ていない
     expect(document.getElementById("cal-repeat-until")).toBeNull()
   })
@@ -268,4 +270,118 @@ describe("CalendarEventFormSheet - 開始日の変更に終了日が追従する
   // 繰り返し終了日の追従は applyStartDateShift の単体テスト(calendar-form.test.ts)で
   // 固定する。base-ui Select は jsdom で popup を開けず、この経路を DOM から
   // 駆動できないため(実ブラウザ側は e2e の繰り返しテストが担保)。
+})
+
+/**
+ * B-2「通知」Select。
+ *
+ * ## なぜ google 側を重く見るか
+ * `calendar_events` の UPDATE ポリシーは **source='native' 限定**ゆえ、google 由来の
+ * 予定は本文が read-only じゃ。しかし主の予定の多くは google 行で、そこへ通知を
+ * 付けられねば機能が半分しか働かぬ。通知を**別テーブル**へ出したのはこのためで、
+ * 「read-only シートでも通知だけは操作できる」が本機能の眼目そのものになる。
+ * ゆえにここを回帰で固定する。
+ */
+const reminderTrigger = () =>
+  document.getElementById("cal-reminder") as HTMLButtonElement | null
+
+function renderSheet(props: Partial<React.ComponentProps<typeof CalendarEventFormSheet>>) {
+  return render(
+    <CalendarEventFormSheet
+      open
+      onOpenChange={() => {}}
+      editing={null}
+      defaultDate="2026-07-15"
+      saving={false}
+      onSubmit={vi.fn()}
+      onDelete={vi.fn()}
+      onDeleteSeries={vi.fn()}
+      onReminderChange={vi.fn()}
+      {...props}
+    />,
+  )
+}
+
+describe("CalendarEventFormSheet - 通知(B-2)", () => {
+  it("新規作成で「通知」Select が出て、既定は「なし」", () => {
+    renderSheet({})
+    expect(screen.getByText("通知")).toBeInTheDocument()
+    expect(reminderTrigger()).toHaveTextContent("なし")
+  })
+
+  it("既定値を渡せばその選択肢が出る(notification_preferences 由来の既定)", () => {
+    renderSheet({ reminder: { status: "ready", choice: "m30" } })
+    expect(reminderTrigger()).toHaveTextContent("30分前")
+  })
+
+  it("**google の read-only 詳細シートでも通知 Select は操作できる**", () => {
+    renderSheet({
+      editing: ev({ id: "g1", source: "google" }),
+      reminder: { status: "ready", choice: "none" },
+    })
+    // sanity anchor: read-only の詳細シートであること
+    expect(screen.getByText("予定（Google）")).toBeInTheDocument()
+    // 本文は編集させぬ
+    expect(document.getElementById("cal-title")).toBeNull()
+    // が、通知だけは出ておりかつ有効
+    const trigger = reminderTrigger()
+    expect(trigger).toBeInTheDocument()
+    expect(trigger).not.toBeDisabled()
+  })
+
+  it("google 予定に設定済みの通知は選択肢として表示される", () => {
+    renderSheet({
+      editing: ev({ id: "g1", source: "google" }),
+      reminder: { status: "ready", choice: "prev_day_20" },
+    })
+    expect(reminderTrigger()).toHaveTextContent("前日20時")
+  })
+
+  it("読み込み中は操作させず、その旨を文言で出す(色だけに頼らぬ)", () => {
+    renderSheet({
+      editing: ev({ id: "e1", source: "native" }),
+      reminder: { status: "loading" },
+    })
+    expect(reminderTrigger()).toBeDisabled()
+    expect(screen.getByText(/読み込み中/)).toBeInTheDocument()
+  })
+
+  it("未知の通知設定は「なし」と偽らず、変更を止めて理由を出す", () => {
+    renderSheet({
+      editing: ev({ id: "e1", source: "native" }),
+      reminder: { status: "unsupported" },
+    })
+    expect(reminderTrigger()).toBeDisabled()
+    expect(screen.getByText(/まだ知らない通知設定/)).toBeInTheDocument()
+  })
+
+  it("通知時刻の予告を出す(終日 7/15 の 30 分前 = 7月14日 23:30)", () => {
+    renderSheet({
+      editing: ev({ id: "g1", source: "google", start_date: "2026-07-15" }),
+      reminder: { status: "ready", choice: "m30" },
+    })
+    expect(screen.getByText("7月14日 23:30 に通知します")).toBeInTheDocument()
+  })
+
+  it("前日20時の予告(7/15 → 7月14日 20:00)", () => {
+    renderSheet({
+      editing: ev({ id: "g1", source: "google", start_date: "2026-07-15" }),
+      reminder: { status: "ready", choice: "prev_day_20" },
+    })
+    expect(screen.getByText("7月14日 20:00 に通知します")).toBeInTheDocument()
+  })
+
+  it("「なし」のときは予告を出さぬ", () => {
+    renderSheet({ reminder: { status: "ready", choice: "none" } })
+    expect(screen.queryByText(/に通知します/)).not.toBeInTheDocument()
+  })
+
+  it("保存中は操作させぬ(二重送信の防止)", () => {
+    renderSheet({
+      editing: ev({ id: "e1", source: "native" }),
+      reminder: { status: "ready", choice: "m10" },
+      saving: true,
+    })
+    expect(reminderTrigger()).toBeDisabled()
+  })
 })

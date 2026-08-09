@@ -1,6 +1,7 @@
 "use server"
 
 import { redirect } from "next/navigation"
+import { revalidatePath } from "next/cache"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { getAppOrigin } from "@/lib/utils/app-origin"
@@ -10,6 +11,10 @@ import {
   FEEDING_INTERVAL_DEFAULT,
   normalizeFeedingInterval,
 } from "@/lib/domain/baby-feeding-interval"
+import {
+  DIGEST_TIME_NONE,
+  isDigestTimeSlot,
+} from "@/lib/domain/notification-digest"
 
 export async function updateProfile(formData: FormData) {
   const displayName = formData.get("display_name")
@@ -286,5 +291,57 @@ export async function updateGoogleCalendarSelection(
     return { error: "カレンダーの設定に失敗しました" }
   }
 
+  return { success: true }
+}
+
+/**
+ * 毎朝のまとめ（B-5）の時刻を保存する。`"none"` は無効（`digest_time = NULL`）。
+ *
+ * ## 認証済みクライアントで撃つ（service role ではない）
+ * `notification_preferences` は**ユーザー単位**で、RLS は `user_id = auth.uid()`、
+ * 列 GRANT は `(user_id, event_default_minutes, digest_time)` の INSERT/UPDATE を
+ * 認めておる（20260808100002）。ゆえに認証済みクライアントで足り、service role を
+ * 持ち込めばその保証を自分で捨てることになる。
+ *
+ * ## ⚠️ upsert のペイロードに `event_default_minutes` を足すな
+ * PostgREST の upsert は **送った列だけ**を `ON CONFLICT DO UPDATE SET` に並べる。
+ * ゆえに 2 列だけ送れば、予定作成時の既定値（B-2 が同じ行に持っておる）は
+ * そのまま残る。「全部入りの行」を送る形へ直すと、まとめの時刻を変えるたびに
+ * 予定通知の既定が黙って消える。
+ *
+ * ## ⚠️ 選択肢の正本は `DIGEST_TIME_SLOTS` 1 つじゃ
+ * 画面が出す集合と、ここで許す集合を別々に書けば必ずずれる（画面から選べるのに
+ * 保存できぬ、が最も気付きにくい）。同じ配列を見ること。
+ */
+export async function updateDigestTime(value: string) {
+  const isNone = value === DIGEST_TIME_NONE
+  if (!isNone && !isDigestTimeSlot(value)) {
+    return { error: "無効な時刻です" }
+  }
+
+  const result = await getAuthContext()
+  if (result.error !== null) return { error: result.error }
+  const { supabase, userId } = result.context
+
+  // TIME 列は "07:00" を 07:00:00 として受ける（読み出しは "07:00:00" で返るゆえ、
+  // 画面側は `parseDigestTimeHm` で "HH:MM" へ戻す — 往復の要じゃ）。
+  const { data, error } = await supabase
+    .from("notification_preferences")
+    .upsert(
+      { user_id: userId, digest_time: isNone ? null : value },
+      { onConflict: "user_id" },
+    )
+    .select("user_id")
+
+  if (error) {
+    logSupabaseError("settings", "digest time update failed", error, { userId })
+    return { error: "通知の設定に失敗しました" }
+  }
+  // 0 行を「成功」と偽らない（upsert が RLS で弾かれても error にはならぬ経路がある）。
+  if (!data || data.length === 0) {
+    return { error: "通知の設定に失敗しました" }
+  }
+
+  revalidatePath("/settings")
   return { success: true }
 }

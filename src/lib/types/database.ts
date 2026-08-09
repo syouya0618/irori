@@ -515,6 +515,18 @@ export interface Database {
           recurring_event_id: string | null
           google_updated: string | null
           synced_at: string | null
+          /**
+           * 削除→再挿入（410 フル再同期）をまたいで不変な同一性キー（**生成列**）。
+           * google 行は `google_calendar_id|google_event_id`、native 行は `id`。
+           * `event_reminders` の結合キーじゃ。
+           *
+           * ⚠️ **`CALENDAR_EVENT_COLUMNS` には入れておらぬ**（入れると migration より
+           * 先にコードが出た瞬間に、この定数を共有する 4 画面が同時に落ちる）。
+           * 必要な箇所が `.select("id, event_uid")` のように個別に取ること。
+           *
+           * ⚠️ 生成列ゆえ **書けぬ** → `Insert` / `Update` には出しておらぬ。
+           */
+          event_uid: string
           created_by: string | null
           created_at: string
           updated_at: string
@@ -554,6 +566,148 @@ export interface Database {
           end_at?: string | null
           series_id?: string | null
           // source / google_* は native 行の編集で触らない(型上も出さない)
+        }
+        Relationships: []
+      }
+      /**
+       * 予定への通知設定（B-2・**世帯単位**）。夫が付けた通知は妻にも届く。
+       *
+       * ⚠️ `calendar_events` へは **FK を張っておらぬ**。`event_uid` で結ぶ
+       * （410 フル再同期が google 行を DELETE→INSERT し直すため、行 id で結ぶと
+       * CASCADE で全滅／SET NULL で迷子になる）。
+       *
+       * ⚠️ `remind_at` は **BEFORE トリガが導出する唯一の真値**ゆえ、
+       * `Insert` / `Update` に出しておらぬ。送っても列 GRANT が無く `42501` で落ちる。
+       * 同様に `created_by` / `created_at` / `updated_at` もトリガと DEFAULT の領分。
+       */
+      event_reminders: {
+        Row: {
+          id: string
+          event_uid: string
+          household_id: string
+          remind_kind: string
+          remind_minutes_before: number | null
+          remind_at: string
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          event_uid: string
+          household_id: string
+          remind_kind: "minutes" | "prev_day_20"
+          remind_minutes_before?: number | null
+        }
+        Update: {
+          remind_kind?: "minutes" | "prev_day_20"
+          remind_minutes_before?: number | null
+        }
+        Relationships: []
+      }
+      /**
+       * 通知の個人設定（**ユーザー単位**）。event_reminders が世帯単位なのと
+       * 意図的に非対称じゃ:「いつ通知を出すか」は世帯の合意、「既定でどれを選ぶか」は
+       * 個人の好み。
+       *
+       * ⚠️ `digest_time` は TZ を持たぬ `TIME` ゆえ **JST 壁時計として解釈する契約**
+       * （列 COMMENT が正本）。素で UTC 比較すると 9 時間ずれる。
+       */
+      notification_preferences: {
+        Row: {
+          user_id: string
+          event_default_minutes: number | null
+          digest_time: string | null
+          updated_at: string
+        }
+        Insert: {
+          user_id: string
+          event_default_minutes?: number | null
+          digest_time?: string | null
+        }
+        Update: {
+          event_default_minutes?: number | null
+          digest_time?: string | null
+        }
+        Relationships: []
+      }
+      /**
+       * 通知の配信キュー兼履歴（**世帯単位**・B-3）。
+       *
+       * ⚠️ **書き手は service role の配信ジョブただ 1 つ**じゃ。IUD の RLS ポリシーも
+       * GRANT も無く、authenticated から撃てば 42501 で落ちる（型が書けるように
+       * 見えるのは `google_connections` と同じ事情）。
+       *
+       * ⚠️ 冪等キーは `(kind, event_key, subscription_key, dedupe_day)` の
+       * **UNIQUE NULLS NOT DISTINCT**。`subscription_id` を鍵に入れてはならぬ
+       * （FK の ON DELETE SET NULL が 2 台目の端末失効で 23505 を起こし、
+       * DELETE ごと中断する。migration 20260808100003 の核 ③）。
+       */
+      notification_deliveries: {
+        Row: {
+          id: string
+          household_id: string
+          kind: string
+          /** `event_reminders.event_uid` の不変コピー（FK は張らぬ）。digest は null */
+          event_key: string | null
+          /** 生きておる購読への指し先。失効すると SET NULL で null になる */
+          subscription_id: string | null
+          /** 冪等キー用の不変コピー。購読が消えても動かぬ */
+          subscription_key: string
+          /** scheduled_at の JST 暦日（**実行日ではない**） */
+          dedupe_day: string
+          scheduled_at: string
+          /** claim 兼 送信済み印 */
+          sent_at: string | null
+          skipped_at: string | null
+          skip_reason: string | null
+          created_at: string
+        }
+        Insert: {
+          household_id: string
+          kind: string
+          event_key?: string | null
+          subscription_id?: string | null
+          subscription_key: string
+          dedupe_day: string
+          scheduled_at: string
+          sent_at?: string | null
+          skipped_at?: string | null
+          skip_reason?: string | null
+        }
+        Update: {
+          scheduled_at?: string
+          sent_at?: string | null
+          skipped_at?: string | null
+          skip_reason?: string | null
+        }
+        Relationships: []
+      }
+      /**
+       * 配信ジョブの心拍（**1 行固定**・id = 1 を CHECK が強制する）。
+       *
+       * 「最終配信」（MAX(sent_at)）だけでは**故障と無風を区別できぬ**ゆえに在る。
+       * 認証済みなら誰でも読めるが、書き手は service role のみ。
+       */
+      notification_heartbeat: {
+        Row: {
+          id: number
+          ran_at: string
+          sent_count: number
+          skipped_count: number
+          failed_count: number
+        }
+        Insert: {
+          id: number
+          ran_at: string
+          sent_count: number
+          skipped_count: number
+          failed_count: number
+        }
+        Update: {
+          ran_at?: string
+          sent_count?: number
+          skipped_count?: number
+          failed_count?: number
         }
         Relationships: []
       }
@@ -734,6 +888,18 @@ export interface Database {
       delete_my_push_subscription: {
         Args: { p_endpoint: string }
         Returns: boolean
+      }
+      /**
+       * 設定カードの「解除」。id で自分の行を消し、それが**呼び出し元の
+       * ブラウザの購読だったか**だけを返す（endpoint そのものは返さぬ —
+       * 端末 A のブラウザへ端末 B の送信先を渡さぬため）。
+       *
+       * 戻り値は 3 値。BOOLEAN + NULL にすると「消えなかった」と
+       * 「消えたが別端末」が呼び出し側の `if (data)` で畳まれる。
+       */
+      delete_my_push_subscription_by_id: {
+        Args: { p_id: string; p_endpoint?: string | null }
+        Returns: "not-found" | "deleted-this-device" | "deleted-other-device"
       }
       get_my_household_id: {
         Args: Record<string, never>

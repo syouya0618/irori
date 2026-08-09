@@ -21,7 +21,8 @@
  * 一段上（app/error.tsx）が受ける。どちらも再試行 (`unstable_retry`) を持つ。
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { render, screen, cleanup } from "@testing-library/react"
 
 const getAuthContext = vi.fn()
 const redirect = vi.fn()
@@ -47,10 +48,19 @@ vi.mock("next/navigation", () => ({
 // 描画対象ではないため軽い stub に置き換える（分岐だけを見る）。
 vi.mock("@/components/common/bottom-nav", () => ({ BottomNav: () => null }))
 vi.mock("@/components/common/cache-user-guard", () => ({
-  CacheUserGuard: () => null,
+  CacheUserGuard: ({ userId }: { userId: string }) => (
+    <div data-testid="cache-user-guard" data-user-id={userId} />
+  ),
 }))
 vi.mock("@/components/common/onboarding-tour", () => ({
   OnboardingTour: () => null,
+}))
+// ⚠️ 実体（effect で fetch する client component）は描かせぬ。**木に在ること**を
+// 見分けられる印だけ置く。
+vi.mock("@/components/common/push-subscription-reconciler", () => ({
+  PushSubscriptionReconciler: ({ userId }: { userId: string }) => (
+    <div data-testid="push-subscription-reconciler" data-user-id={userId} />
+  ),
 }))
 
 import MainLayout from "../layout"
@@ -58,6 +68,9 @@ import MainLayout from "../layout"
 beforeEach(() => {
   getAuthContext.mockReset()
   redirect.mockReset()
+})
+afterEach(() => {
+  cleanup()
 })
 
 function call() {
@@ -130,5 +143,56 @@ describe("(main)/layout: 既存の遷移分岐を壊していない", () => {
     })
     await expect(call()).resolves.toBeTruthy()
     expect(redirect).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * ## 木に在ることを機械で縛る（B3）
+ *
+ * `PushSubscriptionReconciler` は **410 で消された購読を作り直す唯一の自動経路**
+ * じゃ。この 1 行を消しても vitest / tsc / next build は全て緑のまま、通知だけが
+ * 静かに死ぬ（症状は「いつの間にか通知が来なくなった」で、心拍は healthy を
+ * 出し続ける —— 送るものが無いだけゆえ）。CLAUDE.md の「規約ファイルは在るだけ
+ * では効いておらぬ」と同 family: **在ることを assert せねば、無いことに気付けぬ**。
+ *
+ * 分岐だけを見ておった従来のテストは、子要素の有無を一切見ておらなんだ
+ * （戻り値が truthy かしか確かめておらぬ）。ゆえに描画して確かめる。
+ */
+describe("(main)/layout: 起動時に走る client component が木に在る", () => {
+  async function renderLayout(userId = "user-1") {
+    getAuthContext.mockResolvedValue({
+      error: null,
+      reason: null,
+      context: { supabase: {}, userId, householdId: "house-1" },
+    })
+    render(await MainLayout({ children: <p>child</p> }))
+  }
+
+  it("PushSubscriptionReconciler が在る（消せば赤くなる）", async () => {
+    await renderLayout()
+    expect(screen.getByTestId("push-subscription-reconciler")).toBeInTheDocument()
+  })
+
+  it("userId を渡しておる（印を利用者で区切る配線・SEC-2）", async () => {
+    await renderLayout("user-42")
+    // 共用端末で持ち主が代わった時に必ず 1 回走らせるための配線。
+    // 渡さねば前の利用者宛の通知が今の利用者の端末へ届き続ける。
+    expect(screen.getByTestId("push-subscription-reconciler")).toHaveAttribute(
+      "data-user-id",
+      "user-42",
+    )
+  })
+
+  it("CacheUserGuard も同じ userId を受けておる（同じ脅威への対の防御）", async () => {
+    await renderLayout("user-42")
+    expect(screen.getByTestId("cache-user-guard")).toHaveAttribute(
+      "data-user-id",
+      "user-42",
+    )
+  })
+
+  it("children はそのまま描かれる（stub 差し替えで本筋を壊しておらぬ）", async () => {
+    await renderLayout()
+    expect(screen.getByText("child")).toBeInTheDocument()
   })
 })

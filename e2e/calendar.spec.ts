@@ -87,6 +87,35 @@ async function waitForEventCount(
   }).toPass({ timeout: 15_000 })
 }
 
+/**
+ * その利用者の世帯の `event_reminders` が期待の姿になるまで待つ。
+ *
+ * ⚠️ **`event_uid` を解決せぬ**。テスト世帯はこのテストが作った 1 件しか予定を
+ * 持たぬゆえ、世帯で絞れば行は一意じゃ。uid を引くと「予定→uid→通知」の 2 段が
+ * 増え、どちらが壊れて赤くなったのか読めなくなる。
+ */
+async function waitForReminders(
+  userId: string,
+  expected: { remind_kind: string; remind_minutes_before: number | null }[],
+): Promise<void> {
+  const admin = adminClient()
+  await expect(async () => {
+    const { data: profile } = await admin
+      .from("profiles")
+      .select("household_id")
+      .eq("id", userId)
+      .single()
+    if (!profile?.household_id) throw new Error("household not ready")
+    const { data, error } = await admin
+      .from("event_reminders")
+      .select("remind_kind, remind_minutes_before")
+      .eq("household_id", profile.household_id)
+      .order("remind_kind")
+    if (error) throw new Error(`reminder lookup failed: ${error.message}`)
+    expect(data ?? []).toEqual(expected)
+  }).toPass({ timeout: 15_000 })
+}
+
 test("共有カレンダー: 予定を作成 → 反映 → 削除", async ({ page, approvedUser }) => {
   await loginAndOpenCalendar(page, approvedUser.email)
 
@@ -294,4 +323,65 @@ test("時刻付き予定は終了時刻も表示し、アジェンダは終日�
   await expect(items).toHaveCount(2)
   await expect(items.nth(0)).toContainText("終日イベント")
   await expect(items.nth(1)).toContainText("面談")
+})
+
+/**
+ * ★ **既存予定の通知は「Select を変えた瞬間」に保存される**（B-2 の
+ * `handleReminderChange`）。google の read-only 詳細シートには保存ボタンが無く、
+ * この経路が唯一の書き込み口ゆえ、壊れれば通知設定そのものが死ぬ。
+ *
+ * ⚠️ **なぜ e2e でしか塞げぬのか。** base-ui の Select は jsdom では
+ * `fireEvent` で `onValueChange` が発火せぬ（`event-reminder.ts` の注記・実測）。
+ * ゆえに「Select を変える」という**起点**を持つこの経路は、単体テストからは
+ * 一度も駆動できておらぬ。`#cal-repeat` を実操作しておる上のテストと同じ形で撃つ。
+ *
+ * 見ておるのは 2 つ:
+ *   1. **更新ボタンを押さずに** DB へ行が立つ（＝変更が即時に保存される）
+ *   2. reload して開き直しても残る（＝読み戻しの経路まで繋がっておる）
+ * 1 だけでは楽観表示との区別がつかず、2 だけでは submit 時保存の実装でも緑になる。
+ */
+test("既存予定の通知は Select を変えた瞬間に保存される", async ({
+  page,
+  approvedUser,
+}) => {
+  await loginAndOpenCalendar(page, approvedUser.email)
+
+  const addSheet = page.getByRole("heading", { name: "予定を追加" })
+  await openOverlay(page.getByRole("button", { name: "予定を追加" }), addSheet)
+  await page.getByLabel("タイトル").fill("予防接種")
+  await page.getByRole("button", { name: "追加", exact: true }).click()
+
+  await waitForEventCount(approvedUser.id, "予防接種", 1)
+  // 作成時の既定は「なし」ゆえ、この時点で通知の行は無い(下の assert の対照)。
+  await waitForReminders(approvedUser.id, [])
+  await reloadHydrated(page)
+
+  const editSheet = page.getByRole("heading", { name: "予定を編集" })
+  await openOverlay(page.getByText("予防接種"), editSheet)
+
+  // ⚠️ **enabled を待つ**。開いた直後は state が "loading" で Select は
+  // disabled じゃが、その間も表示は「なし」ゆえ文言だけ見ると読み込み中に撃つ。
+  const reminder = page.locator("#cal-reminder")
+  await expect(reminder).toBeEnabled({ timeout: 15_000 })
+  await expect(reminder).toHaveText(/なし/)
+
+  // 通知を「30分前」へ。**更新ボタンは押さぬ。**
+  await reminder.click()
+  await page.getByRole("option", { name: "30分前" }).click()
+
+  await waitForReminders(approvedUser.id, [
+    { remind_kind: "minutes", remind_minutes_before: 30 },
+  ])
+
+  // reload → 開き直しても残っておる(サーバから読み直した値じゃ)。
+  await reloadHydrated(page)
+  await openOverlay(page.getByText("予防接種"), editSheet)
+  const reopened = page.locator("#cal-reminder")
+  await expect(reopened).toBeEnabled({ timeout: 15_000 })
+  await expect(reopened).toHaveText(/30分前/)
+
+  // 「なし」へ戻せば行が消える(同じハンドラの削除側。ここも即時じゃ)。
+  await reopened.click()
+  await page.getByRole("option", { name: "なし" }).click()
+  await waitForReminders(approvedUser.id, [])
 })

@@ -91,6 +91,15 @@ function renderSettings() {
       googleConnections={[]}
       googleNotice={null}
       pushDevices={[]}
+      pushHealth={{
+        runState: "healthy",
+        ranAtLabel: "3分前",
+        failedCount: 0,
+        deliveryState: "sent",
+        lastSentLabel: "1時間前",
+      }}
+      digestTime={null}
+      digestTimeUnknown={false}
     />,
   )
   return screen.getByRole("button", { name: "ログアウト" })

@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 
 vi.mock("@/lib/supabase/log-error", () => ({ logSupabaseError: vi.fn() }))
 
+// updateDigestTime は保存後に revalidatePath を呼ぶ（リクエスト文脈の外では
+// 実体が使えぬ）。呼ばれたことも見たいゆえ spy として持つ。
+const revalidatePath = vi.fn()
+vi.mock("next/cache", () => ({ revalidatePath: (p: string) => revalidatePath(p) }))
+
 const getAuthContext = vi.fn()
 vi.mock("@/lib/supabase/auth-context", () => ({
   getAuthContext: () => getAuthContext(),
@@ -11,6 +16,7 @@ import {
   updateAutoStockCategories,
   updateBabyProfile,
   updateDefaultPage,
+  updateDigestTime,
   updateGoogleCalendarSelection,
   updateProfile,
 } from "../actions"
@@ -338,6 +344,148 @@ describe("updateGoogleCalendarSelection", () => {
       "google calendar selection update failed",
       error,
       { subscriptionId: "sub-1", householdId: HOUSEHOLD },
+    )
+  })
+})
+
+/**
+ * 毎朝のまとめ（B-5）の時刻保存。
+ *
+ * ここで固定するのは 3 つじゃ:
+ *   1. **画面が出す集合しか通さぬ**（allowlist。Server Action は PostgREST を
+ *      直叩きできる利用者に対する唯一の関門でもある）
+ *   2. **送る列は 2 つだけ**。PostgREST の upsert は送った列だけを
+ *      `ON CONFLICT DO UPDATE SET` に並べるゆえ、`event_default_minutes` を
+ *      混ぜると予定通知の既定値が黙って消える
+ *   3. 0 行を成功と偽らぬ
+ */
+function makeUpsertSupabase(result: { data: unknown; error: unknown }) {
+  const select = vi.fn().mockResolvedValue(result)
+  const upsert = vi.fn(() => ({ select }))
+  const from = vi.fn(() => ({ upsert }))
+  return { client: { from }, from, upsert, select }
+}
+
+describe("updateDigestTime", () => {
+  beforeEach(() => {
+    revalidatePath.mockClear()
+  })
+
+  it("刻みに乗った時刻を TIME 列へ書く", async () => {
+    const { client, from, upsert } = makeUpsertSupabase({
+      data: [{ user_id: "user-1" }],
+      error: null,
+    })
+    setContext(client)
+
+    expect(await updateDigestTime("07:30")).toEqual({ success: true })
+    expect(from).toHaveBeenCalledWith("notification_preferences")
+    expect(upsert).toHaveBeenCalledWith(
+      { user_id: "user-1", digest_time: "07:30" },
+      { onConflict: "user_id" },
+    )
+    expect(revalidatePath).toHaveBeenCalledWith("/settings")
+  })
+
+  it("「送らない」は NULL を書く（行は消さぬ）", async () => {
+    const { client, upsert } = makeUpsertSupabase({
+      data: [{ user_id: "user-1" }],
+      error: null,
+    })
+    setContext(client)
+
+    expect(await updateDigestTime("none")).toEqual({ success: true })
+    expect(upsert).toHaveBeenCalledWith(
+      { user_id: "user-1", digest_time: null },
+      { onConflict: "user_id" },
+    )
+  })
+
+  it("**予定通知の既定値（event_default_minutes）を送らぬ**", async () => {
+    // 送れば `ON CONFLICT DO UPDATE SET event_default_minutes = NULL` になり、
+    // まとめの時刻を変えるたびに予定通知の既定が黙って消える。
+    const { client, upsert } = makeUpsertSupabase({
+      data: [{ user_id: "user-1" }],
+      error: null,
+    })
+    setContext(client)
+
+    await updateDigestTime("08:00")
+    // 引数の**列名の集合**を見る（値ではなく形を固定する assert ゆえ、
+    // 上の toHaveBeenCalledWith とは別の意図を持つ）。
+    const calls = upsert.mock.calls as unknown as [Record<string, unknown>][]
+    expect(Object.keys(calls[0][0]).sort()).toEqual(["digest_time", "user_id"])
+  })
+
+  it("画面に無い値は DB へ届く前に弾く（allowlist）", async () => {
+    const { client, upsert } = makeUpsertSupabase({ data: [], error: null })
+    setContext(client)
+
+    // ⚠️ 前半は「形が壊れておる値」、後半は**形は正しいが朝の帯の外**の値じゃ。
+    // 帯を絞ったとき Server Action 側を揃え忘れると、後半だけが素通りする
+    // （画面は出さぬのに保存はできる ＝ allowlist が画面より広い）。
+    for (const bad of [
+      "07:13",
+      "07:00:00",
+      "24:00",
+      "",
+      "なし",
+      "04:30",
+      "00:00",
+      "10:30",
+      "12:00",
+      "23:30",
+    ]) {
+      expect(await updateDigestTime(bad)).toEqual({ error: "無効な時刻です" })
+    }
+    // **DB を一度も触っておらぬ**（検証が素通りしておらぬ証拠）。
+    expect(upsert).not.toHaveBeenCalled()
+  })
+
+  it("帯の**両端**は保存できる（絞りすぎておらぬことの対照）", async () => {
+    // 上の reject 群だけでは「全部弾く」実装でも緑になる。
+    for (const good of ["05:00", "10:00"]) {
+      const { client, upsert } = makeUpsertSupabase({
+        data: [{ user_id: "user-1" }],
+        error: null,
+      })
+      setContext(client)
+      expect(await updateDigestTime(good)).toEqual({ success: true })
+      expect(upsert).toHaveBeenCalledWith(
+        { user_id: "user-1", digest_time: good },
+        { onConflict: "user_id" },
+      )
+    }
+  })
+
+  it("0 行を成功と偽らぬ（RLS 拒否・行が作られなかった）", async () => {
+    const { client } = makeUpsertSupabase({ data: [], error: null })
+    setContext(client)
+
+    expect(await updateDigestTime("07:00")).toEqual({
+      error: "通知の設定に失敗しました",
+    })
+    expect(revalidatePath).not.toHaveBeenCalled()
+  })
+
+  it("Supabase error は構造化ログへ落としてから返す", async () => {
+    const error = {
+      message: "permission denied for table notification_preferences",
+      code: "42501",
+      details: null,
+      hint: null,
+    }
+    const { client } = makeUpsertSupabase({ data: null, error })
+    setContext(client)
+
+    expect(await updateDigestTime("07:00")).toEqual({
+      error: "通知の設定に失敗しました",
+    })
+    expect(mockedLog).toHaveBeenCalledWith(
+      "settings",
+      "digest time update failed",
+      error,
+      { userId: "user-1" },
     )
   })
 })

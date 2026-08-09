@@ -11,6 +11,11 @@ import {
 import { generateRecurrenceDates } from "@/lib/domain/calendar-recurrence"
 import { latestIsoTimestamp } from "@/lib/domain/google-sync-signal"
 import {
+  isReminderChoice,
+  reminderChoiceToPayload,
+  type ReminderChoice,
+} from "@/lib/domain/event-reminder"
+import {
   daysBetweenYmd,
   shiftYmd,
   formatTimeJst,
@@ -280,6 +285,10 @@ export async function deleteCalendarEvent(id: string) {
     return { error: "この予定は削除できません（同期予定か、権限がありません）。" }
   }
 
+  // 通知設定を掃除する。**予定を消した後**に撃つのが順序の要点じゃ（先に消すと
+  // 予定の削除が失敗したとき通知だけ失われる）。native 行の event_uid は id そのもの。
+  await cleanupRemindersFor(supabase, householdId, [id], "delete")
+
   revalidateCalendarConsumers()
   return { error: null }
 }
@@ -313,8 +322,227 @@ export async function deleteCalendarEventSeries(seriesId: string) {
     return { error: "この予定は削除できません（同期予定か、権限がありません）。" }
   }
 
+  // native 行の event_uid = id。削除できた行だけを掃除対象にする。
+  await cleanupRemindersFor(
+    supabase,
+    householdId,
+    data.map((r) => r.id),
+    "delete series",
+  )
+
   revalidateCalendarConsumers()
   return { error: null, count: data.length }
+}
+
+// ============================================================
+// 通知設定（event_reminders）
+// ============================================================
+
+/**
+ * `.in()` に載せる event_uid の最大数。URL クエリに載るため小さく割る
+ * （`google/sync.ts` の DELETE_CHUNK_SIZE と同じ配慮。UUID 36 文字 × 100 ≒ 4KB）。
+ */
+const REMINDER_UID_CHUNK_SIZE = 100
+
+function chunkUids<T>(items: readonly T[]): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < items.length; i += REMINDER_UID_CHUNK_SIZE) {
+    out.push(items.slice(i, i + REMINDER_UID_CHUNK_SIZE))
+  }
+  return out
+}
+
+/**
+ * 予定を削除した後に、その予定へ付いていた通知設定を掃除する。
+ *
+ * **「本物の削除」を知っておるのは削除した当人だけ**じゃ。`event_reminders` は
+ * `calendar_events` へ FK を張っておらぬ（410 フル再同期が google 行を
+ * DELETE→INSERT し直すため）ゆえ、配信ジョブ側で孤児を掃除させるわけにはいかぬ —
+ * 410 の窓では**全ての google 予定が孤児に見える**ため、その 1 回で主の通知設定が
+ * 消し飛ぶ。ゆえに掃除は削除経路が担う。
+ *
+ * 失敗しても**利用者の削除操作は成功として返す**。予定は既に消えており、
+ * 残った孤児は構造的に不活性（配信は calendar_events を join せねば本文を
+ * 組み立てられぬ）ゆえ、ここで巻き戻す先も止める理由も無い。ログは残す。
+ */
+async function cleanupRemindersFor(
+  supabase: AuthContext["supabase"],
+  householdId: string,
+  eventUids: readonly string[],
+  scope: string,
+): Promise<void> {
+  if (eventUids.length === 0) return
+  for (const uids of chunkUids(eventUids)) {
+    const { error } = await supabase
+      .from("event_reminders")
+      .delete()
+      .eq("household_id", householdId)
+      .in("event_uid", uids)
+    if (error) {
+      logSupabaseError("calendar", `${scope}: 通知設定の掃除に失敗`, error, {
+        householdId,
+        uids: uids.length,
+      })
+      return // 以降のチャンクも同じ理由で落ちる公算が高い。孤児は不活性ゆえ止めぬ。
+    }
+  }
+}
+
+/**
+ * 予定 1 件の通知設定を読む（シートを開いた時に呼ぶ）。
+ *
+ * **id → event_uid の解決をサーバ側でやる**のが肝じゃ。`event_uid` は
+ * `CALENDAR_EVENT_COLUMNS` に入れておらぬ（入れると migration より先にコードが
+ * 出た瞬間に 4 画面が同時に落ちる）ゆえ、client は自分の予定の uid を知らぬ。
+ */
+export async function fetchEventReminder(eventId: string): Promise<{
+  error: string | null
+  row: { remind_kind: string; remind_minutes_before: number | null } | null
+}> {
+  if (typeof eventId !== "string" || eventId.length === 0) {
+    return { error: "予定が指定されていません。", row: null }
+  }
+
+  const result = await getAuthContext()
+  if (result.error !== null) return { error: result.error, row: null }
+  const { supabase, householdId } = result.context
+
+  const { data: event, error: eventError } = await supabase
+    .from("calendar_events")
+    .select("event_uid")
+    .eq("id", eventId)
+    .eq("household_id", householdId)
+    .maybeSingle()
+
+  if (eventError) {
+    logSupabaseError("calendar", "reminder: event uid lookup failed", eventError, {
+      eventId,
+      householdId,
+    })
+    return { error: "通知設定の取得に失敗しました。", row: null }
+  }
+  if (!event) {
+    return { error: "予定が見つかりませんでした。", row: null }
+  }
+
+  const { data, error } = await supabase
+    .from("event_reminders")
+    .select("remind_kind, remind_minutes_before")
+    .eq("household_id", householdId)
+    .eq("event_uid", event.event_uid)
+    .maybeSingle()
+
+  if (error) {
+    logSupabaseError("calendar", "reminder lookup failed", error, {
+      eventId,
+      householdId,
+    })
+    return { error: "通知設定の取得に失敗しました。", row: null }
+  }
+
+  return { error: null, row: data ?? null }
+}
+
+/**
+ * 通知設定を書く（`choice="none"` は削除）。
+ *
+ * `source='google'` の予定にも効く — ここが本機能の眼目じゃ。`calendar_events` の
+ * UPDATE ポリシーは native 限定だが、通知は**別テーブル**ゆえ google 行にも付く。
+ *
+ * `target` は単発（`eventId`）と繰り返しシリーズ（`seriesId`）の二形。シリーズ側で
+ * id 配列を client から受けぬのは、400 件の UUID が URL に載らぬためじゃ
+ * （解決はサーバ側の `.eq("series_id", …)` で済む）。
+ *
+ * `remind_at` は**送らぬ**。BEFORE トリガが導出する唯一の真値で、送っても列 GRANT が
+ * 無く `42501` で落ちる（migration の核 ④）。
+ */
+export async function setEventReminder(
+  target: { eventId: string } | { seriesId: string },
+  choice: ReminderChoice,
+): Promise<{ error: string | null; count?: number }> {
+  // Server Action の引数は外部入力ゆえ実行時に検証する。
+  if (!isReminderChoice(choice)) {
+    return { error: "通知の設定値が不正です。" }
+  }
+
+  const isSeries = "seriesId" in target
+  const key = isSeries ? target.seriesId : target.eventId
+  if (typeof key !== "string" || key.length === 0) {
+    return { error: "予定が指定されていません。" }
+  }
+
+  const result = await getAuthContext()
+  if (result.error !== null) return { error: result.error }
+  const { supabase, householdId } = result.context
+
+  // 対象予定の event_uid を解決する（世帯スコープは必ず付ける）。
+  const base = supabase
+    .from("calendar_events")
+    .select("event_uid")
+    .eq("household_id", householdId)
+  const { data: events, error: lookupError } = isSeries
+    ? // シリーズは native のみ（google 行に series_id は付かぬが明示して防御する）。
+      await base.eq("series_id", key).eq("source", "native")
+    : await base.eq("id", key)
+
+  if (lookupError) {
+    logSupabaseError("calendar", "reminder: uid lookup failed", lookupError, {
+      key,
+      isSeries,
+      householdId,
+    })
+    return { error: "通知の設定に失敗しました。もう一度お試しください。" }
+  }
+  if (!events || events.length === 0) {
+    return { error: "予定が見つかりませんでした。" }
+  }
+
+  const uids = events.map((e) => e.event_uid)
+  const payload = reminderChoiceToPayload(choice)
+
+  // 「なし」= 行を消す。
+  if (payload === null) {
+    for (const part of chunkUids(uids)) {
+      const { error } = await supabase
+        .from("event_reminders")
+        .delete()
+        .eq("household_id", householdId)
+        .in("event_uid", part)
+      if (error) {
+        logSupabaseError("calendar", "reminder delete failed", error, {
+          householdId,
+          uids: part.length,
+        })
+        return { error: "通知の解除に失敗しました。もう一度お試しください。" }
+      }
+    }
+    return { error: null, count: uids.length }
+  }
+
+  // upsert は `uq_event_reminders_event` (household_id, event_uid) を指す。
+  // **index ではなく constraint** で作ってあるため PostgREST が ON CONFLICT を
+  // 推論できる（partial index だと 42P10 で落ちる、という既知の罠の回避）。
+  const rows = uids.map((event_uid) => ({
+    event_uid,
+    household_id: householdId,
+    ...payload,
+  }))
+
+  for (const slice of chunkUids(rows)) {
+    const { error } = await supabase
+      .from("event_reminders")
+      .upsert(slice, { onConflict: "household_id,event_uid" })
+    if (error) {
+      logSupabaseError("calendar", "reminder upsert failed", error, {
+        householdId,
+        rows: slice.length,
+        choice,
+      })
+      return { error: "通知の設定に失敗しました。もう一度お試しください。" }
+    }
+  }
+
+  return { error: null, count: rows.length }
 }
 
 /**

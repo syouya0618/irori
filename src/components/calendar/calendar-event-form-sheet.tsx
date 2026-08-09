@@ -28,9 +28,17 @@ import type {
 } from "@/lib/domain/calendar-validation"
 import {
   applyStartDateShift,
+  formValueToTimestamps,
   validateCalendarFormValue,
   type CalendarEventFormValue,
 } from "@/lib/domain/calendar-form"
+import {
+  REMINDER_OPTIONS,
+  deriveRemindAtIso,
+  formatRemindAtLabel,
+  type ReminderChoice,
+  type ReminderState,
+} from "@/lib/domain/event-reminder"
 import type { CalendarEventRecord } from "./use-month-events"
 
 // フォーム値の型は中立モジュール（calendar-form.ts）が正本。既存の import 元を
@@ -105,6 +113,79 @@ interface Props {
   onDelete: (id: string) => void
   /** 繰り返しシリーズ全体を削除する(series_id を持つ予定の編集時のみ使う)。 */
   onDeleteSeries: (seriesId: string) => void
+  /**
+   * 通知設定の状態(B-2)。`loading` は既存予定を開いた直後の読み込み中。
+   * 省略時は「なし」(未指定でも壊れぬよう既定を持たせる)。
+   */
+  reminder?: ReminderState
+  /** 通知設定が変わった。新規予定では親が値を保持し、作成後に書き込む。 */
+  onReminderChange?: (choice: ReminderChoice) => void
+}
+
+/**
+ * 「通知」Select。**google 由来の read-only 詳細シートでも操作可**にするのが要点じゃ
+ * (主の予定の多くは source='google' で、そこへ通知を付けられねば機能が半分しか働かぬ)。
+ * 本文が read-only なのは `calendar_events` の UPDATE ポリシーが native 限定ゆえで、
+ * 通知は**別テーブル**に出してあるためこの制約を受けぬ。
+ */
+function ReminderField({
+  state,
+  onChange,
+  disabled,
+  when,
+}: {
+  state: ReminderState
+  onChange: (choice: ReminderChoice) => void
+  disabled: boolean
+  /** 予定の起点(通知時刻の予告に使う)。 */
+  when: { isAllDay: boolean; startDate: string; startAt: string | null }
+}) {
+  const loading = state.status === "loading"
+  const unsupported = state.status === "unsupported"
+  const choice: ReminderChoice = state.status === "ready" ? state.choice : "none"
+
+  // 予告は表示専用。真値は DB のトリガが導出する(ずれれば pgTAP と vitest が割れる)。
+  const remindAt =
+    state.status === "ready" ? deriveRemindAtIso(when, choice) : null
+  const remindLabel = remindAt ? formatRemindAtLabel(remindAt) : null
+
+  return (
+    <div className="flex flex-col gap-2">
+      <Label htmlFor="cal-reminder">通知</Label>
+      <Select
+        items={REMINDER_OPTIONS}
+        value={choice}
+        onValueChange={(v) => onChange(v as ReminderChoice)}
+        disabled={disabled || loading || unsupported}
+      >
+        <SelectTrigger id="cal-reminder" className="h-11 w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {REMINDER_OPTIONS.map((o) => (
+            <SelectItem key={o.value} value={o.value}>
+              {o.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {/* 状態は文言で出す(色だけに頼らぬ)。 */}
+      {loading && (
+        <p className="text-xs text-muted-foreground">通知設定を読み込み中…</p>
+      )}
+      {unsupported && (
+        <p className="text-xs text-muted-foreground">
+          この予定には、このアプリがまだ知らない通知設定が入っています。誤って消さない
+          よう変更できません。
+        </p>
+      )}
+      {!loading && !unsupported && remindLabel && (
+        <p className="text-xs tabular-nums text-muted-foreground">
+          {remindLabel} に通知します
+        </p>
+      )}
+    </div>
+  )
 }
 
 function initialValue(
@@ -149,6 +230,8 @@ export function CalendarEventFormSheet({
   onSubmit,
   onDelete,
   onDeleteSeries,
+  reminder = { status: "ready", choice: "none" },
+  onReminderChange,
 }: Props) {
   // open/editing 変化でフォームを初期化(render-time conditional setState)。
   const [prevKey, setPrevKey] = useState<string | null>(null)
@@ -233,6 +316,29 @@ export function CalendarEventFormSheet({
   // 編集中の予定が繰り返しシリーズに属するか(series_id を持つ native 行)。
   const seriesId = !isGoogle ? (editing?.series_id ?? null) : null
 
+  // 通知の予告に使う起点。google は行の値、native は編集中のフォーム値から取る
+  // (フォームで日時を動かせば予告も追随する)。
+  const reminderWhen = isGoogle
+    ? {
+        isAllDay: editing.is_all_day,
+        startDate: editing.start_date,
+        startAt: editing.start_at,
+      }
+    : {
+        isAllDay: value.isAllDay,
+        startDate: value.startDate,
+        startAt: formValueToTimestamps(value).startAt,
+      }
+
+  const reminderField = (
+    <ReminderField
+      state={reminder}
+      onChange={(c) => onReminderChange?.(c)}
+      disabled={saving || !onReminderChange}
+      when={reminderWhen}
+    />
+  )
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="bottom" className="rounded-t-2xl safe-bottom">
@@ -258,6 +364,8 @@ export function CalendarEventFormSheet({
                 {editing.memo}
               </p>
             )}
+            {/* 本文は read-only でも通知だけは操作できる(B-2 の眼目)。 */}
+            <div className="pt-2">{reminderField}</div>
           </div>
         ) : (
           <div className="flex flex-col gap-4 py-4">
@@ -378,6 +486,8 @@ export function CalendarEventFormSheet({
                 )}
               </div>
             )}
+
+            {reminderField}
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="cal-memo">メモ（任意）</Label>
