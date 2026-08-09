@@ -30,6 +30,20 @@ vi.mock("@/lib/pdf/baby-report", () => ({
 }))
 
 import { GET, maxDuration } from "../route"
+import { todayJstString } from "@/lib/utils/date-jst"
+
+/**
+ * 種データの日付は**今日（JST）**に置く。
+ *
+ * ⚠️ かつてここは `2026-08-01` を直書きしておった。route は period から
+ * `shiftYmd(today, -7)` 等の**移動窓**を作って絞るため、実時刻が種から 7 日以上
+ * 離れた日に**種が窓の外へ落ち、集計が 0 になって落ちる時限爆弾**じゃった
+ * （2026-08-09 に実際に爆ぜ、main が赤くなった）。
+ *
+ * これらのテストの関心事は「取得上限で切り詰めること」であって日付ではない。
+ * ゆえに窓の内側に必ず入る値を使い、期限切れを構造的に無くす。
+ */
+const TODAY_JST = todayJstString()
 
 type Row = Record<string, unknown>
 
@@ -157,7 +171,7 @@ describe("baby-report: 取得上限の fail-loud", () => {
     // 上限 +1 件返る = 切り詰められた
     const rows = Array.from({ length: 5001 }, () => ({
       log_type: "feeding",
-      logged_at: "2026-08-01T00:00:00+09:00",
+      logged_at: `${TODAY_JST}T00:00:00+09:00`,
     }))
     authOk(makeSupabase({ logs: { data: rows, error: null } }))
 
@@ -182,7 +196,7 @@ describe("baby-report: 取得上限の fail-loud", () => {
   it("ちょうど上限件数は切り詰めではない（偽陽性を出さない）", async () => {
     const rows = Array.from({ length: 5000 }, () => ({
       log_type: "feeding",
-      logged_at: "2026-08-01T00:00:00+09:00",
+      logged_at: `${TODAY_JST}T00:00:00+09:00`,
     }))
     authOk(makeSupabase({ logs: { data: rows, error: null } }))
 
@@ -198,7 +212,7 @@ describe("baby-report: 取得上限の fail-loud", () => {
     const rows = Array.from({ length: 5001 }, (_, i) => ({
       log_type: "diaper",
       diaper_type: "pee",
-      logged_at: `2026-08-01T00:00:${String(i % 60).padStart(2, "0")}+09:00`,
+      logged_at: `${TODAY_JST}T00:00:${String(i % 60).padStart(2, "0")}+09:00`,
     }))
     authOk(makeSupabase({ logs: { data: rows, error: null } }))
 

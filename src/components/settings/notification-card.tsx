@@ -379,6 +379,10 @@ export function NotificationCard({
    */
   const handleDelete = useCallback((id: string) => {
     startTransition(async () => {
+      // ⚠️ block の**先頭**が try であること（`scripts/check-transition-reject-guard.py`
+      // が機械で固定しておる）。startTransition 内の未処理 reject は
+      // **最寄りの error boundary へ bubble し、設定画面ごと落とす**。
+      try {
       // endpoint を失う前に掴んでおく（消した後では二度と取れぬ）。
       const subscription = await getCurrentSubscription().catch((err) => {
         console.warn("[notification-card] 現在の購読を取得できず:", err)
@@ -414,6 +418,9 @@ export function NotificationCard({
           ? "この端末の通知を解除しました。"
           : "一覧から外しました（その端末で再度開くと戻ります）。",
       )
+      } catch (err) {
+        toastOfflineError("[notification-card] deletePushSubscription", err)
+      }
     })
   }, [])
 

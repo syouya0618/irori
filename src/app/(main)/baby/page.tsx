@@ -3,6 +3,7 @@ import { logSupabaseError } from "@/lib/supabase/log-error"
 import { BabyDashboard } from "@/components/baby/baby-dashboard"
 import { FEEDING_INTERVAL_DEFAULT } from "@/lib/domain/baby-feeding-interval"
 import { BABY_LOG_COLUMNS } from "@/lib/domain/baby-log-columns"
+import { WEEKLY_FETCH_DAYS } from "@/lib/domain/baby-weekly-summary"
 import { todayJstString, shiftYmd } from "@/lib/utils/date-jst"
 
 export default async function BabyPage() {
@@ -11,7 +12,9 @@ export default async function BabyPage() {
   const { supabase, userId, householdId } = result.context
 
   const todayJst = todayJstString()
-  const weeklyStartJst = shiftYmd(todayJst, -6)
+  // 取得窓は 8 日（= WEEKLY_FETCH_DAYS）。表示は末尾 7 日、平均は先頭 7 日（＝昨日まで）
+  // に使う。窓を 7 日に戻すと平均が今日を含んでしまい、朝ほど過小に出る。
+  const weeklyStartJst = shiftYmd(todayJst, -(WEEKLY_FETCH_DAYS - 1))
   const tomorrowJst = shiftYmd(todayJst, 1)
   const todayStart = `${todayJst}T00:00:00+09:00`
   const tomorrowStart = `${tomorrowJst}T00:00:00+09:00`

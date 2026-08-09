@@ -19,7 +19,13 @@ import { GrowthChartSection } from "./charts/growth-chart-section"
 import { useNow } from "@/lib/hooks/use-now"
 import { useVisibilityRefetch } from "@/lib/hooks/use-visibility-refetch"
 import { todayJstString, toJstDateString, shiftYmd } from "@/lib/utils/date-jst"
-import { buildBabyWeeklySummary } from "@/lib/domain/baby-weekly-summary"
+import {
+  AVERAGE_WINDOW_DAYS,
+  WEEKLY_DISPLAY_DAYS,
+  WEEKLY_FETCH_DAYS,
+  averageBabyWeeklySummary,
+  buildBabyWeeklySummary,
+} from "@/lib/domain/baby-weekly-summary"
 import {
   deriveDashboardSummary,
   mergeDateNavLogs,
@@ -109,20 +115,32 @@ export function BabyDashboard({
   const now = useNow(60_000)
 
   const today = todayJstString()
-  const weeklyStartDate = useMemo(() => shiftYmd(today, -6), [today])
+  // 窓は 2 本。混ぜると既存の「授乳◯回」「おしっこN・うんちM」が無音で 8 日集計に化ける。
+  // - fetchStartDate: 取得窓（8日）。Realtime の週窓 in/out 判定もこちら
+  // - displayStartDate: 表示窓（7日）。グラフ・合計・おむつ内訳は全てこちら
+  const fetchStartDate = useMemo(
+    () => shiftYmd(today, -(WEEKLY_FETCH_DAYS - 1)),
+    [today],
+  )
+  const displayStartDate = useMemo(
+    () => shiftYmd(today, -(WEEKLY_DISPLAY_DAYS - 1)),
+    [today],
+  )
   const isToday = selectedDate === today
 
   // Ref for selectedDate so Realtime callback sees the latest value
   const selectedDateRef = useRef(selectedDate)
-  const weeklyStartDateRef = useRef(weeklyStartDate)
+  // Realtime の in/out 判定は**取得窓**（8日）で行う。表示窓（7日）にすると
+  // 8 日目の行が state に入らず、平均だけが静かにズレる。
+  const fetchStartDateRef = useRef(fetchStartDate)
   const todayRef = useRef(today)
   useEffect(() => {
     selectedDateRef.current = selectedDate
   }, [selectedDate])
   useEffect(() => {
-    weeklyStartDateRef.current = weeklyStartDate
+    fetchStartDateRef.current = fetchStartDate
     todayRef.current = today
-  }, [weeklyStartDate, today])
+  }, [fetchStartDate, today])
 
   // Realtime subscription
   useEffect(() => {
@@ -130,7 +148,7 @@ export function BabyDashboard({
     const isRelevantToCurrentWeek = (log: BabyLogData) => {
       const logDate = toJstDateString(log.logged_at)
       return (
-        logDate >= weeklyStartDateRef.current && logDate <= todayRef.current
+        logDate >= fetchStartDateRef.current && logDate <= todayRef.current
       )
     }
 
@@ -403,19 +421,33 @@ export function BabyDashboard({
     [growthLogs, today],
   )
 
-  const weeklySummary = useMemo(
-    () => buildBabyWeeklySummary(weeklyLogs, today),
+  // 取得窓ぶんの 8 バケット。ここから表示用と平均用を**別々に**切り出す。
+  const weeklyBuckets = useMemo(
+    () => buildBabyWeeklySummary(weeklyLogs, today, WEEKLY_FETCH_DAYS),
     [weeklyLogs, today],
   )
 
+  // グラフは末尾 7 バケット（今日を含む直近 7 日）＝ **従来と同じ意味**。
+  const weeklySummary = useMemo(
+    () => weeklyBuckets.slice(WEEKLY_FETCH_DAYS - WEEKLY_DISPLAY_DAYS),
+    [weeklyBuckets],
+  )
+
+  // 平均は先頭 7 バケット（昨日までの 7 日）。経過途中の今日は混ぜぬ。
+  const weeklyAverage = useMemo(
+    () => averageBabyWeeklySummary(weeklyBuckets.slice(0, AVERAGE_WINDOW_DAYS)),
+    [weeklyBuckets],
+  )
+
   // 週間のおしっこ/うんち内訳: aggregateDiapers（PDF と同じ日別集計）の出力から
-  // pee+both / poop+both を導出する（weeklyLogs は weeklyStartDate〜today のクエリ窓）。
+  // pee+both / poop+both を導出する。**表示窓（7日）で数える** — 取得窓（8日）を
+  // 渡すとグラフの隣に出る数字だけが 8 日集計になり、グラフと食い違う。
   const weeklyDiaperBreakdown = useMemo(
     () =>
       sumDiaperBreakdown(
-        aggregateDiapers(weeklyLogs, weeklyStartDate, today),
+        aggregateDiapers(weeklyLogs, displayStartDate, today),
       ),
-    [weeklyLogs, weeklyStartDate, today],
+    [weeklyLogs, displayStartDate, today],
   )
 
   const handleEdit = useCallback((log: BabyLogData) => {
@@ -500,6 +532,7 @@ export function BabyDashboard({
       <BabyWeeklySummary
         days={weeklySummary}
         diaperBreakdown={weeklyDiaperBreakdown}
+        average={weeklyAverage}
       />
 
       <GrowthChartSection series={growthSeries} />

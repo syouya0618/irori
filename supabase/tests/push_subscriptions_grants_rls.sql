@@ -365,15 +365,19 @@ SELECT throws_like(
   'B-20: 未承認ユーザーは購読を登録できぬ（proxy とは独立した DB 側の fail-closed）');
 
 -- ══ 未認証（anon）は RPC を実行できぬ ═════════════════════════
-SET LOCAL role anon;
-SELECT set_config('request.jwt.claims', NULL, true);
-SELECT throws_like(
-  $$ SELECT upsert_push_subscription('https://fcm.googleapis.com/fcm/send/anon', 'k', 'a', 'anon') $$,
-  '%permission denied for function upsert_push_subscription%',
+-- ⚠️ **役割を切り替えて pgtap を呼ぶな。** 文が 1 つでもエラーを起こすと
+-- トランザクションが abort し、以降の assert が emit されぬ。pg_prove は
+-- `Bad plan. You planned N but ran N-1` を返すが **`not ok` は 1 本も出ぬ** —
+-- 「失敗 0 件」を緑と読むと見逃す型じゃ（CI で実際に起き、ローカルでも再現した。
+-- 真因は関数シグネチャの取り違えで、`has_function_privilege` の引数が
+-- 実在せねばその場で落ちる）。ゆえに権限そのものをカタログへ問う。
+SELECT ok(
+  NOT has_function_privilege('anon',
+    'upsert_push_subscription(text,text,text,text)', 'EXECUTE'),
   'B-21: anon は RPC を実行できぬ（EXECUTE を GRANT しておらぬ）');
-SELECT throws_like(
-  $$ SELECT delete_my_push_subscription_by_id('20000000-0000-4000-8000-000000000003') $$,
-  '%permission denied for function delete_my_push_subscription_by_id%',
+SELECT ok(
+  NOT has_function_privilege('anon',
+    'delete_my_push_subscription_by_id(uuid,text)', 'EXECUTE'),
   'C-8: anon は id 指定の解除も実行できぬ（EXECUTE を GRANT しておらぬ）');
 
 -- ══ 世帯の外から確かめる（RLS を外して実体を見る）═════════════
@@ -388,5 +392,6 @@ SELECT is(
   1::bigint,
   'C-9: 他人の行は実際に残っておる（C-2 の not-found は「消した上での嘘」ではない）');
 
+RESET ROLE;
 SELECT * FROM finish();
 ROLLBACK;
