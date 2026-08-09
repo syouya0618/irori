@@ -12,6 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { NextRequest } from "next/server"
+import { DEFAULT_PAGE, VALID_PAGES } from "@/lib/constants/pages"
 
 const getClaims = vi.fn()
 const profileSingle = vi.fn()
@@ -89,6 +90,103 @@ describe("proxy: 承認ゲート（DB 読みゆえ即時に効き続ける）", 
     getClaims.mockResolvedValue(validClaims)
     profileSingle.mockResolvedValue({ data: null, error: { message: "boom" } })
     const res = await proxy(request("/baby"))
+    expect(res.status).toBe(307)
+    expect(res.headers.get("location")).toContain("/pending-approval")
+  })
+})
+
+/**
+ * 起動時ページの解決を proxy が担うことの固定（起動の 1 往復を削るための変更）。
+ *
+ * 以前は `/` へ飛ばし、`/` の Server Component が改めて認証して `profiles` を
+ * もう一度引き `/${page}` へ再 redirect しておった。`is_approved` を読む同じ
+ * 往復で `default_page` も取れるゆえ、その一式が不要になる。
+ *
+ * ⚠️ ここで最も危ういのは**ループ**じゃ。行き先が再び分岐に入る値だと、
+ * 307 が無限に続いて起動できなくなる。ゆえに VALID_PAGES を総なめして
+ * 「行き先では redirect されぬ」ことを固定する（1 つ足したときに落ちる形）。
+ */
+describe("proxy: 起動時ページの解決（/ の動的描画を省く）", () => {
+  const approvedWith = (defaultPage: unknown) =>
+    profileSingle.mockResolvedValue({
+      data: { is_approved: true, default_page: defaultPage },
+      error: null,
+    })
+
+  it.each(VALID_PAGES)(
+    "承認済みが / に来たら default_page=%s の行き先へ直接 307 する",
+    async (page) => {
+      getClaims.mockResolvedValue(validClaims)
+      approvedWith(page)
+      const res = await proxy(request("/"))
+      expect(res.status).toBe(307)
+      expect(new URL(res.headers.get("location")!).pathname).toBe(`/${page}`)
+    }
+  )
+
+  it.each([
+    ["NULL", null],
+    ["未知の値", "dashboard"],
+    ["列が無い（select 漏れ）", undefined],
+  ])("default_page が %s なら既定へ倒す", async (_label, value) => {
+    getClaims.mockResolvedValue(validClaims)
+    approvedWith(value)
+    const res = await proxy(request("/"))
+    expect(new URL(res.headers.get("location")!).pathname).toBe(
+      `/${DEFAULT_PAGE}`
+    )
+  })
+
+  it("ログイン直後（/login）も最終目的地まで一度で送る", async () => {
+    getClaims.mockResolvedValue(validClaims)
+    approvedWith("stock")
+    const res = await proxy(request("/login"))
+    expect(res.status).toBe(307)
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/stock")
+  })
+
+  it.each(VALID_PAGES)(
+    "行き先 /%s では redirect されぬ（307 のループを作らない）",
+    async (page) => {
+      getClaims.mockResolvedValue(validClaims)
+      approvedWith(page)
+      const res = await proxy(request(`/${page}`))
+      expect(res.status).not.toBe(307)
+    }
+  )
+
+  it("クエリ文字列は行き先へ引き継ぐ", async () => {
+    getClaims.mockResolvedValue(validClaims)
+    approvedWith("shopping")
+    const res = await proxy(request("/?from=push"))
+    const url = new URL(res.headers.get("location")!)
+    expect(url.pathname).toBe("/shopping")
+    expect(url.search).toBe("?from=push")
+  })
+
+  // ── ゲートは動いておらぬことの確認（/ が「前へ進む」経路にならぬこと）──
+  it("未認証で / に来ても /login へ倒す（前へ進ませない）", async () => {
+    getClaims.mockResolvedValue({ data: null, error: null })
+    const res = await proxy(request("/"))
+    expect(res.status).toBe(307)
+    expect(res.headers.get("location")).toContain("/login")
+  })
+
+  it("未承認で / に来たら /pending-approval へ倒す", async () => {
+    getClaims.mockResolvedValue(validClaims)
+    profileSingle.mockResolvedValue({
+      data: { is_approved: false, default_page: "shopping" },
+      error: null,
+    })
+    const res = await proxy(request("/"))
+    expect(res.status).toBe(307)
+    expect(res.headers.get("location")).toContain("/pending-approval")
+  })
+
+  it("profiles の lookup が失敗したら / でも前へ進ませない（fail-closed）", async () => {
+    getClaims.mockResolvedValue(validClaims)
+    profileSingle.mockResolvedValue({ data: null, error: { message: "boom" } })
+    const res = await proxy(request("/"))
     expect(res.status).toBe(307)
     expect(res.headers.get("location")).toContain("/pending-approval")
   })

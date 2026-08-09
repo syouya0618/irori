@@ -21,10 +21,25 @@ async function readServerTiming(page: import("@playwright/test").Page) {
  *
  * ## なぜ e2e なのか
  * 単体テスト（src/__tests__/proxy.test.ts）は「proxy がヘッダを載せた」ことしか
- * 証明できぬ。それは「本番のブラウザで見える」証明にはならぬ:
+ * 証明できぬ。それは以下の証明にはならぬ:
  *   - Next の proxy 応答ヘッダが最終応答まで伝播するか
  *   - ブラウザがヘッダを **PerformanceServerTiming としてパースするか**
  * この 2 段は実ブラウザ + 実ビルドでしか確かめられぬ。
+ *
+ * ## ⚠️ このテストが**証明せぬこと** — 本番に届いているか
+ *
+ * 導入時、この docstring は「本番のブラウザで見えることの検証」と書いておった。
+ * それは**偽りじゃった**。e2e が撃つのは `next start` で立てた自前のサーバで、
+ * 配信経路（CDN）を一切通らぬ。実際 2026-08-09 の実測で、同じコードが
+ * ローカルでは全経路に載り、**本番では 1 つも載っておらなんだ** —— Vercel の
+ * CDN が `Server-Timing` を剥がしていたためじゃ（一次情報:
+ * https://vercel.com/changelog/server-timing-header 。2026-08-10 に剥がすのを
+ * やめると告知されておる）。
+ *
+ * つまり **このテストは緑のまま、計測は本番で死んでいた**。同じ形は
+ * CLAUDE.md に何度も出てくる（テスト緑・本番不動作）。届いているかは本番を
+ * 撃つほかない → `scripts/verify-prod-server-timing.mjs`。
+ * ここが緑であることを「本番で測れておる」と読んではならぬ。
  *
  * ## なぜ生ヘッダではなく PerformanceServerTiming を見るか
  * 生ヘッダの assert は「ヘッダが存在する」ことしか言えぬ。DevTools の
