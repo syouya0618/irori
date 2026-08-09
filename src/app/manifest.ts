@@ -12,7 +12,24 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "うちのログ",
     short_name: "うちログ",
     description: "夫婦の献立・買い物・暮らしをひとつに",
-    start_url: "/meals",
+    /**
+     * ホーム画面から起動したときに開く URL。
+     *
+     * ⚠️ **ここを具体的なページ（`/meals` 等）にしてはならぬ。** manifest は
+     * 静的生成ゆえ利用者ごとに変えられず、直書きすると設定画面の
+     * 「起動時のページ」（`profiles.default_page`）が**何を選んでも効かぬ**
+     * ——「起動したら必ず献立が出る」という形で表面化する（実際に起きた）。
+     *
+     * `/`（`src/app/page.tsx`）は `default_page` を読んで `/${page}` へ
+     * redirect する。起動をここへ通すことで、設定が初めて意味を持つ。
+     *
+     * 代償: `/` は毎回 redirect ゆえキャッシュしても意味を成さず、`sw.js` の
+     * `classifyRequest` は `nav-passthrough`（キャッシュ禁止）に分類する。
+     * よって**圏外で起動すると `/offline` が出る**（従来は献立のキャッシュが出た）。
+     * 「設定が効かぬ」は機能の破損、「圏外起動が劣化する」は degradation ゆえ、
+     * 前者を直す方を採った。
+     */
+    start_url: "/",
     display: "standalone",
     background_color: "#ffffff",
     theme_color: "#f97316",
