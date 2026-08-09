@@ -150,12 +150,20 @@ export function NotificationCard({ devices }: NotificationCardProps) {
 
   const handleDelete = useCallback((id: string) => {
     startTransition(async () => {
-      const result = await deletePushSubscription(id)
-      if (result.error) {
-        toast.error(result.error)
-        return
+      // ⚠️ block の**先頭**が try であること（`scripts/check-transition-reject-guard.py`
+      // が機械で固定しておる）。startTransition 内の未処理 reject は
+      // **最寄りの error boundary へ bubble し、設定画面ごと落とす** —
+      // 圏外の片手操作で画面が飛ぶのを防ぐため、握ってトーストへ倒す。
+      try {
+        const result = await deletePushSubscription(id)
+        if (result.error) {
+          toast.error(result.error)
+          return
+        }
+        toast.success("この端末の通知を解除しました。")
+      } catch (err) {
+        toastOfflineError("[notification-card] deletePushSubscription", err)
       }
-      toast.success("この端末の通知を解除しました。")
     })
   }, [])
 

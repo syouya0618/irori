@@ -33,7 +33,7 @@
 -- これは検知であって防止ではない。GRANT を緩める migration を書けばこのテストが
 -- 赤くなるだけで、書くこと自体は止められぬ。
 BEGIN;
-SELECT plan(32);
+SELECT plan(34);
 
 -- ══════════════════════════════════════════════════════════════
 -- A. 権限カタログ（静的・ロール切替なし）
@@ -289,12 +289,30 @@ SELECT throws_like(
   'B-20: 未承認ユーザーは購読を登録できぬ（proxy とは独立した DB 側の fail-closed）');
 
 -- ══ 未認証（anon）は RPC を実行できぬ ═════════════════════════
-SET LOCAL role anon;
-SELECT set_config('request.jwt.claims', NULL, true);
-SELECT throws_like(
-  $$ SELECT upsert_push_subscription('https://fcm.googleapis.com/fcm/send/anon', 'k', 'a', 'anon') $$,
-  '%permission denied for function upsert_push_subscription%',
-  'B-21: anon は RPC を実行できぬ（EXECUTE を GRANT しておらぬ）');
+-- ⚠️ **`SET LOCAL role anon` にしてはならぬ。** anon は pgtap の関数
+-- （`throws_like` 等）に EXECUTE を持たぬ環境があり、その場合 assert 自体が
+-- emit されずファイルが途中で落ちる。すると pg_prove は
+-- `Bad plan. You planned N but ran N-1` を返し、**`not ok` は 1 本も出ぬまま
+-- FAIL する** — 「失敗 0 件」を緑と読むと見逃す型じゃ（CI で実際に起きた）。
+-- ゆえに役割を切り替えず、権限そのものをカタログへ問う。
+SELECT ok(
+  NOT has_function_privilege('anon',
+    'upsert_push_subscription(text,text,text,text)', 'EXECUTE'),
+  'B-21: anon は upsert_push_subscription を実行できぬ（EXECUTE を GRANT しておらぬ）');
+SELECT ok(
+  NOT has_function_privilege('anon',
+    'delete_my_push_subscription(text)', 'EXECUTE'),
+  'B-22: anon は delete_my_push_subscription を実行できぬ');
+-- 対照: authenticated は両方を実行できる（「全部落ちておるだけ」と区別する）
+SELECT ok(
+  has_function_privilege('authenticated',
+    'upsert_push_subscription(text,text,text,text)', 'EXECUTE')
+  AND has_function_privilege('authenticated',
+    'delete_my_push_subscription(text)', 'EXECUTE'),
+  'B-23: authenticated は両 RPC を実行できる（対照）');
 
+-- 役割を戻してから締める（`finish()` も pgtap の関数ゆえ、切り替えたまま
+-- 終えると環境によっては実行できぬ。calendar_events_rls.sql が同じ形じゃ）。
+RESET ROLE;
 SELECT * FROM finish();
 ROLLBACK;
