@@ -13,6 +13,7 @@ import { BabyTimeline } from "./baby-timeline"
 import { BabyDailyDiary } from "./baby-daily-diary"
 import { BabyDiaryEditSheet } from "./baby-diary-edit-sheet"
 import { BabyLogFormSheet } from "./baby-log-form-sheet"
+import { BabyTemperatureCard } from "./baby-temperature-card"
 import { FeedingTimer } from "./feeding-timer"
 import { BabyWeeklySummary } from "./weekly-summary/baby-weekly-summary"
 import { GrowthChartSection } from "./charts/growth-chart-section"
@@ -476,6 +477,12 @@ export function BabyDashboard({
     setSheetOpen(true)
   }, [])
 
+  // 体温カードの空きスロットから新規記録シートを開く（既存の create 導線へ相乗り。
+  // 新しい書き込み経路は作らない）。カードが logType を知らずに済むよう束ねる。
+  const handleCreateTemperature = useCallback(() => {
+    handleCreateLog("temperature")
+  }, [handleCreateLog])
+
   const handleStartTimer = useCallback((type: FeedingType) => {
     setTimerFeedingType(type)
     setTimerOpen(true)
@@ -528,6 +535,17 @@ export function BabyDashboard({
           onLogRemoved={removeLog}
         />
       )}
+
+      {/* 朝/夜の体温（訴え③）。読む配列は選択日の logs（週窓の weeklyLogs ではない —
+          週窓の外の過去日を開いた時に静かに空になるため）。isToday ゲートの**外**に
+          置き、過去日は閲覧のみ（記録ボタンはカード側で今日限定に出し分ける）。 */}
+      <BabyTemperatureCard
+        logs={logs}
+        date={selectedDate}
+        isToday={isToday}
+        onEdit={handleEdit}
+        onCreate={handleCreateTemperature}
+      />
 
       <BabyWeeklySummary
         days={weeklySummary}
