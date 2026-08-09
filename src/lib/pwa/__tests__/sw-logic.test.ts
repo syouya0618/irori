@@ -20,23 +20,50 @@ interface DuckRequest {
   headers: { get: (name: string) => string | null }
 }
 
+interface PushPayload {
+  title: string
+  body: string
+  url?: string
+  tag?: string
+}
+
+interface DuckPushEvent {
+  data?: { json: () => unknown; text: () => string } | null
+}
+
 interface TestHooks {
   classifyRequest: (request: DuckRequest, originHref: string) => string | null
   makeCacheKey: (rawUrl: string) => string
   trimCache: (cacheName: string, max?: number) => Promise<void>
   extractAssetUrls: (html: string) => string[]
+  parsePushPayload: (event: DuckPushEvent | null) => PushPayload
   CACHE_NAMES: Record<string, string>
   APP_PAGES: string[]
   PRECACHE_URLS: string[]
 }
 
-function loadSw(extraGlobals: Record<string, unknown> = {}): TestHooks {
+/**
+ * sw.js を評価し、`__TEST_HOOKS__` と **登録されたイベント名の一覧**を返す。
+ *
+ * ⚠️ `addEventListener` を no-op スタブにすると、**リスナ登録そのものを検証できぬ**。
+ * `"push"` を `"pushnotification"` と綴り間違えても純粋関数のテストは全部緑のまま、
+ * 本番では 1 通も届かぬ — CLAUDE.md の「規約ファイルは在るだけでは効いておらぬ」と
+ * 同 family じゃ。ゆえに記録関数にして集合を assert できるようにする。
+ */
+function loadSwWithEvents(extraGlobals: Record<string, unknown> = {}): {
+  hooks: TestHooks
+  events: string[]
+} {
   const code = readFileSync(SW_PATH, "utf8")
+  const events: string[] = []
   const self: Record<string, unknown> = {
-    addEventListener: () => {},
+    addEventListener: (type: string) => {
+      events.push(type)
+    },
     location: { href: ORIGIN },
     skipWaiting: () => Promise.resolve(),
     clients: { claim: () => Promise.resolve() },
+    registration: { showNotification: () => Promise.resolve() },
   }
   const sandbox: Record<string, unknown> = {
     self,
@@ -49,7 +76,11 @@ function loadSw(extraGlobals: Record<string, unknown> = {}): TestHooks {
   runInNewContext(code, sandbox)
   const hooks = self.__TEST_HOOKS__ as TestHooks | undefined
   if (!hooks) throw new Error("sw.js が self.__TEST_HOOKS__ を公開していません")
-  return hooks
+  return { hooks, events }
+}
+
+function loadSw(extraGlobals: Record<string, unknown> = {}): TestHooks {
+  return loadSwWithEvents(extraGlobals).hooks
 }
 
 function makeReq(
@@ -280,6 +311,104 @@ describe("sw.js __TEST_HOOKS__", () => {
       const trimHooks = loadSw({ caches })
       await trimHooks.trimCache("irori-v1-precache")
       expect(deleted).toEqual([])
+    })
+  })
+})
+
+describe("イベントリスナの登録", () => {
+  it("push / notificationclick を含む必要なイベントが全て登録される", () => {
+    const { events } = loadSwWithEvents()
+
+    // 集合として固定する。綴り間違い・登録漏れがそのまま赤になる。
+    expect([...events].sort()).toEqual([
+      "activate",
+      "fetch",
+      "install",
+      "message",
+      "notificationclick",
+      "push",
+    ])
+  })
+})
+
+describe("parsePushPayload", () => {
+  // ⚠️ この関数の契約は「**何を渡されても必ず title と body を返す**」じゃ。
+  // Apple 公式: 受け取った push を可視通知として出さねば Safari は権限を剥奪する
+  // （"If you don't [present immediately], Safari revokes the push notification
+  //  permission for your site."）。ゆえに throw も undefined も許されぬ。
+  const hooks = loadSw()
+
+  it("正常なペイロードをそのまま通す", () => {
+    const result = hooks.parsePushPayload({
+      data: {
+        json: () => ({ title: "予定", body: "10分前です", url: "/calendar", tag: "e1" }),
+        text: () => "",
+      },
+    })
+    expect(result).toEqual({
+      title: "予定",
+      body: "10分前です",
+      url: "/calendar",
+      tag: "e1",
+    })
+  })
+
+  it("data が無くても汎用文言を返す（throw しない）", () => {
+    expect(hooks.parsePushPayload({ data: null })).toEqual({
+      title: "irori",
+      body: "新しいお知らせがあります",
+    })
+    expect(hooks.parsePushPayload(null)).toEqual({
+      title: "irori",
+      body: "新しいお知らせがあります",
+    })
+  })
+
+  it("JSON が壊れていればテキストとして拾う", () => {
+    const result = hooks.parsePushPayload({
+      data: {
+        json: () => {
+          throw new Error("invalid json")
+        },
+        text: () => "素のテキスト",
+      },
+    })
+    expect(result.title).toBe("irori")
+    expect(result.body).toBe("素のテキスト")
+  })
+
+  it("JSON もテキストも落ちれば汎用文言へ倒す", () => {
+    const result = hooks.parsePushPayload({
+      data: {
+        json: () => {
+          throw new Error("invalid json")
+        },
+        text: () => {
+          throw new Error("invalid text")
+        },
+      },
+    })
+    expect(result).toEqual({
+      title: "irori",
+      body: "新しいお知らせがあります",
+    })
+  })
+
+  it("title / body が空文字や非文字列なら汎用文言で埋める", () => {
+    const result = hooks.parsePushPayload({
+      data: { json: () => ({ title: "", body: 42 }), text: () => "" },
+    })
+    expect(result.title).toBe("irori")
+    expect(result.body).toBe("新しいお知らせがあります")
+  })
+
+  it("JSON が object でなければ汎用文言へ倒す", () => {
+    const result = hooks.parsePushPayload({
+      data: { json: () => "文字列だった", text: () => "" },
+    })
+    expect(result).toEqual({
+      title: "irori",
+      body: "新しいお知らせがあります",
     })
   })
 })

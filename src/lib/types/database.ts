@@ -563,6 +563,35 @@ export interface Database {
        * **INSERT / UPDATE は RLS ポリシーも GRANT も無い = service role 専用**
        * （型は書けるように見えるが、authenticated から撃てば 42501 で落ちる）。
        */
+      /**
+       * Web Push の購読（端末単位）。
+       *
+       * ⚠️ **`endpoint` / `p256dh` / `auth` は Row に載せておらぬ。**
+       * 列 GRANT で authenticated から隠してあり、`select("*")` は
+       * `42501 permission denied` で落ちる（pgTAP B-6 が固定）。型に載せると
+       * 「読める」と誤解した実装を誘発するため、意図的に省いてある。
+       * 送信で必要になるのは配信ジョブ（B-3・service role）だけじゃ。
+       *
+       * 書込は `upsert_push_subscription()` のみ。ゆえに `Insert` / `Update` は
+       * **空オブジェクト**にしてある（型の形としては三点必要だが、書ける列は無い）。
+       * 直接 INSERT/UPDATE を書こうとすると型で止まり、pgTAP B-7/B-8 が実行時にも
+       * `42501` で止める。
+       */
+      push_subscriptions: {
+        Row: {
+          id: string
+          user_id: string
+          /** 端末の見分け用の要約（`summarizeUserAgent` の出力）。取れねば null */
+          user_agent: string | null
+          created_at: string
+          last_success_at: string | null
+          last_failure_at: string | null
+          failure_count: number
+        }
+        Insert: Record<string, never>
+        Update: Record<string, never>
+        Relationships: []
+      }
       google_connections: {
         Row: {
           id: string
@@ -683,6 +712,29 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
+      /**
+       * push 購読の**唯一の書込経路**（SECURITY DEFINER）。
+       * `push_subscriptions` は authenticated に INSERT/UPDATE の GRANT も
+       * ポリシーも持たぬため、クライアントからの登録は必ずこれを通る。
+       */
+      upsert_push_subscription: {
+        Args: {
+          p_endpoint: string
+          p_p256dh: string
+          p_auth: string
+          p_user_agent?: string | null
+        }
+        Returns: string
+      }
+      /**
+       * サインアウト時に自分の購読を endpoint 指定で解除する。
+       * `DELETE ... WHERE endpoint = $1` は endpoint への SELECT 権限を要求し、
+       * その列は GRANT から外してあるため RPC でしか消せぬ。
+       */
+      delete_my_push_subscription: {
+        Args: { p_endpoint: string }
+        Returns: boolean
+      }
       get_my_household_id: {
         Args: Record<string, never>
         Returns: string

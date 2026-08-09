@@ -70,6 +70,7 @@ export default async function SettingsPage({
     { data: household, error: householdError },
     { data: pendingData, error: pendingError },
     { data: googleConnections, error: googleConnectionsError },
+    { data: pushDevices, error: pushDevicesError },
   ] = await Promise.all([
     supabase
       .from("households")
@@ -92,7 +93,21 @@ export default async function SettingsPage({
       )
       .eq("user_id", userId)
       .order("created_at"),
+    // 通知の購読は**端末単位・本人のみ**（RLS の SELECT も user_id = auth.uid()）。
+    // ⚠️ 列 GRANT で endpoint / p256dh / auth を隠してあるゆえ `select("*")` は
+    // `42501` で落ちる（pgTAP B-6 が固定）。列は必ず明示すること。
+    supabase
+      .from("push_subscriptions")
+      .select("id, user_agent, created_at, last_success_at, failure_count")
+      .eq("user_id", userId)
+      .order("created_at"),
   ])
+
+  if (pushDevicesError) {
+    logSupabaseError("settings", "push subscriptions lookup failed", pushDevicesError, {
+      userId,
+    })
+  }
 
   if (googleConnectionsError) {
     logSupabaseError(
@@ -195,6 +210,13 @@ export default async function SettingsPage({
       pendingUsers={pendingUsers}
       googleConnections={googleConnectionViews}
       googleNotice={googleNotice}
+      pushDevices={(pushDevices ?? []).map((device) => ({
+        id: device.id,
+        userAgent: device.user_agent,
+        createdAt: device.created_at,
+        lastSuccessAt: device.last_success_at,
+        failureCount: device.failure_count,
+      }))}
     />
   )
 }

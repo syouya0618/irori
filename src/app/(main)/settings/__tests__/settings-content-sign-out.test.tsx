@@ -90,6 +90,7 @@ function renderSettings() {
       babyProfile={{ name: null, birthDate: null, feedingIntervalMin: 180 }}
       googleConnections={[]}
       googleNotice={null}
+      pushDevices={[]}
     />,
   )
   return screen.getByRole("button", { name: "ログアウト" })

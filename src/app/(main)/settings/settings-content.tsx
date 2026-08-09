@@ -16,6 +16,8 @@ import {
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { signOut } from "@/app/(main)/settings/actions"
+import { unsubscribeCurrentDevice } from "@/app/(main)/settings/push-actions"
+import { unsubscribePushForSignOut } from "@/lib/pwa/push-unsubscribe"
 import {
   purgeHouseholdCaches,
   LAST_USER_ID_STORAGE_KEY,
@@ -31,6 +33,10 @@ import { AutoStockCategoriesCard } from "@/components/settings/auto-stock-card"
 import { OcrProviderCard } from "@/components/settings/ocr-provider-card"
 import { BabyProfileCard } from "@/components/settings/baby-profile-card"
 import { ExportCard } from "@/components/settings/export-card"
+import {
+  NotificationCard,
+  type PushDeviceView,
+} from "@/components/settings/notification-card"
 import {
   GoogleCalendarCard,
   type GoogleConnectionView,
@@ -63,6 +69,8 @@ interface SettingsContentProps {
   googleConnections: GoogleConnectionView[]
   /** OAuth callback が付ける `?google=` の値。未知コードはカード側が無視する。 */
   googleNotice: string | null
+  /** 通知を受け取る端末（本人のみ・秘密列は含まぬ） */
+  pushDevices: PushDeviceView[]
 }
 
 const roleLabels: Record<HouseholdRole, string> = {
@@ -80,6 +88,7 @@ export function SettingsContent({
   babyProfile,
   googleConnections,
   googleNotice,
+  pushDevices,
 }: SettingsContentProps) {
   const [, startTransition] = useTransition()
   const [isSigningOut, setIsSigningOut] = useState(false)
@@ -90,6 +99,9 @@ export function SettingsContent({
       try {
         // signOut() の redirect は throw ベースのため、後続コードは実行保証がない。
         // 世帯キャッシュ破棄と localStorage 掃除は必ず signOut() より前に行う。
+        // 購読はブラウザ単位ゆえ、放置すると旧ユーザー宛の通知が
+        // 次の利用者の端末へ届く。キャッシュ破棄と同じ理由で先に畳む。
+        await unsubscribePushForSignOut(unsubscribeCurrentDevice)
         await purgeHouseholdCaches()
         try {
           localStorage.removeItem(LAST_USER_ID_STORAGE_KEY)
@@ -154,6 +166,9 @@ export function SettingsContent({
         connections={googleConnections}
         notice={googleNotice}
       />
+
+      {/* 通知（Web Push） */}
+      <NotificationCard devices={pushDevices} />
 
       {/* 記録エクスポート */}
       <ExportCard />
