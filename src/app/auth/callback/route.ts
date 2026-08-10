@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getAppOrigin } from "@/lib/utils/app-origin"
 import type { AuthErrorReason } from "@/lib/auth/auth-error-messages"
+import { safeReturnTo } from "@/lib/auth/safe-return-to"
 
 /**
  * マジックリンクの着地点。
@@ -18,12 +19,6 @@ import type { AuthErrorReason } from "@/lib/auth/auth-error-messages"
  * 自由文（`error_description`）を画面まで運んではならぬ —— URL に書かれた任意の
  * 文章を表示する装置になるゆえ、文言は `auth-error-messages.ts` の表から引く。
  */
-
-/** 相対パスのみ許可（open redirect 防止）。従来の判定をそのまま関数へ切り出したもの。 */
-function safeReturnTo(returnTo: string | null): string | null {
-  if (!returnTo) return null
-  return returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : null
-}
 
 function loginUrl(
   origin: string,

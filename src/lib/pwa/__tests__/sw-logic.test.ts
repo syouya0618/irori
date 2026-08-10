@@ -230,8 +230,21 @@ describe("sw.js __TEST_HOOKS__", () => {
       expect(hooks.classifyRequest(req, ORIGIN)).toBe("document")
     })
 
+    /**
+     * ⚠️ `/auth/confirm` が `document` に化けると、**使い切りの token を含む応答が
+     * キャッシュされ、消費済みのリンクを再生する**ことになる。認証系は 1 つ残らず
+     * nav-passthrough（ネットワーク直・保存せぬ）でなければならぬ。
+     */
     it("navigate × 認証系ページ → nav-passthrough (キャッシュ禁止)", () => {
-      for (const path of ["/login", "/", "/invite/abc123", "/setup", "/pending-approval"]) {
+      for (const path of [
+        "/login",
+        "/",
+        "/invite/abc123",
+        "/setup",
+        "/pending-approval",
+        "/auth/callback?code=xyz",
+        "/auth/confirm?token_hash=xyz&type=magiclink",
+      ]) {
         const req = makeReq(abs(path), { mode: "navigate" })
         expect(hooks.classifyRequest(req, ORIGIN)).toBe("nav-passthrough")
       }

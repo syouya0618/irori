@@ -186,6 +186,34 @@ describe("proxy: 未認証の扱い（fail-closed）", () => {
     const res = await proxy(request("/login"))
     expect(res.status).not.toBe(307)
   })
+
+  /**
+   * `/auth/confirm` はメールを使わぬログインの着地点（緊急用）じゃ。
+   * **未認証で到達できねば意味が無い** —— 通さねば /login へ 307 され、
+   * ハンドラに永久に届かぬ。cron route で一度やられた型そのものじゃ。
+   *
+   * 認可はハンドラ側の `verifyOtp`（有効な token_hash が無ければセッションを
+   * 立てぬ）が担う。ここで固定するのは「proxy に食われぬこと」だけ。
+   */
+  it("未認証の /auth/confirm は通す（proxy に食わせぬ）", async () => {
+    getClaims.mockResolvedValue({ data: null, error: null })
+    const res = await proxy(request("/auth/confirm?token_hash=x&type=magiclink"))
+    expect(res.status).not.toBe(307)
+  })
+
+  /**
+   * ⚠️ **前方一致にしてはならぬ。** `startsWith("/auth/")` にすると、将来
+   * 足される `/auth/*` の全てが一撃で未認証開放になる。完全一致で 1 本ずつ。
+   */
+  it.each(["/auth/confirm/extra", "/auth/confirmation", "/auth/other"])(
+    "%s は公開扱いにせぬ（完全一致であることの証人）",
+    async (pathname) => {
+      getClaims.mockResolvedValue({ data: null, error: null })
+      const res = await proxy(request(pathname))
+      expect(res.status).toBe(307)
+      expect(res.headers.get("location")).toContain("/login")
+    }
+  )
 })
 
 describe("proxy: 承認ゲート（DB 読みゆえ即時に効き続ける）", () => {
@@ -271,6 +299,28 @@ describe("proxy: 起動時ページの解決（/ の動的描画を省く）", (
       expect(res.status).not.toBe(307)
     }
   )
+
+  /**
+   * ⚠️ **意図した挙動じゃ（意識して選んでおる）。**
+   *
+   * `/auth/confirm` は `isPublicRoute` ゆえ、**既にログイン済みの承認済み利用者**が
+   * 開くと、ハンドラへ届く前に `/{default_page}` へ 307 される。つまり
+   * **token は消費されぬ**（後で使える）。
+   *
+   * これを「素通しさせてハンドラを走らせる」形にすると、ログイン中の者が
+   * リンクを踏んだ瞬間に**別アカウントへ黙って切り替わりうる**。緊急用の逃げ道は
+   * 「入れなくなった人」のためのものゆえ、既に入れておる人の状態を触らぬ方を採る。
+   */
+  it("ログイン済みが /auth/confirm を開いても token を消費させぬ（default_page へ送る）", async () => {
+    getClaims.mockResolvedValue(validClaims)
+    profileSingle.mockResolvedValue({
+      data: { is_approved: true, default_page: "stock" },
+      error: null,
+    })
+    const res = await proxy(request("/auth/confirm?token_hash=x&type=magiclink"))
+    expect(res.status).toBe(307)
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/stock")
+  })
 
   it("クエリ文字列は行き先へ引き継ぐ", async () => {
     getClaims.mockResolvedValue(validClaims)

@@ -127,9 +127,21 @@ export async function proxy(request: NextRequest) {
     // （#171 で入れた TTFB の内訳計測が cron 経路だけ欠ける）。isPublicRoute
     // なら proxy は通り、迂回するのは承認ゲートだけで済む。
     //
-    // 意図的に認証を外すのは `/api/cron/` ただ一つじゃ。ここに別の prefix を
-    // 足す前に、そのハンドラが fail-closed な認可を持つことを必ず確かめよ。
-    pathname.startsWith("/api/cron/")
+    // 意図的に認証を外すのは `/api/cron/` と `/auth/confirm` の二つじゃ。ここに
+    // 別の経路を足す前に、そのハンドラが fail-closed な認可を持つことを必ず確かめよ。
+    pathname.startsWith("/api/cron/") ||
+    // メールを使わぬログインの着地点（緊急用）。**未認証で到達できねば意味が
+    // 無い** —— 通さねば /login へ 307 され、ハンドラに永久に届かぬ（cron で
+    // 一度やられた型じゃ。`e2e/auth-confirm-public.spec.ts` が cookie 無しの
+    // 実リクエストで撃っておる）。
+    //
+    // 認可は `verifyOtp` が担う: **有効・未使用・未期限切れの token_hash が
+    // 無ければセッションは立たぬ**（fail-closed）。承認ゲートと RLS はその後も
+    // そのまま効く。
+    //
+    // ⚠️ **`startsWith("/auth/")` にしてはならぬ。** 一撃で将来の全 `/auth/*` が
+    // 未認証で開く。完全一致で 1 本ずつ通すこと。
+    pathname === "/auth/confirm"
   const isInviteRoute = pathname.startsWith("/invite/")
   const isPendingRoute = pathname === "/pending-approval"
   const isRootRoute = pathname === "/"
