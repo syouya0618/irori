@@ -122,7 +122,20 @@ if (explicitEnvFile && !envFileUsed) {
   process.exit(1)
 }
 
-const env = (key) => (process["env"][key] ?? fileEnv[key] ?? "").trim()
+/**
+ * 値を解決する。**空文字は「無い」と同じに扱う。**
+ *
+ * `??` だけで繋ぐと、シェルに `FOO=` が空で export されておった場合に
+ * **空文字が勝ってファイルの値を隠す** ——「ファイルに在るのに見つからぬ」という
+ * 最も分かりにくい失敗になる。空を弾いてから次へ落とす。
+ */
+const env = (key) => {
+  for (const candidate of [process["env"][key], fileEnv[key]]) {
+    const value = (candidate ?? "").trim()
+    if (value) return value
+  }
+  return ""
+}
 
 const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL")
 const serviceRoleKey = env("SUPABASE_SERVICE_ROLE_KEY")
@@ -137,6 +150,17 @@ const missing = [
 if (missing.length > 0) {
   note(`❌ 次の値が見つかりませぬ: ${missing.join(", ")}`)
   note(`   読んだファイル: ${envFileUsed ?? "（見つからず）"}`)
+  // ⚠️「キーは在るのに値が空」と「キーごと無い」は原因が全く違う（前者は
+  // Vercel の Sensitive 指定で読み戻せておらぬ形）。**値は出さず**、
+  // キーの有無と空か否かだけを見せて弁別できるようにする。
+  for (const key of missing) {
+    const present = Object.prototype.hasOwnProperty.call(fileEnv, key)
+    note(
+      `     - ${key}: ${
+        present ? "キーは在るが値が空（Vercel の Sensitive 指定を疑え）" : "キーごと無い"
+      }`
+    )
+  }
   note("")
   note("   本番の値は **development 環境には入っておらぬ**。必ず production を、")
   note("   しかも **別ファイルへ** 引くこと（.env.local はローカル開発用ゆえ潰すな）:")
