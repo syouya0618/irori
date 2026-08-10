@@ -77,11 +77,37 @@ export async function proxy(request: NextRequest) {
   let dbMs: number | null = null
 
   /**
-   * すべての return をこれで包む。`supabaseResponse` は cookie 書き込み
-   * (`setAll`) のたびに再代入されるため、**返す直前**に載せねば消える。
-   * redirect 応答にも載せる（/login への 307 が遅い場合も測れるように）。
+   * すべての return をこれで包む。**二つの仕事がある。**
+   *
+   * ① 更新されたセッション cookie を載せる（最重要）
+   *
+   * supabase-js はアクセストークンの期限が近づくと自動で更新し、新しいトークンを
+   * `cookies.setAll` 経由で書き戻す。それが載るのは `supabaseResponse` じゃ。
+   * ところが **redirect は別のレスポンスオブジェクト**ゆえ、載せ替えを忘れると:
+   *
+   *   1. 新しいトークンはブラウザへ届かぬ
+   *   2. 一方サーバ側では古い refresh token が**使用済みへ回されておる**
+   *   3. 次のリクエストで失効 → **無言でログアウト**
+   *
+   * そしてログアウトした先には「マジックリンクを送る」しか道が無い。送信は
+   * **1 時間に 2 通**の上限を持つ（Supabase 組込み SMTP・公式値）ゆえ、
+   * 二人で押し合えば**戻れなくなる**。2026-08-10 に実際に起きた。
+   *
+   * ⚠️ この欠陥は**素通し経路だけを見るテストでは絶対に捕まらぬ**。あちらは
+   * `supabaseResponse` をそのまま返すゆえ常に正しい。しかも `/` は #220 以降
+   * **起動のたびに redirect を通る**ようになっており、最も踏みやすい窓じゃった。
+   *
+   * ② `Server-Timing` を載せる（#171 の計測）
+   *
+   * `supabaseResponse` は `setAll` のたびに再代入されるため、いずれも
+   * **返す直前**に行わねば消える。
    */
-  const withTiming = <T extends NextResponse>(res: T): T => {
+  const finalize = <T extends NextResponse>(res: T): T => {
+    if (res !== supabaseResponse) {
+      for (const cookie of supabaseResponse.cookies.getAll()) {
+        res.cookies.set(cookie)
+      }
+    }
     res.headers.set("Server-Timing", serverTimingHeader(authMs, dbMs))
     return res
   }
@@ -116,13 +142,13 @@ export async function proxy(request: NextRequest) {
       // origin は getAppOrigin で解決する (NextResponse.redirect は絶対 URL 必須)
       const url = request.nextUrl.clone()
       url.pathname = "/login"
-      return withTiming(
+      return finalize(
         NextResponse.redirect(
           new URL(url.pathname + url.search, getAppOrigin(request))
         )
       )
     }
-    return withTiming(supabaseResponse)
+    return finalize(supabaseResponse)
   }
 
   // ── 認証済み: 承認チェック ──
@@ -152,7 +178,7 @@ export async function proxy(request: NextRequest) {
     if (!isPendingRoute && !isInviteRoute) {
       const url = request.nextUrl.clone()
       url.pathname = "/pending-approval"
-      return withTiming(
+      return finalize(
         NextResponse.redirect(
           new URL(url.pathname + url.search, getAppOrigin(request))
         )
@@ -178,7 +204,7 @@ export async function proxy(request: NextRequest) {
     if (isPublicRoute || isPendingRoute || isRootRoute) {
       const url = request.nextUrl.clone()
       url.pathname = `/${resolveDefaultPage(profile?.default_page)}`
-      return withTiming(
+      return finalize(
         NextResponse.redirect(
           new URL(url.pathname + url.search, getAppOrigin(request))
         )
@@ -186,7 +212,7 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  return withTiming(supabaseResponse)
+  return finalize(supabaseResponse)
 }
 
 export const config = {

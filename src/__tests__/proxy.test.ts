@@ -17,9 +17,38 @@ import { DEFAULT_PAGE, VALID_PAGES } from "@/lib/constants/pages"
 const getClaims = vi.fn()
 const profileSingle = vi.fn()
 
+/**
+ * セッション更新の再現用。`refresh` に cookie を入れておくと、`getClaims()` の
+ * 最中に `createServerClient` へ渡された `cookies.setAll` が呼ばれる
+ * ——**本物の supabase-js がアクセストークンを更新した時と同じ経路**じゃ。
+ */
+const session: { refresh: { name: string; value: string }[] | null } = {
+  refresh: null,
+}
+
+interface CookieOption {
+  name: string
+  value: string
+  options?: Record<string, unknown>
+}
+
 vi.mock("@supabase/ssr", () => ({
-  createServerClient: () => ({
-    auth: { getClaims: () => getClaims() },
+  createServerClient: (
+    _url: string,
+    _key: string,
+    opts: { cookies: { setAll: (c: CookieOption[]) => void } }
+  ) => ({
+    auth: {
+      getClaims: async () => {
+        // 更新が起きる時は、判定より**前**に setAll が走る（本物と同じ順序）
+        if (session.refresh) {
+          opts.cookies.setAll(
+            session.refresh.map((c) => ({ ...c, options: { path: "/" } }))
+          )
+        }
+        return getClaims()
+      },
+    },
     from: () => ({
       select: () => ({ eq: () => ({ single: () => profileSingle() }) }),
     }),
@@ -41,7 +70,95 @@ const validClaims = { data: { claims: { sub: "user-1" } }, error: null }
 beforeEach(() => {
   getClaims.mockReset()
   profileSingle.mockReset()
+  session.refresh = null
   profileSingle.mockResolvedValue({ data: { is_approved: true }, error: null })
+})
+
+/**
+ * **更新されたセッションを取りこぼさぬこと。**
+ *
+ * supabase-js はアクセストークンの期限が近づくと自動で更新し、新しいトークンを
+ * `cookies.setAll` 経由で書き戻す。proxy はそれを `supabaseResponse` に載せる
+ * ——が、**redirect を返す時は別のレスポンスオブジェクトになる**。載せ替えを
+ * 忘れると:
+ *
+ *   1. 新しいトークンはブラウザへ届かぬ
+ *   2. 一方サーバ側では古い refresh token が**使用済みへ回されておる**
+ *   3. 次のリクエストで失効 → **無言でログアウト**
+ *
+ * そしてログアウトした先には「マジックリンクを送る」しか道が無い。送信は
+ * レート制限を持つゆえ、**戻れなくなる**。実際に配偶者がこれで締め出された
+ * （2026-08-10）。
+ *
+ * ⚠️ この回帰は**通常応答だけを見るテストでは絶対に捕まらぬ**。素通し経路は
+ * `supabaseResponse` をそのまま返すゆえ常に緑じゃ。**redirect を返す経路を
+ * 名指しで撃たねばならぬ** —— そして `/` は #220 以降、起動のたびに通る。
+ */
+describe("proxy: 更新されたセッションを redirect でも保つ", () => {
+  const REFRESHED = [
+    { name: "sb-test-auth-token", value: "NEW_TOKEN" },
+    { name: "sb-test-auth-token.1", value: "NEW_TOKEN_CHUNK" },
+  ]
+
+  /** 更新が起きた状態で proxy を呼び、応答に新トークンが載っておるかを見る */
+  async function refreshedThen(pathname: string) {
+    session.refresh = REFRESHED
+    const res = await proxy(request(pathname))
+    return {
+      status: res.status,
+      location: res.headers.get("location"),
+      cookies: REFRESHED.map((c) => res.cookies.get(c.name)?.value ?? null),
+    }
+  }
+
+  it("承認済みの起動（/ → default_page）で新トークンを載せる", async () => {
+    getClaims.mockResolvedValue(validClaims)
+    profileSingle.mockResolvedValue({
+      data: { is_approved: true, default_page: "shopping" },
+      error: null,
+    })
+    const r = await refreshedThen("/")
+    expect(r.status).toBe(307)
+    expect(r.cookies).toEqual(["NEW_TOKEN", "NEW_TOKEN_CHUNK"])
+  })
+
+  it("ログイン直後（/login → default_page）でも載せる", async () => {
+    getClaims.mockResolvedValue(validClaims)
+    const r = await refreshedThen("/login")
+    expect(r.status).toBe(307)
+    expect(r.cookies).toEqual(["NEW_TOKEN", "NEW_TOKEN_CHUNK"])
+  })
+
+  it("未承認の /pending-approval への redirect でも載せる", async () => {
+    getClaims.mockResolvedValue(validClaims)
+    profileSingle.mockResolvedValue({
+      data: { is_approved: false, default_page: null },
+      error: null,
+    })
+    const r = await refreshedThen("/baby")
+    expect(r.status).toBe(307)
+    expect(r.cookies).toEqual(["NEW_TOKEN", "NEW_TOKEN_CHUNK"])
+  })
+
+  it("未認証の /login への redirect でも載せる（セッション破棄の書き戻しを運ぶ）", async () => {
+    getClaims.mockResolvedValue({ data: null, error: null })
+    const r = await refreshedThen("/baby")
+    expect(r.status).toBe(307)
+    expect(r.cookies).toEqual(["NEW_TOKEN", "NEW_TOKEN_CHUNK"])
+  })
+
+  it("素通し経路でも従来どおり保たれる（回帰防止）", async () => {
+    getClaims.mockResolvedValue(validClaims)
+    const r = await refreshedThen("/baby")
+    expect(r.status).not.toBe(307)
+    expect(r.cookies).toEqual(["NEW_TOKEN", "NEW_TOKEN_CHUNK"])
+  })
+
+  it("更新が起きなければ余計な cookie を足さぬ", async () => {
+    getClaims.mockResolvedValue(validClaims)
+    const res = await proxy(request("/"))
+    expect(res.cookies.get("sb-test-auth-token")).toBeUndefined()
+  })
 })
 
 describe("proxy: 未認証の扱い（fail-closed）", () => {
