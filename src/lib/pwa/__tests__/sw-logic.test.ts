@@ -81,6 +81,7 @@ interface TestHooks {
   MAX_ENTRIES: Record<string, number>
   APP_PAGES: string[]
   PRECACHE_URLS: string[]
+  PRECACHE_EVICT_URLS: string[]
   RESUBSCRIBE_PATH: string
   CALENDAR_DATE_PARAM: string
 }
@@ -293,13 +294,39 @@ describe("sw.js __TEST_HOOKS__", () => {
       expect(hooks.classifyRequest(makeReq(abs("/favicon.ico")), ORIGIN)).toBe("image")
     })
 
-    it("PRECACHE_URLS の fetch (manifest / アイコン) → precached", () => {
-      expect(hooks.classifyRequest(makeReq(abs("/manifest.webmanifest")), ORIGIN)).toBe(
-        "precached"
-      )
+    it("PRECACHE_URLS の fetch (アイコン) → precached", () => {
       expect(hooks.classifyRequest(makeReq(abs("/icons/icon-192.png")), ORIGIN)).toBe(
         "precached"
       )
+    })
+
+    /**
+     * ⚠️ **manifest だけは SW が触れてはならぬ。**
+     *
+     * precache は cache-first で、中身が更新されるのは `install` の時だけ ——
+     * そして `install` が再実行されるのは **sw.js のバイト列が変わった時だけ**。
+     * ゆえに manifest をここへ入れると、manifest を直して配っても既存端末には
+     * **永久に古い方が配られ続ける**。
+     *
+     * 2026-08-10 に実際に起きた: `start_url` を `/` へ直した (#219) のに
+     * ホーム画面からは必ず献立が開き、**アイコンを入れ直しても直らなんだ** ——
+     * 入れ直すその瞬間に OS が読む manifest を、SW が古い方へすり替えておったゆえ。
+     * 「manifest の取得が SW を通る」ことは Chrome で実測済み（precache から
+     * 削除 → 再読込 → エントリが戻った）。
+     *
+     * この 2 本は**対で意味を持つ**。片方だけだと「一覧から消したが分類は
+     * precached のまま」という半端な状態を素通しする。
+     */
+    it("manifest は SW が関与せぬ（null＝ブラウザが常に生を取る）", () => {
+      expect(
+        hooks.classifyRequest(makeReq(abs("/manifest.webmanifest")), ORIGIN)
+      ).toBeNull()
+    })
+
+    it("manifest は PRECACHE_URLS に無く、退避対象に挙がっておる", () => {
+      expect(hooks.PRECACHE_URLS).not.toContain("/manifest.webmanifest")
+      // 過去に焼き込まれた毒入りエントリを activate で掃くための名指し
+      expect(hooks.PRECACHE_EVICT_URLS).toContain("/manifest.webmanifest")
     })
 
     it("不正 URL は null (例外を投げない)", () => {
@@ -1257,5 +1284,79 @@ describe("notificationclick — 既存タブの日付を動かす（B-6）", () 
   it("既定の着地先はアプリの /calendar と一致する（手動同期の綻びを殺す）", () => {
     // src/lib/domain/calendar-link.ts の CALENDAR_PATH（classic script ゆえ import 不可）
     expect(loadSw().DEFAULT_NOTIFICATION_URL).toBe(CALENDAR_PATH)
+  })
+})
+
+/**
+ * activate — **毒入り precache エントリの掃除**。
+ *
+ * 定数一覧（`PRECACHE_URLS` に無い・`PRECACHE_EVICT_URLS` に在る）を assert する
+ * だけでは足りぬ。それは「一覧は直したが掃除は動かぬ」を素通しする。
+ * 既存端末には**すでに焼き込まれたエントリ**が在り、それを消すのは activate ゆえ、
+ * リスナ本体を実際に走らせて確かめる。
+ */
+describe("activate リスナ", () => {
+  function makeCachesSpy(existingNames: string[]) {
+    const deletedCaches: string[] = []
+    const deletedEntries: string[] = []
+    const fakeCache = {
+      keys: () => Promise.resolve([]),
+      delete: (url: string) => {
+        deletedEntries.push(url)
+        return Promise.resolve(true)
+      },
+    }
+    return {
+      caches: {
+        keys: () => Promise.resolve(existingNames),
+        open: () => Promise.resolve(fakeCache),
+        delete: (name: string) => {
+          deletedCaches.push(name)
+          return Promise.resolve(true)
+        },
+      },
+      deletedCaches,
+      deletedEntries,
+    }
+  }
+
+  /** activate リスナを走らせ、waitUntil に渡された仕事の完了まで待つ */
+  async function runActivate(caches: unknown) {
+    const { listeners } = loadSwWithEvents({ caches })
+    let work: Promise<unknown> | null = null
+    listenerFor(listeners, "activate")({
+      waitUntil: (p: Promise<unknown>) => {
+        work = p
+      },
+    })
+    if (!work) throw new Error("activate が waitUntil を呼んでおらぬ")
+    await work
+  }
+
+  it("precache から /manifest.webmanifest を消す（既存端末の毒抜き）", async () => {
+    const spy = makeCachesSpy(["irori-v1-precache"])
+    await runActivate(spy.caches)
+    expect(spy.deletedEntries).toContain("/manifest.webmanifest")
+  })
+
+  it("旧バージョンのキャッシュだけを消し、現行版は残す", async () => {
+    const spy = makeCachesSpy([
+      "irori-v0-documents",
+      "irori-v1-documents",
+      "irori-v1-precache",
+      "someone-elses-cache",
+    ])
+    await runActivate(spy.caches)
+    expect(spy.deletedCaches).toEqual(["irori-v0-documents"])
+    // 他アプリのキャッシュには触れぬ（prefix 判定の証人）
+    expect(spy.deletedCaches).not.toContain("someone-elses-cache")
+  })
+
+  it("現行版のオフライン用ドキュメントを巻き添えで捨てぬ（bump ではなく名指しで消す理由）", async () => {
+    const spy = makeCachesSpy(["irori-v1-documents", "irori-v1-precache"])
+    await runActivate(spy.caches)
+    expect(spy.deletedCaches).toEqual([])
+    // 消えるのは名指しのエントリだけ
+    expect(spy.deletedEntries).toEqual(["/manifest.webmanifest"])
   })
 })

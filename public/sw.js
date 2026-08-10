@@ -41,13 +41,40 @@ const APP_PAGES = ["/meals", "/shopping", "/stock", "/baby", "/calendar", "/sett
 const CALENDAR_DATE_PARAM = "date"
 
 // install 時に precache する静的リソース
+//
+// ⚠️ **`/manifest.webmanifest` をここへ戻してはならぬ。**
+//
+// precache は cache-first で配られ (`cacheFirst` はヒットしたら二度と再検証せぬ)、
+// 中身が更新されるのは `install` の時だけ ——そして `install` が再実行されるのは
+// **sw.js のバイト列が変わった時だけ**じゃ。manifest だけを直して配っても、
+// 既存端末には**永久に古い manifest が配られ続ける**。
+//
+// これは机上の話ではない。2026-08-10 に実際に起きた: `start_url` を `/meals` から
+// `/` へ直した (#219) のに、ホーム画面から起動すると必ず献立が開いたままじゃった。
+// `start_url` は「ホーム画面へ追加した時」に端末へ焼き付くため入れ直しが要るが、
+// **入れ直しても直らなんだ** —— その瞬間に OS が読む manifest を、SW が古い方に
+// すり替えておったゆえ。**自分で自分の直し方を塞ぐ形**になっておった。
+//
+// 「manifest の取得が SW を通る」ことは実測で確認済み (Chrome, 2026-08-10):
+// precache の該当エントリを削除 → ページ再読込 → **エントリが戻った**
+// (`cacheFirst` の miss → network → put)。
+//
+// 外して失うものは無い。manifest が要るのは install / 起動時の判断の時だけで、
+// その時ネットワークが無ければ、そもそもインストールも更新も起きぬ。
 const PRECACHE_URLS = [
   "/offline",
-  "/manifest.webmanifest",
   "/icons/icon.svg",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
 ]
+
+/**
+ * 過去に precache へ入れてしまい、**もう二度と入れてはならぬ** URL。
+ * activate で明示的に削除する（`classifyRequest` はもうここへ振らぬゆえ実害は
+ * 消えるが、毒入りのエントリを残しておくと、将来 precache を横断照会する経路が
+ * 増えた時に黙って復活する）。
+ */
+const PRECACHE_EVICT_URLS = ["/manifest.webmanifest"]
 
 // 各キャッシュの上限エントリ数 (FIFO トリム)
 const MAX_ENTRIES = {
@@ -287,6 +314,14 @@ self.addEventListener("activate", (event) => {
           .filter((name) => name.startsWith(PREFIX) && !valid.includes(name))
           .map((name) => caches.delete(name))
       )
+
+      // かつて precache へ入れてしまった毒入りエントリを掃く。
+      // CACHE_VERSION を bump すれば同時に消えるが、bump は**全端末の
+      // オフライン用ドキュメントを巻き添えで捨てる** —— 1 ファイルを直すために
+      // 払う代償として重すぎるゆえ、名指しで消す方を採った。
+      const precache = await caches.open(CACHE_NAMES.precache)
+      await Promise.all(PRECACHE_EVICT_URLS.map((url) => precache.delete(url)))
+
       await self.clients.claim()
     })()
   )
@@ -708,6 +743,7 @@ self.__TEST_HOOKS__ = {
   MAX_ENTRIES,
   APP_PAGES,
   PRECACHE_URLS,
+  PRECACHE_EVICT_URLS,
   RESUBSCRIBE_PATH,
   DEFAULT_NOTIFICATION_URL,
   CALENDAR_DATE_PARAM,
