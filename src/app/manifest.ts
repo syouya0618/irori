@@ -20,8 +20,12 @@ export default function manifest(): MetadataRoute.Manifest {
      * 「起動時のページ」（`profiles.default_page`）が**何を選んでも効かぬ**
      * ——「起動したら必ず献立が出る」という形で表面化する（実際に起きた）。
      *
-     * `/`（`src/app/page.tsx`）は `default_page` を読んで `/${page}` へ
-     * redirect する。起動をここへ通すことで、設定が初めて意味を持つ。
+     * `/` は `default_page` を読んで `/${page}` へ redirect する。起動をここへ
+     * 通すことで、設定が初めて意味を持つ。解決は二層に在り、いずれも
+     * `resolveDefaultPage`（`src/lib/constants/pages.ts`）を共有する:
+     *   一層目 = `src/proxy.ts`（承認チェックの往復で `default_page` も読み、
+     *            `/` の描画を待たずに 307。起動の 1 往復ぶん速い）
+     *   二層目 = `src/app/page.tsx`（proxy が inert になっても設定を効かせる）
      *
      * 代償: `/` は毎回 redirect ゆえキャッシュしても意味を成さず、`sw.js` の
      * `classifyRequest` は `nav-passthrough`（キャッシュ禁止）に分類する。

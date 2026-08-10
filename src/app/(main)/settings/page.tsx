@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { getVerifiedUser } from "@/lib/supabase/verified-user"
 import { FEEDING_INTERVAL_DEFAULT } from "@/lib/domain/baby-feeding-interval"
+import { resolveDefaultPage } from "@/lib/constants/pages"
 import {
   formatRelativeJa,
   summarizeNotificationHealth,
@@ -257,7 +258,11 @@ export default async function SettingsPage({
         displayName: profile.display_name,
         avatarUrl: profile.avatar_url,
         role: profile.role,
-        defaultPage: profile.default_page ?? "meals",
+        // 起動側（proxy / app/page.tsx）と**同じ関数**で解決する。ここだけ
+        // `?? "meals"` の独自既定にしておくと、未知の値が入ったときに
+        // 「カードは何も選ばれておらぬのに起動は献立へ行く」という食い違いが
+        // 無音で生じる（設定と実挙動の乖離 ＝ #219 と同族）。
+        defaultPage: resolveDefaultPage(profile.default_page),
       }}
       household={
         household
