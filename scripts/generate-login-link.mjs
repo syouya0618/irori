@@ -14,10 +14,25 @@
  *
  * ## 使い方
  *
+ *   node scripts/generate-login-link.mjs <メールアドレス> [--env <path>]
+ *
+ * `NEXT_PUBLIC_SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `NEXT_PUBLIC_APP_URL`
+ * を、次の順で探す（先に見つかった方を使う）:
+ *   ① 実行時の環境変数
+ *   ② `--env` で指定したファイル
+ *   ③ `.env.production.local` → `.env.local`
+ *
+ * ⚠️ **`.env.local` を本番の値で上書きせぬこと。** あれはローカル開発用
+ * （ローカル Supabase 等）ゆえ、潰すと開発環境が壊れる。本番の値が要るなら
+ * **別ファイルへ**引くこと:
+ *
+ *   vercel env pull .env.production.local --environment=production
  *   node scripts/generate-login-link.mjs <メールアドレス>
  *
- * `.env.local` から `NEXT_PUBLIC_SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` /
- * `NEXT_PUBLIC_APP_URL` を読む（環境変数が既にあればそちらを優先）。
+ * ## ⚠️ どのプロジェクトを狙っておるかを必ず確かめよ
+ *
+ * ローカル Supabase の値で実行すると、**ローカル用のリンクが何食わぬ顔で出る**
+ * ——本番では通らぬ。ゆえに生成前に対象の host を stderr へ出す。目で見よ。
  *
  * ## ⚠️ 出力の扱い
  *
@@ -36,16 +51,15 @@ import { createClient } from "@supabase/supabase-js"
 const note = (...args) => console.error(...args)
 
 /**
- * `.env.local` を読む。dotenv に依存せぬのは、このスクリプトを
+ * env ファイルを読む。dotenv に依存せぬのは、このスクリプトを
  * `pnpm install` の状態に関わらず動かしたいゆえ（緊急時に使う道具じゃ）。
  */
-function loadEnvLocal() {
-  const path = resolve(process.cwd(), ".env.local")
+function loadEnvFile(path) {
   let raw
   try {
-    raw = readFileSync(path, "utf8")
+    raw = readFileSync(resolve(process.cwd(), path), "utf8")
   } catch {
-    return {}
+    return null
   }
   const out = {}
   for (const line of raw.split("\n")) {
@@ -67,13 +81,47 @@ function loadEnvLocal() {
   return out
 }
 
-const email = process.argv[2]
-if (!email || !email.includes("@")) {
-  note("使い方: node scripts/generate-login-link.mjs <メールアドレス>")
+const args = process.argv.slice(2)
+const envFileFlag = args.indexOf("--env")
+const explicitEnvFile = envFileFlag !== -1 ? args[envFileFlag + 1] : null
+const email = args.find((a) => a.includes("@") && !a.startsWith("-"))
+
+if (!email) {
+  note("使い方: node scripts/generate-login-link.mjs <メールアドレス> [--env <path>]")
+  process.exit(1)
+}
+if (envFileFlag !== -1 && !explicitEnvFile) {
+  note("❌ --env にパスが指定されておりませぬ")
   process.exit(1)
 }
 
-const fileEnv = loadEnvLocal()
+/**
+ * 探索順。**本番用を先に見る**のが肝じゃ。
+ *
+ * `.env.local` はローカル開発用（ローカル Supabase を指す）ゆえ、そちらを先に
+ * 読むと**ローカル向けのリンクが何食わぬ顔で生成される** —— 本番では通らぬのに、
+ * 出力は成功に見える。最も質の悪い失敗ゆえ順序で殺す。
+ */
+const ENV_FILE_CANDIDATES = explicitEnvFile
+  ? [explicitEnvFile]
+  : [".env.production.local", ".env.local"]
+
+let fileEnv = {}
+let envFileUsed = null
+for (const candidate of ENV_FILE_CANDIDATES) {
+  const loaded = loadEnvFile(candidate)
+  if (loaded) {
+    fileEnv = loaded
+    envFileUsed = candidate
+    break
+  }
+}
+
+if (explicitEnvFile && !envFileUsed) {
+  note(`❌ --env で指定された ${explicitEnvFile} が読めませぬ`)
+  process.exit(1)
+}
+
 const env = (key) => (process["env"][key] ?? fileEnv[key] ?? "").trim()
 
 const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL")
@@ -88,9 +136,39 @@ const missing = [
 
 if (missing.length > 0) {
   note(`❌ 次の値が見つかりませぬ: ${missing.join(", ")}`)
-  note("   .env.local に在るか、環境変数として渡してくりゃれ。")
-  note("   （Vercel から取るなら: vercel env pull .env.local）")
+  note(`   読んだファイル: ${envFileUsed ?? "（見つからず）"}`)
+  note("")
+  note("   本番の値は **development 環境には入っておらぬ**。必ず production を、")
+  note("   しかも **別ファイルへ** 引くこと（.env.local はローカル開発用ゆえ潰すな）:")
+  note("")
+  note("     vercel env pull .env.production.local --environment=production")
+  note("     node scripts/generate-login-link.mjs <メールアドレス>")
   process.exit(1)
+}
+
+/**
+ * ⚠️ **狙う先を必ず目に見せる。**
+ *
+ * ローカル Supabase の値で実行すると、**ローカル向けのリンクが何食わぬ顔で出る**
+ * ——本番では通らぬのに、出力は成功に見える。host は秘密ではないゆえ表示できる。
+ */
+const supabaseHost = (() => {
+  try {
+    return new URL(supabaseUrl).host
+  } catch {
+    return supabaseUrl
+  }
+})()
+const looksLocal = /^(127\.0\.0\.1|localhost|\[::1\])/.test(supabaseHost)
+
+note(`   env: ${envFileUsed ?? "（環境変数のみ）"}`)
+note(`   Supabase: ${supabaseHost}`)
+note(`   リンクの向き先: ${appUrl}`)
+if (looksLocal) {
+  note("")
+  note("⚠️ **ローカルの Supabase を指しております。** このリンクは本番では通りませぬ。")
+  note("   本番の値が要るなら:")
+  note("     vercel env pull .env.production.local --environment=production")
 }
 
 const admin = createClient(supabaseUrl, serviceRoleKey, {
