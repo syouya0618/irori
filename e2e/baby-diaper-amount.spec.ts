@@ -113,14 +113,20 @@ test("うんちの量: 大量で記録 → タイムライン・DB・reload・�
   const todaySummary = page.getByRole("group", { name: "今日のまとめ" })
   await expect(todaySummary).toBeVisible({ timeout: 15_000 })
 
+  // クイックアクションは <main> 内、シートは portal で <main> の外に描かれる。
+  // 編集シートにも同名の種類ボタン「おしっこ」が在り、閉じた直後の退場アニメーション中
+  // （~200ms）は DOM に残るため、無スコープだと strict mode 違反で 2 要素に当たる
+  // （CI で実際に落ちた）。クイックアクション側は必ず main へスコープする。
+  const quick = page.getByRole("main")
+
   // ── 2. おむつ「うんち」→ 2 段目（少量 / 大量 / 指定なし）が同じ行に出る ──
-  await page.getByRole("button", { name: "うんち", exact: true }).click()
-  const largeButton = page.getByRole("button", { name: "大量", exact: true })
+  await quick.getByRole("button", { name: "うんち", exact: true }).click()
+  const largeButton = quick.getByRole("button", { name: "大量", exact: true })
   await expect(largeButton).toBeVisible({ timeout: 10_000 })
-  await expect(page.getByRole("button", { name: "少量", exact: true })).toBeVisible()
-  await expect(page.getByRole("button", { name: "指定なし", exact: true })).toBeVisible()
+  await expect(quick.getByRole("button", { name: "少量", exact: true })).toBeVisible()
+  await expect(quick.getByRole("button", { name: "指定なし", exact: true })).toBeVisible()
   // 2 段目では種別ボタンは隠れる（うんちの記録はまだ無い）
-  await expect(page.getByRole("button", { name: "おしっこ", exact: true })).toHaveCount(0)
+  await expect(quick.getByRole("button", { name: "おしっこ", exact: true })).toHaveCount(0)
 
   // ── 3. 「大量」で記録 → トースト・タイムライン（楽観反映）─────────────
   await largeButton.click()
@@ -131,7 +137,7 @@ test("うんちの量: 大量で記録 → タイムライン・DB・reload・�
   await expect(poopRow).toBeVisible({ timeout: 15_000 })
   await expect(todaySummary).toContainText("うんち1")
   // 1 段目へ戻っている
-  await expect(page.getByRole("button", { name: "おしっこ", exact: true })).toBeVisible()
+  await expect(quick.getByRole("button", { name: "おしっこ", exact: true })).toBeVisible()
 
   // ── 4. DB 断面: poop_amount='large' が永続化されている ───────────────
   const [row] = await waitForDiaperRows(householdId, 1)
@@ -153,6 +159,10 @@ test("うんちの量: 大量で記録 → タイムライン・DB・reload・�
   await openSheet.getByRole("button", { name: "少量", exact: true }).click()
   await openSheet.getByRole("button", { name: "更新する" }).click()
   await expect(page.getByText("ログを更新しました")).toBeVisible({ timeout: 15_000 })
+  // 退場アニメーション中のシートが消えるまで待つ（openOverlay の先頭と同じ待ち）
+  await expect(page.locator('[data-slot="sheet-content"]')).toHaveCount(0, {
+    timeout: 10_000,
+  })
 
   // DB 行が small へ（Realtime を待たず DB 断面で同期）
   await expect(async () => {
@@ -162,7 +172,7 @@ test("うんちの量: 大量で記録 → タイムライン・DB・reload・�
   }).toPass({ timeout: 15_000 })
 
   // ── 7. おしっこは従来どおり 1 タップで記録され、量は NULL ───────────
-  await page.getByRole("button", { name: "おしっこ", exact: true }).click()
+  await quick.getByRole("button", { name: "おしっこ", exact: true }).click()
   await expect(
     page.getByText("おむつ交換を記録しました（おしっこ）")
   ).toBeVisible({ timeout: 15_000 })
