@@ -29,8 +29,37 @@ node scripts/generate-login-link.mjs 相手のメールアドレス
 ログインできる。本人へ直接渡し、使うまでは秘密として扱うこと。一度使うか期限が
 切れれば無効になる。
 
-⚠️ `.env.local` に `NEXT_PUBLIC_SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` /
-`NEXT_PUBLIC_APP_URL` が要る。無ければ `vercel env pull .env.local`。
+### 鍵の用意
+
+本番の値が要る。**`.env.local` を潰してはならぬ** —— あれはローカル開発用
+（ローカル Supabase を指す）で、上書きすると開発環境が壊れる。
+
+```bash
+vercel env pull .env.production.local --environment=production
+```
+
+スクリプトは `.env.production.local` → `.env.local` の順で探す（`--env <path>`
+で明示もできる）。**本番用を先に見る**のは、ローカルの値で作った
+「本番では通らぬのに成功に見えるリンク」を出さぬためじゃ。
+
+⚠️ **`--environment=production` を省くな。** 既定は `development` で、そこには
+env が 1 本も入っておらぬ ——`vercel env pull .env.local` を素で打つと
+**既存の 3 本が消えて `VERCEL_OIDC_TOKEN` だけになる**（2026-08-10 に実際にやった）。
+
+### `.env.local` を壊してしもうた時の復旧
+
+ローカル開発用の値はローカル Supabase から作り直せる:
+
+```bash
+{ echo 'NEXT_PUBLIC_APP_URL=http://localhost:3000'
+  supabase status -o env | sed -n \
+    's/^API_URL=/NEXT_PUBLIC_SUPABASE_URL=/p;
+     s/^ANON_KEY=/NEXT_PUBLIC_SUPABASE_ANON_KEY=/p;
+     s/^SERVICE_ROLE_KEY=/SUPABASE_SERVICE_ROLE_KEY=/p' | tr -d '"'
+} > .env.local
+```
+
+（`supabase start` が動いておることが前提。e2e 用は `.env.e2e` で別物ゆえ無関係。）
 
 ## 3. なぜ締め出しが起きたか（2026-08-10 の記録）
 
