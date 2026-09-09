@@ -5,8 +5,8 @@ export default function SettingsLoading() {
     <div className="flex flex-col gap-6 px-4 pt-12 pb-8">
       <Skeleton className="h-7 w-16 rounded-md" />
 
-      {/* 設定カード群（プロフィール・世帯・デフォルトページ・在庫自動追加・レシート方式・
-          赤ちゃん情報・エクスポート・テーマ・使い方・招待 等） */}
+      {/* 設定カード群（プロフィール・世帯・起動時のページ・赤ちゃん情報・Google カレンダー・
+          通知・エクスポート・テーマ・使い方・招待 等。枚数は概数） */}
       {Array.from({ length: 8 }, (_, i) => (
         <div
           key={i}

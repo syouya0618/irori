@@ -1,6 +1,6 @@
 import type { Metadata } from "next"
 import Link from "next/link"
-import { WifiOff, UtensilsCrossed } from "lucide-react"
+import { WifiOff, Baby } from "lucide-react"
 import { ReloadButton } from "./reload-button"
 
 export const metadata: Metadata = {
@@ -35,11 +35,11 @@ export default function OfflinePage() {
         <div className="flex w-full flex-col items-center gap-3">
           <ReloadButton />
           <Link
-            href="/meals"
+            href="/baby"
             className="inline-flex min-h-11 items-center gap-2 rounded-lg px-6 py-3 text-sm font-medium text-muted-foreground transition-colors duration-200 hover:text-foreground"
           >
-            <UtensilsCrossed className="size-4" />
-            献立ページへ
+            <Baby className="size-4" />
+            育児ページへ
           </Link>
         </div>
       </div>

@@ -18,7 +18,7 @@ import { loginViaMagicLink } from "./fixtures/auth"
  *   二層目 = `getAuthContext`（`(main)/layout.tsx` が reason="not-approved" で
  *            /pending-approval へ redirect）
  *
- * - 「/meals」ケースは **合成**の検証。proxy が inert でも layout が拾うため、
+ * - 「/baby」ケースは **合成**の検証。proxy が inert でも layout が拾うため、
  *   proxy 単独の実効性は測れない。測っているのは利用者から見た不変条件
  *   （未承認は保護ページの中身を見られない）。
  * - 「/login」ケースは **proxy 単独**の検証。`/login` は `"use client"` の
@@ -29,13 +29,13 @@ import { loginViaMagicLink } from "./fixtures/auth"
  * proxy の配置そのものは scripts/check-proxy-effective.py が CI で機械固定する。
  * こちらは「実際に走ったリクエストが弾かれる」という実行時の証人じゃ。
  */
-test("未承認ユーザーは保護ページ (/meals) を開けず /pending-approval へ送られる", async ({
+test("未承認ユーザーは保護ページ (/baby) を開けず /pending-approval へ送られる", async ({
   page,
   unapprovedUser,
 }) => {
   await loginViaMagicLink(page, unapprovedUser.email)
 
-  await page.goto("/meals")
+  await page.goto("/baby")
 
   await expect(page).toHaveURL(/\/pending-approval/, { timeout: 15_000 })
   await expect(page.getByRole("heading", { name: "承認待ち" })).toBeVisible()

@@ -12,7 +12,7 @@ import { resolve } from "node:path"
 import { safeReturnTo } from "../safe-return-to"
 
 describe("safeReturnTo", () => {
-  it.each(["/baby", "/meals?date=2026-08-10", "/settings#notify", "/"])(
+  it.each(["/baby", "/calendar?date=2026-08-10", "/settings#notify", "/"])(
     "同一オリジンの相対パス %s は通す",
     (path) => {
       expect(safeReturnTo(path)).toBe(path)

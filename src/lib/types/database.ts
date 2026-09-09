@@ -6,30 +6,6 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[]
 
-export type MealType = "breakfast" | "lunch" | "dinner" | "snack"
-export type MealReaction = "good" | "ok" | "bad"
-export type StoreType =
-  | "supermarket"
-  | "drugstore"
-  | "convenience"
-  | "online"
-  | "other"
-export type ItemCategory =
-  | "vegetable"
-  | "fruit"
-  | "meat"
-  | "fish"
-  | "dairy"
-  | "egg"
-  | "grain"
-  | "seasoning"
-  | "frozen"
-  | "snack_food"
-  | "other_food"
-  | "baby"
-  | "cleaning"
-  | "hygiene"
-  | "other_daily"
 export type HouseholdRole = "owner" | "member" | "viewer"
 export type InviteStatus = "pending" | "accepted" | "expired"
 export type BabyLogType =
@@ -56,6 +32,18 @@ export type FeedingType =
   | "solid"
   | "pumped"
 export type DiaperType = "pee" | "poop" | "both"
+/**
+ * うんちの量（`baby_logs.poop_amount`）。DB 側は TEXT + CHECK（20260909100001）ゆえ
+ * migration で値が増えうる — 未知値で画面を倒さず null へ退化させること（enum drift 防御）。
+ * NULL は「量の記録なし」（列追加以前の行・量を選ばずに記録した行）。
+ */
+export type PoopAmount = "small" | "large"
+/**
+ * 母乳サイクル（feeding_type='breast'）でどちらの側から吸わせ始めたか
+ * （`baby_logs.breast_start_side`）。TEXT + CHECK。NULL は不明（列追加以前の行・
+ * 旧形式 localStorage から復元したタイマー）。
+ */
+export type BreastStartSide = "left" | "right"
 export type CalendarEventSource = "native" | "google"
 /**
  * Google 接続の恒久状態。`needs_reauth` は refresh token 失効（invalid_grant）で、
@@ -80,7 +68,6 @@ export interface Database {
         Row: {
           id: string
           name: string
-          auto_stock_categories: Json
           baby_name: string | null
           baby_birth_date: string | null
           feeding_interval_min: number
@@ -89,7 +76,6 @@ export interface Database {
         Insert: {
           id?: string
           name?: string
-          auto_stock_categories?: Json
           baby_name?: string | null
           baby_birth_date?: string | null
           feeding_interval_min?: number
@@ -98,7 +84,6 @@ export interface Database {
         Update: {
           id?: string
           name?: string
-          auto_stock_categories?: Json
           baby_name?: string | null
           baby_birth_date?: string | null
           feeding_interval_min?: number
@@ -171,233 +156,6 @@ export interface Database {
         }
         Relationships: []
       }
-      meals: {
-        Row: {
-          id: string
-          household_id: string
-          date: string
-          meal_type: MealType
-          title: string
-          is_eating_out: boolean
-          template_id: string | null
-          created_by: string
-          created_at: string
-          updated_at: string
-        }
-        Insert: {
-          id?: string
-          household_id: string
-          date: string
-          meal_type: MealType
-          title: string
-          is_eating_out?: boolean
-          template_id?: string | null
-          created_by: string
-        }
-        Update: {
-          date?: string
-          meal_type?: MealType
-          title?: string
-          is_eating_out?: boolean
-          template_id?: string | null
-        }
-        Relationships: []
-      }
-      meal_reactions: {
-        Row: {
-          id: string
-          meal_id: string
-          user_id: string
-          reaction: MealReaction
-          created_at: string
-        }
-        Insert: {
-          id?: string
-          meal_id: string
-          user_id: string
-          reaction: MealReaction
-        }
-        Update: {
-          reaction?: MealReaction
-        }
-        Relationships: []
-      }
-      meal_ingredients: {
-        Row: {
-          id: string
-          meal_id: string
-          name: string
-          quantity: string | null
-          category: ItemCategory
-          created_at: string
-        }
-        Insert: {
-          id?: string
-          meal_id: string
-          name: string
-          quantity?: string | null
-          category?: ItemCategory
-        }
-        Update: {
-          name?: string
-          quantity?: string | null
-          category?: ItemCategory
-        }
-        Relationships: []
-      }
-      meal_templates: {
-        Row: {
-          id: string
-          household_id: string
-          title: string
-          description: string | null
-          ingredients: Json
-          created_by: string
-          created_at: string
-          updated_at: string
-        }
-        Insert: {
-          id?: string
-          household_id: string
-          title: string
-          description?: string | null
-          ingredients?: Json
-          created_by: string
-        }
-        Update: {
-          title?: string
-          description?: string | null
-          ingredients?: Json
-        }
-        Relationships: []
-      }
-      shopping_items: {
-        Row: {
-          id: string
-          household_id: string
-          name: string
-          quantity: string | null
-          category: ItemCategory
-          store_type: StoreType
-          is_checked: boolean
-          checked_by: string | null
-          checked_at: string | null
-          meal_id: string | null
-          sort_order: number
-          created_by: string
-          created_at: string
-        }
-        Insert: {
-          id?: string
-          household_id: string
-          name: string
-          quantity?: string | null
-          category?: ItemCategory
-          store_type?: StoreType
-          is_checked?: boolean
-          checked_by?: string | null
-          checked_at?: string | null
-          meal_id?: string | null
-          sort_order?: number
-          created_by: string
-        }
-        Update: {
-          name?: string
-          quantity?: string | null
-          category?: ItemCategory
-          store_type?: StoreType
-          is_checked?: boolean
-          checked_by?: string | null
-          checked_at?: string | null
-          sort_order?: number
-        }
-        Relationships: []
-      }
-      eating_out_logs: {
-        Row: {
-          id: string
-          meal_id: string
-          restaurant_name: string | null
-          place_id: string | null
-          photo_url: string | null
-          memo: string | null
-          rating: number | null
-          created_at: string
-        }
-        Insert: {
-          id?: string
-          meal_id: string
-          restaurant_name?: string | null
-          place_id?: string | null
-          photo_url?: string | null
-          memo?: string | null
-          rating?: number | null
-        }
-        Update: {
-          restaurant_name?: string | null
-          place_id?: string | null
-          photo_url?: string | null
-          memo?: string | null
-          rating?: number | null
-        }
-        Relationships: []
-      }
-      stock_items: {
-        Row: {
-          id: string
-          household_id: string
-          name: string
-          category: ItemCategory
-          quantity: number
-          unit: string | null
-          expires_at: string | null
-          created_by: string
-          created_at: string
-          updated_at: string
-        }
-        Insert: {
-          id?: string
-          household_id: string
-          name: string
-          category?: ItemCategory
-          quantity?: number
-          unit?: string | null
-          expires_at?: string | null
-          created_by: string
-        }
-        Update: {
-          name?: string
-          category?: ItemCategory
-          quantity?: number
-          unit?: string | null
-          expires_at?: string | null
-        }
-        Relationships: []
-      }
-      purchase_history: {
-        Row: {
-          id: string
-          household_id: string
-          item_name: string
-          category: ItemCategory | null
-          store_type: StoreType | null
-          purchased_at: string
-        }
-        Insert: {
-          id?: string
-          household_id: string
-          item_name: string
-          category?: ItemCategory | null
-          store_type?: StoreType | null
-          purchased_at?: string
-        }
-        Update: {
-          item_name?: string
-          category?: ItemCategory | null
-          store_type?: StoreType | null
-        }
-        Relationships: []
-      }
       baby_logs: {
         Row: {
           id: string
@@ -415,7 +173,11 @@ export interface Database {
           breast_left_sec: number | null
           /** 母乳サイクルの右の授乳秒数（同上） */
           breast_right_sec: number | null
+          /** 母乳サイクルの開始側（breast 行のみ非 NULL 可・NULL は不明） */
+          breast_start_side: BreastStartSide | null
           diaper_type: DiaperType | null
+          /** うんちの量（diaper_type が poop / both の行のみ非 NULL 可・NULL は記録なし） */
+          poop_amount: PoopAmount | null
           temperature: number | null
           weight_g: number | null
           height_cm: number | null
@@ -437,7 +199,9 @@ export interface Database {
           breast_right_count?: number | null
           breast_left_sec?: number | null
           breast_right_sec?: number | null
+          breast_start_side?: BreastStartSide | null
           diaper_type?: DiaperType | null
+          poop_amount?: PoopAmount | null
           temperature?: number | null
           weight_g?: number | null
           height_cm?: number | null
@@ -454,7 +218,9 @@ export interface Database {
           breast_right_count?: number | null
           breast_left_sec?: number | null
           breast_right_sec?: number | null
+          breast_start_side?: BreastStartSide | null
           diaper_type?: DiaperType | null
+          poop_amount?: PoopAmount | null
           temperature?: number | null
           weight_g?: number | null
           height_cm?: number | null
@@ -937,23 +703,8 @@ export interface Database {
         Args: { p_name: string }
         Returns: string
       }
-      update_meal_with_ingredients: {
-        Args: {
-          p_meal_id: string
-          p_date: string
-          p_meal_type: MealType
-          p_title: string
-          p_is_eating_out: boolean
-          p_ingredients: Json
-        }
-        Returns: void
-      }
     }
     Enums: {
-      meal_type: MealType
-      meal_reaction: MealReaction
-      store_type: StoreType
-      item_category: ItemCategory
       household_role: HouseholdRole
       invite_status: InviteStatus
       baby_log_type: BabyLogType

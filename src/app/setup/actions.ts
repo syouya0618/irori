@@ -32,8 +32,8 @@ export async function createHousehold(name: string) {
     return { error: "世帯の作成に失敗しました。もう一度お試しください。" }
   }
 
-  revalidatePath("/meals")
-  redirect("/meals")
+  revalidatePath("/baby")
+  redirect("/baby")
 }
 
 /**
@@ -112,6 +112,6 @@ export async function joinByInviteToken(rawInput: string) {
     return { error: "世帯への参加に失敗しました。もう一度お試しください。" }
   }
 
-  revalidatePath("/meals")
-  redirect("/meals")
+  revalidatePath("/baby")
+  redirect("/baby")
 }

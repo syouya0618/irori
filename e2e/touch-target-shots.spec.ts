@@ -22,15 +22,12 @@ test("主要画面を撮る", async ({ page, approvedUser }) => {
   await expect(page).toHaveURL(/\/setup/, { timeout: 15_000 })
   await page.getByLabel("世帯名").fill("撮影用世帯")
   await page.getByRole("button", { name: "世帯を作成する" }).click()
-  await expect(page).toHaveURL(/\/meals/, { timeout: 15_000 })
+  await expect(page).toHaveURL(/\/baby/, { timeout: 15_000 })
 
   // 片手操作の実寸で見たいゆえ iPhone 相当の幅にする（DESIGN_SYSTEM の前提）。
   await page.setViewportSize({ width: 390, height: 844 })
 
   for (const [name, path] of [
-    ["meals", "/meals"],
-    ["shopping", "/shopping"],
-    ["stock", "/stock"],
     ["baby", "/baby"],
     ["calendar", "/calendar"],
     ["settings", "/settings"],

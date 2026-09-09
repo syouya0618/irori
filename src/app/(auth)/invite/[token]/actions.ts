@@ -38,6 +38,6 @@ export async function acceptInvitation(invitationId: string) {
     return { error: "世帯への参加に失敗しました。もう一度お試しください。" }
   }
 
-  revalidatePath("/meals")
-  redirect("/meals")
+  revalidatePath("/baby")
+  redirect("/baby")
 }

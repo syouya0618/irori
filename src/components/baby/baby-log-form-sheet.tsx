@@ -47,7 +47,13 @@ import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
 // startTransition 内の未処理 reject は error boundary へ bubble し、入力/記録が
 // 無言で失われる。握ってトーストへ倒す（機序の詳細は offline-error.ts）。
 import { toastOfflineError } from "@/lib/utils/offline-error"
-import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
+import type {
+  BabyLogType,
+  FeedingType,
+  DiaperType,
+  PoopAmount,
+  BreastStartSide,
+} from "@/lib/types/database"
 import type { BabyLogData } from "@/lib/types/baby"
 
 // 新規記録で選べる授乳タイプ。母乳は 'breast'（左右の吸わせ回数を持つサイクル 1 行）へ
@@ -75,6 +81,36 @@ function feedingTypeOptions(
 }
 
 const DIAPER_TYPES: DiaperType[] = ["pee", "poop", "both"]
+
+// うんちの量（poop_amount）。「指定なし」= null は量を記録しない（旧行と同じ形）。
+// 量を持てるのはうんちを含む種別だけ（DB CHECK chk_poop_amount_only_poop のミラー —
+// サーバは pee への種別変更で量を強制 null 化するが、画面でも欄ごと消して迷わせない）。
+const POOP_AMOUNT_OPTIONS: { value: PoopAmount | null; label: string }[] = [
+  { value: "small", label: "少量" },
+  { value: "large", label: "大量" },
+  { value: null, label: "指定なし" },
+]
+
+function allowsPoopAmount(type: DiaperType): boolean {
+  return type === "poop" || type === "both"
+}
+
+/** DB 由来の値を型へ絞る（TEXT + CHECK ゆえ未知値は null = 指定なしへ退化） */
+function seedPoopAmount(value: string | null | undefined): PoopAmount | null {
+  return value === "small" || value === "large" ? value : null
+}
+
+// 母乳サイクルの開始側（breast_start_side）。「不明」= null は旧行の既定形で、
+// 編集で分からぬ時に無理に左右を選ばせない。
+const START_SIDE_OPTIONS: { value: BreastStartSide | null; label: string }[] = [
+  { value: "left", label: "左から" },
+  { value: "right", label: "右から" },
+  { value: null, label: "不明" },
+]
+
+function seedStartSide(value: string | null | undefined): BreastStartSide | null {
+  return value === "left" || value === "right" ? value : null
+}
 
 // 量（ml）を伴う授乳タイプ。母乳（サイクル/片側とも）は量を測らないため除外する。
 const AMOUNT_FEEDING_TYPES: FeedingType[] = ["bottle", "solid", "pumped"]
@@ -203,6 +239,15 @@ export function BabyLogFormSheet({
     hasSides ? String((log!.breast_right_sec as number) % 60) : "",
   )
   const [diaperType, setDiaperType] = useState<DiaperType>(log?.diaper_type ?? "pee")
+  // うんちの量。既存行から seed（旧行・未指定は null = 指定なし）。
+  const [poopAmount, setPoopAmount] = useState<PoopAmount | null>(
+    seedPoopAmount(log?.poop_amount),
+  )
+  // 母乳サイクルの開始側。既存行から seed（旧行は null = 不明）。新規記録も null 既定
+  // — 分からぬものを「左」と決め打ちで捏造しない（タイマー経路はタップした側を確実に送る）。
+  const [breastStartSide, setBreastStartSide] = useState<BreastStartSide | null>(
+    seedStartSide(log?.breast_start_side),
+  )
   const [temperature, setTemperature] = useState(log?.temperature?.toString() ?? "")
   const [weightG, setWeightG] = useState(log?.weight_g?.toString() ?? "")
   const [heightCm, setHeightCm] = useState(log?.height_cm?.toString() ?? "")
@@ -269,11 +314,14 @@ export function BabyLogFormSheet({
               toast.error(BREAST_COUNTS_ERROR)
               return
             }
+            // 開始側は母乳サイクルのみ（それ以外はサーバが拒否する契約ゆえ null）
+            const startSide = feedingType === "breast" ? breastStartSide : null
             result = await recordFeeding({
               feedingType,
               amountMl: amt,
               breastLeftCount: counts?.left ?? null,
               breastRightCount: counts?.right ?? null,
+              breastStartSide: startSide,
               loggedAt,
               memo: memo || undefined,
             })
@@ -289,6 +337,7 @@ export function BabyLogFormSheet({
                 // タイムラインが「母乳」だけ（内訳なし）で表示されてしまう。
                 breastLeftCount: counts?.left ?? null,
                 breastRightCount: counts?.right ?? null,
+                breastStartSide: startSide,
                 memo: memo || null,
               })
             break
@@ -423,6 +472,9 @@ export function BabyLogFormSheet({
             }
             updates.breastLeftCount = counts.left
             updates.breastRightCount = counts.right
+            // 開始側は母乳サイクルの時だけ送る（null = 不明へ戻す）。'breast' 以外へ
+            // 切替えた時は送らない — updateLog が種別変更に連動して null 化する契約。
+            updates.breastStartSide = breastStartSide
           }
           if (hasSides && feedingType === "breast") {
             // sides を持つ行は左右それぞれを送り、合計はサーバが導出する
@@ -464,6 +516,8 @@ export function BabyLogFormSheet({
         }
         if (log.log_type === "diaper") {
           updates.diaperType = diaperType
+          // 量は種類と対で送る（updateLog の契約）。pee は量を持てないため null。
+          updates.poopAmount = allowsPoopAmount(diaperType) ? poopAmount : null
         }
         if (log.log_type === "temperature") {
           const temp = parseFloat(temperature)
@@ -601,6 +655,27 @@ export function BabyLogFormSheet({
                 </div>
               )}
 
+              {/* 母乳サイクルの開始側（'breast' のみ）。回数・時間は順序を持たぬため
+                  「どちらから始めたか」はここでしか直せない。不明のままでも保存できる。 */}
+              {feedingType === "breast" && (
+                <div className="space-y-1.5">
+                  <Label>開始側</Label>
+                  <div className="flex gap-1.5">
+                    {START_SIDE_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.label}
+                        type="button"
+                        onClick={() => setBreastStartSide(opt.value)}
+                        disabled={isPending}
+                        className={segmentCn(breastStartSide === opt.value)}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* 左右別授乳時間の編集（sides を持つサイクル行のみ）。合計欄は出さない
                   — 合計だけの編集は updateLog が fail-loud で拒否する契約。 */}
               {log && hasSides && feedingType === "breast" && (
@@ -711,21 +786,43 @@ export function BabyLogFormSheet({
 
           {/* Diaper fields */}
           {logType === "diaper" && (
-            <div className="space-y-1.5">
-              <Label>種類</Label>
-              <div className="flex gap-1.5">
-                {DIAPER_TYPES.map((type) => (
-                  <button
-                    key={type}
-                    type="button"
-                    onClick={() => setDiaperType(type)}
-                    className={segmentCn(diaperType === type)}
-                  >
-                    {getDiaperTypeLabel(type)}
-                  </button>
-                ))}
+            <>
+              <div className="space-y-1.5">
+                <Label>種類</Label>
+                <div className="flex gap-1.5">
+                  {DIAPER_TYPES.map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setDiaperType(type)}
+                      className={segmentCn(diaperType === type)}
+                    >
+                      {getDiaperTypeLabel(type)}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+
+              {/* うんちの量（うんちを含む種別のみ）。量なしの旧行は「指定なし」で開く。 */}
+              {allowsPoopAmount(diaperType) && (
+                <div className="space-y-1.5">
+                  <Label>うんちの量</Label>
+                  <div className="flex gap-1.5">
+                    {POOP_AMOUNT_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.label}
+                        type="button"
+                        onClick={() => setPoopAmount(opt.value)}
+                        disabled={isPending}
+                        className={segmentCn(poopAmount === opt.value)}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
           {/* Temperature field */}

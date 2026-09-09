@@ -35,7 +35,7 @@ async function loginAndOpenSettings(page: Page, email: string): Promise<void> {
   await expect(page).toHaveURL(/\/setup/, { timeout: 15_000 })
   await page.getByLabel("世帯名").fill("E2E 誕生日世帯")
   await page.getByRole("button", { name: "世帯を作成する" }).click()
-  await expect(page).toHaveURL(/\/meals/, { timeout: 15_000 })
+  await expect(page).toHaveURL(/\/baby/, { timeout: 15_000 })
   await page.goto("/settings")
   // 赤ちゃん情報カードの CardTitle は heading role を持たない div ゆえ
   // getByRole("heading") では拾えない。到達判定は一意な「生年月日」入力に置く。

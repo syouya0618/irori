@@ -11,9 +11,10 @@ import {
 } from "lucide-react"
 import {
   getFeedingTypeLabel,
-  getDiaperTypeLabel,
+  formatDiaperSummary,
   formatBreastCounts,
   formatBreastSideBreakdown,
+  formatBreastStartSide,
   formatDurationSec,
 } from "@/lib/utils/baby-log-labels"
 import { formatTimeJst } from "@/lib/utils/date-jst"
@@ -41,7 +42,13 @@ function getLogSummary(log: BabyLogData): string {
     case "feeding": {
       if (!log.feeding_type) return "授乳"
       const label = getFeedingTypeLabel(log.feeding_type)
-      const parts = [label]
+      // 母乳サイクル行は開始側を「母乳（左から）」と種別に添える（不明なら何も足さない
+      // — 旧行は開始側を持たぬのが正常ゆえ、欠落を目立たせない）
+      const parts = [
+        log.feeding_type === "breast"
+          ? `${label}${formatBreastStartSide(log.breast_start_side)}`
+          : label,
+      ]
       // 母乳サイクル（'breast'）で左右別時間（sides）を持つ行は
       // 「母乳 左2回7分30秒・右1回5分」と側ごとに表示し、合計は併記しない
       // （左右の和と自明・二重表示は密度を壊す）。sides を持たない行
@@ -72,7 +79,10 @@ function getLogSummary(log: BabyLogData): string {
       return parts.join(" ")
     }
     case "diaper":
-      return log.diaper_type ? getDiaperTypeLabel(log.diaper_type) : "おむつ"
+      // 量を持つ行は「うんち（大量）」。量なし（旧行・指定なし）は従来どおり種別だけ
+      return log.diaper_type
+        ? formatDiaperSummary(log.diaper_type, log.poop_amount)
+        : "おむつ"
     // 廃止済みの旧種別（上の logTypeConfig と同じ理由で退化形のみ残す）
     case "sleep":
       return "睡眠"

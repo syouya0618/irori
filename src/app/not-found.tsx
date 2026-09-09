@@ -19,7 +19,7 @@ export default function NotFound() {
         </div>
 
         <Link
-          href="/meals"
+          href="/baby"
           className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground transition-colors duration-200 hover:bg-primary/90"
         >
           <Home className="size-4" />

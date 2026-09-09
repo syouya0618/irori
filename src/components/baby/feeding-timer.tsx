@@ -12,8 +12,10 @@ import { Button } from "@/components/ui/button"
 import { Loader2, Square, Check, Minus, Plus } from "lucide-react"
 import { toast } from "sonner"
 import { recordFeeding } from "@/app/(main)/baby/actions"
-import { clampFeedingDurationSec } from "@/lib/domain"
-import { resolveBreastSideSeconds } from "@/lib/domain/feeding"
+import {
+  clampFeedingDurationSec,
+  resolveBreastSideSeconds,
+} from "@/lib/domain/feeding"
 import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
 import { useWakeLock } from "@/lib/hooks/use-wake-lock"
 import { useNow } from "@/lib/hooks/use-now"
@@ -24,7 +26,7 @@ import {
   formatBreastSideBreakdown,
 } from "@/lib/utils/baby-log-labels"
 import { toJstDateString, todayJstString } from "@/lib/utils/date-jst"
-import type { FeedingType } from "@/lib/types/database"
+import type { FeedingType, BreastStartSide } from "@/lib/types/database"
 import type { BabyLogData } from "@/lib/types/baby"
 
 const STORAGE_KEY = "irori:feeding-timer"
@@ -64,6 +66,12 @@ type BreastSide = "breast_left" | "breast_right"
  */
 interface CycleState {
   side: BreastSide
+  /**
+   * サイクルを始めた側（DB の breast_start_side）。counts / sides は順序を持たぬため
+   * ここで別に覚える。旧形式 localStorage から復元して片側からしか吸わせていない
+   * （反対側 0 回）なら推定できるが、両側とも 1 回以上なら復元不能 = null（不明）。
+   */
+  startSide: BreastSide | null
   leftCount: number
   rightCount: number
   /** 側ごとの確定済み積算秒（現在側の走行分は含まない）。sidesUnknown 時は常に 0。 */
@@ -94,6 +102,25 @@ interface TimerState {
   leftSec?: number
   rightSec?: number
   sideSince?: string
+  /** 開始側（さらに新しい形式）。無ければ counts から推定し、推定不能なら不明。 */
+  startSide?: BreastSide
+}
+
+/** localStorage / DB 用に CycleState の側を DB 値（left / right）へ写す。 */
+function toDbStartSide(side: BreastSide | null): BreastStartSide | null {
+  if (side === "breast_left") return "left"
+  if (side === "breast_right") return "right"
+  return null
+}
+
+/**
+ * 旧形式（startSide を持たぬ TimerState）の復元時に開始側を推定する。
+ * 片側しか吸わせていなければその側で確定、両側とも吸わせていれば順序は復元不能。
+ */
+function inferStartSide(leftCount: number, rightCount: number): BreastSide | null {
+  if (leftCount > 0 && rightCount === 0) return "breast_left"
+  if (rightCount > 0 && leftCount === 0) return "breast_right"
+  return null
 }
 
 function formatTimer(seconds: number): string {
@@ -120,6 +147,7 @@ function normalizeSide(type: FeedingType): BreastSide {
 function seedCycle(side: BreastSide, sideSinceIso: string): CycleState {
   return {
     side,
+    startSide: side,
     leftCount: side === "breast_left" ? 1 : 0,
     rightCount: side === "breast_right" ? 1 : 0,
     leftSec: 0,
@@ -164,6 +192,18 @@ function restoreCycle(state: TimerState): CycleState {
       ? seedCycle(side, nowIso)
       : { leftCount: left, rightCount: right }
 
+  // 開始側: 保存値があればそれ、無ければ counts から推定（推定不能なら null = 不明）。
+  // counts を seed し直した（壊れていた）場合は現在側から始めたものとして扱う。
+  const storedStart =
+    state.startSide === "breast_left" || state.startSide === "breast_right"
+      ? state.startSide
+      : null
+  const startSide =
+    storedStart ??
+    ("startSide" in counts
+      ? counts.startSide
+      : inferStartSide(counts.leftCount, counts.rightCount))
+
   // 左右別秒の復元。leftSec/rightSec が非負整数・sideSince が妥当な ISO の
   // 3点セットが揃わなければ sidesUnknown（粘着 — CycleState の docstring 参照）。
   const leftSec =
@@ -180,6 +220,7 @@ function restoreCycle(state: TimerState): CycleState {
   if (leftSec === null || rightSec === null || !sideSinceValid) {
     return {
       side,
+      startSide,
       leftCount: counts.leftCount,
       rightCount: counts.rightCount,
       leftSec: 0,
@@ -192,6 +233,7 @@ function restoreCycle(state: TimerState): CycleState {
   // みなして banking する（切替はタップでしか起きないため正しい帰属）。
   return {
     side,
+    startSide,
     leftCount: counts.leftCount,
     rightCount: counts.rightCount,
     leftSec,
@@ -207,6 +249,8 @@ function persistTimerState(startedAt: Date, cycle: CycleState) {
     feedingType: cycle.side,
     leftCount: cycle.leftCount,
     rightCount: cycle.rightCount,
+    // 不明（null）は書かない（復元時に counts から推定し直す余地を残す）
+    ...(cycle.startSide ? { startSide: cycle.startSide } : {}),
     // sidesUnknown のサイクルは秒情報を保存しない（旧形式のまま）= 開き直しても
     // sidesUnknown が復元される粘着性の実装。書けば「途中からの配分」が本物に見えてしまう
     ...(cycle.sidesUnknown
@@ -352,6 +396,18 @@ export function FeedingTimer({
     if (startedAt) persistTimerState(startedAt, next)
   }
 
+  /**
+   * 手動入力の開始側（クイックアクションでタップした側が既定）。現在側も揃える —
+   * 手動入力では「現在側」は 0 秒救済（resolveBreastSideSeconds）の寄せ先にしか
+   * 使われず、開始側と食い違わせる意味が無い。
+   */
+  function handleStartSideChange(next: BreastSide) {
+    if (cycle.startSide === next) return
+    const bumped: CycleState = { ...cycle, startSide: next, side: next }
+    setCycle(bumped)
+    if (startedAt) persistTimerState(startedAt, bumped)
+  }
+
   const elapsedSeconds = startedAt
     ? Math.max(0, Math.floor((now.getTime() - startedAt.getTime()) / 1000))
     : 0
@@ -402,12 +458,16 @@ export function FeedingTimer({
     isSavingRef.current = true
     setIsSaving(true)
 
+    // 開始側。タイマーはタップした側で確定、旧形式復元は推定（不能なら null = 不明）。
+    const breastStartSide = toDbStartSide(cycle.startSide)
+
     let result: Awaited<ReturnType<typeof recordFeeding>>
     try {
       result = await recordFeeding({
         feedingType: "breast",
         breastLeftCount: leftCount,
         breastRightCount: rightCount,
+        breastStartSide,
         // sides あり → 合計はサーバ導出（durationSec の同時指定はサーバが拒否する契約）。
         // sides なし（sidesUnknown）→ 従来どおり合計のみ
         ...(sides
@@ -462,6 +522,7 @@ export function FeedingTimer({
         breastRightCount: rightCount,
         breastLeftSec: sides?.leftSec ?? null,
         breastRightSec: sides?.rightSec ?? null,
+        breastStartSide,
         durationSec,
         loggedAt,
       })
@@ -477,10 +538,10 @@ export function FeedingTimer({
 
     localStorage.removeItem(STORAGE_KEY)
     setStartedAt(null)
-    // 内訳（左2・右1）と時間を添えて「何が記録されたか」を確認できるようにする。
+    // 内訳（左から・左2・右1）と時間を添えて「何が記録されたか」を確認できるようにする。
     // 日跨ぎで append を見送った時は必ず前日保存を明示する — 無言でスキップすると
     // 「記録されていない」と誤解して再タップし、二重記録になる。
-    const detail = sides
+    const breakdown = sides
       ? formatBreastSideBreakdown(
           leftCount,
           rightCount,
@@ -490,6 +551,13 @@ export function FeedingTimer({
       : [formatBreastCounts(leftCount, rightCount), formatDurationSec(durationSec)]
           .filter(Boolean)
           .join("・")
+    const startLabel =
+      breastStartSide === "left"
+        ? "左から"
+        : breastStartSide === "right"
+          ? "右から"
+          : ""
+    const detail = [startLabel, breakdown].filter(Boolean).join("・")
     toast.success(
       isSameJstDay
         ? `授乳を記録しました（${detail}）`
@@ -617,10 +685,14 @@ export function FeedingTimer({
                 {formatTimer(elapsedSeconds)}
               </div>
 
-              {/* 吸わせた回数（左右の内訳） */}
+              {/* 吸わせた回数（左右の内訳）。開始側は切替後も確認できるよう常に添える */}
               <div className="flex flex-col items-center gap-1">
                 <span className="text-xs font-medium text-muted-foreground">
-                  吸わせた回数
+                  {cycle.startSide === "breast_left"
+                    ? "左から開始・吸わせた回数"
+                    : cycle.startSide === "breast_right"
+                      ? "右から開始・吸わせた回数"
+                      : "吸わせた回数"}
                 </span>
                 {/* 手動入力で両側 0 にしてから timer へ戻ると空になるため 0回 と出す
                     （反対側をタップすればその側が 1 になり復帰できる）。
@@ -654,6 +726,31 @@ export function FeedingTimer({
             </>
           ) : (
             <>
+              {/* 開始側（タップした側が既定）。手動入力は順序を自動で知り得ぬためここで選ぶ */}
+              <div className="flex w-full flex-col gap-1">
+                <span className="px-1 text-xs font-medium text-muted-foreground">
+                  開始側
+                </span>
+                <div className="flex w-full gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => handleStartSideChange("breast_left")}
+                    disabled={isSaving}
+                    className={segmentCn(cycle.startSide === "breast_left")}
+                  >
+                    左から
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleStartSideChange("breast_right")}
+                    disabled={isSaving}
+                    className={segmentCn(cycle.startSide === "breast_right")}
+                  >
+                    右から
+                  </button>
+                </div>
+              </div>
+
               {/* 左右の回数（ステッパー） */}
               <div className="flex w-full gap-3">
                 <CountStepper

@@ -45,7 +45,9 @@ function bottleFeedingLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
     breast_right_count: null,
     breast_left_sec: null,
     breast_right_sec: null,
+    breast_start_side: null,
     diaper_type: null,
+    poop_amount: null,
     temperature: null,
     weight_g: null,
     height_cm: null,
@@ -568,6 +570,223 @@ describe("BabyLogFormSheet の授乳時間（duration）編集", () => {
       />,
     )
     expect(screen.queryByLabelText("時間（分）")).toBeNull()
+  })
+})
+
+describe("BabyLogFormSheet のおむつ編集（うんちの量）", () => {
+  function diaperLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
+    return bottleFeedingLog({
+      log_type: "diaper",
+      feeding_type: null,
+      amount_ml: null,
+      diaper_type: "poop",
+      poop_amount: null,
+      ...overrides,
+    })
+  }
+
+  it("うんち行は「うんちの量」の 少量 / 大量 / 指定なし が出て、既存値が選択済み", () => {
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={diaperLog({ poop_amount: "large" })}
+      />,
+    )
+    expect(screen.getByText("うんちの量")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "大量" })).toHaveClass("bg-primary")
+    expect(screen.getByRole("button", { name: "少量" })).not.toHaveClass("bg-primary")
+  })
+
+  it("量なしの旧行は「指定なし」が選択済みで開く（後方互換）", () => {
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={diaperLog({ poop_amount: null })}
+      />,
+    )
+    expect(screen.getByRole("button", { name: "指定なし" })).toHaveClass("bg-primary")
+  })
+
+  it("量を変えて更新すると diaperType と対で poopAmount が updateLog に渡る", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={diaperLog({ poop_amount: null })}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "少量" }))
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
+    expect(mockedUpdateLog).toHaveBeenCalledWith(
+      "log-1",
+      expect.objectContaining({ diaperType: "poop", poopAmount: "small" }),
+    )
+  })
+
+  it("おしっこへ切替えると量の欄が消え、poopAmount: null を送る", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={diaperLog({ poop_amount: "large" })}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
+    expect(screen.queryByText("うんちの量")).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
+    expect(mockedUpdateLog).toHaveBeenCalledWith(
+      "log-1",
+      expect.objectContaining({ diaperType: "pee", poopAmount: null }),
+    )
+  })
+
+  it("おしっこ行では量の欄を出さない", () => {
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={diaperLog({ diaper_type: "pee" })}
+      />,
+    )
+    expect(screen.queryByText("うんちの量")).toBeNull()
+  })
+})
+
+describe("BabyLogFormSheet の母乳サイクルの開始側（breast_start_side）", () => {
+  function breastLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
+    return bottleFeedingLog({
+      feeding_type: "breast",
+      amount_ml: null,
+      breast_left_count: 1,
+      breast_right_count: 1,
+      duration_sec: 600,
+      duration_min: 10,
+      ...overrides,
+    })
+  }
+
+  it("母乳行には 左から / 右から / 不明 が出て、既存値が選択済み", () => {
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastLog({ breast_start_side: "right" })}
+      />,
+    )
+    expect(screen.getByText("開始側")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "右から" })).toHaveClass("bg-primary")
+  })
+
+  it("開始側を持たない旧行は「不明」が選択済みで、そのまま更新すると null を送る", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastLog({ breast_start_side: null })}
+      />,
+    )
+    expect(screen.getByRole("button", { name: "不明" })).toHaveClass("bg-primary")
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
+    expect(mockedUpdateLog).toHaveBeenCalledWith(
+      "log-1",
+      expect.objectContaining({ feedingType: "breast", breastStartSide: null }),
+    )
+  })
+
+  it("左から を選んで更新すると feedingType と対で breastStartSide: left が渡る", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastLog({ breast_start_side: null })}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "左から" }))
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
+    expect(mockedUpdateLog).toHaveBeenCalledWith(
+      "log-1",
+      expect.objectContaining({ feedingType: "breast", breastStartSide: "left" }),
+    )
+  })
+
+  it("ミルクへ切替えると開始側の欄は消え、breastStartSide を送らない（サーバが null 化）", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={breastLog({ breast_start_side: "left" })}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "ミルク" }))
+    expect(screen.queryByText("開始側")).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
+    const payload = mockedUpdateLog.mock.calls[0][1]
+    expect(payload.feedingType).toBe("bottle")
+    expect(payload).not.toHaveProperty("breastStartSide")
+  })
+
+  it("作成: 母乳で 右から を選ぶと recordFeeding と楽観行に right が乗る", async () => {
+    mockedRecordFeeding.mockResolvedValue({ error: null, id: "feed-side" })
+    const onLogRecorded = vi.fn()
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={null}
+        createLogType="feeding"
+        createFeedingType="breast"
+        onLogRecorded={onLogRecorded}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "右から" }))
+    fireEvent.click(screen.getByRole("button", { name: "記録する" }))
+    await waitFor(() => expect(mockedRecordFeeding).toHaveBeenCalled())
+    expect(mockedRecordFeeding).toHaveBeenCalledWith(
+      expect.objectContaining({ feedingType: "breast", breastStartSide: "right" }),
+    )
+    await waitFor(() => expect(onLogRecorded).toHaveBeenCalled())
+    expect(onLogRecorded.mock.calls[0][0].breast_start_side).toBe("right")
+  })
+
+  it("作成: 開始側を選ばなければ null（不明）で記録する — 左を決め打ちで捏造しない", async () => {
+    mockedRecordFeeding.mockResolvedValue({ error: null, id: "feed-unknown" })
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={null}
+        createLogType="feeding"
+        createFeedingType="breast"
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "記録する" }))
+    await waitFor(() => expect(mockedRecordFeeding).toHaveBeenCalled())
+    expect(mockedRecordFeeding).toHaveBeenCalledWith(
+      expect.objectContaining({ breastStartSide: null }),
+    )
   })
 })
 

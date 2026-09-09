@@ -2,9 +2,9 @@
  * UpcomingEventsCard（CAL-4「今日・明日の予定」アプリ内カード）のテスト。
  *
  * refetch style の chain mock（`.from → .select → .eq → .gte → .lte → .order`）を
- * meal-week-view.test.tsx と同一 idiom で使う。本コンポーネントは Realtime を
- * 購読せず visibilitychange/focus refetch のみだが、mount 時に createClient() を
- * 呼ぶため mock は必要。
+ * test-utils/supabase-realtime-mock.ts の buildRefetchSupabaseMock で組む。
+ * 本コンポーネントは Realtime を購読せず visibilitychange/focus refetch のみだが、
+ * refetch で createClient() を呼ぶため mock は必要。置き場は /baby（BabyDashboard）。
  *
  * 時刻語彙は CalendarAgenda（CAL-2）と共有する agendaTimeDisplay に委ねるため、
  * 「→」表記の期待値は agenda 側の表示分岐表と一致させる。

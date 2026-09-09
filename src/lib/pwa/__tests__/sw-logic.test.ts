@@ -184,14 +184,7 @@ describe("sw.js __TEST_HOOKS__", () => {
   const hooks = loadSw()
 
   it("APP_PAGES / PRECACHE_URLS / CACHE_NAMES が期待値で公開されている", () => {
-    expect(hooks.APP_PAGES).toEqual([
-      "/meals",
-      "/shopping",
-      "/stock",
-      "/baby",
-      "/calendar",
-      "/settings",
-    ])
+    expect(hooks.APP_PAGES).toEqual(["/baby", "/calendar", "/settings"])
     expect(hooks.PRECACHE_URLS).toContain("/offline")
     expect(hooks.CACHE_NAMES.precache).toBe("irori-v1-precache")
     expect(hooks.CACHE_NAMES.documents).toBe("irori-v1-documents")
@@ -200,14 +193,14 @@ describe("sw.js __TEST_HOOKS__", () => {
 
   describe("classifyRequest", () => {
     it("別オリジン (Supabase) は null (構造的に不可侵)", () => {
-      const req = makeReq("http://127.0.0.1:54321/rest/v1/meal_records?select=*", {
+      const req = makeReq("http://127.0.0.1:54321/rest/v1/baby_logs?select=*", {
         mode: "cors",
       })
       expect(hooks.classifyRequest(req, ORIGIN)).toBeNull()
     })
 
     it("POST (Server Action) は null (素通し)", () => {
-      const req = makeReq(abs("/meals"), { method: "POST", mode: "navigate" })
+      const req = makeReq(abs("/baby"), { method: "POST", mode: "navigate" })
       expect(hooks.classifyRequest(req, ORIGIN)).toBeNull()
     })
 
@@ -226,7 +219,7 @@ describe("sw.js __TEST_HOOKS__", () => {
     })
 
     it("navigate × 末尾スラッシュ付き APP_PAGES → document (正規化)", () => {
-      const req = makeReq(abs("/meals/"), { mode: "navigate" })
+      const req = makeReq(abs("/baby/"), { mode: "navigate" })
       expect(hooks.classifyRequest(req, ORIGIN)).toBe("document")
     })
 
@@ -256,7 +249,7 @@ describe("sw.js __TEST_HOOKS__", () => {
     })
 
     it("RSC ヘッダー × APP_PAGES → rsc", () => {
-      const req = makeReq(abs("/meals?_rsc=abc12"), {
+      const req = makeReq(abs("/baby?_rsc=abc12"), {
         mode: "cors",
         headers: { RSC: "1" },
       })
@@ -264,12 +257,12 @@ describe("sw.js __TEST_HOOKS__", () => {
     })
 
     it("?_rsc= クエリのみ (ヘッダーなし) でも APP_PAGES → rsc", () => {
-      const req = makeReq(abs("/shopping?_rsc=xyz"), { mode: "cors" })
+      const req = makeReq(abs("/settings?_rsc=xyz"), { mode: "cors" })
       expect(hooks.classifyRequest(req, ORIGIN)).toBe("rsc")
     })
 
     it("RSC × prefetch → null (部分 payload で汚染しない)", () => {
-      const req = makeReq(abs("/meals?_rsc=abc12"), {
+      const req = makeReq(abs("/baby?_rsc=abc12"), {
         mode: "cors",
         headers: { RSC: "1", "Next-Router-Prefetch": "1" },
       })
@@ -300,7 +293,7 @@ describe("sw.js __TEST_HOOKS__", () => {
     })
 
     it("画像 (拡張子 / _next/image / favicon.ico) → image", () => {
-      expect(hooks.classifyRequest(makeReq(abs("/photos/meal.webp")), ORIGIN)).toBe("image")
+      expect(hooks.classifyRequest(makeReq(abs("/photos/baby.webp")), ORIGIN)).toBe("image")
       expect(
         hooks.classifyRequest(makeReq(abs("/_next/image?url=%2Ffoo.png&w=640&q=75")), ORIGIN)
       ).toBe("image")
@@ -322,7 +315,7 @@ describe("sw.js __TEST_HOOKS__", () => {
      * **永久に古い方が配られ続ける**。
      *
      * 2026-08-10 に実際に起きた: `start_url` を `/` へ直した (#219) のに
-     * ホーム画面からは必ず献立が開き、**アイコンを入れ直しても直らなんだ** ——
+     * ホーム画面からは必ず当時の献立ページが開き、**アイコンを入れ直しても直らなんだ** ——
      * 入れ直すその瞬間に OS が読む manifest を、SW が古い方へすり替えておったゆえ。
      * 「manifest の取得が SW を通る」ことは Chrome で実測済み（precache から
      * 削除 → 再読込 → エントリが戻った）。
@@ -350,7 +343,7 @@ describe("sw.js __TEST_HOOKS__", () => {
 
   describe("makeCacheKey", () => {
     it("_rsc クエリのみ除去する", () => {
-      expect(hooks.makeCacheKey(abs("/meals?_rsc=abc12"))).toBe(abs("/meals"))
+      expect(hooks.makeCacheKey(abs("/baby?_rsc=abc12"))).toBe(abs("/baby"))
     })
 
     // ⚠️ **この 2 本と下の makeDocumentCacheKey 節は対で読むこと。**
@@ -359,8 +352,8 @@ describe("sw.js __TEST_HOOKS__", () => {
     // 増えて他ページを追い出す）。「同じことを 2 回書いておる」と見て統合すると、
     // どちら向きでも必ず片方が壊れる。
     it("他のクエリは維持する（rsc はこのキーを共有する）", () => {
-      expect(hooks.makeCacheKey(abs("/meals?date=2026-06-01&_rsc=abc"))).toBe(
-        abs("/meals?date=2026-06-01")
+      expect(hooks.makeCacheKey(abs("/baby?date=2026-06-01&_rsc=abc"))).toBe(
+        abs("/baby?date=2026-06-01")
       )
     })
 
@@ -371,7 +364,7 @@ describe("sw.js __TEST_HOOKS__", () => {
     })
 
     it("クエリなし URL はそのまま", () => {
-      expect(hooks.makeCacheKey(abs("/stock"))).toBe(abs("/stock"))
+      expect(hooks.makeCacheKey(abs("/settings"))).toBe(abs("/settings"))
     })
   })
 
@@ -653,7 +646,7 @@ describe("document キャッシュ — `?date=` の着地（B-6）", () => {
   it("オフラインで cached が無ければ /offline へ倒れる（対照: 退化先は実際に出る）", async () => {
     const sw = setup()
     sw.goOffline()
-    const res = await sw.navigate("/meals")
+    const res = await sw.navigate("/baby")
     expect(res.body).toBe(OFFLINE_BODY)
   })
 
@@ -698,7 +691,7 @@ describe("document キャッシュ — `?date=` の着地（B-6）", () => {
     }
     // (4) 実際にオフラインで開けること（キー集合だけでなく振る舞いで見る）。
     sw.goOffline()
-    expect((await sw.navigate("/meals")).body).toBe("server:/meals")
+    expect((await sw.navigate("/baby")).body).toBe("server:/baby")
   })
 })
 

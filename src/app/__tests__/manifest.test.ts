@@ -11,7 +11,8 @@ import { VALID_PAGES } from "@/lib/constants/pages"
  * （`profiles.default_page`）が何を選んでも効かなくなる**。ホーム画面のアイコンから
  * 起動すると `/`（`src/app/page.tsx` の振り分け）を通らず、その URL が直接開くためじゃ。
  *
- * 実際に `start_url: "/meals"` で起きた —— 設定を変えても**必ず献立が開く**。
+ * 実際に `start_url: "/meals"`（当時の献立ページ）で起きた —— 設定を変えても
+ * **必ず献立が開く**。
  * 振り分けのロジック自体は正しかったゆえ、そちらを何度読んでも原因は見つからぬ。
  * manifest は静的生成（`○ /manifest.webmanifest`）で利用者ごとに変えられず、
  * **コードを読んでも「効かぬ」ことが現れぬ**種類の破損じゃ。
@@ -28,7 +29,7 @@ describe("PWA manifest", () => {
   })
 
   it("start_url に具体的なページを直書きしておらぬ（設定が死ぬ形を禁ずる）", () => {
-    // VALID_PAGES = meals / shopping / stock / baby。どれを直書きしても
+    // VALID_PAGES = baby / calendar。どれを直書きしても
     // 「起動時のページ」の設定が効かなくなる。
     for (const page of VALID_PAGES) {
       expect(m.start_url).not.toBe(`/${page}`)

@@ -613,6 +613,269 @@ describe("updateLog の breast_left_count / breast_right_count（母乳サイク
   })
 })
 
+describe("recordDiaper のうんちの量（poop_amount）", () => {
+  it("poop + small を insert payload に書く", async () => {
+    const { client, insert } = makeSupabase({ data: { id: "d-1" }, error: null })
+    setContext(client)
+    const result = await recordDiaper({ diaperType: "poop", poopAmount: "small" })
+    expect(result.error).toBeNull()
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ diaper_type: "poop", poop_amount: "small" }),
+    )
+  })
+
+  it("both + large も許可（両方はうんちを含む）", async () => {
+    const { client, insert } = makeSupabase({ data: { id: "d-2" }, error: null })
+    setContext(client)
+    const result = await recordDiaper({ diaperType: "both", poopAmount: "large" })
+    expect(result.error).toBeNull()
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ diaper_type: "both", poop_amount: "large" }),
+    )
+  })
+
+  it("量 未指定 / null は poop_amount: null で insert（量なし・後方互換の形）", async () => {
+    const { client, insert } = makeSupabase({ data: { id: "d-3" }, error: null })
+    setContext(client)
+    await recordDiaper({ diaperType: "poop" })
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ diaper_type: "poop", poop_amount: null }),
+    )
+    await recordDiaper({ diaperType: "pee", poopAmount: null })
+    expect(insert).toHaveBeenLastCalledWith(
+      expect.objectContaining({ diaper_type: "pee", poop_amount: null }),
+    )
+  })
+
+  it("pee に量を付けるとエラーで DB 到達しない（chk_poop_amount_only_poop のミラー）", async () => {
+    const { client, insert } = makeSupabase({ data: { id: "x" }, error: null })
+    setContext(client)
+    const result = await recordDiaper({ diaperType: "pee", poopAmount: "large" })
+    expect(result.error).toBe("うんちの量はうんちを含む記録にのみ指定できます")
+    expect(result.id).toBeNull()
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("集合外の量はエラーで DB 到達しない（chk_poop_amount_value のミラー）", async () => {
+    const { client, insert } = makeSupabase({ data: { id: "x" }, error: null })
+    setContext(client)
+    const result = await recordDiaper({
+      diaperType: "poop",
+      poopAmount: "medium" as unknown as "small",
+    })
+    expect(result.error).toBe("うんちの量は 少量 / 大量 のいずれかで指定してください")
+    expect(insert).not.toHaveBeenCalled()
+  })
+})
+
+describe("updateLog のうんちの量（poop_amount）", () => {
+  it("diaperType=poop + poopAmount=large を payload に書く", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      { data: null, error: null },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    const result = await updateLog("log-1", { diaperType: "poop", poopAmount: "large" })
+    expect(result.error).toBeNull()
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ diaper_type: "poop", poop_amount: "large" }),
+    )
+  })
+
+  it("diaperType=poop + poopAmount=null は量なしへ戻す", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      { data: null, error: null },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    const result = await updateLog("log-1", { diaperType: "poop", poopAmount: null })
+    expect(result.error).toBeNull()
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ diaper_type: "poop", poop_amount: null }),
+    )
+  })
+
+  it("pee へ変更すると量は常に null で上書き（送り忘れ/消し忘れ防御）", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      { data: null, error: null },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    const result = await updateLog("log-1", { diaperType: "pee" })
+    expect(result.error).toBeNull()
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ diaper_type: "pee", poop_amount: null }),
+    )
+  })
+
+  it("poop へ変更で量 未指定なら poop_amount 列に触れない（既存値を undefined で壊さない）", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      { data: null, error: null },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    const result = await updateLog("log-1", { diaperType: "both" })
+    expect(result.error).toBeNull()
+    const payload = (
+      update.mock.calls[0] as unknown as [Record<string, unknown>]
+    )[0]
+    expect(payload).toHaveProperty("diaper_type", "both")
+    expect(payload).not.toHaveProperty("poop_amount")
+  })
+
+  it("量だけ送る（種類なし）は fail-loud で拒否", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      { data: null, error: null },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    const result = await updateLog("log-1", { poopAmount: "small" })
+    expect(result.error).toBe("うんちの量はおむつの種類と同時に指定してください")
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it("pee に量を付けて送るのは拒否", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      { data: null, error: null },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    const result = await updateLog("log-1", { diaperType: "pee", poopAmount: "small" })
+    expect(result.error).toBe("うんちの量はうんちを含む記録にのみ指定できます")
+    expect(update).not.toHaveBeenCalled()
+  })
+})
+
+describe("recordFeeding / updateLog の開始側（breast_start_side）", () => {
+  it("recordFeeding: breast + left を insert payload に書く", async () => {
+    const { client, insert } = makeSupabase({ data: { id: "s-1" }, error: null })
+    setContext(client)
+    const result = await recordFeeding({
+      feedingType: "breast",
+      breastLeftCount: 1,
+      breastRightCount: 0,
+      breastStartSide: "left",
+    })
+    expect(result.error).toBeNull()
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ feeding_type: "breast", breast_start_side: "left" }),
+    )
+  })
+
+  it("recordFeeding: 不明（null / 未指定）は breast_start_side: null で通る", async () => {
+    const { client, insert } = makeSupabase({ data: { id: "s-2" }, error: null })
+    setContext(client)
+    await recordFeeding({
+      feedingType: "breast",
+      breastLeftCount: 1,
+      breastRightCount: 1,
+    })
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ breast_start_side: null }),
+    )
+  })
+
+  it("recordFeeding: breast 以外に開始側を付けるとエラー（chk_breast_start_side_only_breast のミラー）", async () => {
+    const { client, insert } = makeSupabase({ data: { id: "x" }, error: null })
+    setContext(client)
+    const result = await recordFeeding({ feedingType: "bottle", breastStartSide: "left" })
+    expect(result.error).toBe("この授乳タイプには開始側を指定できません")
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("recordFeeding: 集合外の開始側はエラー", async () => {
+    const { client, insert } = makeSupabase({ data: { id: "x" }, error: null })
+    setContext(client)
+    const result = await recordFeeding({
+      feedingType: "breast",
+      breastLeftCount: 1,
+      breastRightCount: 0,
+      breastStartSide: "both" as unknown as "left",
+    })
+    expect(result.error).toBe("開始側は 左 / 右 のいずれかで指定してください")
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("recordFeeding: bottle 行は開始側 null で insert する（未指定の既定）", async () => {
+    const { client, insert } = makeSupabase({ data: { id: "s-3" }, error: null })
+    setContext(client)
+    await recordFeeding({ feedingType: "bottle" })
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ breast_start_side: null }),
+    )
+  })
+
+  it("updateLog: feedingType=breast + right を書き、null は不明へ戻す", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      { data: null, error: null },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    await updateLog("log-1", {
+      feedingType: "breast",
+      breastLeftCount: 1,
+      breastRightCount: 1,
+      breastStartSide: "right",
+    })
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ breast_start_side: "right" }),
+    )
+    await updateLog("log-1", {
+      feedingType: "breast",
+      breastLeftCount: 1,
+      breastRightCount: 1,
+      breastStartSide: null,
+    })
+    expect(update).toHaveBeenLastCalledWith(
+      expect.objectContaining({ breast_start_side: null }),
+    )
+  })
+
+  it("updateLog: feedingType=breast で開始側 未指定なら列に触れない", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      { data: null, error: null },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    await updateLog("log-1", {
+      feedingType: "breast",
+      breastLeftCount: 1,
+      breastRightCount: 1,
+    })
+    const payload = (
+      update.mock.calls[0] as unknown as [Record<string, unknown>]
+    )[0]
+    expect(payload).not.toHaveProperty("breast_start_side")
+  })
+
+  it("updateLog: breast 以外へ種別変更すると開始側も強制 null 化（counts / sides と同じ規約）", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      { data: null, error: null },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    await updateLog("log-1", { feedingType: "bottle" })
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ breast_start_side: null }),
+    )
+  })
+
+  it("updateLog: 開始側だけ送る（種類なし）/ breast 以外に付ける は fail-loud", async () => {
+    const { client, update } = makeUpdateSupabaseWithFetch(
+      { data: null, error: null },
+      { data: { id: "log-1" }, error: null },
+    )
+    setContext(client)
+    expect((await updateLog("log-1", { breastStartSide: "left" })).error).toBe(
+      "開始側は授乳の種類と同時に指定してください",
+    )
+    expect(
+      (await updateLog("log-1", { feedingType: "bottle", breastStartSide: "left" })).error,
+    ).toBe("この授乳タイプには開始側を指定できません")
+    expect(update).not.toHaveBeenCalled()
+  })
+})
+
 describe("upsertBabyDiary（育児日記・1日1本）", () => {
   function makeUpsertSupabase(upsertResult: { data: unknown; error: unknown }) {
     const single = vi.fn().mockResolvedValue(upsertResult)

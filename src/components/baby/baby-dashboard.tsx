@@ -17,6 +17,8 @@ import { BabyTemperatureCard } from "./baby-temperature-card"
 import { FeedingTimer } from "./feeding-timer"
 import { BabyWeeklySummary } from "./weekly-summary/baby-weekly-summary"
 import { GrowthChartSection } from "./charts/growth-chart-section"
+import { UpcomingEventsCard } from "@/components/calendar/upcoming-events-card"
+import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
 import { useNow } from "@/lib/hooks/use-now"
 import { useVisibilityRefetch } from "@/lib/hooks/use-visibility-refetch"
 import { todayJstString, toJstDateString, shiftYmd } from "@/lib/utils/date-jst"
@@ -69,6 +71,12 @@ interface BabyDashboardProps {
   babyBirthDate: string | null
   /** 授乳間隔（分）。次の授乳の目安の算出に使う（設定で変更可能） */
   feedingIntervalMin: number
+  /**
+   * 今日・明日に重なる予定（CAL-4「今日・明日の予定」カード）。起動時のページが
+   * /baby になったため、旧 /meals から移設した。サーバ（baby/page.tsx）が
+   * `calendar_events` を引いて渡す。省略時は空（カードは 0 件で何も描かない）。
+   */
+  initialUpcomingEvents?: CalendarEventRecord[]
 }
 
 export function BabyDashboard({
@@ -84,6 +92,7 @@ export function BabyDashboard({
   babyName,
   babyBirthDate,
   feedingIntervalMin,
+  initialUpcomingEvents = [],
 }: BabyDashboardProps) {
   const [logs, setLogs] = useState<BabyLogData[]>(initialLogs)
   const [weeklyLogs, setWeeklyLogs] =
@@ -510,6 +519,16 @@ export function BabyDashboard({
         babyBirthDate={babyBirthDate}
         referenceDate={today}
       />
+
+      {/* 今日・明日の予定（CAL-4）。「今日」の概念ゆえ今日を表示している時だけ出す。
+          0 件なら null を返し gap ごと消える。復帰時の refetch はカード自身が持つ。 */}
+      {isToday && (
+        <UpcomingEventsCard
+          initialEvents={initialUpcomingEvents}
+          householdId={householdId}
+          initialToday={initialDate}
+        />
+      )}
 
       <BabyDateNav
         selectedDate={selectedDate}

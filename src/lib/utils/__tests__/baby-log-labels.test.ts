@@ -12,8 +12,52 @@ import {
   formatElapsedMinutes,
   formatBreastCounts,
   formatBreastSideBreakdown,
+  formatBreastStartSide,
+  formatDiaperSummary,
+  getBreastStartSideLabel,
   getFeedingTypeLabel,
+  getPoopAmountLabel,
 } from "@/lib/utils/baby-log-labels"
+
+describe("うんちの量（poop_amount）の表示", () => {
+  it("small / large を 少量 / 大量 に写す", () => {
+    expect(getPoopAmountLabel("small")).toBe("少量")
+    expect(getPoopAmountLabel("large")).toBe("大量")
+  })
+
+  it("null・未知値（将来の DB 値）は null へ退化させ画面を倒さない", () => {
+    expect(getPoopAmountLabel(null)).toBeNull()
+    expect(getPoopAmountLabel(undefined)).toBeNull()
+    expect(getPoopAmountLabel("medium")).toBeNull()
+  })
+
+  it("formatDiaperSummary: うんち（大量）/ 両方（少量）、量なしは種別のみ", () => {
+    expect(formatDiaperSummary("poop", "large")).toBe("うんち（大量）")
+    expect(formatDiaperSummary("both", "small")).toBe("両方（少量）")
+    expect(formatDiaperSummary("poop", null)).toBe("うんち")
+    expect(formatDiaperSummary("both", "weird")).toBe("両方")
+  })
+
+  it("formatDiaperSummary: pee 行は量が来ても描かない（契約のミラー）", () => {
+    expect(formatDiaperSummary("pee", "large")).toBe("おしっこ")
+  })
+})
+
+describe("母乳サイクルの開始側（breast_start_side）の表示", () => {
+  it("left / right を 左 / 右 に写し、不明・未知値は null", () => {
+    expect(getBreastStartSideLabel("left")).toBe("左")
+    expect(getBreastStartSideLabel("right")).toBe("右")
+    expect(getBreastStartSideLabel(null)).toBeNull()
+    expect(getBreastStartSideLabel("both")).toBeNull()
+  })
+
+  it("formatBreastStartSide: （左から）/（右から）、不明は空文字", () => {
+    expect(formatBreastStartSide("left")).toBe("（左から）")
+    expect(formatBreastStartSide("right")).toBe("（右から）")
+    expect(formatBreastStartSide(null)).toBe("")
+    expect(formatBreastStartSide(undefined)).toBe("")
+  })
+})
 
 describe("formatElapsedMinutes: 負値ガード", () => {
   it("負の分は 0分 にクランプされる（stale now による負値の表示崩れ防止）", () => {

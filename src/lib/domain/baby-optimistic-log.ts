@@ -1,6 +1,12 @@
 import { deriveDurationMinFromSec } from "./feeding"
 import type { BabyLogData } from "@/lib/types/baby"
-import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
+import type {
+  BabyLogType,
+  FeedingType,
+  DiaperType,
+  PoopAmount,
+  BreastStartSide,
+} from "@/lib/types/database"
 
 /**
  * B-03: 記録系 Server Action の成功時に、返却された id を使ってクライアント側で
@@ -43,7 +49,11 @@ export interface BuildOptimisticLogParams {
    */
   breastLeftSec?: number | null
   breastRightSec?: number | null
+  /** 母乳サイクルの開始側（feedingType='breast' の時のみ渡す。不明なら省略 = null） */
+  breastStartSide?: BreastStartSide | null
   diaperType?: DiaperType | null
+  /** うんちの量（diaperType が poop / both の時のみ渡す。量なしなら省略 = null） */
+  poopAmount?: PoopAmount | null
   temperature?: number | null
   weightG?: number | null
   heightCm?: number | null
@@ -67,7 +77,9 @@ export function buildOptimisticLog(
     breast_right_count: params.breastRightCount ?? null,
     breast_left_sec: params.breastLeftSec ?? null,
     breast_right_sec: params.breastRightSec ?? null,
+    breast_start_side: params.breastStartSide ?? null,
     diaper_type: params.diaperType ?? null,
+    poop_amount: params.poopAmount ?? null,
     temperature: params.temperature ?? null,
     weight_g: params.weightG ?? null,
     height_cm: params.heightCm ?? null,

@@ -67,7 +67,7 @@ export function UpcomingEventsCard({
     // （use-month-events.ts の fetchGenerationRef と同流儀）
     if (generation !== generationRef.current) return
     if (error) {
-      logSupabaseError("meals", "upcoming events lookup failed", error, {
+      logSupabaseError("baby", "upcoming events lookup failed", error, {
         householdId,
       })
       return
@@ -95,13 +95,13 @@ export function UpcomingEventsCard({
   // （page 側の条件レンダリングを避ける理由と同根）。
   if (buckets.length === 0) return null
 
-  // 外余白(mx-4 mt-4)は自身が持つ。page 側のラッパー div に padding を置くと、
-  // 0 件で null を返した時に空の隙間だけが残るため。
+  // 外余白は持たない。置き場は BabyDashboard（`flex flex-col gap-4 px-4`）で、
+  // 0 件で null を返せば gap ごと消える（旧 /meals では自前の mx-4 mt-4 を持っていた）。
   return (
     <Link
       href="/calendar"
       aria-label="今日・明日の予定（カレンダーを開く）"
-      className="glass mx-4 mt-4 flex min-h-11 flex-col gap-2 rounded-2xl px-4 py-3 shadow-lg shadow-black/[0.04] transition-colors duration-200 hover:bg-muted/50 dark:hover:bg-muted/20"
+      className="glass flex min-h-11 flex-col gap-2 rounded-2xl px-4 py-3 shadow-lg shadow-black/[0.04] transition-colors duration-200 hover:bg-muted/50 dark:hover:bg-muted/20"
     >
       <span className="flex items-center gap-2 text-sm font-semibold">
         <CalendarDays size={16} className="shrink-0 text-muted-foreground" />

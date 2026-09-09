@@ -2,10 +2,10 @@
 
 ## Advisor へ（本質の番人・二人称）
 
-Advisor、あなたへ。これは世帯単位の献立・買い物 PWA で、要は Liquid Glass の一貫した手触り、世帯データの分離、そして「訓練データの記憶で Next.js を書かない」ことだ。全履歴を読み、**通常のレビューに加えて**、判断を特に次の3軸で重く点検せよ:
+Advisor、あなたへ。これは世帯単位の育児記録・予定 PWA で、要は Liquid Glass の一貫した手触り、世帯データの分離、そして「訓練データの記憶で Next.js を書かない」ことだ。全履歴を読み、**通常のレビューに加えて**、判断を特に次の3軸で重く点検せよ:
 
-1. **Liquid Glass デザインの一貫性を崩していないか** ― `glass` カード/warm orange/`transition-colors` のみ/44px タッチ/絵文字は meal reaction のみ。独自スタイルや `transition-all` を持ち込んでいれば、止めよ。
-2. **世帯（household）単位のデータ分離を破っていないか** ― RLS は SELECT/UPDATE/DELETE 分離（FOR ALL 禁止）、SECURITY DEFINER は `SET search_path=public`、在庫の重複使用防止。分離を緩めていれば、止めよ。
+1. **Liquid Glass デザインの一貫性を崩していないか** ― `glass` カード/warm orange/`transition-colors` のみ/44px タッチ/絵文字は使わない。独自スタイルや `transition-all` を持ち込んでいれば、止めよ。
+2. **世帯（household）単位のデータ分離を破っていないか** ― RLS は SELECT/UPDATE/DELETE 分離（FOR ALL 禁止）、SECURITY DEFINER は `SET search_path=public`。分離を緩めていれば、止めよ。
 3. **現行 Next.js 16 / React 19 の実APIに忠実か** ― 記憶で書かず `node_modules/next/dist/docs/` を読んだか（`unstable_retry`、form auto-reset 無効化 等）。記憶ベースの古いAPIで書いていれば、止めよ。
 
 衝突したら本質を優先せよ。指摘は短く。**3軸に該当せずとも本質を損なう判断を見れば遠慮なく指摘せよ。**
@@ -30,7 +30,7 @@ Key rules:
 - Primary: warm orange `oklch(0.65 0.19 50)`
 - Transitions: `transition-colors duration-200` ONLY (never `transition-all`)
 - Touch targets: min 44px
-- Icons: Lucide React (no emoji except meal reactions)
+- Icons: Lucide React (no emoji)
 
 ## Project Structure
 
@@ -38,12 +38,13 @@ Key rules:
 src/
   app/
     (auth)/       # Login, callback, invite
-    (main)/       # Authenticated pages (meals, shopping, settings)
+    (main)/       # Authenticated pages (baby, calendar, settings)
     setup/        # Household setup
   components/
     common/       # BottomNav etc.
-    meals/        # Meal-related components
-    shopping/     # Shopping-related components
+    baby/         # Baby-log components
+    calendar/     # Calendar components
+    settings/     # Settings cards
     ui/           # shadcn/ui primitives
   lib/
     supabase/     # Client & server Supabase instances
@@ -70,7 +71,6 @@ src/
 
 ### irori 固有
 
-- **レシピマッチングで同一在庫アイテムの重複使用を防ぐ**: `usedStockIds: Set<string>` で追跡し、マッチング時に除外
 - **pdfmake v0.3.7: `setFonts()` はモジュールスコープで1回のみ**: リクエストごとに呼ぶと並行リクエストで競合リスク
 - **SECURITY DEFINER 関数には `SET search_path = public` 必須**: `auth.users` トリガーから呼ばれると `search_path=auth` で狂う
 - **`ALTER TYPE ADD VALUE` と CHECK 制約は別マイグレーションに分離**: 同一トランザクション内で新 ENUM 値を CHECK 制約で参照すると `unsafe use of new value` エラー

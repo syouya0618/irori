@@ -15,7 +15,7 @@ const nextConfig: NextConfig = {
     //
     // 代償と、なぜ許容できるか:
     // - 自分の書き込みが即時反映されるのは、この設定とは別の既存経路による:
-    //   meals/shopping/stock/baby/calendar の Server Action は revalidatePath
+    //   baby/calendar の Server Action は revalidatePath
     //   を呼んでおり、公式 doc (revalidatePath.md) が
     //   「Server Functions: Updates the UI immediately (if viewing the
     //   affected path)」と明記している。settings は router.refresh() を使い、

@@ -26,9 +26,10 @@ export type GoogleFetchOutcome =
 /**
  * `AbortController` + timeout 付きの fetch。
  *
- * `AbortSignal.timeout()` ではなく明示的な `AbortController` を使う（プロジェクト
- * 規約: `src/app/api/receipt-ocr/route.ts` と同じ流儀）。`clearTimeout` は
- * `finally` で必ず走らせ、成功時にタイマーがイベントループを掴み続けぬようにする。
+ * `AbortSignal.timeout()` ではなく明示的な `AbortController` を使う（外部 I/O の
+ * 上限を明示する流儀。`src/app/api/baby-report/route.ts` が `maxDuration` を
+ * 明示するのと同じ理由じゃ）。`clearTimeout` は `finally` で必ず走らせ、
+ * 成功時にタイマーがイベントループを掴み続けぬようにする。
  */
 export async function fetchWithTimeout(
   url: string,

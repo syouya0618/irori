@@ -13,7 +13,6 @@ vi.mock("@/lib/supabase/auth-context", () => ({
 }))
 
 import {
-  updateAutoStockCategories,
   updateBabyProfile,
   updateDefaultPage,
   updateDigestTime,
@@ -212,7 +211,7 @@ describe("settings の update: 0 行更新を成功と偽らない", () => {
   it("updateDefaultPage: 0 行更新はエラーを返す", async () => {
     const { client } = makeSupabase({ error: null }, [])
     setContext(client)
-    expect(await updateDefaultPage("meals")).toEqual({
+    expect(await updateDefaultPage("calendar")).toEqual({
       error: "設定の更新に失敗しました",
     })
   })
@@ -220,21 +219,16 @@ describe("settings の update: 0 行更新を成功と偽らない", () => {
   it("updateDefaultPage: 1 行更新なら成功", async () => {
     const { client } = makeSupabase({ error: null }, [{ id: "user-1" }])
     setContext(client)
-    expect(await updateDefaultPage("meals")).toEqual({ success: true })
+    expect(await updateDefaultPage("baby")).toEqual({ success: true })
   })
 
-  it("updateAutoStockCategories: 0 行更新はエラーを返す", async () => {
-    const { client } = makeSupabase({ error: null }, [])
+  it("updateDefaultPage: 廃止されたページは DB へ到達せず弾く", async () => {
+    const { client, update } = makeSupabase({ error: null })
     setContext(client)
-    expect(await updateAutoStockCategories(["baby"])).toEqual({
-      error: "設定の更新に失敗しました",
+    expect(await updateDefaultPage("meals")).toEqual({
+      error: "無効なページ指定です",
     })
-  })
-
-  it("updateAutoStockCategories: 1 行更新なら成功", async () => {
-    const { client } = makeSupabase({ error: null })
-    setContext(client)
-    expect(await updateAutoStockCategories(["baby"])).toEqual({ success: true })
+    expect(update).not.toHaveBeenCalled()
   })
 })
 

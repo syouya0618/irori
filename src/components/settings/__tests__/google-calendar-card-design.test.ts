@@ -64,7 +64,7 @@ describe("Liquid Glass の作法", () => {
   })
 
   it("絵文字を使わぬ（アイコンは Lucide React）", () => {
-    // meal reaction 以外で絵文字は禁止（CLAUDE.md / DESIGN_SYSTEM.md）。
+    // 絵文字は禁止（CLAUDE.md / DESIGN_SYSTEM.md）。
     // 絵文字プレゼンテーション / サロゲートペア領域を検出する。
     expect(code).not.toMatch(/[\u{1F300}-\u{1FAFF}\u{FE0F}\u{2600}-\u{27BF}]/u)
     expect(code).toContain('from "lucide-react"')

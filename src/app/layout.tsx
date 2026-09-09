@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "うちのログ",
-  description: "夫婦の献立・買い物・暮らしをひとつに",
+  description: "夫婦の育児記録と予定をひとつに",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",

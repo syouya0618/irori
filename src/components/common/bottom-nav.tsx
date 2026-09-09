@@ -2,20 +2,10 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import {
-  UtensilsCrossed,
-  ShoppingCart,
-  Package,
-  Baby,
-  CalendarDays,
-  Settings,
-} from "lucide-react"
+import { Baby, CalendarDays, Settings } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const tabs = [
-  { href: "/meals", label: "献立", icon: UtensilsCrossed },
-  { href: "/shopping", label: "買い物", icon: ShoppingCart },
-  { href: "/stock", label: "在庫", icon: Package },
   { href: "/baby", label: "育児", icon: Baby },
   { href: "/calendar", label: "予定", icon: CalendarDays },
   { href: "/settings", label: "設定", icon: Settings },

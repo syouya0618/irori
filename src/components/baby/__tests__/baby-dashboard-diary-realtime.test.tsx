@@ -41,6 +41,12 @@ const mockState = vi.hoisted(() => ({
 }))
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+// 「今日・明日の予定」カードも visibilitychange で自前 refetch する（calendar_events）。
+// 本テストの対象は日記の refetch ゆえ、カードは無害な stub に置き換える
+// （chain mock は baby_diaries の形しか持たず、カードの .gte が無くて落ちる）。
+vi.mock("@/components/calendar/upcoming-events-card", () => ({
+  UpcomingEventsCard: () => null,
+}))
 
 vi.mock("@/lib/supabase/client", async () => {
   const { vi: viMod } = await import("vitest")

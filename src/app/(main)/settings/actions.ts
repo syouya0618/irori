@@ -7,6 +7,7 @@ import { getAuthContext } from "@/lib/supabase/auth-context"
 import { getAppOrigin } from "@/lib/utils/app-origin"
 import { isFutureJstDate } from "@/lib/utils/date-jst"
 import { logSupabaseError } from "@/lib/supabase/log-error"
+import { VALID_PAGES, type ValidPage } from "@/lib/constants/pages"
 import {
   FEEDING_INTERVAL_DEFAULT,
   normalizeFeedingInterval,
@@ -93,13 +94,6 @@ export async function approveUser(targetUserId: string) {
   return { success: true }
 }
 
-import { VALID_PAGES, type ValidPage } from "@/lib/constants/pages"
-import type { ItemCategory } from "@/lib/types/database"
-
-const VALID_STOCK_CATEGORIES: ItemCategory[] = [
-  "baby", "cleaning", "hygiene", "other_daily",
-]
-
 export async function updateDefaultPage(page: string) {
   if (!VALID_PAGES.includes(page as ValidPage)) {
     return { error: "無効なページ指定です" }
@@ -118,37 +112,6 @@ export async function updateDefaultPage(page: string) {
 
   if (error) {
     logSupabaseError("settings", "default page update failed", error, { userId })
-    return { error: "設定の更新に失敗しました" }
-  }
-  if (!data || data.length === 0) {
-    return { error: "設定の更新に失敗しました" }
-  }
-
-  return { success: true }
-}
-
-export async function updateAutoStockCategories(categories: ItemCategory[]) {
-  // バリデーション: 全てが有効なカテゴリであること
-  const valid = categories.every((c) => VALID_STOCK_CATEGORIES.includes(c))
-  if (!valid) {
-    return { error: "無効なカテゴリが含まれています" }
-  }
-
-  const result = await getAuthContext()
-  if (result.error !== null) return { error: result.error }
-  const { supabase, householdId } = result.context
-
-  // 0 行更新を「成功」と偽らない（別世帯・RLS 拒否は 0 行マッチになる）。
-  const { data, error } = await supabase
-    .from("households")
-    .update({ auto_stock_categories: categories })
-    .eq("id", householdId)
-    .select("id")
-
-  if (error) {
-    logSupabaseError("settings", "auto stock categories update failed", error, {
-      householdId,
-    })
     return { error: "設定の更新に失敗しました" }
   }
   if (!data || data.length === 0) {

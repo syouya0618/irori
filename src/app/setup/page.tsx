@@ -28,7 +28,7 @@ export default async function SetupPage() {
   }
 
   if (profile?.household_id) {
-    redirect("/meals")
+    redirect("/baby")
   }
 
   return (

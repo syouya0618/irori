@@ -1,4 +1,10 @@
-import type { BabyLogType, FeedingType, DiaperType } from "./database"
+import type {
+  BabyLogType,
+  FeedingType,
+  DiaperType,
+  PoopAmount,
+  BreastStartSide,
+} from "./database"
 
 export interface BabyLogData {
   id: string
@@ -22,7 +28,20 @@ export interface BabyLogData {
   breast_left_sec: number | null
   /** 母乳サイクルで右を吸わせた秒数（同上） */
   breast_right_sec: number | null
+  /**
+   * 母乳サイクルでどちらの側から吸わせ始めたか。`feeding_type='breast'` の行のみ
+   * 非 NULL 可（chk_breast_start_side_only_breast）。NULL は不明（列追加以前の行・
+   * 旧形式 localStorage から復元したタイマー）。counts / sides は順序を持たぬため
+   * 開始側はこの列でしか表せない。
+   */
+  breast_start_side: BreastStartSide | null
   diaper_type: DiaperType | null
+  /**
+   * うんちの量（少量 / 大量）。`diaper_type` が poop / both の行のみ非 NULL 可
+   * （chk_poop_amount_only_poop）。NULL は「量の記録なし」（列追加以前の行・
+   * クイック記録で量を選ばなかった行）ゆえ、表示は量なしとして退化させる。
+   */
+  poop_amount: PoopAmount | null
   temperature: number | null
   weight_g: number | null
   height_cm: number | null

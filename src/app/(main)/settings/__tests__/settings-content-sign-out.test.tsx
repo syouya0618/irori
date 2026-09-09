@@ -45,12 +45,6 @@ vi.mock("@/components/settings/approval-card", () => ({ ApprovalCard: () => null
 vi.mock("@/components/settings/default-page-card", () => ({
   DefaultPageCard: () => null,
 }))
-vi.mock("@/components/settings/auto-stock-card", () => ({
-  AutoStockCategoriesCard: () => null,
-}))
-vi.mock("@/components/settings/ocr-provider-card", () => ({
-  OcrProviderCard: () => null,
-}))
 vi.mock("@/components/settings/baby-profile-card", () => ({
   BabyProfileCard: () => null,
 }))
@@ -81,12 +75,11 @@ function renderSettings() {
         displayName: "テスト",
         avatarUrl: null,
         role: "owner",
-        defaultPage: "meals",
+        defaultPage: "baby",
       }}
       household={{ id: "h1", name: "我が家" }}
       email="test@example.com"
       pendingUsers={[]}
-      autoStockCategories={[]}
       babyProfile={{ name: null, birthDate: null, feedingIntervalMin: 180 }}
       googleConnections={[]}
       googleNotice={null}

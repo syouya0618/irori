@@ -37,12 +37,12 @@ describe("reportRealtimeAnomaly: 異常 3 種のみ記録する", () => {
   it.each(["CLOSED", "CHANNEL_ERROR", "TIMED_OUT"])(
     "%s は userId 付きで記録する",
     async (status) => {
-      await reportRealtimeAnomaly("shopping", status, "socket died")
+      await reportRealtimeAnomaly("baby_logs", status, "socket died")
 
       expect(consoleError).toHaveBeenCalledWith(
         expect.stringContaining("realtime-anomaly"),
         expect.objectContaining({
-          channel: "shopping",
+          channel: "baby_logs",
           status,
           error: "socket died",
           userId: "user-1",
@@ -54,13 +54,13 @@ describe("reportRealtimeAnomaly: 異常 3 種のみ記録する", () => {
   it.each(["SUBSCRIBED", "JOINING", "", "closed"])(
     "%s は記録しない（正常系・未知値でログを埋めない）",
     async (status) => {
-      await reportRealtimeAnomaly("shopping", status)
+      await reportRealtimeAnomaly("baby_logs", status)
       expect(consoleError).not.toHaveBeenCalled()
     },
   )
 
   it("status のフィルタは認証より先（無駄な往復を作らない）", async () => {
-    await reportRealtimeAnomaly("shopping", "SUBSCRIBED")
+    await reportRealtimeAnomaly("baby_logs", "SUBSCRIBED")
     expect(getVerifiedUserId).not.toHaveBeenCalled()
   })
 })
@@ -70,7 +70,7 @@ describe("reportRealtimeAnomaly: 認証を課す（匿名のログ注入を防�
     getVerifiedUserId.mockResolvedValue(null)
 
     await expect(
-      reportRealtimeAnomaly("shopping", "CLOSED", "x"),
+      reportRealtimeAnomaly("baby_logs", "CLOSED", "x"),
     ).resolves.toBeUndefined()
 
     expect(consoleError).not.toHaveBeenCalled()
@@ -78,7 +78,7 @@ describe("reportRealtimeAnomaly: 認証を課す（匿名のログ注入を防�
 
   it("認証を通れば記録する（未認証ドロップが常時発火していないことの陽性対照）", async () => {
     getVerifiedUserId.mockResolvedValue("user-9")
-    await reportRealtimeAnomaly("stock", "CLOSED")
+    await reportRealtimeAnomaly("calendar", "CLOSED")
     expect(consoleError).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ userId: "user-9" }),
@@ -101,7 +101,7 @@ describe("reportRealtimeAnomaly: ログ 1 行の肥大化を防ぐ", () => {
   })
 
   it("error message 無しでも記録できる（TIMED_OUT は err を伴わない）", async () => {
-    await reportRealtimeAnomaly("stock", "TIMED_OUT")
+    await reportRealtimeAnomaly("calendar", "TIMED_OUT")
     expect(consoleError).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ status: "TIMED_OUT", error: undefined }),

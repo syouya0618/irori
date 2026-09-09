@@ -25,9 +25,6 @@ import { loginViaMagicLink } from "./fixtures/auth"
 const MIN_TOUCH_PX = 44
 
 const SCREENS = [
-  ["献立", "/meals"],
-  ["買い物", "/shopping"],
-  ["在庫", "/stock"],
   ["育児", "/baby"],
   ["予定", "/calendar"],
   ["設定", "/settings"],
@@ -41,7 +38,7 @@ test("押下対象はどの画面でも 44x44px 以上ある（実ブラウザ�
   await expect(page).toHaveURL(/\/setup/, { timeout: 15_000 })
   await page.getByLabel("世帯名").fill("タッチ領域検査世帯")
   await page.getByRole("button", { name: "世帯を作成する" }).click()
-  await expect(page).toHaveURL(/\/meals/, { timeout: 15_000 })
+  await expect(page).toHaveURL(/\/baby/, { timeout: 15_000 })
 
   // 片手操作の実寸で測る（DESIGN_SYSTEM が前提とする使い方）。
   await page.setViewportSize({ width: 390, height: 844 })

@@ -19,7 +19,7 @@ describe("unstable_rethrow の契約", () => {
   it("redirect() の内部エラーは再送出する（握り潰さない）", () => {
     let redirectError: unknown
     try {
-      redirect("/meals")
+      redirect("/baby")
     } catch (e) {
       redirectError = e
     }

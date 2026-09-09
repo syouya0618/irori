@@ -4,8 +4,11 @@ import { adminClient, loginViaMagicLink } from "./fixtures/auth"
 
 /**
  * CAL-4「今日・明日の予定」カード E2E:
- * login → 世帯作成 → /meals（予定 0 件でカード非表示）→ /calendar で予定を作成
- * → /meals でカードに反映 → カードから /calendar へ戻れる。
+ * login → 世帯作成 → /baby（予定 0 件でカード非表示）→ /calendar で予定を作成
+ * → /baby でカードに反映 → カードから /calendar へ戻れる。
+ *
+ * カードは BabyDashboard（src/components/baby/baby-dashboard.tsx）の中で、
+ * 選択日が今日（既定）のときだけ描画される。
  *
  * calendar.spec.ts とはファイルを分けている（同一 spec の書き換え依存を作らない）。
  */
@@ -14,13 +17,12 @@ test.setTimeout(180_000)
 
 /**
  * 予定作成 server action の完了を DB 断面で待つ (service_role で RLS バイパス)。
- * calendar.spec.ts の同名ヘルパ・golden-path.spec.ts の waitForMealRow と同じ流儀
- * (各 spec ファイルでの重複が既存の慣習。cross-spec import は Playwright の
- * テストファイル読み込みを壊しうるため避ける)。
+ * calendar.spec.ts の同名ヘルパと同じ流儀 (各 spec ファイルでの重複が既存の慣習。
+ * cross-spec import は Playwright のテストファイル読み込みを壊しうるため避ける)。
  *
  * calendar-view.tsx の新規予定作成は「楽観挿入 → シートを閉じる → startTransition
  * 内で非同期に createCalendarEvent を実行」の順であり、画面に予定名が見えた時点
- * ではサーバー側の INSERT が commit 済みである保証がない。/meals への遷移前に
+ * ではサーバー側の INSERT が commit 済みである保証がない。/baby への遷移前に
  * この関数で実永続化を待つことで、「楽観表示は見えたが commit 前に SSR した」
  * という固定待ち時間に依存しない同期点を作る（waitForTimeout 等の時間待ちは
  * flake を時間で覆い隠すだけで使わない）。
@@ -49,7 +51,7 @@ async function waitForEventCount(
   }).toPass({ timeout: 15_000 })
 }
 
-/** login(マジックリンク) → 世帯作成 → /meals に着地。 */
+/** login(マジックリンク) → 世帯作成 → /baby に着地。 */
 async function loginAndCreateHousehold(
   page: Page,
   email: string,
@@ -58,10 +60,10 @@ async function loginAndCreateHousehold(
   await expect(page).toHaveURL(/\/setup/, { timeout: 15_000 })
   await page.getByLabel("世帯名").fill("E2E 予定カード世帯")
   await page.getByRole("button", { name: "世帯を作成する" }).click()
-  await expect(page).toHaveURL(/\/meals/, { timeout: 15_000 })
+  await expect(page).toHaveURL(/\/baby/, { timeout: 15_000 })
 }
 
-test("今日の予定を作ると /meals の先頭にカードが出て、そこから /calendar へ飛べる", async ({
+test("今日の予定を作ると /baby の先頭にカードが出て、そこから /calendar へ飛べる", async ({
   page,
   approvedUser,
 }) => {
@@ -91,8 +93,8 @@ test("今日の予定を作ると /meals の先頭にカードが出て、そこ
   // 楽観表示は commit を保証しないため、DB 断面で実永続化を待ってから遷移する。
   await waitForEventCount(approvedUser.id, "保育園見学", 1)
 
-  // /meals を SSR させ直してカードを確認する（Router Cache に依らず断面を見る）。
-  await page.goto("/meals")
+  // /baby を SSR させ直してカードを確認する（Router Cache に依らず断面を見る）。
+  await page.goto("/baby")
   const card = page.getByRole("link", { name: /今日・明日の予定/ })
   await expect(card).toBeVisible({ timeout: 15_000 })
   await expect(card).toContainText("今日")

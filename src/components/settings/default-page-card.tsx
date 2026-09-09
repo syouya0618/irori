@@ -15,10 +15,8 @@ import { toastOfflineError } from "@/lib/utils/offline-error"
 import { segmentCn } from "@/lib/utils/segment-cn"
 
 const PAGE_OPTIONS = [
-  { value: "meals", label: "献立" },
-  { value: "shopping", label: "買い物" },
-  { value: "stock", label: "在庫" },
   { value: "baby", label: "育児" },
+  { value: "calendar", label: "予定" },
 ] as const
 
 export function DefaultPageCard({ defaultPage }: { defaultPage: string }) {

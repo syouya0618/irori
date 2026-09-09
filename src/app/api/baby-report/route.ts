@@ -13,7 +13,7 @@ import { generateBabyReport } from "@/lib/pdf/baby-report"
 /**
  * PDF 生成は DB 2 クエリ + pdfmake のフォント埋め込み + レイアウトを直列で行うため、
  * Vercel の既定タイムアウト（設定しなければプラットフォーム既定に委ねられる）を
- * 超えて無言で中断されうる。同じ理由で `receipt-ocr/route.ts` も 30 を明示している。
+ * 超えて無言で中断されうる。ゆえに 30 を明示する。
  * 「複数の重い処理を呼ぶ Route Handler には maxDuration を明示する」の適用。
  */
 export const maxDuration = 30

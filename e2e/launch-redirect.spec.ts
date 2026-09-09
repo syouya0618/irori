@@ -16,7 +16,7 @@ import { adminClient, loginViaMagicLink } from "./fixtures/auth"
  * ## ⚠️ これが弁別**せぬ**もの — 速くなったこと
  *
  * 旧実装（proxy を素通りし `src/app/page.tsx` が描画されて redirect する形）でも
- * **応答は同じ 307 + Location: /shopping じゃ**。ゆえに status も Location も
+ * **応答は同じ 307 + Location: /calendar じゃ**。ゆえに status も Location も
  * 新旧を見分けられぬ。HTTP の往復数も両者 2 回で変わらぬ。
  *
  * 変わるのは 1 往復目の**中身**だけ ——「`/` の動的描画 + getClaims + profiles の
@@ -39,11 +39,11 @@ test("承認済みの起動は 1 回の 307 で default_page へ着く（/ を�
 }) => {
   await loginViaMagicLink(page, approvedUser.email)
 
-  // 既定（meals）と区別できる値を選ぶ。meals のままだと「解決せず既定へ
+  // 既定（baby）と区別できる値を選ぶ。baby のままだと「解決せず既定へ
   // 倒れただけ」と見分けがつかず、設定が効かなくても緑になる。
   const { error } = await adminClient()
     .from("profiles")
-    .update({ default_page: "shopping" })
+    .update({ default_page: "calendar" })
     .eq("id", approvedUser.id)
   expect(error, `default_page の更新に失敗: ${JSON.stringify(error)}`).toBeNull()
 
@@ -58,7 +58,7 @@ test("承認済みの起動は 1 回の 307 で default_page へ着く（/ を�
     "http://localhost" // 相対 Location でも解釈できるようにする
   )
   // 既定と区別できる値を選んである（上記）ゆえ、これは「設定が効いておる」の証人。
-  expect(location.pathname).toBe("/shopping")
+  expect(location.pathname).toBe("/calendar")
 })
 
 test("承認済みが /login を開くと、/ を経由せず default_page へ着く", async ({
@@ -67,9 +67,11 @@ test("承認済みが /login を開くと、/ を経由せず default_page へ�
 }) => {
   await loginViaMagicLink(page, approvedUser.email)
 
+  // こちらは既定値そのもの（baby）を明示して書き、既定へ倒れる経路と
+  // 明示設定の経路の両方が同じ行き先へ着くことを見る（上のケースと対）。
   const { error } = await adminClient()
     .from("profiles")
-    .update({ default_page: "stock" })
+    .update({ default_page: "baby" })
     .eq("id", approvedUser.id)
   expect(error, `default_page の更新に失敗: ${JSON.stringify(error)}`).toBeNull()
 
@@ -77,13 +79,13 @@ test("承認済みが /login を開くと、/ を経由せず default_page へ�
 
   expect(res.status()).toBe(307)
   const location = new URL(res.headers()["location"], "http://localhost")
-  expect(location.pathname).toBe("/stock")
+  expect(location.pathname).toBe("/baby")
 })
 
 /**
  * ⚠️ **ゲートが動いておらぬことの証人。** 起動の高速化は承認済みの枝の中だけで
  * 行った。未承認が `/` から前へ進めては、公開インスタンスを家族専用に保つ門が
- * 破れる。`e2e/approval-gate.spec.ts` は `/meals` と `/login` を見ておるが、
+ * 破れる。`e2e/approval-gate.spec.ts` は `/baby` と `/login` を見ておるが、
  * **`/` は誰も見ておらなんだ** —— 今回 `/` に分岐を足したゆえ、ここで塞ぐ。
  */
 test("未承認は / から前へ進めず /pending-approval へ送られる", async ({
