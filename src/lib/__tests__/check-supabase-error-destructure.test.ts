@@ -212,7 +212,7 @@ describe("check-supabase-error-destructure.py", () => {
     write(
       "bare-write.ts",
       `export async function remove(supabase: unknown, id: string) {
-  await supabase.from("meal_ingredients").delete().eq("meal_id", id)
+  await supabase.from("baby_diaries").delete().eq("household_id", id)
 }
 `,
     )
@@ -228,7 +228,7 @@ describe("check-supabase-error-destructure.py", () => {
       "bare-write-chain.ts",
       `export async function unlink(supabase: unknown, id: string) {
   await supabase
-    .from("meals")
+    .from("baby_logs")
     .update({ template_id: null })
     .eq("template_id", id)
 }
@@ -244,7 +244,7 @@ describe("check-supabase-error-destructure.py", () => {
       "write-ok.ts",
       `export async function remove(supabase: unknown, id: string) {
   const { error } = await supabase
-    .from("meals")
+    .from("baby_logs")
     .delete()
     .eq("id", id)
   if (error) throw error
@@ -260,7 +260,7 @@ describe("check-supabase-error-destructure.py", () => {
     write(
       "write-no-error.ts",
       `export async function add(supabase: unknown, row: unknown) {
-  const { data } = await supabase.from("stock_items").insert(row)
+  const { data } = await supabase.from("baby_diaries").insert(row)
   return data
 }
 `,
@@ -275,7 +275,7 @@ describe("check-supabase-error-destructure.py", () => {
       "write-select.ts",
       `export async function remove(supabase: unknown, id: string) {
   const { data } = await supabase
-    .from("shopping_items")
+    .from("calendar_events")
     .delete()
     .eq("id", id)
     .select("id")

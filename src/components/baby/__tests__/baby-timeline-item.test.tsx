@@ -161,6 +161,93 @@ describe("BabyTimelineItem の母乳サイクル表示（feeding_type='breast'�
   })
 })
 
+describe("BabyTimelineItem のおむつ表示（うんちの量）", () => {
+  it("量を持つうんち行は「うんち（大量）」", () => {
+    render(
+      <BabyTimelineItem
+        log={feedingLog({
+          log_type: "diaper",
+          feeding_type: null,
+          diaper_type: "poop",
+          poop_amount: "large",
+        })}
+        onEdit={vi.fn()}
+      />,
+    )
+    expect(screen.getByText("うんち（大量）")).toBeInTheDocument()
+  })
+
+  it("両方 + 少量 は「両方（少量）」", () => {
+    render(
+      <BabyTimelineItem
+        log={feedingLog({
+          log_type: "diaper",
+          feeding_type: null,
+          diaper_type: "both",
+          poop_amount: "small",
+        })}
+        onEdit={vi.fn()}
+      />,
+    )
+    expect(screen.getByText("両方（少量）")).toBeInTheDocument()
+  })
+
+  it("量を持たない旧行は従来どおり「うんち」だけ（後方互換）", () => {
+    render(
+      <BabyTimelineItem
+        log={feedingLog({
+          log_type: "diaper",
+          feeding_type: null,
+          diaper_type: "poop",
+          poop_amount: null,
+        })}
+        onEdit={vi.fn()}
+      />,
+    )
+    expect(screen.getByText("うんち")).toBeInTheDocument()
+  })
+})
+
+describe("BabyTimelineItem の母乳サイクルの開始側", () => {
+  it("開始側を持つ行は「母乳（右から） 左1回5分・右2回10分」と種別に添える", () => {
+    render(
+      <BabyTimelineItem
+        log={feedingLog({
+          feeding_type: "breast",
+          breast_left_count: 1,
+          breast_right_count: 2,
+          breast_left_sec: 300,
+          breast_right_sec: 600,
+          breast_start_side: "right",
+          duration_sec: 900,
+          duration_min: 15,
+        })}
+        onEdit={vi.fn()}
+      />,
+    )
+    expect(
+      screen.getByText("母乳（右から） 左1回5分・右2回10分"),
+    ).toBeInTheDocument()
+  })
+
+  it("開始側が不明（旧行）なら何も添えない（回帰: 表示が変わらない）", () => {
+    render(
+      <BabyTimelineItem
+        log={feedingLog({
+          feeding_type: "breast",
+          breast_left_count: 2,
+          breast_right_count: 1,
+          breast_start_side: null,
+          duration_sec: 750,
+          duration_min: 13,
+        })}
+        onEdit={vi.fn()}
+      />,
+    )
+    expect(screen.getByText("母乳 左2・右1 12分30秒")).toBeInTheDocument()
+  })
+})
+
 describe("BabyTimelineItem のメモ表示（複数行・改行反映）", () => {
   it("メモログは全文を whitespace-pre-wrap で表示し改行を保持する", () => {
     render(

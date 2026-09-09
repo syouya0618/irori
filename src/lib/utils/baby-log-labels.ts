@@ -1,4 +1,10 @@
-import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
+import type {
+  BabyLogType,
+  FeedingType,
+  DiaperType,
+  PoopAmount,
+  BreastStartSide,
+} from "@/lib/types/database"
 
 const logTypeLabels: Record<BabyLogType, string> = {
   feeding: "授乳",
@@ -40,6 +46,57 @@ export function getFeedingTypeLabel(type: FeedingType): string {
 
 export function getDiaperTypeLabel(type: DiaperType): string {
   return diaperTypeLabels[type]
+}
+
+const poopAmountLabels: Record<PoopAmount, string> = {
+  small: "少量",
+  large: "大量",
+}
+
+/**
+ * うんちの量のラベル。DB は TEXT + CHECK ゆえ将来値が増えうる — 未知値は null へ
+ * 退化させ（enum drift 防御・#159 と同じ流儀）、呼び出し側は「量の表示なし」で描く。
+ */
+export function getPoopAmountLabel(amount: string | null | undefined): string | null {
+  if (amount === "small" || amount === "large") return poopAmountLabels[amount]
+  return null
+}
+
+/**
+ * おむつ行の要約（うんち / うんち（大量） / 両方（少量））。量は poop / both の
+ * 行にしか付かない契約（chk_poop_amount_only_poop）だが、万一 pee 行に量が来ても
+ * 描かない（表示側でも契約をミラーし、矛盾行を目立たせない）。
+ */
+export function formatDiaperSummary(
+  type: DiaperType,
+  amount: string | null | undefined,
+): string {
+  const base = getDiaperTypeLabel(type)
+  if (type === "pee") return base
+  const amountLabel = getPoopAmountLabel(amount)
+  return amountLabel ? `${base}（${amountLabel}）` : base
+}
+
+const breastStartSideLabels: Record<BreastStartSide, string> = {
+  left: "左",
+  right: "右",
+}
+
+/** 開始側の短いラベル（左 / 右）。未知値・null は null（不明）。 */
+export function getBreastStartSideLabel(
+  side: string | null | undefined,
+): string | null {
+  if (side === "left" || side === "right") return breastStartSideLabels[side]
+  return null
+}
+
+/**
+ * タイムライン用「（左から）」。開始側を持つ母乳サイクル行だけに添える。
+ * 未知値・null は空文字（旧行は開始側を持たぬのが正常ゆえ、欠落を目立たせない）。
+ */
+export function formatBreastStartSide(side: string | null | undefined): string {
+  const label = getBreastStartSideLabel(side)
+  return label ? `（${label}から）` : ""
 }
 
 /**

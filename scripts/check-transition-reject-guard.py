@@ -51,7 +51,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 
 # `startTransition(async () => {` / `startClearTransition(async () => {` 等。
-# 変数名は startTransition 固定ではない（shopping-list は startClearTransition）。
+# 変数名は startTransition 固定ではない（かつての shopping-list は startClearTransition じゃった）。
 OPEN_RE = re.compile(r"\b\w*[Tt]ransition\(\s*async\s*(?:\([^)]*\)|\w+)\s*=>\s*\{\s*$")
 # 文字列リテラルを潰してから brace を数える（`${...}` などの誤カウント防止）
 STRING_RE = re.compile(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|`(?:\\.|[^`\\])*`")

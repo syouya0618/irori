@@ -1,8 +1,8 @@
-export const VALID_PAGES = ["meals", "shopping", "stock", "baby"] as const
+export const VALID_PAGES = ["baby", "calendar"] as const
 export type ValidPage = (typeof VALID_PAGES)[number]
 
 /** `default_page` が未設定・未知の値だったときの行き先 */
-export const DEFAULT_PAGE: ValidPage = "meals"
+export const DEFAULT_PAGE: ValidPage = "baby"
 
 /**
  * `profiles.default_page` を「起動時に開くページ」へ解決する。
@@ -17,7 +17,9 @@ export const DEFAULT_PAGE: ValidPage = "meals"
  * `isValidYmd` を 1 箇所へ畳んだのと同じ理由じゃ。ゆえに両層ともこの関数を呼ぶ。
  *
  * `default_page` は NULL を取りうる（列追加以前の行・未設定の利用者）。未知の
- * 文字列も、列が自由文字列である以上ありうる。どちらも `DEFAULT_PAGE` へ倒す。
+ * 文字列も、DB の CHECK（`baby` / `calendar`）とこの配列の追随がずれる間は
+ * ありうる（かつて在った `meals` / `shopping` / `stock` は migration
+ * `20260909100002` で `baby` へ寄せ済み）。どちらも `DEFAULT_PAGE` へ倒す。
  */
 export function resolveDefaultPage(value: unknown): ValidPage {
   return VALID_PAGES.includes(value as ValidPage)

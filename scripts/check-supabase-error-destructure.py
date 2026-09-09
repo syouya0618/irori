@@ -11,7 +11,7 @@ silent fail を作るため、`{ data, error }` で受け取り早期 log/throw 
   A. single-row:  `.single()` / `.maybeSingle()` を含む destructure
   B. multi-row:   `.single()` を含まない supabase 読み取りクエリ
                   (`supabase....select(...)` または `supabase....rpc(...)`)。
-                  PR #31 で baby/meals/shopping page.tsx の instance を修正したが、
+                  PR #31 で baby 等の page.tsx（当時は meals/shopping も在った）の instance を修正したが、
                   従来この検出器は B を見逃していた (Issue #14 推奨3)。
   C. write:       supabase 書き込みクエリ
                   (`.insert(` / `.update(` / `.upsert(` / `.delete(`)。

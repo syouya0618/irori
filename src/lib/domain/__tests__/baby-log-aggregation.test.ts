@@ -326,25 +326,33 @@ describe("getBabyAge", () => {
       years: 0,
       months: 0,
       days: 10,
+      totalDays: 10,
       label: "生後10日",
+      totalDaysLabel: "生後10日",
     })
   })
 
-  it("当日誕生 → 生後0日", () => {
+  it("当日誕生 → 生後0日（誕生日当日は 0 日目・既存の数え方を変えない）", () => {
     expect(getBabyAge("2026-04-11", "2026-04-11")).toEqual({
       years: 0,
       months: 0,
       days: 0,
+      totalDays: 0,
       label: "生後0日",
+      totalDaysLabel: "生後0日",
     })
   })
 
-  it("1ヶ月以上は「生後○ヶ月○日」", () => {
+  it("1ヶ月以上は「生後○ヶ月○日」と通算日数を両方持つ", () => {
+    // 1/1 → 4/11: 3ヶ月10日。通算は 31+28+31+10 = 100 日（30 日換算なら 3ヶ月10日 = 100 日と偶然一致するが、
+    // 次の月末ケースで暦計算と 30 日換算が食い違うことを固定する）
     expect(getBabyAge("2026-01-01", "2026-04-11")).toEqual({
       years: 0,
       months: 3,
       days: 10,
+      totalDays: 100,
       label: "生後3ヶ月10日",
+      totalDaysLabel: "生後100日",
     })
   })
 
@@ -353,26 +361,125 @@ describe("getBabyAge", () => {
       years: 0,
       months: 1,
       days: 0,
+      totalDays: 31,
       label: "生後1ヶ月",
+      totalDaysLabel: "生後31日",
     })
   })
 
-  it("月末→翌月頭の借り（1/31→3/1）を暦で正しく処理", () => {
-    // 2026-02 は 28 日。1/31 + 1ヶ月 = 2/28（クランプ）→ 3/1 まで 1 日
+  it("要望の例: 1ヶ月27日 と 生後58日 が同時に出る（7/13 → 9/9）", () => {
+    // 7/13 + 1ヶ月 = 8/13 → 9/9 まで 27 日。通算は 18（7月残）+ 31 + 9 = 58 日
+    expect(getBabyAge("2026-07-13", "2026-09-09")).toEqual({
+      years: 0,
+      months: 1,
+      days: 27,
+      totalDays: 58,
+      label: "生後1ヶ月27日",
+      totalDaysLabel: "生後58日",
+    })
+  })
+
+  it("月末→翌月頭の借り（1/31→3/1）を暦で正しく処理（30 日換算なら 0ヶ月29日になる）", () => {
+    // 2026-02 は 28 日。1/31 + 1ヶ月 = 2/28（クランプ）→ 3/1 まで 1 日。通算 29 日
     expect(getBabyAge("2026-01-31", "2026-03-01")).toEqual({
       years: 0,
       months: 1,
       days: 1,
+      totalDays: 29,
+      label: "生後1ヶ月1日",
+      totalDaysLabel: "生後29日",
+    })
+  })
+
+  it("月末生まれの前日（1/31 → 2/28）は月齢の記念日に達しておらず 生後28日", () => {
+    // 2/28 は 1/31 + 1ヶ月（クランプ先）そのものゆえ 1ヶ月0日 が正しい
+    expect(getBabyAge("2026-01-31", "2026-02-28")).toEqual({
+      years: 0,
+      months: 1,
+      days: 0,
+      totalDays: 28,
+      label: "生後1ヶ月",
+      totalDaysLabel: "生後28日",
+    })
+    // その前日 2/27 はまだ 0ヶ月 → 日数のみ表記
+    expect(getBabyAge("2026-01-31", "2026-02-27")).toEqual({
+      years: 0,
+      months: 0,
+      days: 27,
+      totalDays: 27,
+      label: "生後27日",
+      totalDaysLabel: "生後27日",
+    })
+  })
+
+  it("31日生まれ → 30日までしかない月（3/31 → 4/30 → 5/1）", () => {
+    // 4/30 は 3/31 + 1ヶ月のクランプ先 → 1ヶ月0日・通算 30
+    expect(getBabyAge("2026-03-31", "2026-04-30")).toMatchObject({
+      months: 1,
+      days: 0,
+      totalDays: 30,
+      label: "生後1ヶ月",
+    })
+    // 5/1 は 1ヶ月1日・通算 31
+    expect(getBabyAge("2026-03-31", "2026-05-01")).toMatchObject({
+      months: 1,
+      days: 1,
+      totalDays: 31,
       label: "生後1ヶ月1日",
     })
   })
 
-  it("1歳以上は「○歳○ヶ月」（日数は省略）", () => {
+  it("うるう年: 2/29 生まれの 1ヶ月後は 3/29、平年の 2/28 で満 1 歳（末日満了）", () => {
+    expect(getBabyAge("2028-02-29", "2028-03-29")).toMatchObject({
+      months: 1,
+      days: 0,
+      totalDays: 29,
+      label: "生後1ヶ月",
+    })
+    // 2029 は平年で 2/29 が無い。応当日の無い月は末日で満了 → 2/28 に 1 歳 0 日。通算 365 日
+    expect(getBabyAge("2028-02-29", "2029-02-28")).toMatchObject({
+      years: 1,
+      months: 0,
+      days: 0,
+      totalDays: 365,
+      label: "1歳",
+    })
+    // その前日 2/27 はまだ 11ヶ月（1/29 起点で 29 日）
+    expect(getBabyAge("2028-02-29", "2029-02-27")).toMatchObject({
+      years: 0,
+      months: 11,
+      days: 29,
+      totalDays: 364,
+      label: "生後11ヶ月29日",
+    })
+    // 3/1 は 1 歳 1 日。通算 366 日
+    expect(getBabyAge("2028-02-29", "2029-03-01")).toMatchObject({
+      years: 1,
+      months: 0,
+      days: 1,
+      totalDays: 366,
+      label: "1歳",
+    })
+  })
+
+  it("記念日が無い月でも 0ヶ月末日 → 1ヶ月0日 → 1ヶ月1日 と連続する（不連続の回帰固定）", () => {
+    // 5/31 生まれ: 6/29 = 生後29日、6/30 = 1ヶ月（末日満了）、7/1 = 1ヶ月1日
+    expect(getBabyAge("2026-05-31", "2026-06-29")).toMatchObject({ months: 0, days: 29 })
+    expect(getBabyAge("2026-05-31", "2026-06-30")).toMatchObject({ months: 1, days: 0 })
+    expect(getBabyAge("2026-05-31", "2026-07-01")).toMatchObject({ months: 1, days: 1 })
+    // 記念日がある月は従来どおり（5/31 生まれの 7/31 = 2ヶ月、7/30 = 1ヶ月30日）
+    expect(getBabyAge("2026-05-31", "2026-07-31")).toMatchObject({ months: 2, days: 0 })
+    expect(getBabyAge("2026-05-31", "2026-07-30")).toMatchObject({ months: 1, days: 30 })
+  })
+
+  it("1歳以上は「○歳○ヶ月」（日数は省略）だが通算日数は持つ", () => {
     expect(getBabyAge("2025-02-11", "2026-04-11")).toEqual({
       years: 1,
       months: 2,
       days: 0,
+      totalDays: 424,
       label: "1歳2ヶ月",
+      totalDaysLabel: "生後424日",
     })
   })
 
@@ -381,7 +488,9 @@ describe("getBabyAge", () => {
       years: 1,
       months: 0,
       days: 0,
+      totalDays: 365,
       label: "1歳",
+      totalDaysLabel: "生後365日",
     })
   })
 
@@ -390,7 +499,9 @@ describe("getBabyAge", () => {
       years: 0,
       months: 0,
       days: 0,
+      totalDays: 0,
       label: "生後0日",
+      totalDaysLabel: "生後0日",
     })
   })
 

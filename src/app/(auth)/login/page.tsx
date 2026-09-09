@@ -26,7 +26,7 @@ export default function LoginPage() {
             うちのログ
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            夫婦の献立・買い物・暮らしをひとつに
+            夫婦の育児記録と予定をひとつに
           </p>
         </div>
 

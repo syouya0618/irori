@@ -1,9 +1,11 @@
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { BabyDashboard } from "@/components/baby/baby-dashboard"
+import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
 import { FEEDING_INTERVAL_DEFAULT } from "@/lib/domain/baby-feeding-interval"
 import { BABY_LOG_COLUMNS } from "@/lib/domain/baby-log-columns"
 import { WEEKLY_FETCH_DAYS } from "@/lib/domain/baby-weekly-summary"
+import { CALENDAR_EVENT_COLUMNS } from "@/lib/domain/calendar-event-columns"
 import { todayJstString, shiftYmd } from "@/lib/utils/date-jst"
 
 export default async function BabyPage() {
@@ -29,6 +31,7 @@ export default async function BabyPage() {
     { data: todayDiary, error: diaryError },
     { data: lastFeedingData, error: lastFeedingError },
     { data: lastNursingData, error: lastNursingError },
+    { data: upcomingEvents, error: upcomingError },
   ] = await Promise.all([
       supabase
         .from("baby_logs")
@@ -100,6 +103,15 @@ export default async function BabyPage() {
         .order("logged_at", { ascending: false })
         .limit(1)
         .maybeSingle(),
+      // 今日・明日に重なる予定（CAL-4 カード。起動直後に目に入る位置 = 起動時のページ
+      // が /baby になったため旧 /meals から移設）。他クエリと並列ゆえ往復は増えない。
+      supabase
+        .from("calendar_events")
+        .select(CALENDAR_EVENT_COLUMNS)
+        .eq("household_id", householdId)
+        .gte("end_date", todayJst) // 重なり判定: end_date >= 今日
+        .lte("start_date", tomorrowJst) //          AND start_date <= 明日
+        .order("start_date"),
     ])
 
   if (logsError) {
@@ -144,6 +156,12 @@ export default async function BabyPage() {
     })
   }
 
+  if (upcomingError) {
+    logSupabaseError("baby", "upcoming events lookup failed", upcomingError, {
+      householdId,
+    })
+  }
+
   return (
     <BabyDashboard
       initialLogs={logs ?? []}
@@ -159,6 +177,9 @@ export default async function BabyPage() {
       babyBirthDate={household?.baby_birth_date ?? null}
       feedingIntervalMin={
         household?.feeding_interval_min ?? FEEDING_INTERVAL_DEFAULT
+      }
+      initialUpcomingEvents={
+        (upcomingEvents as unknown as CalendarEventRecord[]) ?? []
       }
     />
   )

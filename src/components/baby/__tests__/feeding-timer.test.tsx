@@ -257,9 +257,104 @@ describe("FeedingTimer の localStorage 復元", () => {
       feedingType: "breast",
       breastLeftCount: 2,
       breastRightCount: 1,
+      // 旧形式（startSide なし）で両側とも吸わせ済み → 開始側は復元不能 = 不明（null）
+      breastStartSide: null,
       durationSec: 300,
       loggedAt: STARTED_5MIN_AGO,
     })
+  })
+})
+
+describe("FeedingTimer の開始側（breast_start_side）", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ now: FIXED_NOW, toFake: ["Date"] })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it("左でタイマーを始めて右へ切替えても、開始側は左のまま記録する", async () => {
+    recordFeeding.mockResolvedValueOnce({ error: null, id: "ss-1" })
+    renderTimer({ initialFeedingType: "breast_left" })
+    expect(screen.getByText(/左から開始/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "右" }))
+    // 現在側は右へ動くが開始側は動かない
+    expect(screen.getByText(/左から開始/)).toBeInTheDocument()
+    fireEvent.click(stopButton())
+    await waitFor(() => expect(recordFeeding).toHaveBeenCalled())
+    expect(recordFeeding).toHaveBeenCalledWith(
+      expect.objectContaining({ breastStartSide: "left" }),
+    )
+    // トーストにも開始側が出る
+    expect(toast.success).toHaveBeenCalledWith(
+      expect.stringContaining("左から・"),
+    )
+  })
+
+  it("右でタイマーを始めると開始側は右", async () => {
+    recordFeeding.mockResolvedValueOnce({ error: null, id: "ss-2" })
+    renderTimer({ initialFeedingType: "breast_right" })
+    fireEvent.click(stopButton())
+    await waitFor(() => expect(recordFeeding).toHaveBeenCalled())
+    expect(recordFeeding).toHaveBeenCalledWith(
+      expect.objectContaining({ breastStartSide: "right" }),
+    )
+  })
+
+  it("開始側は localStorage に保存され、復元後もそのまま記録される", async () => {
+    renderTimer({ initialFeedingType: "breast_right" })
+    fireEvent.click(screen.getByRole("button", { name: "左" }))
+    expect(savedTimerState()).toMatchObject({
+      feedingType: "breast_left",
+      startSide: "breast_right",
+    })
+    cleanup()
+
+    recordFeeding.mockResolvedValueOnce({ error: null, id: "ss-3" })
+    // 復元時の initialFeedingType（左）は開始側を上書きしない
+    renderTimer({ initialFeedingType: "breast_left" })
+    fireEvent.click(stopButton())
+    await waitFor(() => expect(recordFeeding).toHaveBeenCalled())
+    expect(recordFeeding).toHaveBeenCalledWith(
+      expect.objectContaining({ breastStartSide: "right" }),
+    )
+  })
+
+  it("旧形式（startSide なし）でも片側しか吸わせていなければその側を開始側と推定する", async () => {
+    seedTimerState({
+      startedAt: STARTED_5MIN_AGO,
+      feedingType: "breast_right",
+      leftCount: 0,
+      rightCount: 2,
+    })
+    recordFeeding.mockResolvedValueOnce({ error: null, id: "ss-4" })
+    renderTimer({ initialFeedingType: "breast_left" })
+    fireEvent.click(stopButton())
+    await waitFor(() => expect(recordFeeding).toHaveBeenCalled())
+    expect(recordFeeding).toHaveBeenCalledWith(
+      expect.objectContaining({ breastStartSide: "right" }),
+    )
+  })
+
+  it("手動入力では開始側を選び直せる（既定はタップした側）", async () => {
+    recordFeeding.mockResolvedValueOnce({ error: null, id: "ss-5" })
+    renderTimer({ initialFeedingType: "breast_left" })
+    fireEvent.click(screen.getByRole("button", { name: "手動入力" }))
+    fireEvent.click(screen.getByRole("button", { name: "右から" }))
+    fireEvent.click(screen.getByRole("button", { name: /記録する/ }))
+    await waitFor(() => expect(recordFeeding).toHaveBeenCalled())
+    expect(recordFeeding).toHaveBeenCalledWith(
+      expect.objectContaining({ breastStartSide: "right" }),
+    )
+  })
+
+  it("楽観 append する行にも開始側が乗る", async () => {
+    recordFeeding.mockResolvedValueOnce({ error: null, id: "ss-6" })
+    const onLogRecorded = vi.fn()
+    renderTimer({ initialFeedingType: "breast_left", onLogRecorded })
+    fireEvent.click(stopButton())
+    await waitFor(() => expect(onLogRecorded).toHaveBeenCalledTimes(1))
+    expect(onLogRecorded.mock.calls[0][0].breast_start_side).toBe("left")
   })
 })
 
@@ -286,6 +381,7 @@ describe("FeedingTimer の左右別授乳時間（stint banking）", () => {
       feedingType: "breast",
       breastLeftCount: 1,
       breastRightCount: 1,
+      breastStartSide: "left",
       breastLeftSec: 300,
       breastRightSec: 200,
       loggedAt: FIXED_NOW_ISO,
@@ -331,6 +427,8 @@ describe("FeedingTimer の左右別授乳時間（stint banking）", () => {
       feedingType: "breast",
       breastLeftCount: 1,
       breastRightCount: 1,
+      // startSide を持たぬ保存形式で両側 1 回ずつ → 開始側は推定不能（null）
+      breastStartSide: null,
       breastLeftSec: 60,
       breastRightSec: 120,
       loggedAt: STARTED_5MIN_AGO,
@@ -452,6 +550,8 @@ describe("FeedingTimer 手動入力モード（分・秒 + 左右回数）", () 
       feedingType: "breast",
       breastLeftCount: 0,
       breastRightCount: 1,
+      // 手動入力の開始側はタップした側（右）が既定
+      breastStartSide: "right",
       breastLeftSec: 60,
       breastRightSec: 160,
       // logged_at は「記録時刻 − 授乳時間(左+右)」= サイクル開始時刻
@@ -518,6 +618,7 @@ describe("FeedingTimer の深夜跨ぎ（前日の記録として保存）", () 
       feedingType: "breast",
       breastLeftCount: 1,
       breastRightCount: 1,
+      breastStartSide: null,
       durationSec: 1200,
       loggedAt: PREV_DAY_STARTED_AT,
     })

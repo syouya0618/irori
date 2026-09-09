@@ -62,7 +62,7 @@ describe("getAppOrigin", () => {
   })
 
   it("env が無ければ x-forwarded-host / x-forwarded-proto を優先する", () => {
-    const request = makeRequest("http://localhost:3000/meals", {
+    const request = makeRequest("http://localhost:3000/baby", {
       host: "127.0.0.1:3000",
       "x-forwarded-host": "fwd.example.com",
       "x-forwarded-proto": "https",
@@ -71,7 +71,7 @@ describe("getAppOrigin", () => {
   })
 
   it("x-forwarded-host / x-forwarded-proto がカンマ列挙なら先頭を採用する", () => {
-    const request = makeRequest("http://localhost:3000/meals", {
+    const request = makeRequest("http://localhost:3000/baby", {
       "x-forwarded-host": "a.example, b.example",
       "x-forwarded-proto": "https, http",
     })

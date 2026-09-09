@@ -23,17 +23,17 @@ afterEach(() => {
 describe("logRealtimeStatus", () => {
   it("SUBSCRIBED は console.info に channel/status を出す", () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {})
-    logRealtimeStatus("meals-abc", "SUBSCRIBED")
+    logRealtimeStatus("baby_logs-abc", "SUBSCRIBED")
     expect(info).toHaveBeenCalledTimes(1)
     expect(info.mock.calls[0][1]).toMatchObject({
-      channel: "meals-abc",
+      channel: "baby_logs-abc",
       status: "SUBSCRIBED",
     })
   })
 
   it("CLOSED は console.warn に落とす（セッション途中の socket 死の信号）", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
-    logRealtimeStatus("stock", "CLOSED")
+    logRealtimeStatus("calendar", "CLOSED")
     expect(warn).toHaveBeenCalledTimes(1)
     expect(warn.mock.calls[0][1]).toMatchObject({ status: "CLOSED" })
   })
@@ -55,15 +55,15 @@ describe("logRealtimeEvent", () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {})
     // 実際の RealtimePostgresChangesPayload は new/old に行データ(PII)を持つ
     const payload = {
-      table: "shopping_items",
+      table: "baby_logs",
       eventType: "INSERT",
-      new: { id: "1", name: "秘密のメモ" },
+      new: { id: "1", memo: "秘密のメモ" },
     }
-    logRealtimeEvent("shopping", payload)
+    logRealtimeEvent("baby_logs", payload)
     expect(info).toHaveBeenCalledTimes(1)
     expect(info.mock.calls[0][1]).toEqual({
-      channel: "shopping",
-      table: "shopping_items",
+      channel: "baby_logs",
+      table: "baby_logs",
       eventType: "INSERT",
     })
     expect(JSON.stringify(info.mock.calls[0][1])).not.toContain("秘密")
@@ -101,11 +101,11 @@ describe("logRealtimeStatus: 異常のみサーバへ 1 回だけ報告する", 
       vi.spyOn(console, "error").mockImplementation(() => {})
       const mod = await freshModule()
 
-      mod.logRealtimeStatus("shopping", status, new Error("socket died"))
+      mod.logRealtimeStatus("baby_logs", status, new Error("socket died"))
 
       expect(reportRealtimeAnomaly).toHaveBeenCalledTimes(1)
       expect(reportRealtimeAnomaly).toHaveBeenCalledWith(
-        "shopping",
+        "baby_logs",
         status,
         "socket died",
       )
@@ -116,7 +116,7 @@ describe("logRealtimeStatus: 異常のみサーバへ 1 回だけ報告する", 
     vi.spyOn(console, "info").mockImplementation(() => {})
     const mod = await freshModule()
 
-    mod.logRealtimeStatus("meals", "SUBSCRIBED")
+    mod.logRealtimeStatus("baby_diaries", "SUBSCRIBED")
 
     expect(reportRealtimeAnomaly).not.toHaveBeenCalled()
   })
@@ -127,8 +127,8 @@ describe("logRealtimeStatus: 異常のみサーバへ 1 回だけ報告する", 
     const mod = await freshModule()
 
     // 同一 channel の再発、別 channel の異常、いずれも 2 回目以降は送らない
-    mod.logRealtimeStatus("stock", "CLOSED")
-    mod.logRealtimeStatus("stock", "CLOSED")
+    mod.logRealtimeStatus("calendar", "CLOSED")
+    mod.logRealtimeStatus("calendar", "CLOSED")
     mod.logRealtimeStatus("baby_logs", "CHANNEL_ERROR")
 
     expect(reportRealtimeAnomaly).toHaveBeenCalledTimes(1)
@@ -138,8 +138,8 @@ describe("logRealtimeStatus: 異常のみサーバへ 1 回だけ報告する", 
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
     const mod = await freshModule()
 
-    mod.logRealtimeStatus("stock", "CLOSED")
-    mod.logRealtimeStatus("stock", "CLOSED")
+    mod.logRealtimeStatus("calendar", "CLOSED")
+    mod.logRealtimeStatus("calendar", "CLOSED")
 
     // console.warn は 2 回とも出る（サーバ報告のゲートに巻き込まれていない）
     const closedWarns = warn.mock.calls.filter((c) =>
@@ -163,7 +163,7 @@ describe("logRealtimeStatus: 報告が失敗しても本来の機能を壊さな
     const mod = await freshModule()
     reportRealtimeAnomaly.mockRejectedValue(new Error("network down"))
 
-    expect(() => mod.logRealtimeStatus("stock", "CLOSED")).not.toThrow()
+    expect(() => mod.logRealtimeStatus("calendar", "CLOSED")).not.toThrow()
 
     // `.catch()` が付いており unhandled rejection にならない
     await Promise.resolve()
@@ -183,7 +183,7 @@ describe("logRealtimeStatus: 報告が失敗しても本来の機能を壊さな
       throw new Error("action reference broken")
     })
 
-    expect(() => mod.logRealtimeStatus("stock", "CLOSED")).not.toThrow()
+    expect(() => mod.logRealtimeStatus("calendar", "CLOSED")).not.toThrow()
 
     // 本来の CLOSED ログは出ている（報告の失敗に巻き込まれていない）
     expect(warn.mock.calls.some((c) => String(c[0]).includes("closed"))).toBe(true)
@@ -199,8 +199,8 @@ describe("logRealtimeStatus: 報告が失敗しても本来の機能を壊さな
       throw new Error("action reference broken")
     })
 
-    mod.logRealtimeStatus("stock", "CLOSED")
-    mod.logRealtimeStatus("stock", "CLOSED")
+    mod.logRealtimeStatus("calendar", "CLOSED")
+    mod.logRealtimeStatus("calendar", "CLOSED")
 
     expect(reportRealtimeAnomaly).toHaveBeenCalledTimes(1)
   })

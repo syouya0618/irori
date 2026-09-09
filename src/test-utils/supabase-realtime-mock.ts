@@ -6,14 +6,14 @@
  * - **inline reducer style**: `buildInlineReducerSupabaseMock`
  *   Realtime callback 内で setState の reducer を回し、payload.new/old を直接
  *   state に反映する scheme。`supabase.from()` は契約上呼ばれないため throw mock。
- *   採用例: BabyDashboard / ShoppingList / StockList
+ *   採用例: BabyDashboard
  *
  * - **refetch style**: `buildRefetchSupabaseMock`
  *   Realtime callback 内で `supabase.from(table).select(...).eq().gte().lte().order()`
  *   を chainable に呼んで全体 refetch する scheme。最後の `.order()` が thenable で
  *   `{ data, error }` を resolve する。chain mock は state に蓄積され、test body から
  *   `state.gteMock.toHaveBeenLastCalledWith(...)` 等で個別 assertion 可能。
- *   採用例: MealWeekView
+ *   採用例: UpcomingEventsCard
  *
  * ### vi.mock factory hoisting の制約
  *
@@ -40,8 +40,7 @@ export type ViFn = ReturnType<
  * factory 内で `vi.fn()` を作成して各フィールドへ代入する。
  * テスト本体では `state.fromMock.mockClear()` などで個別 access する。
  *
- * stock-list のように Realtime 以外の mock フィールド
- * （例: `checkAndAutoAddLowStockMock`）を追加する場合は、
+ * Realtime 以外の mock フィールド（例: Server Action の spy）を追加する場合は、
  * この型の **superset** としてテストファイル側でローカル拡張する。
  */
 export type InlineReducerRealtimeMockState = {
@@ -205,7 +204,7 @@ export function makePayloadFor<TRow>(
 }
 
 // ===========================================================================
-// Refetch style (MealWeekView 等)
+// Refetch style (UpcomingEventsCard 等)
 // ===========================================================================
 
 /**
@@ -324,8 +323,8 @@ export function buildRefetchSupabaseMock<TRow>(
       } = {
         on: (_event, filter, cb) => {
           // 実 postgres_changes は table 単位で配信される。同一 channel に複数
-          // table の .on を chain した場合 (meals + meal_reactions)、meals の
-          // payload が meal_reactions の callback を発火してはならない。emit は
+          // table の .on を chain した場合 (baby_logs + baby_diaries)、baby_logs の
+          // payload が baby_diaries の callback を発火してはならない。emit は
           // 全 listener を無差別に呼ぶため、購読 table と payload.table が食い違う
           // 時に callback を握り潰す wrapper で per-table 配信を再現する。
           // どちらかの table が欠ける場合は旧挙動 (常に発火) に degrade する。

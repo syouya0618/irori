@@ -29,8 +29,6 @@ import { ProfileCard } from "@/components/settings/profile-card"
 import { InviteCard } from "@/components/settings/invite-card"
 import { ApprovalCard, type PendingUser } from "@/components/settings/approval-card"
 import { DefaultPageCard } from "@/components/settings/default-page-card"
-import { AutoStockCategoriesCard } from "@/components/settings/auto-stock-card"
-import { OcrProviderCard } from "@/components/settings/ocr-provider-card"
 import { BabyProfileCard } from "@/components/settings/baby-profile-card"
 import { ExportCard } from "@/components/settings/export-card"
 import {
@@ -60,7 +58,6 @@ interface SettingsContentProps {
   } | null
   email: string
   pendingUsers: PendingUser[]
-  autoStockCategories: string[]
   babyProfile: {
     name: string | null
     birthDate: string | null
@@ -91,7 +88,6 @@ export function SettingsContent({
   household,
   email,
   pendingUsers,
-  autoStockCategories,
   babyProfile,
   googleConnections,
   googleNotice,
@@ -161,12 +157,6 @@ export function SettingsContent({
 
       {/* デフォルトページ */}
       <DefaultPageCard defaultPage={profile.defaultPage} />
-
-      {/* 在庫自動追加 */}
-      <AutoStockCategoriesCard initialCategories={autoStockCategories} />
-
-      {/* レシート読み取り方式 */}
-      <OcrProviderCard />
 
       {/* 赤ちゃん情報 */}
       <BabyProfileCard initialProfile={babyProfile} />

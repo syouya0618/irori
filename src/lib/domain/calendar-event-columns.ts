@@ -1,7 +1,7 @@
 /**
  * `calendar_events` の SELECT カラム（`CalendarEventRecord` を満たす一式）。
  *
- * **なぜ独立モジュールに置くか**: この定数は Server Component（`meals/page.tsx`・
+ * **なぜ独立モジュールに置くか**: この定数は Server Component（`baby/page.tsx`・
  * `calendar/page.tsx`）と Client Component（`use-month-events.ts`・
  * `upcoming-events-card.tsx`）の両方から使う。`"use client"` を持つファイルに
  * 置いて Server 側から**値として** import すると、Next.js がそれを client

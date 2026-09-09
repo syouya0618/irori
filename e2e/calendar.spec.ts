@@ -32,7 +32,7 @@ async function loginAndOpenCalendar(page: Page, email: string): Promise<void> {
   await expect(page).toHaveURL(/\/setup/, { timeout: 15_000 })
   await page.getByLabel("世帯名").fill("E2E カレンダー世帯")
   await page.getByRole("button", { name: "世帯を作成する" }).click()
-  await expect(page).toHaveURL(/\/meals/, { timeout: 15_000 })
+  await expect(page).toHaveURL(/\/baby/, { timeout: 15_000 })
   await page.getByRole("link", { name: "予定" }).click()
   await expect(page).toHaveURL(/\/calendar/, { timeout: 15_000 })
 }

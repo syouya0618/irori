@@ -83,9 +83,7 @@ export default async function SettingsPage({
   ] = await Promise.all([
     supabase
       .from("households")
-      .select(
-        "id, name, auto_stock_categories, baby_name, baby_birth_date, feeding_interval_min",
-      )
+      .select("id, name, baby_name, baby_birth_date, feeding_interval_min")
       .eq("id", profile.household_id)
       .single(),
     profile.role === "owner"
@@ -259,8 +257,8 @@ export default async function SettingsPage({
         avatarUrl: profile.avatar_url,
         role: profile.role,
         // 起動側（proxy / app/page.tsx）と**同じ関数**で解決する。ここだけ
-        // `?? "meals"` の独自既定にしておくと、未知の値が入ったときに
-        // 「カードは何も選ばれておらぬのに起動は献立へ行く」という食い違いが
+        // `?? "baby"` の独自既定にしておくと、未知の値が入ったときに
+        // 「カードは何も選ばれておらぬのに起動は育児へ行く」という食い違いが
         // 無音で生じる（設定と実挙動の乖離 ＝ #219 と同族）。
         defaultPage: resolveDefaultPage(profile.default_page),
       }}
@@ -268,9 +266,6 @@ export default async function SettingsPage({
         household
           ? { id: household.id, name: household.name }
           : null
-      }
-      autoStockCategories={
-        (household?.auto_stock_categories as string[] | null) ?? ["baby", "cleaning", "hygiene"]
       }
       babyProfile={{
         name: household?.baby_name ?? null,

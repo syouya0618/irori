@@ -137,6 +137,52 @@ describe("buildOptimisticLog (B-03)", () => {
   })
 })
 
+describe("buildOptimisticLog: うんちの量と母乳サイクルの開始側", () => {
+  it("diaper: poopAmount を透過する", () => {
+    const log = buildOptimisticLog({
+      id: "p1",
+      logType: "diaper",
+      loggedBy: "u1",
+      diaperType: "both",
+      poopAmount: "large",
+    })
+    expect(log.diaper_type).toBe("both")
+    expect(log.poop_amount).toBe("large")
+  })
+
+  it("diaper: 未指定なら poop_amount は null（量なし）", () => {
+    const log = buildOptimisticLog({
+      id: "p2",
+      logType: "diaper",
+      loggedBy: "u1",
+      diaperType: "poop",
+    })
+    expect(log.poop_amount).toBeNull()
+  })
+
+  it("breast: breastStartSide を透過し、未指定なら null（不明）", () => {
+    const withSide = buildOptimisticLog({
+      id: "b-side",
+      logType: "feeding",
+      loggedBy: "u1",
+      feedingType: "breast",
+      breastLeftCount: 1,
+      breastRightCount: 0,
+      breastStartSide: "left",
+    })
+    expect(withSide.breast_start_side).toBe("left")
+    const unknown = buildOptimisticLog({
+      id: "b-unknown",
+      logType: "feeding",
+      loggedBy: "u1",
+      feedingType: "breast",
+      breastLeftCount: 1,
+      breastRightCount: 1,
+    })
+    expect(unknown.breast_start_side).toBeNull()
+  })
+})
+
 describe("buildOptimisticLog: 左右別授乳時間（sides）", () => {
   it("breastLeftSec/RightSec を透過し、0 を null に化けさせない", () => {
     const log = buildOptimisticLog({

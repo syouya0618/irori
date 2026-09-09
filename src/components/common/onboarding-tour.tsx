@@ -2,10 +2,8 @@
 
 import { useState } from "react"
 import {
-  UtensilsCrossed,
-  ShoppingCart,
-  Package,
   Baby,
+  CalendarDays,
   Settings,
   Hand,
   type LucideIcon,
@@ -29,32 +27,22 @@ interface TourStep {
   body: string
 }
 
-// 説明対象は BottomNav の 5 タブと対応（bottom-nav.tsx）。
+// 説明対象は BottomNav の 3 タブと対応（bottom-nav.tsx）。
 const STEPS: TourStep[] = [
   {
     icon: Hand,
     title: "irori へようこそ",
-    body: "夫婦で献立・買い物・在庫・育児をひとつにまとめるアプリです。片手でも、すき間時間でも使えます。",
-  },
-  {
-    icon: UtensilsCrossed,
-    title: "献立",
-    body: "1週間の献立をふたりで決めて共有します。空いた枠をタップするだけで登録できます。",
-  },
-  {
-    icon: ShoppingCart,
-    title: "買い物",
-    body: "買い物リストはリアルタイムで共有されます。お店で片手でチェックできます。",
-  },
-  {
-    icon: Package,
-    title: "在庫",
-    body: "家の在庫を記録します。賞味期限は任意なので、冷蔵庫の食材はそのまま追加できます。",
+    body: "育児記録と予定を夫婦で共有するアプリです。片手でも、すき間時間でも使えます。",
   },
   {
     icon: Baby,
     title: "育児",
     body: "授乳・おむつをワンタップで記録します。夜間や抱っこ中でもすぐ残せます。",
+  },
+  {
+    icon: CalendarDays,
+    title: "予定",
+    body: "健診や予防接種などの予定をふたりで共有します。Google カレンダーと連携すれば、ふだんの予定もここに並びます。",
   },
   {
     icon: Settings,

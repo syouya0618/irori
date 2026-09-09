@@ -1,7 +1,7 @@
 "use client"
 
-import { useTransition } from "react"
-import { Thermometer, Ruler, StickyNote } from "lucide-react"
+import { useState, useTransition } from "react"
+import { Thermometer, Ruler, StickyNote, ChevronLeft } from "lucide-react"
 import { toast } from "sonner"
 import {
   recordFeeding,
@@ -9,11 +9,20 @@ import {
   deleteLog,
 } from "@/app/(main)/baby/actions"
 import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
+import {
+  formatDiaperSummary,
+  getDiaperTypeLabel,
+} from "@/lib/utils/baby-log-labels"
 // 通信断で Server Action が reject すると、startTransition 内の unhandled reject が
 // 最寄りの error boundary へ bubble し全画面エラー化 + 記録が無言で失われる。
 // 各ハンドラの reject を握ってトーストへ倒す（機序の詳細は offline-error.ts）。
 import { toastOfflineError } from "@/lib/utils/offline-error"
-import type { BabyLogType, FeedingType, DiaperType } from "@/lib/types/database"
+import type {
+  BabyLogType,
+  FeedingType,
+  DiaperType,
+  PoopAmount,
+} from "@/lib/types/database"
 import type { BabyLogData } from "@/lib/types/baby"
 
 const FEEDING_OPTIONS: { value: FeedingType; label: string }[] = [
@@ -28,6 +37,19 @@ const DIAPER_OPTIONS: { value: DiaperType; label: string }[] = [
   { value: "pee", label: "おしっこ" },
   { value: "poop", label: "うんち" },
   { value: "both", label: "両方" },
+]
+
+/** うんちを含む種別（量を選ぶ 2 段目へ進む）。DB CHECK chk_poop_amount_only_poop と同じ集合 */
+type PoopDiaperType = Extract<DiaperType, "poop" | "both">
+
+/**
+ * うんちの量の選択肢（2 段目）。「指定なし」は従来どおり量なし（poop_amount = null）で
+ * 記録する逃げ道 — 見ていない・急いでいる時に 2 段目で詰まらせない。
+ */
+const POOP_AMOUNT_OPTIONS: { value: PoopAmount | null; label: string }[] = [
+  { value: "small", label: "少量" },
+  { value: "large", label: "大量" },
+  { value: null, label: "指定なし" },
 ]
 
 interface BabyQuickActionsProps {
@@ -58,6 +80,13 @@ export function BabyQuickActions({
   onLogRemoved,
 }: BabyQuickActionsProps) {
   const [isPending, startTransition] = useTransition()
+  /**
+   * うんち / 両方 をタップした直後の「量を選ぶ」段。おしっこは従来どおり 1 タップで
+   * 記録し、うんちを含む時だけ 2 タップ目で 少量 / 大量 / 指定なし を選ぶ。
+   * 粘着する事前選択（先に量を選んでから種別を押す）にしないのは、押し忘れが
+   * 前回の量を引き継ぐ無音の誤記録になるため。記録の成否にかかわらず必ず戻す。
+   */
+  const [pendingPoop, setPendingPoop] = useState<PoopDiaperType | null>(null)
 
   // 片手操作での押し間違いをその場で取り消せるようにする（記録直後のトーストから）
   function undoLog(logId: string, label: string) {
@@ -125,10 +154,19 @@ export function BabyQuickActions({
     })
   }
 
-  function handleDiaper(diaperType: DiaperType) {
+  // おむつボタンの振り分け: おしっこは即時記録、うんち / 両方 は量を選ぶ 2 段目へ。
+  function handleDiaperOption(value: DiaperType) {
+    if (value === "poop" || value === "both") {
+      setPendingPoop(value)
+      return
+    }
+    handleDiaper(value, null)
+  }
+
+  function handleDiaper(diaperType: DiaperType, poopAmount: PoopAmount | null) {
     startTransition(async () => {
       try {
-        const result = await recordDiaper({ diaperType })
+        const result = await recordDiaper({ diaperType, poopAmount })
         if (result.error) {
           toast.error(result.error)
           return
@@ -142,12 +180,22 @@ export function BabyQuickActions({
               logType: "diaper",
               loggedBy: userId,
               diaperType,
+              poopAmount,
             }),
           )
         }
-        successWithUndo("おむつ交換を記録しました", "おむつ", result.id)
+        // 何を記録したか（うんち（大量）等）をトーストで確認できるようにする
+        successWithUndo(
+          `おむつ交換を記録しました（${formatDiaperSummary(diaperType, poopAmount)}）`,
+          "おむつ",
+          result.id,
+        )
       } catch (err) {
         toastOfflineError("[baby-quick-actions] recordDiaper", err)
+      } finally {
+        // 成否にかかわらず 1 段目へ戻す（失敗時に 2 段目へ張り付くと、再タップで
+        // 種別を選び直せず「うんちだったのか」が分からなくなる）
+        setPendingPoop(null)
       }
     })
   }
@@ -173,23 +221,50 @@ export function BabyQuickActions({
         </div>
       </div>
 
-      {/* Diaper */}
+      {/* Diaper: 1 段目は種別、うんちを含む種別を選ぶと同じ行が量の選択へ入れ替わる */}
       <div className="space-y-1.5">
         <span className="px-1 text-xs font-semibold text-muted-foreground">
-          おむつ
+          {pendingPoop === null
+            ? "おむつ"
+            : `${getDiaperTypeLabel(pendingPoop)}・うんちの量`}
         </span>
-        <div className="flex gap-1.5">
-          {DIAPER_OPTIONS.map((opt) => (
+        {pendingPoop === null ? (
+          <div className="flex gap-1.5">
+            {DIAPER_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => handleDiaperOption(opt.value)}
+                disabled={isPending}
+                className="flex min-h-11 flex-1 items-center justify-center rounded-xl bg-sky-50 text-sm font-medium text-sky-800 transition-colors duration-200 hover:bg-sky-100 active:bg-sky-200 disabled:opacity-50 dark:bg-sky-900/30 dark:text-sky-200 dark:hover:bg-sky-900/50 dark:active:bg-sky-900/70"
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="flex gap-1.5">
             <button
-              key={opt.value}
-              onClick={() => handleDiaper(opt.value)}
+              type="button"
+              aria-label="おむつの種類に戻る"
+              onClick={() => setPendingPoop(null)}
               disabled={isPending}
-              className="flex min-h-11 flex-1 items-center justify-center rounded-xl bg-sky-50 text-sm font-medium text-sky-800 transition-colors duration-200 hover:bg-sky-100 active:bg-sky-200 disabled:opacity-50 dark:bg-sky-900/30 dark:text-sky-200 dark:hover:bg-sky-900/50 dark:active:bg-sky-900/70"
+              className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground transition-colors duration-200 hover:text-foreground disabled:opacity-50"
             >
-              {opt.label}
+              <ChevronLeft size={18} />
             </button>
-          ))}
-        </div>
+            {POOP_AMOUNT_OPTIONS.map((opt) => (
+              <button
+                key={opt.label}
+                type="button"
+                onClick={() => handleDiaper(pendingPoop, opt.value)}
+                disabled={isPending}
+                className="flex min-h-11 flex-1 items-center justify-center rounded-xl bg-sky-50 text-sm font-medium text-sky-800 transition-colors duration-200 hover:bg-sky-100 active:bg-sky-200 disabled:opacity-50 dark:bg-sky-900/30 dark:text-sky-200 dark:hover:bg-sky-900/50 dark:active:bg-sky-900/70"
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* その他（体温・成長・メモ） */}

@@ -114,7 +114,7 @@ describe("proxy: 更新されたセッションを redirect でも保つ", () =>
   it("承認済みの起動（/ → default_page）で新トークンを載せる", async () => {
     getClaims.mockResolvedValue(validClaims)
     profileSingle.mockResolvedValue({
-      data: { is_approved: true, default_page: "shopping" },
+      data: { is_approved: true, default_page: "calendar" },
       error: null,
     })
     const r = await refreshedThen("/")
@@ -284,10 +284,10 @@ describe("proxy: 起動時ページの解決（/ の動的描画を省く）", (
 
   it("ログイン直後（/login）も最終目的地まで一度で送る", async () => {
     getClaims.mockResolvedValue(validClaims)
-    approvedWith("stock")
+    approvedWith("calendar")
     const res = await proxy(request("/login"))
     expect(res.status).toBe(307)
-    expect(new URL(res.headers.get("location")!).pathname).toBe("/stock")
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/calendar")
   })
 
   it.each(VALID_PAGES)(
@@ -314,20 +314,20 @@ describe("proxy: 起動時ページの解決（/ の動的描画を省く）", (
   it("ログイン済みが /auth/confirm を開いても token を消費させぬ（default_page へ送る）", async () => {
     getClaims.mockResolvedValue(validClaims)
     profileSingle.mockResolvedValue({
-      data: { is_approved: true, default_page: "stock" },
+      data: { is_approved: true, default_page: "calendar" },
       error: null,
     })
     const res = await proxy(request("/auth/confirm?token_hash=x&type=magiclink"))
     expect(res.status).toBe(307)
-    expect(new URL(res.headers.get("location")!).pathname).toBe("/stock")
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/calendar")
   })
 
   it("クエリ文字列は行き先へ引き継ぐ", async () => {
     getClaims.mockResolvedValue(validClaims)
-    approvedWith("shopping")
+    approvedWith("calendar")
     const res = await proxy(request("/?from=push"))
     const url = new URL(res.headers.get("location")!)
-    expect(url.pathname).toBe("/shopping")
+    expect(url.pathname).toBe("/calendar")
     expect(url.search).toBe("?from=push")
   })
 
@@ -342,7 +342,7 @@ describe("proxy: 起動時ページの解決（/ の動的描画を省く）", (
   it("未承認で / に来たら /pending-approval へ倒す", async () => {
     getClaims.mockResolvedValue(validClaims)
     profileSingle.mockResolvedValue({
-      data: { is_approved: false, default_page: "shopping" },
+      data: { is_approved: false, default_page: "calendar" },
       error: null,
     })
     const res = await proxy(request("/"))

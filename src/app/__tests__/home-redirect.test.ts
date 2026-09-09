@@ -63,7 +63,7 @@ beforeEach(() => {
   profileSingle.mockReset()
   getVerifiedUserId.mockResolvedValue("user-1")
   profileSingle.mockResolvedValue({
-    data: { default_page: "meals" },
+    data: { default_page: "baby" },
     error: null,
   })
 })

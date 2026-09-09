@@ -47,7 +47,7 @@ describe("extractInviteToken", () => {
   })
 
   it("URL でも /invite/ を含まなければ null（誤貼付防止）", () => {
-    expect(extractInviteToken("https://irori-sigma.vercel.app/meals")).toBeNull()
+    expect(extractInviteToken("https://irori-sigma.vercel.app/baby")).toBeNull()
   })
 
   it("スラッシュ/空白を含むが招待リンクでない入力は null", () => {

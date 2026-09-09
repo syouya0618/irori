@@ -11,14 +11,15 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "うちのログ",
     short_name: "うちログ",
-    description: "夫婦の献立・買い物・暮らしをひとつに",
+    description: "夫婦の育児記録と予定をひとつに",
     /**
      * ホーム画面から起動したときに開く URL。
      *
-     * ⚠️ **ここを具体的なページ（`/meals` 等）にしてはならぬ。** manifest は
+     * ⚠️ **ここを具体的なページ（`/baby` 等）にしてはならぬ。** manifest は
      * 静的生成ゆえ利用者ごとに変えられず、直書きすると設定画面の
      * 「起動時のページ」（`profiles.default_page`）が**何を選んでも効かぬ**
-     * ——「起動したら必ず献立が出る」という形で表面化する（実際に起きた）。
+     * ——「起動したら必ず育児が出る」という形で表面化する（かつて献立ページを
+     * 直書きして実際に起きた）。
      *
      * `/` は `default_page` を読んで `/${page}` へ redirect する。起動をここへ
      * 通すことで、設定が初めて意味を持つ。解決は二層に在り、いずれも
@@ -29,7 +30,7 @@ export default function manifest(): MetadataRoute.Manifest {
      *
      * 代償: `/` は毎回 redirect ゆえキャッシュしても意味を成さず、`sw.js` の
      * `classifyRequest` は `nav-passthrough`（キャッシュ禁止）に分類する。
-     * よって**圏外で起動すると `/offline` が出る**（従来は献立のキャッシュが出た）。
+     * よって**圏外で起動すると `/offline` が出る**（従来は起動ページのキャッシュが出た）。
      * 「設定が効かぬ」は機能の破損、「圏外起動が劣化する」は degradation ゆえ、
      * 前者を直す方を採った。
      */

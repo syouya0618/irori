@@ -19,7 +19,7 @@ const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8")
  *
  * 設定画面も含めるのは、そこが**利用者に「今どこが選ばれているか」を見せる**層
  * だからじゃ。ここだけ独自の既定を持つと、未知の値が入ったときに
- * 「カードは無選択なのに起動は献立へ行く」という乖離が無音で生じる
+ * 「カードは無選択なのに起動は育児へ行く」という乖離が無音で生じる
  * —— 設定と実挙動が食い違う形は `#219` そのものじゃ。
  */
 const RESOLVER_FILES = [
@@ -40,10 +40,13 @@ describe("resolveDefaultPage", () => {
     ["未知の文字列", "dashboard"],
     ["空文字", ""],
     ["ページではないが実在するパス", "settings"],
-    ["ページではないが実在するパス（calendar）", "calendar"],
-    ["先頭スラッシュ付き（列の書式違い）", "/meals"],
+    ["ページではないが実在するパス（baby/diary）", "baby/diary"],
+    ["廃止されたページ（migration で baby へ寄せ済み）", "meals"],
+    ["廃止されたページ（shopping）", "shopping"],
+    ["廃止されたページ（stock）", "stock"],
+    ["先頭スラッシュ付き（列の書式違い）", "/calendar"],
     ["数値", 42],
-    ["オブジェクト", { page: "meals" }],
+    ["オブジェクト", { page: "baby" }],
   ])("%s は既定へ倒す", (_label, value) => {
     expect(resolveDefaultPage(value)).toBe(DEFAULT_PAGE)
   })

@@ -15,7 +15,7 @@
 //
 // B-6 で document のキー形式を変えた (`?date=` を落とす) が **bump しておらぬ**。
 // 新しいキーは旧キーの**部分集合**（クエリを 1 つ減らすだけ）ゆえ、既存端末の
-// `/meals` 等のエントリは今のキーでもそのまま当たる。`?date=` 付きの document を
+// `/baby` 等のエントリは今のキーでもそのまま当たる。`?date=` 付きの document を
 // 作る版は一度も配っておらぬ（この PR が初出）ゆえ、旧スキーマの残骸も存在せぬ。
 // 一方 bump すれば全端末のオフラインキャッシュを無駄に捨てることになる。
 const CACHE_VERSION = "v1"
@@ -30,9 +30,9 @@ const CACHE_NAMES = {
 }
 
 // オフライン閲覧を許可する認証済みページ。
-// src/lib/constants/pages.ts の VALID_PAGES (+ /settings, /calendar) と手動同期すること。
+// src/lib/constants/pages.ts の VALID_PAGES (+ /settings) と手動同期すること。
 // (classic script のため import できない — ページ追加時はここも更新する)
-const APP_PAGES = ["/meals", "/shopping", "/stock", "/baby", "/calendar", "/settings"]
+const APP_PAGES = ["/baby", "/calendar", "/settings"]
 
 // 通知の着地日を運ぶクエリ名 (B-6)。document キャッシュのキーからはこれを落とす
 // (→ makeDocumentCacheKey)。src/lib/domain/calendar-link.ts の CALENDAR_DATE_PARAM と
@@ -50,7 +50,7 @@ const CALENDAR_DATE_PARAM = "date"
 // 既存端末には**永久に古い manifest が配られ続ける**。
 //
 // これは机上の話ではない。2026-08-10 に実際に起きた: `start_url` を `/meals` から
-// `/` へ直した (#219) のに、ホーム画面から起動すると必ず献立が開いたままじゃった。
+// `/` へ直した (#219) のに、ホーム画面から起動すると必ず当時の献立ページが開いたままじゃった。
 // `start_url` は「ホーム画面へ追加した時」に端末へ焼き付くため入れ直しが要るが、
 // **入れ直しても直らなんだ** —— その瞬間に OS が読む manifest を、SW が古い方に
 // すり替えておったゆえ。**自分で自分の直し方を塞ぐ形**になっておった。
@@ -111,7 +111,7 @@ function makeCacheKey(rawUrl) {
  *   (a) オフラインで cached の `/calendar` に**構造的に当たらぬ** → `/offline` が出る。
  *       通知タップは最も圏外になりやすい瞬間ゆえ、これは実害じゃ。
  *   (b) キーの濃度が日付ぶん無制限に増える → documents は上限 16 の FIFO ゆえ、
- *       毎朝のまとめを 16 回叩くだけで /meals /shopping … が全て追い出される。
+ *       毎朝のまとめを 16 回叩くだけで /baby /settings … が全て追い出される。
  *       しかも居座るのは「二度と開かぬ過去の日付」＝キャッシュとして無価値。
  * 日付はサーバが描く**中身**の違いでしかない。ゆえに保存されるのは
  * 「最後にオンラインで開いた日のカレンダー」となり、オフラインでは指された日と
@@ -226,7 +226,7 @@ async function trimCache(cacheName, max) {
 }
 
 // redirect されたレスポンスを誤キャッシュしない要 (例: 認証切れで /login へ redirect された
-// HTML を /meals として保存すると、オフライン時に壊れた画面を返してしまう)
+// HTML を /baby として保存すると、オフライン時に壊れた画面を返してしまう)
 const cacheable = (res) => Boolean(res) && res.ok && !res.redirected
 
 /**

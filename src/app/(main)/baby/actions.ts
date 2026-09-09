@@ -10,9 +10,49 @@ import {
 } from "@/lib/domain/feeding"
 import { validateLogTime } from "@/lib/domain/baby-log-time"
 import { todayJstString } from "@/lib/utils/date-jst"
-import type { FeedingType, DiaperType } from "@/lib/types/database"
+import type {
+  FeedingType,
+  DiaperType,
+  PoopAmount,
+  BreastStartSide,
+} from "@/lib/types/database"
 
 const MAX_MEMO_LENGTH = 1000
+
+// うんちの量（poop_amount）。DB CHECK chk_poop_amount_value / chk_poop_amount_only_poop
+// （supabase/migrations/20260909100001）のミラー: 値は small / large、付けられるのは
+// うんちを含む行（poop / both）だけ。pee 行に量を残す部分 update は DB が fail-loud で
+// 拒否するため、updateLog は種類変更と対でしか量を扱わない（counts と同じ規約）。
+const POOP_AMOUNT_ERROR = "うんちの量は 少量 / 大量 のいずれかで指定してください"
+const POOP_AMOUNT_TYPE_ERROR = "うんちの量はうんちを含む記録にのみ指定できます"
+const POOP_AMOUNT_WITHOUT_TYPE_ERROR =
+  "うんちの量はおむつの種類と同時に指定してください"
+
+function isPoopAmount(value: unknown): value is PoopAmount {
+  return value === "small" || value === "large"
+}
+
+/**
+ * 量を持てるおむつ種別か。DB CHECK（chk_poop_amount_only_poop）と同じ集合を
+ * 名指しする。diaper_type に新しい値が増えた時は DB 側と同時にここも直すこと
+ * （allowlist にしてあるのは「量が意味を持つ種別」を DB と一致させるためで、
+ * 未知値が混ざっても量なし扱いで退化するだけ = 画面は倒れない）。
+ */
+function allowsPoopAmount(type: DiaperType): boolean {
+  return type === "poop" || type === "both"
+}
+
+// 母乳サイクルの開始側（breast_start_side）。DB CHECK chk_breast_start_side_value /
+// chk_breast_start_side_only_breast のミラー: 値は left / right、breast 行のみ。
+// null は「不明」（旧行・旧形式タイマー復元）ゆえ受理する。
+const BREAST_START_SIDE_ERROR = "開始側は 左 / 右 のいずれかで指定してください"
+const BREAST_START_SIDE_TYPE_ERROR = "この授乳タイプには開始側を指定できません"
+const BREAST_START_SIDE_WITHOUT_TYPE_ERROR =
+  "開始側は授乳の種類と同時に指定してください"
+
+function isBreastStartSide(value: unknown): value is BreastStartSide {
+  return value === "left" || value === "right"
+}
 
 function validateMemoLength(memo?: string | null): string | null {
   if (memo && memo.length > MAX_MEMO_LENGTH) {
@@ -112,6 +152,12 @@ interface RecordFeedingInput {
   breastLeftSec?: number | null
   /** 母乳サイクルの右の授乳秒数（制約は breastLeftSec と同じ）。 */
   breastRightSec?: number | null
+  /**
+   * 母乳サイクルの開始側（left / right）。feedingType が 'breast' の時のみ指定可
+   * （chk_breast_start_side_only_breast のミラー）。null / 未指定は「不明」で合法
+   * （旧形式 localStorage から復元したタイマーは開始側を知らない）。
+   */
+  breastStartSide?: BreastStartSide | null
   /** 記録時刻（ISO 8601）。未指定時は DB の now() 既定に依存する。 */
   loggedAt?: string
   memo?: string
@@ -119,6 +165,11 @@ interface RecordFeedingInput {
 
 interface RecordDiaperInput {
   diaperType: DiaperType
+  /**
+   * うんちの量（small / large）。diaperType が poop / both の時のみ指定可
+   * （chk_poop_amount_only_poop のミラー）。null / 未指定は「量の記録なし」。
+   */
+  poopAmount?: PoopAmount | null
   /** 記録時刻（ISO 8601）。未指定時は DB の now() 既定に依存する。 */
   loggedAt?: string
   memo?: string
@@ -181,6 +232,17 @@ export async function recordFeeding(input: RecordFeedingInput) {
     if (sidesError) return { error: sidesError, id: null }
   }
 
+  // 開始側（chk_breast_start_side_value / chk_breast_start_side_only_breast のミラー）。
+  // null は「不明」として素通し（旧形式タイマー復元・編集シートの「不明」）。
+  if (input.breastStartSide != null) {
+    if (!isBreastStartSide(input.breastStartSide)) {
+      return { error: BREAST_START_SIDE_ERROR, id: null }
+    }
+    if (input.feedingType !== "breast") {
+      return { error: BREAST_START_SIDE_TYPE_ERROR, id: null }
+    }
+  }
+
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error, id: null }
   const { supabase, userId, householdId } = result.context
@@ -208,6 +270,9 @@ export async function recordFeeding(input: RecordFeedingInput) {
         input.feedingType === "breast" ? input.breastRightCount ?? null : null,
       breast_left_sec: hasSides ? input.breastLeftSec ?? null : null,
       breast_right_sec: hasSides ? input.breastRightSec ?? null : null,
+      // breast 以外は上で拒否済みゆえ常に null（chk_breast_start_side_only_breast のミラー）
+      breast_start_side:
+        input.feedingType === "breast" ? input.breastStartSide ?? null : null,
       // 未指定時は logged_at を送らず DB の now() 既定に委ねる（従来挙動）
       ...(input.loggedAt != null && { logged_at: input.loggedAt }),
       memo: input.memo || null,
@@ -234,6 +299,17 @@ export async function recordDiaper(input: RecordDiaperInput) {
   const timeError = validateCreateLoggedAt(input.loggedAt)
   if (timeError) return { error: timeError, id: null }
 
+  // うんちの量（chk_poop_amount_value / chk_poop_amount_only_poop のミラー）。
+  // null / 未指定は「量の記録なし」として素通し（クイック記録の「指定なし」）。
+  if (input.poopAmount != null) {
+    if (!isPoopAmount(input.poopAmount)) {
+      return { error: POOP_AMOUNT_ERROR, id: null }
+    }
+    if (!allowsPoopAmount(input.diaperType)) {
+      return { error: POOP_AMOUNT_TYPE_ERROR, id: null }
+    }
+  }
+
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error, id: null }
   const { supabase, userId, householdId } = result.context
@@ -245,6 +321,10 @@ export async function recordDiaper(input: RecordDiaperInput) {
       log_type: "diaper",
       logged_by: userId,
       diaper_type: input.diaperType,
+      // pee は上で拒否済みゆえ常に null（chk_poop_amount_only_poop のミラー）
+      poop_amount: allowsPoopAmount(input.diaperType)
+        ? input.poopAmount ?? null
+        : null,
       ...(input.loggedAt != null && { logged_at: input.loggedAt }),
       memo: input.memo || null,
     })
@@ -410,7 +490,23 @@ export async function updateLog(
      */
     breastLeftCount?: number | null
     breastRightCount?: number | null
+    /**
+     * 母乳サイクルの開始側。**feedingType と対でしか受け付けない**（単独送信は
+     * fail-loud で拒否）。feedingType='breast' なら指定値（null = 不明へ戻す）を
+     * 書き、'breast' 以外へ変更する時は counts / sides と同じく常に null で上書き
+     * する（chk_breast_start_side_only_breast のミラー）。feedingType='breast' で
+     * 未指定なら既存値に触れない（送り忘れで開始側を消さない）。
+     */
+    breastStartSide?: BreastStartSide | null
     diaperType?: DiaperType
+    /**
+     * うんちの量。**diaperType と対でしか受け付けない**（単独送信は fail-loud で
+     * 拒否）。diaperType が poop / both なら指定値（null = 量なしへ戻す）を書き、
+     * pee へ変更する時は常に null で上書きする（chk_poop_amount_only_poop のミラー
+     * — 量を残したまま pee にすると DB CHECK 違反で更新が落ちる）。poop / both で
+     * 未指定なら既存値に触れない。
+     */
+    poopAmount?: PoopAmount | null
     temperature?: number | null
     weightG?: number | null
     heightCm?: number | null
@@ -419,6 +515,34 @@ export async function updateLog(
 ) {
   const memoError = validateMemoLength(updates.memo)
   if (memoError) return { error: memoError }
+
+  // うんちの量は種類と対（無音 no-op を作らず fail-loud）。
+  if (updates.poopAmount !== undefined) {
+    if (updates.diaperType === undefined) {
+      return { error: POOP_AMOUNT_WITHOUT_TYPE_ERROR }
+    }
+    if (updates.poopAmount !== null) {
+      if (!isPoopAmount(updates.poopAmount)) return { error: POOP_AMOUNT_ERROR }
+      if (!allowsPoopAmount(updates.diaperType)) {
+        return { error: POOP_AMOUNT_TYPE_ERROR }
+      }
+    }
+  }
+
+  // 開始側は授乳の種類と対（同上）。
+  if (updates.breastStartSide !== undefined) {
+    if (updates.feedingType === undefined) {
+      return { error: BREAST_START_SIDE_WITHOUT_TYPE_ERROR }
+    }
+    if (updates.breastStartSide !== null) {
+      if (!isBreastStartSide(updates.breastStartSide)) {
+        return { error: BREAST_START_SIDE_ERROR }
+      }
+      if (updates.feedingType !== "breast") {
+        return { error: BREAST_START_SIDE_TYPE_ERROR }
+      }
+    }
+  }
 
   // 授乳時間の範囲検証（DB CHECK chk_duration_sec と同じ 1..10800 秒 + 整数のみ）。
   // null は「時間なしへ戻す」で妥当。クライアント parse（parseFeedingDurationInput）
@@ -517,12 +641,18 @@ export async function updateLog(
         breast_right_count:
           updates.feedingType === "breast" ? updates.breastRightCount : null,
       }),
-      // sides の null 化は種別変更時のみ（'breast' のまま sides 未指定の編集 —
-      // 旧形サイクル行の合計編集など — では sides 列に触れない）
+      // sides / 開始側の null 化は種別変更時のみ（'breast' のまま未指定の編集 —
+      // 旧形サイクル行の合計編集など — では列に触れない）
       ...(updates.feedingType !== undefined &&
         updates.feedingType !== "breast" && {
           breast_left_sec: null,
           breast_right_sec: null,
+          breast_start_side: null,
+        }),
+      // 開始側は feedingType='breast' と対で指定された時だけ書く（null = 不明へ戻す）
+      ...(updates.breastStartSide !== undefined &&
+        updates.feedingType === "breast" && {
+          breast_start_side: updates.breastStartSide,
         }),
       // sides 指定時は合計をサーバ導出（validateBreastSideSeconds 通過済み・
       // durationSec の同時指定は上で拒否済み → duration_sec の書込はこの1経路のみ）
@@ -542,6 +672,16 @@ export async function updateLog(
       ...(updates.diaperType !== undefined && {
         diaper_type: updates.diaperType,
       }),
+      // pee へ変更する時は量を必ず null 化する（chk_poop_amount_only_poop のミラー。
+      // クライアントの送り忘れ/消し忘れで DB CHECK 違反にしない）
+      ...(updates.diaperType !== undefined &&
+        !allowsPoopAmount(updates.diaperType) && { poop_amount: null }),
+      // poop / both では指定された時だけ書く（null = 量なしへ戻す）
+      ...(updates.poopAmount !== undefined &&
+        updates.diaperType !== undefined &&
+        allowsPoopAmount(updates.diaperType) && {
+          poop_amount: updates.poopAmount,
+        }),
       ...(updates.temperature !== undefined && {
         temperature: updates.temperature,
       }),

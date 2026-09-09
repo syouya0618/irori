@@ -173,7 +173,7 @@ describe("BabyQuickActions の押し間違い取り消し", () => {
 })
 
 describe("BabyQuickActions の楽観 append (B-03)", () => {
-  it("おむつ記録成功で onLogRecorded に返却 id 付きの diaper 行を渡す", async () => {
+  it("おむつ記録成功で onLogRecorded に返却 id 付きの diaper 行（量つき）を渡す", async () => {
     mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-33" })
     const onLogRecorded = vi.fn<(log: BabyLogData) => void>()
     render(
@@ -186,12 +186,16 @@ describe("BabyQuickActions の楽観 append (B-03)", () => {
       />,
     )
 
+    // うんちは 2 段目で量を選ぶ（1 段目だけでは記録しない）
     fireEvent.click(screen.getByRole("button", { name: "うんち" }))
+    expect(mockedRecordDiaper).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "大量" }))
     await waitFor(() => expect(onLogRecorded).toHaveBeenCalledTimes(1))
     const log = onLogRecorded.mock.calls[0][0]
     expect(log.id).toBe("diaper-33")
     expect(log.log_type).toBe("diaper")
     expect(log.diaper_type).toBe("poop")
+    expect(log.poop_amount).toBe("large")
     expect(log.logged_by).toBe("u1")
   })
 
@@ -213,6 +217,117 @@ describe("BabyQuickActions の楽観 append (B-03)", () => {
     await waitFor(() => expect(mockedToast.success).toHaveBeenCalled())
     lastSuccessOptions()?.action?.onClick()
     await waitFor(() => expect(onLogRemoved).toHaveBeenCalledWith("diaper-77"))
+  })
+})
+
+describe("BabyQuickActions のうんちの量（2 段目）", () => {
+  function renderActions(onLogRecorded?: (log: BabyLogData) => void) {
+    render(
+      <BabyQuickActions
+        userId="u1"
+        onCreateLog={() => {}}
+        onStartTimer={() => {}}
+        onCreateFeeding={() => {}}
+        onLogRecorded={onLogRecorded}
+      />,
+    )
+  }
+
+  it("おしっこは従来どおり 1 タップで記録し、量は送らない（null）", async () => {
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "pee-1" })
+    renderActions()
+    fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
+    await waitFor(() => expect(mockedRecordDiaper).toHaveBeenCalledTimes(1))
+    expect(mockedRecordDiaper).toHaveBeenCalledWith({
+      diaperType: "pee",
+      poopAmount: null,
+    })
+    // 2 段目は出ていない
+    expect(screen.queryByRole("button", { name: "少量" })).toBeNull()
+  })
+
+  it("うんちをタップすると同じ行が 少量 / 大量 / 指定なし に入れ替わり、種別行は隠れる", () => {
+    renderActions()
+    fireEvent.click(screen.getByRole("button", { name: "うんち" }))
+    expect(screen.getByRole("button", { name: "少量" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "大量" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "指定なし" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "おしっこ" })).toBeNull()
+    expect(screen.getByText("うんち・うんちの量")).toBeInTheDocument()
+    expect(mockedRecordDiaper).not.toHaveBeenCalled()
+  })
+
+  it("少量 を選ぶと poop + small で記録し、トーストに量が出る", async () => {
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "poop-1" })
+    renderActions()
+    fireEvent.click(screen.getByRole("button", { name: "うんち" }))
+    fireEvent.click(screen.getByRole("button", { name: "少量" }))
+    await waitFor(() => expect(mockedRecordDiaper).toHaveBeenCalledTimes(1))
+    expect(mockedRecordDiaper).toHaveBeenCalledWith({
+      diaperType: "poop",
+      poopAmount: "small",
+    })
+    await waitFor(() => expect(mockedToast.success).toHaveBeenCalled())
+    expect(mockedToast.success.mock.calls.at(-1)?.[0]).toBe(
+      "おむつ交換を記録しました（うんち（少量））",
+    )
+    // 記録後は 1 段目へ戻る
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "うんち" })).toBeInTheDocument(),
+    )
+  })
+
+  it("両方 も 2 段目を通り、大量 で both + large を記録する", async () => {
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "both-1" })
+    const onLogRecorded = vi.fn<(log: BabyLogData) => void>()
+    renderActions(onLogRecorded)
+    fireEvent.click(screen.getByRole("button", { name: "両方" }))
+    expect(screen.getByText("両方・うんちの量")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "大量" }))
+    await waitFor(() => expect(onLogRecorded).toHaveBeenCalledTimes(1))
+    expect(mockedRecordDiaper).toHaveBeenCalledWith({
+      diaperType: "both",
+      poopAmount: "large",
+    })
+    expect(onLogRecorded.mock.calls[0][0]).toMatchObject({
+      diaper_type: "both",
+      poop_amount: "large",
+    })
+  })
+
+  it("指定なし は量 null（従来と同じ形）で記録する", async () => {
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "poop-2" })
+    renderActions()
+    fireEvent.click(screen.getByRole("button", { name: "うんち" }))
+    fireEvent.click(screen.getByRole("button", { name: "指定なし" }))
+    await waitFor(() => expect(mockedRecordDiaper).toHaveBeenCalledTimes(1))
+    expect(mockedRecordDiaper).toHaveBeenCalledWith({
+      diaperType: "poop",
+      poopAmount: null,
+    })
+    expect(mockedToast.success.mock.calls.at(-1)?.[0]).toBe(
+      "おむつ交換を記録しました（うんち）",
+    )
+  })
+
+  it("戻るボタンで 1 段目へ戻り、何も記録しない", () => {
+    renderActions()
+    fireEvent.click(screen.getByRole("button", { name: "うんち" }))
+    fireEvent.click(screen.getByRole("button", { name: "おむつの種類に戻る" }))
+    expect(screen.getByRole("button", { name: "おしっこ" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "少量" })).toBeNull()
+    expect(mockedRecordDiaper).not.toHaveBeenCalled()
+  })
+
+  it("記録が失敗しても 2 段目に張り付かず 1 段目へ戻る", async () => {
+    mockedRecordDiaper.mockResolvedValue({ error: "boom", id: null })
+    renderActions()
+    fireEvent.click(screen.getByRole("button", { name: "うんち" }))
+    fireEvent.click(screen.getByRole("button", { name: "大量" }))
+    await waitFor(() => expect(mockedToast.error).toHaveBeenCalledWith("boom"))
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "うんち" })).toBeInTheDocument(),
+    )
   })
 })
 

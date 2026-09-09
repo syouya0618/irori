@@ -247,8 +247,10 @@ export function calculateAge(birthDate: string, referenceDate: string): string {
   const [by, bm, bd] = birthDate.split("-").map(Number)
   const [ry, rm, rd] = referenceDate.split("-").map(Number)
 
+  // 記念日が無い月は末日で満了（getBabyAge と同じ規則 — PDF の月齢と画面の月齢を
+  // 月末の 1 日だけ食い違わせない）
   let months = (ry - by) * 12 + (rm - bm)
-  if (rd < bd) months--
+  if (rd < Math.min(bd, daysInMonth(ry, rm))) months--
   if (months < 0) return "0ヶ月"
 
   const years = Math.floor(months / 12)
@@ -390,7 +392,17 @@ export interface BabyAge {
   years: number
   months: number
   days: number
+  /**
+   * 誕生日からの通算日数（誕生日当日 = 0）。`label` の「○ヶ月○日」は暦上の
+   * 月齢（誕生日を起点に月末クランプ）ゆえ、同じ日でも 30 日単位の割り算とは
+   * 一致しない。両方を同時に見せるためにここで別に持つ（label と同じ入力から
+   * 1 経路で導出し、画面側で再計算させない）。
+   */
+  totalDays: number
+  /** 暦上の月齢表記（生後3ヶ月10日 / 1歳2ヶ月）。1 ヶ月未満は日数のみ */
   label: string
+  /** 通算日数の表記（生後58日）。誕生日当日は 生後0日 */
+  totalDaysLabel: string
 }
 
 const YMD_PATTERN = /^\d{4}-\d{2}-\d{2}$/
@@ -402,8 +414,13 @@ function daysInMonth(year: number, month: number): number {
 }
 
 /**
- * 生年月日から「生後○ヶ月○日 / ○歳○ヶ月」を暦計算で求める。
- * 日数の借りは実日付演算（月末クランプ）で正しく処理する。
+ * 生年月日から「生後○ヶ月○日 / ○歳○ヶ月」（暦計算）と「生後○日」（通算日数）を
+ * 同時に求める。日数の借りは実日付演算（月末クランプ）で正しく処理する。
+ *
+ * 月齢は「誕生日と同じ日付の直近の記念日」を起点にする暦上の計算で、30 日単位の
+ * 割り算ではない（1/31 生まれの 3/1 は 1ヶ月1日、通算 29 日）。通算日数は
+ * `daysBetweenYmd`（TZ 非依存・誕生日当日 = 0）で数え、既存の「生後○日」表示の
+ * 数え方（誕生日当日 = 生後0日）を変えない。
  * @param birthDate "YYYY-MM-DD"
  * @param referenceDate "YYYY-MM-DD"
  * @returns 不正な日付文字列なら null。未来の生年月日は 生後0日 にフォールバック。
@@ -421,11 +438,24 @@ export function getBabyAge(
 
   // 未来の生年月日は 生後0日 に丸める（DB の CHECK 前提だが多層防御）
   if (birthDate > referenceDate) {
-    return { years: 0, months: 0, days: 0, label: "生後0日" }
+    return {
+      years: 0,
+      months: 0,
+      days: 0,
+      totalDays: 0,
+      label: "生後0日",
+      totalDaysLabel: "生後0日",
+    }
   }
 
+  // 基準月における「月齢の記念日」は誕生日の日付を月末でクランプしたもの
+  // （31 日生まれの 2 月は 28/29 日、4 月は 30 日）。基準日がそこに届いていなければ
+  // 1 ヶ月借りる。素の `rd < bd` で借りると、記念日が無い月の末日（1/31 生まれの 2/28）が
+  // 「0ヶ月28日」になり、翌日 3/1 に「1ヶ月1日」へ飛んで **1ヶ月0日が存在しない**
+  // 不連続が生じる。応当日の無い月は末日で満了とする（民法 143 条 2 項と同じ規則）。
+  const anniversaryDay = Math.min(bd, daysInMonth(ry, rm))
   let monthsTotal = (ry - by) * 12 + (rm - bm)
-  if (rd < bd) monthsTotal -= 1
+  if (rd < anniversaryDay) monthsTotal -= 1
 
   // 誕生日から monthsTotal ヶ月後の「直近の月齢記念日」を月末クランプで求める
   const anchorMonthIndex = bm - 1 + monthsTotal
@@ -437,6 +467,8 @@ export function getBabyAge(
   const days = daysBetweenYmd(anchorYmd, referenceDate) ?? 0
   const years = Math.floor(monthsTotal / 12)
   const months = monthsTotal % 12
+  // 通算日数は誕生日から直接数える（月齢の起点とは独立。誕生日当日 = 0）
+  const totalDays = daysBetweenYmd(birthDate, referenceDate) ?? 0
 
   let label: string
   if (years >= 1) {
@@ -447,5 +479,12 @@ export function getBabyAge(
     label = `生後${days}日`
   }
 
-  return { years, months, days, label }
+  return {
+    years,
+    months,
+    days,
+    totalDays,
+    label,
+    totalDaysLabel: `生後${totalDays}日`,
+  }
 }

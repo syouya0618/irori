@@ -134,6 +134,8 @@ interface BreastRow {
   breast_right_count: number | null
   breast_left_sec: number | null
   breast_right_sec: number | null
+  /** 開始側（left / right / null=不明）。タイマー経路はタップした側で確定する */
+  breast_start_side: string | null
   duration_sec: number | null
   duration_min: number | null
   logged_at: string
@@ -153,7 +155,7 @@ async function waitForBreastRow(householdId: string): Promise<BreastRow> {
     const { data, error } = await admin
       .from("baby_logs")
       .select(
-        "feeding_type, breast_left_count, breast_right_count, breast_left_sec, breast_right_sec, duration_sec, duration_min, logged_at"
+        "feeding_type, breast_left_count, breast_right_count, breast_left_sec, breast_right_sec, breast_start_side, duration_sec, duration_min, logged_at"
       )
       .eq("household_id", householdId)
       .eq("log_type", "feeding")
@@ -181,12 +183,10 @@ test("母乳サイクル: 手動入力で左2回を記録 → タイムライン
   await expect(page).toHaveURL(/\/setup/, { timeout: 15_000 })
   await page.getByLabel("世帯名").fill("E2E母乳サイクル世帯")
   await page.getByRole("button", { name: "世帯を作成する" }).click()
-  await expect(page).toHaveURL(/\/meals/, { timeout: 15_000 })
+  // 起動時のページは /baby（献立機能の廃止で既定が育児になった）
+  await expect(page).toHaveURL(/\/baby/, { timeout: 15_000 })
 
   const householdId = await waitForHouseholdId(approvedUser.id)
-
-  await page.getByRole("link", { name: "育児" }).click()
-  await expect(page).toHaveURL(/\/baby/, { timeout: 15_000 })
 
   // 記録前の授乳チップは「0回」（種別内訳が全ゼロのときの退避表示）
   const todaySummary = page.getByRole("group", { name: "今日のまとめ" })
@@ -235,18 +235,20 @@ test("母乳サイクル: 手動入力で左2回を記録 → タイムライン
   const beforeMs = Date.now()
   await openSheet.getByRole("button", { name: "記録する" }).click()
 
-  // 内訳つきトースト。閉じ括弧まで含めて一致させることで、深夜跨ぎ分岐
-  // （「…（左2・1分／前日の記録として保存）」）と取り違えない。
+  // 内訳つきトースト（開始側「左から」を先頭に添える）。閉じ括弧まで含めて一致させる
+  // ことで、深夜跨ぎ分岐（「…／前日の記録として保存）」）と取り違えない。
   await expect(
-    page.getByText(`授乳を記録しました（左2回${MANUAL_MINUTES}分）`)
+    page.getByText(`授乳を記録しました（左から・左2回${MANUAL_MINUTES}分）`)
   ).toBeVisible({ timeout: 15_000 })
   const afterMs = Date.now()
 
-  // ── 5. DB 断面: 左右回数・秒数・**開始時刻**の logged_at ────────────────
+  // ── 5. DB 断面: 左右回数・秒数・開始側・**開始時刻**の logged_at ─────────
   const row = await waitForBreastRow(householdId)
   expect(row.feeding_type).toBe("breast")
   expect(row.breast_left_count).toBe(2)
   expect(row.breast_right_count).toBe(0)
+  // 「左」のクイックアクションから開いたサイクルは開始側 left で確定する
+  expect(row.breast_start_side).toBe("left")
   // 左右別秒（chk_breast_side_sec_total: duration_sec = 左 + 右 の等式）
   expect(row.breast_left_sec).toBe(MANUAL_DURATION_SEC)
   expect(row.breast_right_sec).toBe(0)
@@ -276,6 +278,8 @@ test("母乳サイクル: 手動入力で左2回を記録 → タイムライン
   // ── 6. 楽観反映（Realtime を待たない即時表示）────────────────────────
   const feedingRow = page.getByRole("button", { name: /母乳/ })
   await expect(feedingRow).toBeVisible({ timeout: 15_000 })
+  // 開始側はタイムラインでも「母乳（左から）」と読める
+  await expect(feedingRow).toContainText("母乳（左から）")
   await expect(feedingRow).toContainText("左2")
   await expect(feedingRow).toContainText(`${MANUAL_MINUTES}分`)
   await expect(todaySummary).toContainText("母乳1")
@@ -283,6 +287,7 @@ test("母乳サイクル: 手動入力で左2回を記録 → タイムライン
   // ── 7. reload して SSR 断面でも同じ表示になる（永続化の確認）───────────
   await reloadHydrated(page)
   await expect(feedingRow).toBeVisible({ timeout: 15_000 })
+  await expect(feedingRow).toContainText("母乳（左から）")
   await expect(feedingRow).toContainText("左2")
   await expect(todaySummary).toContainText("母乳1")
 
@@ -296,6 +301,10 @@ test("母乳サイクル: 手動入力で左2回を記録 → タイムライン
   // ステッパーは DB の値で seed される（0 を falsy 扱いして 1 に化けない）
   await expect(openSheet.locator('[aria-label="左の回数"]')).toHaveText("2")
   await expect(openSheet.locator('[aria-label="右の回数"]')).toHaveText("0")
+  // 開始側も DB の値（left）で seed され「左から」が選択済み（primary 背景）
+  await expect(
+    openSheet.getByRole("button", { name: "左から", exact: true })
+  ).toHaveClass(/bg-primary/)
   // sides を持つ行は左右それぞれの時間入力へ seed される（合計欄は出さない —
   // 合計だけの編集はサーバが fail-loud で拒否する契約）
   await expect(openSheet.getByLabel("左の分", { exact: true })).toHaveValue(

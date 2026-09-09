@@ -1,5 +1,5 @@
 /**
- * calendar/actions の単体テスト(DB なし・meals actions.test.ts の idiom)。
+ * calendar/actions の単体テスト(DB なし・settings/__tests__/actions.test.ts と同じ idiom)。
  * 検証・所有権/source ガード(0 行→編集/削除不可)・silent fail 防止を回帰対象にする。
  */
 
@@ -395,21 +395,21 @@ describe("deleteCalendarEventSeries", () => {
  * 無効化することを固定する。
  *
  * ## なぜ「/calendar だけ」では足りぬか
- * `/meals` の「今日・明日の予定」カードのデータは `meals/page.tsx` がサーバで
- * `calendar_events` を引いて `initialEvents` として渡す = **`/meals` の RSC
- * ペイロードに乗っておる**。`/meals` を無効化せねば `staleTimes.dynamic: 10`
+ * `/baby`（BabyDashboard）の「今日・明日の予定」カードのデータは `baby/page.tsx`
+ * がサーバで `calendar_events` を引いて `initialEvents` として渡す = **`/baby` の
+ * RSC ペイロードに乗っておる**。`/baby` を無効化せねば `staleTimes.dynamic: 10`
  * により最大 10 秒、作成前のペイロードが再利用される。しかもカードの復帰時
  * refetch は `visibilitychange`/`focus` 契機ゆえ、BottomNav の遷移
  * （同一ドキュメント内）では発火せず**自己修復もせぬ**。
  *
  * ## toHaveBeenCalledWith ではなく「集合の一致」で書く理由
- * `toHaveBeenCalledWith("/meals")` だけだと **`/calendar` を消しても緑**になる。
+ * `toHaveBeenCalledWith("/baby")` だけだと **`/calendar` を消しても緑**になる。
  * 集合で固定すれば**足りなくても余っても**赤くなる。将来 `calendar_events` を
  * 読むページが増えたら、ここと `revalidateCalendarConsumers` の両方が同時に
  * 直らねば通らぬ。
  */
 describe("calendar_events を書く経路は読者ページを漏れなく無効化する", () => {
-  const CONSUMERS = ["/calendar", "/meals"]
+  const CONSUMERS = ["/calendar", "/baby"]
 
   const cases: [string, () => Promise<unknown>][] = [
     ["createCalendarEvent(単発)", () => createCalendarEvent(baseInput)],

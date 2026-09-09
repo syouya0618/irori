@@ -25,11 +25,11 @@ import {
 /**
  * `calendar_events` を書き換えた後に呼ぶ。**この表を読むページを全て**無効化する。
  *
- * `/calendar` だけを無効化しておると、`/meals` の「今日・明日の予定」カードが
- * 最大 10 秒古いまま残る。原因は 3 つが重なるためじゃ:
+ * `/calendar` だけを無効化しておると、`/baby`（BabyDashboard）の
+ * 「今日・明日の予定」カードが最大 10 秒古いまま残る。原因は 3 つが重なるためじゃ:
  *
- * 1. カードのデータは `meals/page.tsx` がサーバで `calendar_events` を引いて
- *    `initialEvents` として渡す = **`/meals` の RSC ペイロードに乗っておる**
+ * 1. カードのデータは `baby/page.tsx` がサーバで `calendar_events` を引いて
+ *    `initialEvents` として渡す = **`/baby` の RSC ペイロードに乗っておる**
  * 2. `next.config.ts` の `staleTimes.dynamic: 10` により、10 秒以内の
  *    クライアント遷移は取得済みペイロードを再利用する
  * 3. カードの復帰時 refetch は `visibilitychange`/`focus` 契機ゆえ、
@@ -38,7 +38,7 @@ import {
  * `revalidatePath` は Client Cache を purge する（同梱 docs
  * `04-functions/revalidatePath.md`: "This will purge the Client Cache, and
  * invalidate all cached data for revalidation on the next page visit."）ゆえ、
- * ここで `/meals` も無効化すれば `staleTimes` を迂回できる。
+ * ここで `/baby` も無効化すれば `staleTimes` を迂回できる。
  *
  * **呼び出し側に 5 箇所へ素で書かせぬのは、6 箇所目を足す者が忘れるからじゃ。**
  * 表と読者の対応はこの 1 箇所に閉じておく（`calendar_events` を読むページを
@@ -46,7 +46,7 @@ import {
  */
 function revalidateCalendarConsumers() {
   revalidatePath("/calendar")
-  revalidatePath("/meals")
+  revalidatePath("/baby")
 }
 
 export interface CalendarEventActionInput {
