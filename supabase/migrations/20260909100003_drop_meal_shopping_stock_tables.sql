@@ -33,6 +33,10 @@ DROP TYPE IF EXISTS item_category;
 ALTER TABLE households DROP CONSTRAINT IF EXISTS chk_auto_stock_categories;
 ALTER TABLE households DROP COLUMN IF EXISTS auto_stock_categories;
 
--- 外食写真 bucket の中身と bucket 本体（objects を先に消さねば bucket は消えぬ）
-DELETE FROM storage.objects WHERE bucket_id = 'eating-out-photos';
-DELETE FROM storage.buckets WHERE id = 'eating-out-photos';
+-- 外食写真 bucket（eating-out-photos）は **ここでは消さぬ**。
+-- Supabase Storage は `storage.protect_delete()` トリガで `storage.objects` /
+-- `storage.buckets` への直接 DELETE を 42501 で拒む（2026-09-09 に本番 SQL Editor で
+-- 実際に拒まれ、同一トランザクションの DROP TABLE ごとロールバックされた）。
+-- bucket の削除は Storage API 経由 — Dashboard → Storage → eating-out-photos →
+-- Empty bucket → Delete bucket — で人が行う。ポリシーは 100002 で既に落としてあり、
+-- 残った bucket はどのコードからも参照されぬ（残っても実害は無い）。
