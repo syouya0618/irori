@@ -156,6 +156,11 @@ function lastUndoOnClick(): (() => void) | undefined {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // clearAllMocks は mockResolvedValueOnce の待ち行列を消さぬ。途中で落ちたテストの
+  // 未消費の応答が次のテストへ漏れ、無関係の失敗を連鎖させぬよう個別に戻す
+  mockedRecordDiaper.mockReset()
+  mockedDeleteLog.mockReset()
+  mockedUpdateLog.mockReset()
   cleanup()
   resetInlineReducerMockState(mockState)
 })
@@ -546,6 +551,17 @@ describe("BabyDashboard / 編集の衝突（P2-07）", () => {
     await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalled())
   }
 
+  /**
+   * 保存の transition が閉じるのを待つ。衝突の反映（setConflict 等）は await の後ゆえ
+   * transition の外の通常の更新として先に描かれ、isPending は遅れて解ける（日記シートの
+   * 衝突テストと同じ）。通知が出た直後に同期で引くと、負荷しだいで「更新中...」のままの
+   * 画面を掴む（CI と負荷下のローカルで観測）。送信ボタンの名前が「更新する」へ戻った
+   * ことで isPending の解除を直接見る — 以後の disabled は衝突だけに由来する。
+   */
+  function saveSettled(): Promise<HTMLElement> {
+    return screen.findByRole("button", { name: "更新する" })
+  }
+
   it("単独の編集は開いた時点の版を送り、従来どおり保存して閉じる（対照）", async () => {
     mockedUpdateLog.mockResolvedValue({
       error: null,
@@ -587,8 +603,9 @@ describe("BabyDashboard / 編集の衝突（P2-07）", () => {
     expect(mockedToast.error).toHaveBeenCalledWith(
       "この記録は別の端末で先に更新されていました（家族またはご自身）。",
     )
-    // 同じ版での再送も、版を見ぬ削除も止める（家族の変更を巻き戻さぬ）
-    expect(screen.getByRole("button", { name: "更新する" })).toBeDisabled()
+    // 同じ版での再送も、版を見ぬ削除も止める（家族の変更を巻き戻さぬ）。送信中ゆえの
+    // disabled と取り違えぬよう、transition の完了後に見る
+    expect(await saveSettled()).toBeDisabled()
     expect(screen.getByRole("button", { name: "この記録を削除" })).toBeDisabled()
     // 背後のタイムラインは A の内容へ揃う（B の画面に古い行を残さぬ）
     await waitFor(() =>
@@ -613,7 +630,13 @@ describe("BabyDashboard / 編集の衝突（P2-07）", () => {
     render(<BabyDashboard {...defaultProps({ initialLogs: [original] })} />)
 
     await openAndTypeMemo("Bのメモ")
-    fireEvent.click(await screen.findByRole("button", { name: "最新の内容で編集し直す" }))
+    await screen.findByRole("alert")
+    // 送信中は「編集し直す」も押せぬ（disabled への click は無視される）。transition の
+    // 完了を待ち、押せることを確かめてから押す
+    await saveSettled()
+    const reload = screen.getByRole("button", { name: "最新の内容で編集し直す" })
+    expect(reload).toBeEnabled()
+    fireEvent.click(reload)
 
     // A の内容で seed し直される（衝突の表示は消え、保存できる）
     await waitFor(() =>
@@ -655,7 +678,21 @@ describe("BabyDashboard / 編集の衝突（P2-07）", () => {
     expect(screen.getByRole("button", { name: "削除する" })).toBeEnabled()
     fireEvent.click(screen.getByRole("button", { name: "更新する" }))
 
+    // 保存は開いた時点の版で 1 回だけ送られる
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalledTimes(1))
+    expect(mockedUpdateLog).toHaveBeenCalledWith("conflict-log", expect.any(Object), V0)
+    // 応答の処理（成否どちらでもトーストが出る）を待ち、成功して閉じたのではなく衝突として
+    // 返ったことを見る
+    await waitFor(() =>
+      expect(
+        mockedToast.success.mock.calls.length + mockedToast.error.mock.calls.length,
+      ).toBeGreaterThan(0),
+    )
+    expect(mockedToast.success).not.toHaveBeenCalled()
     await screen.findByRole("alert")
+    expect(await saveSettled()).toBeDisabled()
+    expect(screen.getByRole("dialog", { name: "おむつを編集" })).toBeInTheDocument()
+    // 確認は閉じ、削除の入口も止まる
     expect(screen.queryByRole("button", { name: "削除する" })).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "この記録を削除" })).toBeDisabled()
     expect(mockedDeleteLog).not.toHaveBeenCalled()
@@ -672,7 +709,7 @@ describe("BabyDashboard / 編集の衝突（P2-07）", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("削除されていました")
     expect((screen.getByLabelText("メモ") as HTMLTextAreaElement).value).toBe("Bのメモ")
-    expect(screen.getByRole("button", { name: "更新する" })).toBeDisabled()
+    expect(await saveSettled()).toBeDisabled()
     expect(
       screen.queryByRole("button", { name: "最新の内容で編集し直す" }),
     ).not.toBeInTheDocument()
@@ -701,6 +738,6 @@ describe("BabyDashboard / 編集の衝突（P2-07）", () => {
     )
     expect(mockedToast.success).not.toHaveBeenCalled()
     expect((screen.getByLabelText("メモ") as HTMLTextAreaElement).value).toBe("Bのメモ")
-    expect(screen.getByRole("button", { name: "更新する" })).toBeEnabled()
+    expect(await saveSettled()).toBeEnabled()
   })
 })
