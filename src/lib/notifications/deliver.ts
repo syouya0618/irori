@@ -39,6 +39,7 @@ import type { Database } from "@/lib/types/database"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { todayJstString } from "@/lib/utils/date-jst"
 import { parseDigestTimeHm } from "@/lib/domain/notification-digest"
+import { isAllowedPushEndpoint } from "@/lib/domain/push-endpoint"
 import {
   DELIVERY_GRACE_MS,
   buildEventNotification,
@@ -79,6 +80,16 @@ export interface DeliveryRunResult {
    * この表の存在理由が消える。
    */
   failed: number
+  /**
+   * allowlist 外の宛先ゆえ**送らずに据え置いた**配信行の数（P1-03）。
+   *
+   * `failed` には数えぬ —— 失敗の枝は failure_count を積み、購読を消す判断
+   * （404/410 だけ）とも隣り合う。不適合な購読は「届かなかった」のではなく
+   * 「撃ってはならぬ」もので、消すか直すかは人が決める。行は claim せぬゆえ、
+   * grace の後に期限切れ掃除が `expired` で畳む。0 でなければ RPC を迂回した
+   * 書込が DB に在る印じゃ（runbook の監査クエリで件数を確かめよ）。
+   */
+  rejectedEndpoints: number
 }
 
 /** テストから差し替える境界（時刻と外向きの送信）。 */
@@ -152,6 +163,7 @@ interface Counters {
   sent: number
   skipped: number
   failed: number
+  rejectedEndpoints: number
 }
 
 type Client = SupabaseClient<Database>
@@ -181,7 +193,13 @@ export async function deliverDueNotifications(
     ...overrides,
   }
   const now = deps.now()
-  const counters: Counters = { scheduled: 0, sent: 0, skipped: 0, failed: 0 }
+  const counters: Counters = {
+    scheduled: 0,
+    sent: 0,
+    skipped: 0,
+    failed: 0,
+    rejectedEndpoints: 0,
+  }
   // ⚠️ **`failed` の契約を機械で守るための旗じゃ。** 下の finally を見よ。
   let completed = false
 
@@ -982,6 +1000,28 @@ async function claimAndSend(
   counters: Counters,
   householdId: string,
 ): Promise<void> {
+  const subscriptionId = delivery.subscription_id
+  const target = subscriptionId ? subscriptionById.get(subscriptionId) : undefined
+
+  // ★ **送る宛先を、送る直前にもう一度 allowlist へ当てる（P1-03）。**
+  // RPC の検査（20261002100003）より前に入った旧行や、将来どこかの経路が検査を
+  // 外して入れた行を、cron（service role）が盲目 SSRF として撃たぬための最後の門じゃ。
+  // 下の `deps.sendPush` へ渡すのはこの `target.endpoint` そのものゆえ、ここで
+  // 見た値と送る値は同一じゃ（間に I/O で入れ替わる余地は無い）。
+  //   * claim せぬ: sent_at を立てれば「送った」嘘になる。行は据え置き、grace の後に
+  //     期限切れ掃除が expired で畳む（宛先を失ったダイジェスト行と同じ扱い）
+  //   * 購読は消さぬ・failure_count も積まぬ: 破棄は 404/410 の `gone` だけの契約じゃ
+  //   * ⚠️ endpoint は出さぬ（不適合でも、送信能力そのものゆえ）。識別子だけ。
+  if (target && !isAllowedPushEndpoint(target.endpoint)) {
+    counters.rejectedEndpoints += 1
+    console.error("[cron-notify] allowlist 外の宛先ゆえ送らぬ（購読は消さぬ）", {
+      householdId,
+      deliveryId: delivery.id,
+      subscriptionId: target.id,
+    })
+    return
+  }
+
   const { data: claimed, error: claimError } = await supabase
     .from("notification_deliveries")
     .update({ sent_at: nowIso })
@@ -1003,8 +1043,6 @@ async function claimAndSend(
   // 0 行 = 別プロセスが先に取った、または宛先を失った → 送らぬ。
   if (!claimed || claimed.length === 0) return
 
-  const subscriptionId = delivery.subscription_id
-  const target = subscriptionId ? subscriptionById.get(subscriptionId) : undefined
   if (!target) {
     // claim と読み込みの間に購読が消えた。claim を解いて次の実行へ委ねる。
     await releaseClaim(supabase, delivery.id)

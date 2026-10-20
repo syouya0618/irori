@@ -14,6 +14,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react"
 
 import { CalendarEventFormSheet } from "../calendar-event-form-sheet"
 import type { CalendarEventRecord } from "../use-month-events"
+import * as dateJst from "@/lib/utils/date-jst"
 
 beforeEach(() => cleanup())
 
@@ -28,6 +29,7 @@ function ev(o: Partial<CalendarEventRecord> & { id: string }): CalendarEventReco
     end_at: o.end_at ?? null,
     source: o.source ?? "native",
     series_id: o.series_id ?? null,
+    updated_at: o.updated_at ?? "2026-07-01T00:00:00.000000+00:00",
     ...o,
   }
 }
@@ -121,6 +123,67 @@ describe("CalendarEventFormSheet - 終日/時刻あり セグメント", () => {
   })
 })
 
+describe("CalendarEventFormSheet - シートの高さとスクロール", () => {
+  /**
+   * シートは画面下端に固定され高さは中身なり。上限もスクロール領域も無いと、
+   * 「時刻あり」や繰り返しで中身が伸びた時に上端（閉じる・タイトル欄）が画面外へ
+   * 押し出され、fixed ゆえスクロールでも戻せぬ。育児ログ側のシートと同じく
+   * 上限 + 本文スクロール + 保存ボタンは本文の外（常時見える）に揃える。
+   * jsdom は寸法を測れぬゆえ構造の契約で固定する。
+   */
+  it("入力欄は本文のスクロール領域に入り、保存ボタンはその外に在る", () => {
+    renderNewForm()
+    expect(screen.getByText("タイトル")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "時刻あり" }))
+
+    const sheet = titleInput()!.closest('[data-slot="sheet-content"]')
+    expect(sheet).not.toBeNull()
+    expect(sheet?.className).toMatch(/max-h-\[85dvh\]/)
+
+    const scroller = startTimeInput()!.closest(".overflow-y-auto")
+    expect(scroller).not.toBeNull()
+    expect(titleInput()!.closest(".overflow-y-auto")).toBe(scroller)
+
+    const save = screen.getByRole("button", { name: "追加" })
+    expect(scroller?.contains(save)).toBe(false)
+    expect(sheet?.contains(save)).toBe(true)
+  })
+
+  it("本文は左右に余白を持つ（入力欄を画面端に密着させぬ）", () => {
+    renderNewForm()
+    const scroller = titleInput()!.closest(".overflow-y-auto")
+    expect(scroller?.className).toMatch(/\bpx-4\b/)
+  })
+})
+
+describe("CalendarEventFormSheet - 編集時の時刻 seed", () => {
+  // <input type="time"> は "24:30" を不正値として空表示する。seed は h23 固定の
+  // formatJstTimeInput で作る（date-jst.ts の注記どおり formatTimeJst は環境依存）。
+  //
+  // Node / jsdom の ICU は ja-JP でも h23 ゆえ、素のままでは formatTimeJst へ戻しても
+  // 緑になる。ICU が h24 既定の環境を再現するため formatTimeJst だけを "24:30" に
+  // 差し替える（server 側 actions.test.ts の「ICU h24 既定環境の再現」と同じ手）。
+  it("深夜 0 時台の予定は 00:xx で seed される（formatTimeJst が 24:xx を返す環境でも）", () => {
+    const spy = vi.spyOn(dateJst, "formatTimeJst").mockReturnValue("24:30")
+    try {
+      renderEditForm(
+        ev({
+          id: "midnight",
+          is_all_day: false,
+          start_date: "2026-07-15",
+          end_date: "2026-07-15",
+          start_at: "2026-07-14T15:30:00.000Z", // = JST 2026-07-15 00:30
+          end_at: "2026-07-14T16:15:00.000Z", // = JST 01:15
+        }),
+      )
+      expect(startTimeInput()!.value).toBe("00:30")
+      expect(endTimeInput()!.value).toBe("01:15")
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+
 describe("CalendarEventFormSheet - 繰り返し(作成モードのみ)", () => {
   it("作成モードで繰り返し select が見え、既定「なし」・終了日入力は非表示", () => {
     renderNewForm()
@@ -193,6 +256,20 @@ describe("CalendarEventFormSheet - 保存前の検証(入力を失わない)", (
     expect(screen.getByRole("alert")).toHaveTextContent(
       "終了日は開始日以降にしてください",
     )
+  })
+
+  // 本文は上限付きのスクロール領域ゆえ、エラーを本文の末尾に置くと、背の低い画面で
+  // 最上部のまま「追加」を押した時に文言が画面外へ出て「押しても何も起きぬ」に見える。
+  // 本文の外（保存ボタンの直上・常に見える位置）に置く。
+  it("エラー文言はスクロール本文の外（保存ボタンと同じシート内）に出る", () => {
+    renderNewForm()
+    fireEvent.change(titleInput()!, { target: { value: "検診" } })
+    fireEvent.change(endDateInput()!, { target: { value: "2026-07-14" } })
+    fireEvent.click(screen.getByRole("button", { name: "追加" }))
+
+    const alert = screen.getByRole("alert")
+    expect(alert.closest(".overflow-y-auto")).toBeNull()
+    expect(alert.closest('[data-slot="sheet-content"]')).not.toBeNull()
   })
 
   it("エラー時は該当入力に aria-invalid と aria-describedby が付く", () => {

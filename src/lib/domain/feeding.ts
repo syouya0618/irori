@@ -20,6 +20,26 @@ export const FEEDING_DURATION_SEC_MIN = 1
 export const FEEDING_DURATION_SEC_MAX = FEEDING_DURATION_MAX * 60 // 10800
 
 /**
+ * 母乳サイクル行の左右の吸わせ回数の上限。DB CHECK `chk_breast_counts_required`
+ * （各 0..20・合計 >= 1。`supabase/migrations/20260726100002`）のミラー。
+ *
+ * サーバ Action の検証（validateBreastCounts）・編集シート・タイマーのステッパーが
+ * この 1 値を共有する。別々に 20 を書くと、片方だけ変えた時に UI が DB に拒まれる値を
+ * 作れてしまう（CLAUDE.md「サーバ Action と UI は同じ契約のミラー」）。
+ * CHECK を緩める方向の変更は禁止（CLAUDE.md の既知の罠）。
+ */
+export const BREAST_COUNT_MAX = 20
+
+/**
+ * 回数を 0..BREAST_COUNT_MAX の整数へ丸める。非有限値は 0（その側は吸わせていない）へ
+ * 倒す — NaN を wire に乗せて CHECK に拒ませ、記録を恒久失敗させぬため。
+ */
+export function clampBreastCount(n: number): number {
+  if (!Number.isFinite(n)) return 0
+  return Math.min(BREAST_COUNT_MAX, Math.max(0, Math.round(n)))
+}
+
+/**
  * 経過分を [FEEDING_DURATION_MIN, FEEDING_DURATION_MAX] にクランプする。
  *
  * NaN / ±Infinity の防御は defense-in-depth（現状の唯一の呼出元は有限値を渡すが、

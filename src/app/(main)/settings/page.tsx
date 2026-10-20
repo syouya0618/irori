@@ -11,6 +11,55 @@ import {
 import { parseDigestTimeHm } from "@/lib/domain/notification-digest"
 import { SettingsContent } from "./settings-content"
 
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>
+
+interface PendingApprovalRow {
+  id: string
+  display_name: string
+  email: string
+  created_at: string
+}
+
+/**
+ * 承認待ちの一覧（P1-02）。**インスタンスの運用者だけ**が見る。
+ *
+ * かつては世帯の owner なら誰でも一覧を引いており、相互に信頼せぬ他世帯の新規登録者
+ * （email 入り）が自世帯の設定画面に「承認待ち」として並んだ。承認は世帯への参加では
+ * なくインスタンスへの入場許可ゆえ、判定源は世帯の役割ではなく `is_app_operator()` じゃ。
+ * DB 側も運用者以外には空集合を返し、approve_user は 42501 で拒む（二重の防御）。
+ *
+ * - 判定に失敗したら**閉じる**（カードを出さぬ）。ログには残す
+ * - `true` 以外（null・想定外の型）は運用者とみなさぬ
+ * - 運用者が一覧を読めなかった時は `null`（「0 件」と偽らぬ）
+ */
+async function loadPendingApprovals(
+  supabase: SupabaseServerClient,
+  userId: string,
+): Promise<{ isAppOperator: boolean; pendingUsers: PendingApprovalRow[] | null }> {
+  const { data: operatorFlag, error: operatorError } =
+    await supabase.rpc("is_app_operator")
+  if (operatorError) {
+    logSupabaseError("settings", "is_app_operator lookup failed", operatorError, {
+      userId,
+    })
+    return { isAppOperator: false, pendingUsers: [] }
+  }
+  if (operatorFlag !== true) {
+    return { isAppOperator: false, pendingUsers: [] }
+  }
+
+  const { data: pendingData, error: pendingError } = await supabase.rpc(
+    "get_pending_approvals",
+  )
+  if (pendingError) {
+    logSupabaseError("settings", "pending approvals lookup failed", pendingError, {
+      userId,
+    })
+    return { isAppOperator: true, pendingUsers: null }
+  }
+  return { isAppOperator: true, pendingUsers: pendingData ?? [] }
+}
+
 /**
  * `?google=<notice>` は OAuth callback（`/api/google/oauth/callback`）が付ける。
  *
@@ -67,14 +116,12 @@ export default async function SettingsPage({
     redirect("/setup")
   }
 
-  // household と pending approvals rpc は互いに依存しないため並列化する。
-  // ただし get_pending_approvals は owner だけが必要とするクエリのため、
-  // 無条件に Promise.all へ入れると owner 以外も毎回 rpc を叩くことになる
-  // (権限のないユーザーへの不要なクエリ発行を防ぐ)。ゆえに三項演算子で
-  // owner 以外は実クエリを発行しない Promise.resolve に差し替えてから並列化する。
+  // household と承認待ちの読み出しは互いに依存しないため並列化する。
+  // 承認待ちは運用者の判定 → 一覧の 2 段ゆえ、関数に畳んで 1 要素として並べる
+  // （運用者でなければ一覧のクエリは発行せぬ）。
   const [
     { data: household, error: householdError },
-    { data: pendingData, error: pendingError },
+    { isAppOperator, pendingUsers },
     { data: googleConnections, error: googleConnectionsError },
     { data: pushDevices, error: pushDevicesError },
     { data: heartbeat, error: heartbeatError },
@@ -86,9 +133,7 @@ export default async function SettingsPage({
       .select("id, name, baby_name, baby_birth_date, feeding_interval_min")
       .eq("id", profile.household_id)
       .single(),
-    profile.role === "owner"
-      ? supabase.rpc("get_pending_approvals")
-      : Promise.resolve({ data: null, error: null }),
+    loadPendingApprovals(supabase, userId),
     // Google 接続は**ユーザー単位**（夫婦が各自 1 つずつ持つ）。切断できるのは
     // 本人だけ（RLS の DELETE は user_id = auth.uid()）ゆえ、カードには自分の
     // 接続だけを出す。世帯の SELECT ポリシーは配偶者の接続も見せるが、
@@ -238,17 +283,6 @@ export default async function SettingsPage({
   // 同じ画面の中で「3分前」と「4分前」が混ざりうる）。
   const now = new Date()
 
-  // ownerのみ: 承認待ちユーザー取得
-  let pendingUsers: { id: string; display_name: string; email: string; created_at: string }[] = []
-  if (profile.role === "owner") {
-    if (pendingError) {
-      logSupabaseError("settings", "pending approvals lookup failed", pendingError, {
-        householdId: profile.household_id,
-      })
-    }
-    pendingUsers = pendingData ?? []
-  }
-
   return (
     <SettingsContent
       profile={{
@@ -267,13 +301,22 @@ export default async function SettingsPage({
           ? { id: household.id, name: household.name }
           : null
       }
-      babyProfile={{
-        name: household?.baby_name ?? null,
-        birthDate: household?.baby_birth_date ?? null,
-        feedingIntervalMin:
-          household?.feeding_interval_min ?? FEEDING_INTERVAL_DEFAULT,
-      }}
+      // ⚠️ **「読めなかった」を空欄として描かせぬ（P2-31）。** 取得に失敗した時に
+      // `?? null` と既定の間隔で埋めて渡せば、カードは空欄の編集フォームになり、
+      // 間隔だけを直した保存の 1 クリックで名前と生年月日が NULL に上書きされる
+      // （updateBabyProfile は 3 列を全て書く）。null で運び、カードは保存の口を出さぬ。
+      babyProfile={
+        household
+          ? {
+              name: household.baby_name ?? null,
+              birthDate: household.baby_birth_date ?? null,
+              feedingIntervalMin:
+                household.feeding_interval_min ?? FEEDING_INTERVAL_DEFAULT,
+            }
+          : null
+      }
       email={email ?? ""}
+      isAppOperator={isAppOperator}
       pendingUsers={pendingUsers}
       googleConnections={googleConnectionViews}
       googleNotice={googleNotice}

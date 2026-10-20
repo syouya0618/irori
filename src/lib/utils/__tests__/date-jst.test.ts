@@ -321,3 +321,13 @@ describe("isValidYmd", () => {
     expect(() => shiftYmd("garbage", -1)).toThrow()
   })
 })
+
+describe("jstDayStartIso", () => {
+  it("JST 暦日の 0:00 を +09:00 明示で返す（UTC の 0:00 = JST 9:00 で日を切らぬ）", async () => {
+    const { jstDayStartIso, toJstDateString } = await import("../date-jst")
+    expect(jstDayStartIso("2026-07-22")).toBe("2026-07-22T00:00:00+09:00")
+    // 往復で同じ JST 暦日に戻る（UTC では前日の 15:00）
+    expect(toJstDateString(jstDayStartIso("2026-07-22"))).toBe("2026-07-22")
+    expect(new Date(jstDayStartIso("2026-07-22")).toISOString()).toBe("2026-07-21T15:00:00.000Z")
+  })
+})

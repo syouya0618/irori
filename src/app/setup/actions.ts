@@ -29,6 +29,11 @@ export async function createHousehold(name: string) {
       details: error.details,
       hint: error.hint,
     })
+    // 未承認の利用者は DB 層でも 42501 で拒まれる（20261002100001）。proxy が
+    // /pending-approval へ送るゆえ通常は届かぬが、届いた時に「再試行」を促さぬ。
+    if (error.code === "42501") {
+      return { error: "管理者の承認がまだのため、世帯を作れません。" }
+    }
     return { error: "世帯の作成に失敗しました。もう一度お試しください。" }
   }
 

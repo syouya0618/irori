@@ -49,6 +49,16 @@ export interface BabyLogData {
   duration_sec: number | null
   memo: string | null
   created_at: string
+  /**
+   * 最終更新時刻（DB トリガー trg_baby_logs_updated_at が UPDATE ごとに now() を振る）。
+   * 二つの役目がある:
+   * - 編集の版（P2-07）: 編集シートは開いた時点のこの値を updateLog へ送り、サーバは
+   *   この版を条件に書く。表記のまま運ぶこと（`new Date()` でマイクロ秒が落ちる）。
+   * - 到着順の逆転対策: 古い版で新しい版を上書きせぬ比較（applyUpdatedLog / isOlderLogVersion）。
+   * 楽観 append の行も作成の応答の版を持つ（buildOptimisticLog）。optional なのは、版を
+   * 持たぬ形（テストの断片等）でも比較を飛ばして置き換えられるようにするため。
+   */
+  updated_at?: string | null
 }
 
 /** 育児日記（1世帯・1日1本、baby_diaries）。SELECT で使う実データ形。 */

@@ -113,6 +113,47 @@ const ERROR_KIND_LABELS: Record<string, string> = {
   unknown: "同期に失敗しました",
 }
 
+/**
+ * route に届かなんだ応答の振り分け（export-card.tsx と同じ規則）。
+ * - `"unauthenticated"`: route 自身の 401（route は 401 を**未認証の時だけ**返す。UX-03）
+ * - `"redirected"`: proxy の 307（opaqueredirect / status 0 / 3xx）。proxy は未認証なら
+ *   /login、未承認**または profiles の一過性の取得失敗**なら /pending-approval へ送るゆえ、
+ *   原因を断定せず再読み込みを促す（N1。再読み込みで proxy が正しく振り分ける）
+ */
+type GateOutcome = "unauthenticated" | "redirected" | null
+
+function gateOutcome(response: Response): GateOutcome {
+  if (response.status === 401) return "unauthenticated"
+  if (
+    response.type === "opaqueredirect" ||
+    response.status === 0 ||
+    (response.status >= 300 && response.status < 400)
+  ) {
+    return "redirected"
+  }
+  return null
+}
+
+const GATE_MESSAGES: Record<Exclude<GateOutcome, null>, string> = {
+  unauthenticated: "セッションが切れました。ログインし直してください",
+  redirected: "ログイン状態を確認できませんでした。画面を再読み込みしてください",
+}
+
+/**
+ * サーバが文言を返さなんだ失敗の既定文言（route の 403 / 5xx は素のテキストを返す）。
+ * - 403: route が未承認・世帯なしと判定した（ログインし直しても直らぬ）
+ * - 5xx: サーバ側の障害（一過性の取得失敗は 503）。待てば直る側じゃ
+ */
+function syncFailureMessage(status: number): string {
+  if (status === 403) {
+    return "このアカウントでは同期できません（承認されていないか、世帯に参加していません）"
+  }
+  if (status >= 500) {
+    return "同期に失敗しました。時間をおいてもう一度お試しください"
+  }
+  return "同期に失敗しました"
+}
+
 /** ISO → 「M/D H:MM」。不正値でも throw せぬ（未同期と同じ扱いへ退化）。 */
 function formatSyncedAt(iso: string | null): string {
   if (iso === null || iso.length === 0) return "未同期"
@@ -236,10 +277,22 @@ function GoogleConnectionRow({
     try {
       const response = await fetch("/api/google/sync", {
         method: "POST",
+        // ⚠️ 承認ゲートの 307 を追わせぬ（追うと login 画面の 200 を成功と誤読する）。
+        redirect: "manual",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ connectionId: connection.id }),
         signal: controller.signal,
       })
+      const gate = gateOutcome(response)
+      if (gate !== null) {
+        console.error("[google-calendar-card] 認証・承認の門で同期に届かず", {
+          gate,
+          status: response.status,
+          type: response.type,
+        })
+        toast.error(GATE_MESSAGES[gate])
+        return
+      }
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as {
           error?: unknown
@@ -247,8 +300,28 @@ function GoogleConnectionRow({
         const message =
           typeof payload?.error === "string"
             ? payload.error
-            : "同期に失敗しました"
+            : syncFailureMessage(response.status)
+        console.error("[google-calendar-card] 同期の要求が失敗", {
+          status: response.status,
+        })
         toast.error(message)
+        return
+      }
+      // 成功と言ってよいのは route が `{ ok: true }` を返した時だけじゃ（嘘の成功を出さぬ）。
+      const body = (await response.json().catch((err: unknown) => {
+        console.error("[google-calendar-card] 同期の応答を JSON として読めず", {
+          status: response.status,
+          message: err instanceof Error ? err.message : String(err),
+        })
+        return null
+      })) as { ok?: unknown } | null
+      if (body?.ok !== true) {
+        if (body !== null) {
+          console.error("[google-calendar-card] 同期の応答が ok ではない", {
+            status: response.status,
+          })
+        }
+        toast.error("同期に失敗しました")
         return
       }
       toast.success("同期を開始しました")

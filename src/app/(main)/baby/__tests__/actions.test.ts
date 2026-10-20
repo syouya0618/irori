@@ -21,54 +21,118 @@ import {
 } from "../actions"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { FUTURE_LOG_TIME_ERROR } from "@/lib/domain/baby-log-time"
+import { BABY_LOG_COLUMNS } from "@/lib/domain/baby-log-columns"
 
 const mockedLog = vi.mocked(logSupabaseError)
 const HOUSEHOLD = "house-1"
 
-/** insert().select("id").single() を模した fake client。 */
+/** insert().select(cols).single() を模した fake client。 */
 function makeSupabase(insertResult: { data: unknown; error: unknown }) {
   const single = vi.fn().mockResolvedValue(insertResult)
-  const select = vi.fn(() => ({ single }))
+  const select = vi.fn((_cols: string) => ({ single }))
   const insert = vi.fn(() => ({ select }))
   const from = vi.fn(() => ({ insert }))
-  return { client: { from }, insert }
+  return { client: { from }, insert, insertSelect: select }
 }
 
-/** update().eq().eq().select("id").single() を模した fake client。 */
-function makeUpdateSupabase(updateResult: { data: unknown; error: unknown }) {
-  const single = vi.fn().mockResolvedValue(updateResult)
-  const select = vi.fn(() => ({ single }))
-  const eqHousehold = vi.fn(() => ({ select }))
-  const eqId = vi.fn(() => ({ eq: eqHousehold }))
-  const update = vi.fn(() => ({ eq: eqId }))
-  const from = vi.fn(() => ({ update }))
-  return { client: { from } }
+/** 編集を始めた時点の版（PostgREST の表記・マイクロ秒つき）と、保存で進んだ後の版。 */
+const V0 = "2026-10-01T00:00:00.123456+00:00"
+const V1 = "2026-10-01T00:05:00.654321+00:00"
+
+/** 既存の updateLog の検査は「開いた時点の版」を送る正常な呼び出しとして書く。 */
+function updateLogV0(logId: string, updates: Parameters<typeof updateLog>[1]) {
+  return updateLog(logId, updates, V0)
 }
 
 /**
- * updateLog の durationSec 単独編集経路を模した fake client。
- * 先に breast_left_sec を pre-fetch（select().eq().eq().maybeSingle()）してから
- * update().eq().eq().select("id").single() する。両方 supabase.from("baby_logs") 起点。
+ * updateLog の fake client（どれも supabase.from("baby_logs") 起点）。
+ * - 更新: update(payload).eq()….select(cols) を await → 配列の行。
+ * - 既存行の pre-fetch（"breast_left_sec"）と、版が合わなかった時の読み直し
+ *   （BABY_LOG_COLUMNS）: select(cols).eq()….maybeSingle()。
+ *
+ * **`.eq()` は経路ごとに記録する。** 更新の絞り込み（id・世帯・版の三点）と読み直しの
+ * 絞り込みが混ざると、「版で絞った」の assert が読み直しの eq で偽って通る。
+ * 更新の終端は `.single()` も持つ — 旧形（`.single()` で受ける実装）に対しても版ガードの
+ * 検査だけが赤くなり、RED が呼び出し形の TypeError で濁らぬように。
  */
+function makeLogUpdateSupabase(
+  opts: {
+    update?: { data: unknown; error: unknown }
+    prefetch?: { data: unknown; error: unknown }
+    reread?: { data: unknown; error: unknown }
+  } = {},
+) {
+  const updateResult = opts.update ?? {
+    data: [{ id: "log-1", updated_at: V1 }],
+    error: null,
+  }
+  const updateEqs: [string, unknown][] = []
+  const readEqs: [string, unknown][] = []
+
+  const terminal = {
+    then: (
+      onFulfilled: (v: unknown) => unknown,
+      onRejected?: (e: unknown) => unknown,
+    ) => Promise.resolve(updateResult).then(onFulfilled, onRejected),
+    single: () => {
+      const rows = updateResult.data
+      if (updateResult.error || !Array.isArray(rows)) return Promise.resolve(updateResult)
+      if (rows.length === 1) return Promise.resolve({ data: rows[0], error: null })
+      return Promise.resolve({ data: null, error: { code: "PGRST116", message: "no rows" } })
+    },
+  }
+  const select = vi.fn((_cols: string) => terminal)
+  const updateChain: Record<string, unknown> = {
+    eq: vi.fn((col: string, val: unknown) => {
+      updateEqs.push([col, val])
+      return updateChain
+    }),
+    select,
+  }
+  const update = vi.fn((_payload: Record<string, unknown>) => updateChain)
+
+  const fetchSelect = vi.fn((cols: string) => {
+    const chain: Record<string, unknown> = {
+      eq: vi.fn((col: string, val: unknown) => {
+        readEqs.push([col, val])
+        return chain
+      }),
+      maybeSingle: () =>
+        Promise.resolve(
+          cols === "breast_left_sec"
+            ? (opts.prefetch ?? { data: { breast_left_sec: null }, error: null })
+            : (opts.reread ?? { data: null, error: null }),
+        ),
+    }
+    return chain
+  })
+
+  const from = vi.fn((_table: string) => ({ update, select: fetchSelect }))
+  return { client: { from }, from, update, select, fetchSelect, updateEqs, readEqs }
+}
+
+/** 1 行の更新が通る形（旧来の `{ data: 行 }` を配列の 1 行として返す）。 */
+function makeUpdateSupabase(updateResult: { data: unknown; error: unknown }) {
+  return makeLogUpdateSupabase({
+    update:
+      updateResult.data && !Array.isArray(updateResult.data)
+        ? { data: [updateResult.data], error: updateResult.error }
+        : updateResult,
+  })
+}
+
+/** durationSec 単独編集の pre-fetch を伴う形（pre-fetch の結果と更新の 1 行を渡す）。 */
 function makeUpdateSupabaseWithFetch(
   fetchResult: { data: unknown; error: unknown },
   updateResult: { data: unknown; error: unknown },
 ) {
-  // pre-fetch: from().select("breast_left_sec").eq().eq().maybeSingle()
-  const maybeSingle = vi.fn().mockResolvedValue(fetchResult)
-  const fetchEq2 = vi.fn(() => ({ maybeSingle }))
-  const fetchEq1 = vi.fn(() => ({ eq: fetchEq2 }))
-  const fetchSelect = vi.fn(() => ({ eq: fetchEq1 }))
-
-  // update: from().update().eq().eq().select("id").single()
-  const single = vi.fn().mockResolvedValue(updateResult)
-  const updSelect = vi.fn(() => ({ single }))
-  const updEq2 = vi.fn(() => ({ select: updSelect }))
-  const updEq1 = vi.fn(() => ({ eq: updEq2 }))
-  const update = vi.fn(() => ({ eq: updEq1 }))
-
-  const from = vi.fn(() => ({ select: fetchSelect, update }))
-  return { client: { from }, update, fetchSelect }
+  return makeLogUpdateSupabase({
+    prefetch: fetchResult,
+    update:
+      updateResult.data && !Array.isArray(updateResult.data)
+        ? { data: [updateResult.data], error: updateResult.error }
+        : updateResult,
+  })
 }
 
 /** delete().eq().eq().select("id") を模した fake client（.single() なし、data は配列）。 */
@@ -228,7 +292,7 @@ describe("updateLog の記録時刻検証（タスクB）", () => {
       { data: null, error: null },
     )
     setContext(client)
-    const result = await updateLog("log-1", {
+    const result = await updateLogV0("log-1", {
       loggedAt: "2099-01-01T00:00:00.000Z",
     })
     expect(result.error).toBe(FUTURE_LOG_TIME_ERROR)
@@ -241,11 +305,11 @@ describe("updateLog の記録時刻検証（タスクB）", () => {
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    const result = await updateLog("log-1", {
+    const result = await updateLogV0("log-1", {
       loggedAt: "2026-07-09T10:00:00.000Z",
       amountMl: 80,
     })
-    expect(result).toEqual({ error: null })
+    expect(result.error).toBeNull()
     expect(update).toHaveBeenCalled()
     // 既存行の pre-fetch が要るのは durationSec 単独編集のときだけ
     expect(fetchSelect).not.toHaveBeenCalled()
@@ -257,46 +321,217 @@ describe("updateLog の記録時刻検証（タスクB）", () => {
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    const result = await updateLog("missing", { durationSec: 300 })
+    const result = await updateLogV0("missing", { durationSec: 300 })
     expect(result.error).toBeTruthy()
     expect(update).not.toHaveBeenCalled()
   })
 })
 
 describe("updateLog が 0 行更新を成功と偽らない", () => {
-  it("成功時（1 行更新）は error: null を返す", async () => {
-    const { client } = makeUpdateSupabase({ data: { id: "log-1" }, error: null })
+  it("成功時（1 行更新）は error: null と更新後の行を返す", async () => {
+    const row = { id: "log-1", log_type: "diaper", logged_at: "2026-10-01T00:01:00.000Z" }
+    const { client } = makeUpdateSupabase({ data: row, error: null })
     setContext(client)
-    const result = await updateLog("log-1", { memo: "hi" })
-    expect(result).toEqual({ error: null })
+    const result = await updateLogV0("log-1", { memo: "hi" })
+    expect(result).toEqual({ error: null, log: row })
   })
 
-  it("0 行マッチ（PGRST116）は success を偽らず error を返し、ノイズログを出さない", async () => {
-    const { client } = makeUpdateSupabase({
-      data: null,
-      error: { code: "PGRST116", message: "no rows" },
+  it("更新後の行は BABY_LOG_COLUMNS 一式で取り直す（画面の書き換えに全列が要る）", async () => {
+    const { client, select } = makeUpdateSupabase({
+      data: { id: "log-1" },
+      error: null,
     })
     setContext(client)
-    const result = await updateLog("missing-id", { memo: "hi" })
+    await updateLogV0("log-1", { memo: "hi" })
+    expect(select).toHaveBeenCalledWith(BABY_LOG_COLUMNS)
+  })
+
+  it("0 行（不在・別世帯）は success を偽らず error を返し、ノイズログを出さない", async () => {
+    const { client } = makeLogUpdateSupabase({ update: { data: [], error: null } })
+    setContext(client)
+    const result = await updateLogV0("missing-id", { memo: "hi" })
     expect(result.error).toBeTruthy()
-    // PGRST116 は正常な失敗ゆえ logSupabaseError では出さない。
+    expect(result.log).toBeUndefined()
+    expect(revalidatePath).not.toHaveBeenCalled()
+    // 行が無いのは正常な失敗ゆえ logSupabaseError では出さない。
     expect(mockedLog).not.toHaveBeenCalled()
   })
 
-  it("PGRST116 以外の DB エラーは logSupabaseError で構造化ログに残す", async () => {
+  it("DB エラーは logSupabaseError で構造化ログに残し、衝突とは言わぬ", async () => {
     const { client } = makeUpdateSupabase({
       data: null,
       error: { code: "XX000", message: "boom" },
     })
     setContext(client)
-    const result = await updateLog("log-1", { memo: "hi" })
+    const result = await updateLogV0("log-1", { memo: "hi" })
     expect(result.error).toBeTruthy()
+    expect(result.conflict).toBeUndefined()
     expect(mockedLog).toHaveBeenCalledWith(
       "baby",
       expect.any(String),
       expect.objectContaining({ code: "XX000" }),
       expect.objectContaining({ householdId: HOUSEHOLD }),
     )
+  })
+})
+
+describe("updateLog の版ガード（P2-07: 開いた時点の版でしか書けぬ）", () => {
+  // 家族（または自分の別端末）が先に保存した後の行。版は V1 へ進んでおる。
+  const CURRENT = {
+    id: "log-1",
+    log_type: "diaper",
+    logged_at: "2026-10-01T00:01:00+00:00",
+    diaper_type: "poop",
+    poop_amount: "large",
+    memo: "家族が直したメモ",
+    updated_at: V1,
+  }
+
+  it.each([
+    ["版なし（デプロイを跨いだ古い画面）", undefined],
+    ["null（ログの編集に「行が無い」版は無い）", null],
+    ["日付だけ", "2026-10-01"],
+    ["表記でない文字列", "not-a-version"],
+  ])("版が %s なら DB に触れず、画面が古いと返す（無条件の上書きへ倒さぬ）", async (_label, bad) => {
+    const { client, from } = makeLogUpdateSupabase()
+    setContext(client)
+    const result = await updateLog("log-1", { memo: "hi" }, bad as unknown as string)
+    expect(result.error).toMatch(/画面が古いため保存できませんでした/)
+    expect(from).not.toHaveBeenCalled()
+  })
+
+  it("更新は id・世帯・版（送られた表記のまま・マイクロ秒つき）の三点で 1 本の UPDATE に絞る", async () => {
+    const { client, update, updateEqs, fetchSelect } = makeLogUpdateSupabase()
+    setContext(client)
+    await updateLog("log-1", { memo: "hi" }, V0)
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(updateEqs).toEqual([
+      ["id", "log-1"],
+      ["household_id", HOUSEHOLD],
+      ["updated_at", V0],
+    ])
+    // 先に版を SELECT してから無条件に UPDATE する形（TOCTOU）ではない
+    expect(fetchSelect).not.toHaveBeenCalled()
+  })
+
+  it("成功は更新後の行（trigger で進んだ版）を返す", async () => {
+    const saved = { ...CURRENT, memo: "hi" }
+    const { client } = makeLogUpdateSupabase({ update: { data: [saved], error: null } })
+    setContext(client)
+    const result = await updateLog("log-1", { memo: "hi" }, V0)
+    expect(result).toEqual({ error: null, log: saved })
+    expect(revalidatePath).toHaveBeenCalledWith("/baby")
+  })
+
+  it("0 行で読み直した行が送った内容と違う → 衝突。最新の行を返し、成功と偽らぬ", async () => {
+    const { client, readEqs } = makeLogUpdateSupabase({
+      update: { data: [], error: null },
+      reread: { data: CURRENT, error: null },
+    })
+    setContext(client)
+    const result = await updateLog(
+      "log-1",
+      { diaperType: "poop", poopAmount: "small", memo: "古い画面から書いたメモ" },
+      V0,
+    )
+    expect(result.error).toMatch(/別の端末で先に更新されていました/)
+    expect(result.log).toBeUndefined()
+    expect(result.conflict).toEqual({ current: CURRENT })
+    expect(revalidatePath).not.toHaveBeenCalled()
+    // 読み直しも世帯で絞る（別世帯の行を拾って見せぬ）
+    expect(readEqs).toEqual([
+      ["id", "log-1"],
+      ["household_id", HOUSEHOLD],
+    ])
+    expect(mockedLog).not.toHaveBeenCalled()
+  })
+
+  it("0 行で読み直しても無い（削除済み・別世帯）→ 削除されていたと返す（別世帯と削除を区別せぬ）", async () => {
+    const { client } = makeLogUpdateSupabase({
+      update: { data: [], error: null },
+      reread: { data: null, error: null },
+    })
+    setContext(client)
+    const result = await updateLog("log-1", { memo: "hi" }, V0)
+    expect(result.error).toMatch(/削除されていました/)
+    expect(result.conflict).toEqual({ current: null })
+    expect(result.log).toBeUndefined()
+    expect(mockedLog).not.toHaveBeenCalled()
+  })
+
+  it("0 行で読み直しに失敗 → 確かめられなかったと返す（衝突とも削除とも断定せぬ）", async () => {
+    const { client } = makeLogUpdateSupabase({
+      update: { data: [], error: null },
+      reread: { data: null, error: { code: "XX000", message: "boom" } },
+    })
+    setContext(client)
+    const result = await updateLog("log-1", { memo: "hi" }, V0)
+    expect(result.error).toMatch(/確かめられませんでした/)
+    expect(result.conflict).toBeUndefined()
+    expect(result.log).toBeUndefined()
+    expect(mockedLog).toHaveBeenCalledWith(
+      "baby",
+      expect.any(String),
+      expect.objectContaining({ code: "XX000" }),
+      expect.objectContaining({ householdId: HOUSEHOLD, logId: "log-1" }),
+    )
+  })
+
+  it("0 行でも、読み直した行が送った内容そのもの（応答だけ失われた保存の再試行）なら成功", async () => {
+    const current = { ...CURRENT, poop_amount: "small", memo: "同じメモ" }
+    const { client } = makeLogUpdateSupabase({
+      update: { data: [], error: null },
+      reread: { data: current, error: null },
+    })
+    setContext(client)
+    const result = await updateLog(
+      "log-1",
+      { diaperType: "poop", poopAmount: "small", memo: "同じメモ" },
+      V0,
+    )
+    expect(result).toEqual({ error: null, log: current })
+    expect(revalidatePath).toHaveBeenCalledWith("/baby")
+  })
+
+  it("内容一致の判定は logged_at の表記ゆれ（Z と +00:00）を同じ時刻として扱う", async () => {
+    const current = { ...CURRENT, memo: "同じメモ" }
+    const { client } = makeLogUpdateSupabase({
+      update: { data: [], error: null },
+      reread: { data: current, error: null },
+    })
+    setContext(client)
+    const result = await updateLog(
+      "log-1",
+      { loggedAt: "2026-10-01T00:01:00.000Z", memo: "同じメモ" },
+      V0,
+    )
+    expect(result).toEqual({ error: null, log: current })
+  })
+
+  it("未承認の利用者は DB に触れず拒否される", async () => {
+    getAuthContext.mockResolvedValue({
+      error: "承認待ちです",
+      reason: "not-approved",
+      context: null,
+    })
+    const { client, from } = makeLogUpdateSupabase()
+    void client
+    const result = await updateLog("log-1", { memo: "hi" }, V0)
+    expect(result.error).toBe("承認待ちです")
+    expect(from).not.toHaveBeenCalled()
+  })
+})
+
+describe("record* は作成した行の版も返す（P2-07: 作成直後の編集に版が要る）", () => {
+  it("insert は id と updated_at を取り直し、updatedAt として返す", async () => {
+    const { client, insertSelect } = makeSupabase({
+      data: { id: "log-5", updated_at: V0 },
+      error: null,
+    })
+    setContext(client)
+    const result = await recordDiaper({ diaperType: "pee" })
+    expect(insertSelect).toHaveBeenCalledWith("id, updated_at")
+    expect(result).toEqual({ error: null, id: "log-5", updatedAt: V0 })
   })
 })
 
@@ -313,7 +548,19 @@ describe("deleteLog が 0 行削除を成功と偽らない", () => {
     setContext(client)
     const result = await deleteLog("missing-id")
     expect(result.error).toBeTruthy()
+    // 画面に残る幽霊行（他端末の削除は Realtime で届かぬ）を呼び出し側が外せる印
+    expect(result.alreadyDeleted).toBe(true)
     expect(mockedLog).not.toHaveBeenCalled()
+  })
+
+  it("DB エラーは alreadyDeleted を付けない（行を画面から外させない）", async () => {
+    const { client } = makeDeleteSupabase({
+      data: null,
+      error: { code: "XX000", message: "boom" },
+    })
+    setContext(client)
+    const result = await deleteLog("log-1")
+    expect(result.alreadyDeleted).toBeUndefined()
   })
 
   it("DB エラーは logSupabaseError で構造化ログに残す", async () => {
@@ -335,31 +582,16 @@ describe("deleteLog が 0 行削除を成功と偽らない", () => {
 
 describe("updateLog の授乳時間（durationSec）更新", () => {
   function makeCapturedUpdate() {
-    const single = vi
-      .fn()
-      .mockResolvedValue({ data: { id: "log-1" }, error: null })
-    const select = vi.fn(() => ({ single }))
-    const eq2 = vi.fn(() => ({ select }))
-    const eq1 = vi.fn(() => ({ eq: eq2 }))
-    const update = vi.fn((_payload: Record<string, unknown>) => ({ eq: eq1 }))
     // durationSec 単独編集は既存行を pre-fetch する（sides を持つ行の合計だけ編集を
-    // fail-loud で拒むため）。ここでは sides 無しの行を返す = 従来経路が通る前提。
-    const maybeSingle = vi.fn().mockResolvedValue({
-      data: { breast_left_sec: null },
-      error: null,
-    })
-    const fetchEq2 = vi.fn(() => ({ maybeSingle }))
-    const fetchEq1 = vi.fn(() => ({ eq: fetchEq2 }))
-    const fetchSelect = vi.fn(() => ({ eq: fetchEq1 }))
-    const from = vi.fn(() => ({ update, select: fetchSelect }))
-    return { client: { from }, update }
+    // fail-loud で拒むため）。既定は sides 無しの行 = 従来経路が通る前提。
+    return makeLogUpdateSupabase()
   }
 
   it("durationSec 指定で duration_sec と導出 duration_min の両列を1経路で書く", async () => {
     const { client, update } = makeCapturedUpdate()
     setContext(client)
 
-    const result = await updateLog("log-1", { durationSec: 330 })
+    const result = await updateLogV0("log-1", { durationSec: 330 })
     expect(result.error).toBeNull()
     // 330 秒 → duration_min = round(330/60) = 6（recordFeeding の導出と同一規約）
     expect(update).toHaveBeenCalledWith(
@@ -371,7 +603,7 @@ describe("updateLog の授乳時間（durationSec）更新", () => {
     const { client, update } = makeCapturedUpdate()
     setContext(client)
 
-    const result = await updateLog("log-1", { durationSec: null })
+    const result = await updateLogV0("log-1", { durationSec: null })
     expect(result.error).toBeNull()
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ duration_sec: null, duration_min: null }),
@@ -382,7 +614,7 @@ describe("updateLog の授乳時間（durationSec）更新", () => {
     const { client, update } = makeCapturedUpdate()
     setContext(client)
 
-    const result = await updateLog("log-1", { memo: "hi" })
+    const result = await updateLogV0("log-1", { memo: "hi" })
     expect(result.error).toBeNull()
     const payload = update.mock.calls[0][0] as Record<string, unknown>
     expect(payload).not.toHaveProperty("duration_sec")
@@ -394,7 +626,7 @@ describe("updateLog の授乳時間（durationSec）更新", () => {
     async (bad) => {
       const { client } = makeCapturedUpdate()
       setContext(client)
-      const result = await updateLog("log-1", { durationSec: bad as number })
+      const result = await updateLogV0("log-1", { durationSec: bad as number })
       expect(result.error).toBe("授乳時間は1秒〜180分の範囲で指定してください")
       expect(client.from).not.toHaveBeenCalled()
     },
@@ -515,23 +747,15 @@ describe("recordFeeding の breast_left_count / breast_right_count（母乳サ�
 })
 
 describe("updateLog の breast_left_count / breast_right_count（母乳サイクル）", () => {
-  /** update().eq().eq().select("id").single() を模した fake client（payload 検査用）。 */
+  /** 更新の payload を検査する fake client（1 行の更新が通る形）。 */
   function makeCapturedUpdate() {
-    const single = vi
-      .fn()
-      .mockResolvedValue({ data: { id: "log-1" }, error: null })
-    const select = vi.fn(() => ({ single }))
-    const eq2 = vi.fn(() => ({ select }))
-    const eq1 = vi.fn(() => ({ eq: eq2 }))
-    const update = vi.fn((_payload: Record<string, unknown>) => ({ eq: eq1 }))
-    const from = vi.fn(() => ({ update }))
-    return { client: { from }, update }
+    return makeLogUpdateSupabase()
   }
 
   it("feedingType='breast' + 妥当な counts は payload に書く", async () => {
     const { client, update } = makeCapturedUpdate()
     setContext(client)
-    const result = await updateLog("log-1", {
+    const result = await updateLogV0("log-1", {
       feedingType: "breast",
       breastLeftCount: 4,
       breastRightCount: 5,
@@ -549,7 +773,7 @@ describe("updateLog の breast_left_count / breast_right_count（母乳サイク
   it("feedingType='breast' + 片側 0 の妥当な counts は 0 のまま payload に書く（falsy 判定で null 化しない）", async () => {
     const { client, update } = makeCapturedUpdate()
     setContext(client)
-    const result = await updateLog("log-1", {
+    const result = await updateLogV0("log-1", {
       feedingType: "breast",
       breastLeftCount: 0,
       breastRightCount: 1,
@@ -567,7 +791,7 @@ describe("updateLog の breast_left_count / breast_right_count（母乳サイク
   it("feedingType を bottle へ変更すると breast_left_count/right_count を null 化する（送り忘れ/消し忘れ防御）", async () => {
     const { client, update } = makeCapturedUpdate()
     setContext(client)
-    const result = await updateLog("log-1", { feedingType: "bottle" })
+    const result = await updateLogV0("log-1", { feedingType: "bottle" })
     expect(result.error).toBeNull()
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -581,7 +805,7 @@ describe("updateLog の breast_left_count / breast_right_count（母乳サイク
   it("feedingType='breast' + counts 未指定はエラーで update しない", async () => {
     const { client, update } = makeCapturedUpdate()
     setContext(client)
-    const result = await updateLog("log-1", { feedingType: "breast" })
+    const result = await updateLogV0("log-1", { feedingType: "breast" })
     expect(result.error).toBe(
       "左右の回数は0〜20回・合計1回以上で指定してください",
     )
@@ -591,7 +815,7 @@ describe("updateLog の breast_left_count / breast_right_count（母乳サイク
   it("feedingType='breast' + 範囲外の counts はエラーで update しない", async () => {
     const { client, update } = makeCapturedUpdate()
     setContext(client)
-    const result = await updateLog("log-1", {
+    const result = await updateLogV0("log-1", {
       feedingType: "breast",
       breastLeftCount: 21,
       breastRightCount: 0,
@@ -605,7 +829,7 @@ describe("updateLog の breast_left_count / breast_right_count（母乳サイク
   it("feedingType 未指定なら breast_left_count/right_count 列に触れない", async () => {
     const { client, update } = makeCapturedUpdate()
     setContext(client)
-    const result = await updateLog("log-1", { memo: "hi" })
+    const result = await updateLogV0("log-1", { memo: "hi" })
     expect(result.error).toBeNull()
     const payload = update.mock.calls[0][0] as Record<string, unknown>
     expect(payload).not.toHaveProperty("breast_left_count")
@@ -675,7 +899,7 @@ describe("updateLog のうんちの量（poop_amount）", () => {
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    const result = await updateLog("log-1", { diaperType: "poop", poopAmount: "large" })
+    const result = await updateLogV0("log-1", { diaperType: "poop", poopAmount: "large" })
     expect(result.error).toBeNull()
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ diaper_type: "poop", poop_amount: "large" }),
@@ -688,7 +912,7 @@ describe("updateLog のうんちの量（poop_amount）", () => {
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    const result = await updateLog("log-1", { diaperType: "poop", poopAmount: null })
+    const result = await updateLogV0("log-1", { diaperType: "poop", poopAmount: null })
     expect(result.error).toBeNull()
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ diaper_type: "poop", poop_amount: null }),
@@ -701,7 +925,7 @@ describe("updateLog のうんちの量（poop_amount）", () => {
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    const result = await updateLog("log-1", { diaperType: "pee" })
+    const result = await updateLogV0("log-1", { diaperType: "pee" })
     expect(result.error).toBeNull()
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ diaper_type: "pee", poop_amount: null }),
@@ -714,7 +938,7 @@ describe("updateLog のうんちの量（poop_amount）", () => {
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    const result = await updateLog("log-1", { diaperType: "both" })
+    const result = await updateLogV0("log-1", { diaperType: "both" })
     expect(result.error).toBeNull()
     const payload = (
       update.mock.calls[0] as unknown as [Record<string, unknown>]
@@ -729,7 +953,7 @@ describe("updateLog のうんちの量（poop_amount）", () => {
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    const result = await updateLog("log-1", { poopAmount: "small" })
+    const result = await updateLogV0("log-1", { poopAmount: "small" })
     expect(result.error).toBe("うんちの量はおむつの種類と同時に指定してください")
     expect(update).not.toHaveBeenCalled()
   })
@@ -740,7 +964,7 @@ describe("updateLog のうんちの量（poop_amount）", () => {
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    const result = await updateLog("log-1", { diaperType: "pee", poopAmount: "small" })
+    const result = await updateLogV0("log-1", { diaperType: "pee", poopAmount: "small" })
     expect(result.error).toBe("うんちの量はうんちを含む記録にのみ指定できます")
     expect(update).not.toHaveBeenCalled()
   })
@@ -811,7 +1035,7 @@ describe("recordFeeding / updateLog の開始側（breast_start_side）", () => 
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    await updateLog("log-1", {
+    await updateLogV0("log-1", {
       feedingType: "breast",
       breastLeftCount: 1,
       breastRightCount: 1,
@@ -820,7 +1044,7 @@ describe("recordFeeding / updateLog の開始側（breast_start_side）", () => 
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ breast_start_side: "right" }),
     )
-    await updateLog("log-1", {
+    await updateLogV0("log-1", {
       feedingType: "breast",
       breastLeftCount: 1,
       breastRightCount: 1,
@@ -837,7 +1061,7 @@ describe("recordFeeding / updateLog の開始側（breast_start_side）", () => 
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    await updateLog("log-1", {
+    await updateLogV0("log-1", {
       feedingType: "breast",
       breastLeftCount: 1,
       breastRightCount: 1,
@@ -854,7 +1078,7 @@ describe("recordFeeding / updateLog の開始側（breast_start_side）", () => 
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    await updateLog("log-1", { feedingType: "bottle" })
+    await updateLogV0("log-1", { feedingType: "bottle" })
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ breast_start_side: null }),
     )
@@ -866,99 +1090,396 @@ describe("recordFeeding / updateLog の開始側（breast_start_side）", () => 
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    expect((await updateLog("log-1", { breastStartSide: "left" })).error).toBe(
+    expect((await updateLogV0("log-1", { breastStartSide: "left" })).error).toBe(
       "開始側は授乳の種類と同時に指定してください",
     )
     expect(
-      (await updateLog("log-1", { feedingType: "bottle", breastStartSide: "left" })).error,
+      (await updateLogV0("log-1", { feedingType: "bottle", breastStartSide: "left" })).error,
     ).toBe("この授乳タイプには開始側を指定できません")
     expect(update).not.toHaveBeenCalled()
   })
 })
 
-describe("upsertBabyDiary（育児日記・1日1本）", () => {
-  function makeUpsertSupabase(upsertResult: { data: unknown; error: unknown }) {
-    const single = vi.fn().mockResolvedValue(upsertResult)
-    const select = vi.fn(() => ({ single }))
-    const upsert = vi.fn<
-      (
-        row: Record<string, unknown>,
-        opts: Record<string, unknown>,
-      ) => { select: typeof select }
-    >(() => ({ select }))
-    const from = vi.fn(() => ({ upsert }))
-    return { client: { from }, upsert }
+describe("upsertBabyDiary（育児日記・1日1本・updated_at を版とする楽観的排他）", () => {
+  /** baby_diaries の 1 行（fake の内部表現）。 */
+  interface DiaryRow {
+    id: string
+    household_id: string
+    diary_date: string
+    content: string
+    updated_by: string | null
+    updated_at: string
   }
+  type Op = "select" | "upsert" | "update" | "delete"
+  type FakeError = { message: string; code: string }
 
-  function makeDiaryDeleteSupabase(deleteResult: { error: unknown }) {
-    const eqDate = vi.fn().mockResolvedValue(deleteResult)
-    const eqHousehold = vi.fn(() => ({ eq: eqDate }))
-    const del = vi.fn(() => ({ eq: eqHousehold }))
-    const from = vi.fn(() => ({ delete: del }))
-    return { client: { from }, del }
-  }
-
-  it("本文ありは onConflict(household_id,diary_date) の upsert 1経路で保存し、trim 済み本文を書く", async () => {
-    const { client, upsert } = makeUpsertSupabase({
-      data: {
-        id: "d1",
-        diary_date: "2026-07-20",
-        content: "今日は散歩",
-        updated_at: "2026-07-22T12:00:00Z",
-      },
-      error: null,
+  /**
+   * baby_diaries を模した in-memory の fake client（P1-06）。
+   *
+   * 本物の PostgREST / Postgres の意味論のうち、排他の正しさに効く 3 点を写す:
+   * - UNIQUE (household_id, diary_date) への upsert は既定で DO UPDATE（＝上書き）、
+   *   `ignoreDuplicates: true` なら ON CONFLICT DO NOTHING（返却 0 行）
+   * - update / delete は `.eq()` の全条件（`updated_at` を含む）に一致する行だけに効き、
+   *   0 行でも error は null（`.select()` の返却配列でしか検知できない）
+   * - BEFORE UPDATE トリガ trg_baby_diaries_updated_at を模し、UPDATE のたびに
+   *   updated_at を新しい値へ進める
+   * 旧実装の `upsert(...).select().single()` も実行できるようにしてある（赤が
+   * TypeError ではなく「上書きされた」というアサーション失敗で出るように）。
+   */
+  function makeDiaryFake(
+    initial: DiaryRow[] = [],
+    failOps: Partial<Record<Op, FakeError>> = {},
+  ) {
+    const rows: DiaryRow[] = initial.map((r) => ({ ...r }))
+    const ops: Op[] = []
+    let tick = 0
+    const nextUpdatedAt = () =>
+      `2026-07-22T12:00:00.${String(++tick).padStart(6, "0")}+00:00`
+    const project = (r: DiaryRow) => ({
+      id: r.id,
+      diary_date: r.diary_date,
+      content: r.content,
+      updated_at: r.updated_at,
     })
-    setContext(client)
 
-    const result = await upsertBabyDiary("2026-07-20", "  今日は散歩  ")
+    function builder(op: Op, payload?: Record<string, unknown>, opts?: Record<string, unknown>) {
+      const filters: Array<[string, unknown]> = []
+      let selected = false
+      const matches = (r: DiaryRow) =>
+        filters.every(
+          ([col, val]) => String(r[col as keyof DiaryRow]) === String(val),
+        )
+
+      const exec = (): { data: unknown; error: unknown } => {
+        ops.push(op)
+        const failure = failOps[op]
+        if (failure) return { data: null, error: failure }
+        let affected: DiaryRow[] = []
+        if (op === "select") {
+          affected = rows.filter(matches)
+        } else if (op === "upsert") {
+          const row = payload as Pick<
+            DiaryRow,
+            "household_id" | "diary_date" | "content" | "updated_by"
+          >
+          const existing = rows.find(
+            (r) =>
+              r.household_id === row.household_id &&
+              r.diary_date === row.diary_date,
+          )
+          if (existing && opts?.ignoreDuplicates === true) {
+            affected = [] // ON CONFLICT DO NOTHING
+          } else if (existing) {
+            // ON CONFLICT DO UPDATE（＝無条件の上書き）+ トリガで版が進む
+            existing.content = row.content
+            existing.updated_by = row.updated_by
+            existing.updated_at = nextUpdatedAt()
+            affected = [existing]
+          } else {
+            const inserted: DiaryRow = {
+              id: `d-new-${rows.length + 1}`,
+              ...row,
+              updated_at: nextUpdatedAt(),
+            }
+            rows.push(inserted)
+            affected = [inserted]
+          }
+        } else if (op === "update") {
+          affected = rows.filter(matches)
+          for (const r of affected) {
+            Object.assign(r, payload)
+            r.updated_at = nextUpdatedAt()
+          }
+        } else {
+          affected = rows.filter(matches)
+          for (const r of affected) rows.splice(rows.indexOf(r), 1)
+        }
+        return { data: selected || op === "select" ? affected.map(project) : null, error: null }
+      }
+
+      const q = {
+        select: () => {
+          selected = true
+          return q
+        },
+        eq: (col: string, val: unknown) => {
+          filters.push([col, val])
+          return q
+        },
+        single: () => {
+          const res = exec()
+          if (res.error) return Promise.resolve(res)
+          const list = res.data as unknown[]
+          return Promise.resolve(
+            list.length === 1
+              ? { data: list[0], error: null }
+              : { data: null, error: { message: "not single", code: "PGRST116" } },
+          )
+        },
+        maybeSingle: () => {
+          const res = exec()
+          if (res.error) return Promise.resolve(res)
+          const list = res.data as unknown[]
+          return Promise.resolve({ data: list[0] ?? null, error: null })
+        },
+        then: (
+          onF: (v: { data: unknown; error: unknown }) => unknown,
+          onR?: (e: unknown) => unknown,
+        ) => Promise.resolve().then(exec).then(onF, onR),
+      }
+      return q
+    }
+
+    const from = vi.fn(() => ({
+      select: () => builder("select").select(),
+      upsert: (row: Record<string, unknown>, opts?: Record<string, unknown>) =>
+        builder("upsert", row, opts),
+      update: (patch: Record<string, unknown>) => builder("update", patch),
+      delete: () => builder("delete"),
+    }))
+    return { client: { from }, rows, ops, from }
+  }
+
+  const SPOUSE_VERSION = "2026-07-22T03:00:00.123456+00:00"
+  const STALE_VERSION = "2026-07-21T22:00:00.654321+00:00"
+
+  function spouseRow(overrides: Partial<DiaryRow> = {}): DiaryRow {
+    return {
+      id: "d1",
+      household_id: HOUSEHOLD,
+      diary_date: "2026-07-20",
+      content: "配偶者が先に書いた長文",
+      updated_by: "user-2",
+      updated_at: SPOUSE_VERSION,
+      ...overrides,
+    }
+  }
+
+  it("新規（期待版 null・行なし）は INSERT し、trim 済み本文の行を返す", async () => {
+    const fake = makeDiaryFake()
+    setContext(fake.client)
+
+    const result = await upsertBabyDiary("2026-07-20", "  今日は散歩  ", null)
     expect(result.error).toBeNull()
     expect(result.diary?.content).toBe("今日は散歩")
-    expect(upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        household_id: HOUSEHOLD,
-        diary_date: "2026-07-20",
-        content: "今日は散歩",
-      }),
-      { onConflict: "household_id,diary_date" },
-    )
+    expect(fake.rows).toHaveLength(1)
+    expect(fake.rows[0]).toMatchObject({
+      household_id: HOUSEHOLD,
+      diary_date: "2026-07-20",
+      content: "今日は散歩",
+      updated_by: "user-1",
+    })
+    expect(revalidatePath).toHaveBeenCalledWith("/baby")
   })
 
-  it("空保存はその日の行を DELETE し diary: null を返す（冪等）", async () => {
-    const { client, del } = makeDiaryDeleteSupabase({ error: null })
-    setContext(client)
+  it("版が一致すれば UPDATE で保存し、トリガで進んだ新しい版を返す", async () => {
+    const fake = makeDiaryFake([spouseRow()])
+    setContext(fake.client)
 
-    const result = await upsertBabyDiary("2026-07-20", "   \n  ")
+    const result = await upsertBabyDiary("2026-07-20", "追記した本文", SPOUSE_VERSION)
+    expect(result.error).toBeNull()
+    expect(result.conflict).toBeUndefined()
+    expect(fake.rows[0].content).toBe("追記した本文")
+    expect(result.diary?.content).toBe("追記した本文")
+    expect(result.diary?.updated_at).not.toBe(SPOUSE_VERSION)
+    expect(result.diary?.updated_at).toBe(fake.rows[0].updated_at)
+  })
+
+  it("版の不一致（配偶者が先に保存）は上書きせず、最新の行を conflict で返す", async () => {
+    const fake = makeDiaryFake([spouseRow()])
+    setContext(fake.client)
+
+    const result = await upsertBabyDiary("2026-07-20", "古い版から書いた本文", STALE_VERSION)
+    // 配偶者の本文は無傷（無条件 upsert だとここが「古い版から書いた本文」になる）
+    expect(fake.rows[0].content).toBe("配偶者が先に書いた長文")
+    expect(fake.rows[0].updated_at).toBe(SPOUSE_VERSION)
+    // 書いた人は判別できない（応答が失われた自分の保存・同じ利用者の別端末も同じ形で
+    // 衝突する）ため、「家族が」と断定しない
+    expect(result.error).toBe(
+      "この日の日記は別の端末で先に保存されていました（家族またはご自身）。",
+    )
+    expect(result.diary).toBeNull()
+    expect(result.conflict).toEqual({
+      current: {
+        id: "d1",
+        diary_date: "2026-07-20",
+        content: "配偶者が先に書いた長文",
+        updated_at: SPOUSE_VERSION,
+      },
+    })
+    expect(revalidatePath).not.toHaveBeenCalled()
+  })
+
+  it("取得失敗の空シード（期待版 null）から保存しても、既存行があれば上書きせず conflict", async () => {
+    const fake = makeDiaryFake([spouseRow()])
+    setContext(fake.client)
+
+    const result = await upsertBabyDiary("2026-07-20", "空欄から書いた一言", null)
+    expect(fake.rows).toHaveLength(1)
+    expect(fake.rows[0].content).toBe("配偶者が先に書いた長文")
+    expect(result.error).toBeTruthy()
+    expect(result.conflict?.current?.content).toBe("配偶者が先に書いた長文")
+  })
+
+  it("応答が失われた保存の再試行（読み直した本文が今送った本文と同じ）は衝突にせず成功で返す", async () => {
+    // 1 回目の保存は DB で成立し版が進んだが、応答だけが届かなかった。同じ端末から
+    // 同じ本文で押し直すと、古い版の UPDATE は 0 行になる — それを「別の端末で先に
+    // 保存されていました」と出せば、端末を 1 台しか使わぬ利用者を誤らせる（DC-01）。
+    const fake = makeDiaryFake([spouseRow({ content: "送り直した本文" })])
+    setContext(fake.client)
+
+    const result = await upsertBabyDiary("2026-07-20", "  送り直した本文  ", STALE_VERSION)
+    expect(result.error).toBeNull()
+    expect(result.conflict).toBeUndefined()
+    expect(result.diary).toEqual({
+      id: "d1",
+      diary_date: "2026-07-20",
+      content: "送り直した本文",
+      updated_at: SPOUSE_VERSION,
+    })
+    expect(fake.rows[0].updated_at).toBe(SPOUSE_VERSION)
+  })
+
+  it("更新しようとした行が他端末で削除済みなら conflict（current: null）で返し、勝手に作り直さない", async () => {
+    const fake = makeDiaryFake([])
+    setContext(fake.client)
+
+    const result = await upsertBabyDiary("2026-07-20", "編集中の本文", SPOUSE_VERSION)
+    expect(fake.rows).toHaveLength(0)
+    expect(result.error).toBeTruthy()
+    expect(result.conflict).toEqual({ current: null })
+  })
+
+  it("空保存は版が一致すれば DELETE し diary: null を返す", async () => {
+    const fake = makeDiaryFake([spouseRow()])
+    setContext(fake.client)
+
+    const result = await upsertBabyDiary("2026-07-20", "   \n  ", SPOUSE_VERSION)
     expect(result.error).toBeNull()
     expect(result.diary).toBeNull()
-    expect(del).toHaveBeenCalled()
+    expect(fake.rows).toHaveLength(0)
+    expect(revalidatePath).toHaveBeenCalledWith("/baby")
+  })
+
+  it("空保存でも版が古ければ消さず conflict（配偶者の新しい本文を守る）", async () => {
+    const fake = makeDiaryFake([spouseRow()])
+    setContext(fake.client)
+
+    const result = await upsertBabyDiary("2026-07-20", "", STALE_VERSION)
+    expect(fake.rows).toHaveLength(1)
+    expect(fake.rows[0].content).toBe("配偶者が先に書いた長文")
+    expect(result.error).toBeTruthy()
+    expect(result.conflict?.current?.updated_at).toBe(SPOUSE_VERSION)
+  })
+
+  it("空保存・期待版 null で行が在れば消さず conflict（DELETE を発行しない）", async () => {
+    const fake = makeDiaryFake([spouseRow()])
+    setContext(fake.client)
+
+    const result = await upsertBabyDiary("2026-07-20", " ", null)
+    expect(fake.rows).toHaveLength(1)
+    expect(fake.ops).not.toContain("delete")
+    expect(result.conflict?.current?.content).toBe("配偶者が先に書いた長文")
+  })
+
+  it("空保存で行が既に無いなら冪等に成功する（期待版 null / 期待版あり の両方）", async () => {
+    const fakeA = makeDiaryFake([])
+    setContext(fakeA.client)
+    const a = await upsertBabyDiary("2026-07-20", "", null)
+    expect(a).toEqual({ error: null, diary: null })
+
+    const fakeB = makeDiaryFake([])
+    setContext(fakeB.client)
+    const b = await upsertBabyDiary("2026-07-20", "", SPOUSE_VERSION)
+    expect(b).toEqual({ error: null, diary: null })
+  })
+
+  it.each([
+    ["undefined（版を送らぬ旧バンドル）", undefined],
+    ["空文字", ""],
+    ["日時でない文字列", "not-a-timestamp"],
+    ["数値", 12345],
+  ])("期待版が不正（%s）なら DB に触れず拒否する（無条件 upsert に倒さない）", async (_label, bad) => {
+    const fake = makeDiaryFake([spouseRow()])
+    setContext(fake.client)
+
+    const result = await upsertBabyDiary(
+      "2026-07-20",
+      "本文",
+      bad as unknown as string | null,
+    )
+    expect(result.error).toBeTruthy()
+    expect(result.diary).toBeNull()
+    expect(fake.from).not.toHaveBeenCalled()
+    expect(fake.rows[0].content).toBe("配偶者が先に書いた長文")
+  })
+
+  it("Realtime 風の空白区切り・時差短縮の版表記も受理する", async () => {
+    const fake = makeDiaryFake([spouseRow({ updated_at: "2026-07-22 03:00:00.123456+00" })])
+    setContext(fake.client)
+
+    const result = await upsertBabyDiary(
+      "2026-07-20",
+      "本文",
+      "2026-07-22 03:00:00.123456+00",
+    )
+    expect(result.error).toBeNull()
+    expect(fake.rows[0].content).toBe("本文")
   })
 
   it("不正な日付形式・未来日・上限超過は auth 前に拒否する", async () => {
     const from = vi.fn()
     setContext({ from })
 
-    expect((await upsertBabyDiary("2026/07/20", "x")).error).toBe(
+    expect((await upsertBabyDiary("2026/07/20", "x", null)).error).toBe(
       "日付の形式が不正です",
     )
-    expect((await upsertBabyDiary("2999-01-01", "x")).error).toBe(
+    expect((await upsertBabyDiary("2999-01-01", "x", null)).error).toBe(
       "未来の日記は書けません",
     )
-    expect((await upsertBabyDiary("2026-07-20", "あ".repeat(5001))).error).toContain(
-      "5000文字以内",
-    )
+    expect(
+      (await upsertBabyDiary("2026-07-20", "あ".repeat(5001), null)).error,
+    ).toContain("5000文字以内")
     expect(from).not.toHaveBeenCalled()
   })
 
-  it("upsert の DB error は握り潰さず日本語エラーを返す", async () => {
-    const { client } = makeUpsertSupabase({
-      data: null,
-      error: { message: "boom", code: "23514" },
-    })
-    setContext(client)
+  it.each([
+    ["新規 INSERT", [] as DiaryRow[], "本文", null, "upsert" as Op, "日記の保存に失敗しました。もう一度お試しください。"],
+    ["UPDATE", [spouseRow()], "本文", SPOUSE_VERSION, "update" as Op, "日記の保存に失敗しました。もう一度お試しください。"],
+    ["DELETE", [spouseRow()], "", SPOUSE_VERSION, "delete" as Op, "日記の削除に失敗しました。もう一度お試しください。"],
+  ])("%s の DB error は握り潰さず日本語エラーを返して記録する", async (_label, initial, content, version, op, message) => {
+    const fake = makeDiaryFake(initial, { [op]: { message: "boom", code: "23514" } })
+    setContext(fake.client)
 
-    const result = await upsertBabyDiary("2026-07-20", "本文")
-    expect(result.error).toBe("日記の保存に失敗しました。もう一度お試しください。")
+    const result = await upsertBabyDiary("2026-07-20", content, version)
+    expect(result.error).toBe(message)
     expect(result.diary).toBeNull()
+    expect(result.conflict).toBeUndefined()
+    expect(mockedLog).toHaveBeenCalledWith(
+      "baby",
+      expect.any(String),
+      expect.objectContaining({ message: "boom" }),
+      expect.objectContaining({ householdId: HOUSEHOLD, diaryDate: "2026-07-20" }),
+    )
+  })
+
+  it("衝突後の最新行の読み直しが失敗したら conflict を偽らず（current: null と誤認させず）エラーだけ返す", async () => {
+    const fake = makeDiaryFake([spouseRow()], {
+      select: { message: "read boom", code: "XX000" },
+    })
+    setContext(fake.client)
+
+    const result = await upsertBabyDiary("2026-07-20", "本文", STALE_VERSION)
+    expect(fake.rows[0].content).toBe("配偶者が先に書いた長文")
+    expect(result.error).toBeTruthy()
+    expect(result.diary).toBeNull()
+    expect(result.conflict).toBeUndefined()
+    expect(mockedLog).toHaveBeenCalledWith(
+      "baby",
+      expect.any(String),
+      expect.objectContaining({ message: "read boom" }),
+      expect.objectContaining({ householdId: HOUSEHOLD }),
+    )
   })
 })
 
@@ -1067,7 +1588,7 @@ describe("updateLog: 左右別の授乳時間", () => {
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    const result = await updateLog("log-1", {
+    const result = await updateLogV0("log-1", {
       feedingType: "breast",
       breastLeftCount: 2,
       breastRightCount: 1,
@@ -1091,7 +1612,7 @@ describe("updateLog: 左右別の授乳時間", () => {
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    const result = await updateLog("log-1", {
+    const result = await updateLogV0("log-1", {
       feedingType: "breast",
       breastLeftCount: 1,
       breastRightCount: 0,
@@ -1110,7 +1631,7 @@ describe("updateLog: 左右別の授乳時間", () => {
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    const result = await updateLog("log-1", {
+    const result = await updateLogV0("log-1", {
       feedingType: "bottle",
       breastLeftSec: 300,
       breastRightSec: 0,
@@ -1127,7 +1648,7 @@ describe("updateLog: 左右別の授乳時間", () => {
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    const result = await updateLog("log-1", {
+    const result = await updateLogV0("log-1", {
       feedingType: "breast",
       breastLeftCount: 1,
       breastRightCount: 1,
@@ -1148,7 +1669,7 @@ describe("updateLog: 左右別の授乳時間", () => {
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    const result = await updateLog("log-1", {
+    const result = await updateLogV0("log-1", {
       feedingType: "breast",
       breastLeftCount: 1,
       breastRightCount: 1,
@@ -1166,7 +1687,7 @@ describe("updateLog: 左右別の授乳時間", () => {
       { data: { id: "log-1" }, error: null },
     )
     setContext(client)
-    const result = await updateLog("log-1", { feedingType: "bottle" })
+    const result = await updateLogV0("log-1", { feedingType: "bottle" })
     expect(result.error).toBeNull()
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({

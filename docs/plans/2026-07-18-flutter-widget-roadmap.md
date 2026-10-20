@@ -1,5 +1,7 @@
 # irori Flutter ネイティブ「カレンダーホーム画面ウィジェット」ロードマップ
 
+> **状態（2026-10-19 時点）: 廃止。** Flutter 版は 2026-07-31 に廃止（README 参照）。本書は歴史記録としてのみ残す。
+
 - 作成: 2026-07-18 / 対象 HEAD: main `e77a376`
 - 改訂: 2026-07-18 敵対的レビュー（F4）の blocking 6 件を全て解消、suggestions 反映（レビュー原本: scratchpad/F4-review.md）
 - 入力: `F1-flutter-state.md`（flutter/ 実査）/ `F2-widget-tech.md`（一次情報調査）/ 前回計画 `prior-audit/implementation-plan.md` §0（web↔Flutter 戦略設問）/ `docs/plans/2026-07-18-calendar-requests.md`（CAL 計画・§5 でユーザーが「Flutter 本格検討」を選択済み）

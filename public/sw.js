@@ -469,18 +469,27 @@ self.addEventListener("fetch", (event) => {
 
 // 別ユーザーのログイン・ログアウト時に世帯データ入りキャッシュ (documents / rsc) を
 // 破棄する。static / images / precache は個人データを含まないため残す。
+//
+// ⚠️ **失敗も ack で返すこと。** ページ側 (src/lib/pwa/sw-messages.ts) は `ok` を読み、
+// true の時だけ LAST_USER_ID を消す。黙って ack を出さねば、ページはタイムアウトまで
+// 待たされた末に「確かめられぬ」へ倒れるしかない (P2-24)。
 self.addEventListener("message", (event) => {
   const data = event.data
   if (!data || data.type !== "PURGE_HOUSEHOLD_CACHES") return
+  const port = event.ports && event.ports[0]
   event.waitUntil(
     (async () => {
-      await Promise.all([
-        caches.delete(CACHE_NAMES.documents),
-        caches.delete(CACHE_NAMES.rsc),
-      ])
-      if (event.ports && event.ports[0]) {
-        event.ports[0].postMessage({ ok: true })
+      let ok = false
+      try {
+        await Promise.all([
+          caches.delete(CACHE_NAMES.documents),
+          caches.delete(CACHE_NAMES.rsc),
+        ])
+        ok = true
+      } catch (err) {
+        console.warn("[sw] 世帯キャッシュの破棄に失敗:", err)
       }
+      if (port) port.postMessage({ ok })
     })()
   )
 })

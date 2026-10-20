@@ -30,6 +30,11 @@ export interface CalendarEventRecord extends CalendarEventLite {
   source: CalendarEventSource
   /** 繰り返しシリーズ識別子(単発は null)。シリーズ一括削除の可否判定に使う。 */
   series_id: string | null
+  /**
+   * 更新の版（PostgREST が返した表記のまま）。編集の保存で `expectedUpdatedAt` として
+   * 送り、別の端末が先に直した予定を巻き戻さぬ。作成応答の前の楽観行だけ null。
+   */
+  updated_at: string | null
 }
 
 // SELECT カラムは中立モジュール（@/lib/domain/calendar-event-columns）に置く。
@@ -151,12 +156,28 @@ export function useMonthEvents({
   const removeOptimistic = useCallback((id: string) => {
     setEvents((prev) => prev.filter((e) => e.id !== id))
   }, [])
-  const replaceOptimisticId = useCallback((tempId: string, realId: string) => {
-    setEvents((prev) =>
-      prev.map((e) => (e.id === tempId ? { ...e, id: realId } : e)),
-    )
-  }, [])
+  const replaceOptimisticId = useCallback(
+    (tempId: string, realId: string, updatedAt: string | null = null) => {
+      setEvents((prev) =>
+        prev.map((e) =>
+          e.id === tempId
+            ? { ...e, id: realId, updated_at: updatedAt ?? e.updated_at }
+            : e,
+        ),
+      )
+    },
+    [],
+  )
   const setAllEvents = useCallback((rows: CalendarEventRecord[]) => setEvents(rows), [])
+  /**
+   * いま表示中の月を取り直す。非同期の応答（保存の衝突・作成の完了・同期の完了）の後で
+   * 呼ぶ経路は、呼び出し時点の `monthFirst` を閉じ込めると、待つ間に月を送った利用者の
+   * 新しい月を旧月の範囲で上書きしてしまう。ゆえに ref の最新値を読む。
+   */
+  const refetchCurrent = useCallback(
+    () => refetch(monthFirstRef.current),
+    [refetch],
+  )
 
   // Realtime(best-effort。#92 未解決でも下の visibilitychange refetch で自己回復)
   useEffect(() => {
@@ -205,6 +226,7 @@ export function useMonthEvents({
     goNextMonth,
     goToday,
     refetch,
+    refetchCurrent,
     upsertOptimistic,
     removeOptimistic,
     replaceOptimisticId,

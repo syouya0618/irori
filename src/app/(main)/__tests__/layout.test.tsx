@@ -18,7 +18,7 @@
  *    `page.js`, and nested `layout.js` files in a React error boundary.
  *    It does **not** wrap the `layout.js` or `template.js` above it in the same segment."
  * 同一セグメントの error.tsx は自分の layout の throw を捕まえられぬため、
- * 一段上（app/error.tsx）が受ける。どちらも再試行 (`unstable_retry`) を持つ。
+ * 一段上（app/error.tsx）が受ける。どちらも再試行 (`retry`) を持つ。
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"

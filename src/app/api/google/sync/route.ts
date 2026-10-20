@@ -1,4 +1,6 @@
 import { getAuthContext } from "@/lib/supabase/auth-context"
+// 拒否理由 → HTTP status（UX-03）。401 はログインし直せば直る時だけ（PDF・JSON と同じ 1 表）
+import { AUTH_DENIAL_HTTP_STATUS } from "@/lib/auth/auth-denial-status"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { syncHousehold } from "@/lib/google/sync"
 
@@ -27,7 +29,10 @@ export const maxDuration = 60
 export async function POST() {
   const result = await getAuthContext()
   if (result.error !== null) {
-    return new Response("Unauthorized", { status: 401 })
+    // lookup-failed の真因は getAuthContext が構造化ログに残し済み。
+    return new Response(result.error, {
+      status: AUTH_DENIAL_HTTP_STATUS[result.reason],
+    })
   }
   const { householdId } = result.context
 

@@ -46,6 +46,8 @@ function makeSupabase(opts: {
   mutate?: { data: unknown; error: unknown }
   /** select 無しで await される終端（event_reminders の掃除 delete）の戻り。 */
   bare?: { data: unknown; error: unknown }
+  /** 版が合わなかった更新の読み直し（from().select().eq()….maybeSingle()）の戻り。 */
+  reread?: { data: unknown; error: unknown }
 }) {
   const single = vi.fn().mockResolvedValue(opts.single ?? { data: { id: "ev-1" }, error: null })
   const selectTerminal = {
@@ -75,15 +77,33 @@ function makeSupabase(opts: {
   }
 
   const insert = vi.fn((_payload: unknown) => ({ select: () => selectTerminal }))
+  const update = vi.fn((_payload: unknown) => null)
+  const rereadSelect = vi.fn((_columns: string) => null)
   const from = vi.fn((table: string) => ({
     insert,
-    update: () => chainFor(table),
+    update: (payload: unknown) => {
+      update(payload)
+      return chainFor(table)
+    },
     delete: () => chainFor(table),
+    select: (columns: string) => {
+      rereadSelect(columns)
+      const reread: Record<string, unknown> = {
+        eq: vi.fn((col: string, val: unknown) => {
+          eqCalls.push([table, col, val])
+          return reread
+        }),
+        maybeSingle: () => Promise.resolve(opts.reread ?? { data: null, error: null }),
+      }
+      return reread
+    },
   }))
   return {
     client: { from },
     from,
     insert,
+    update,
+    rereadSelect,
     eqCalls,
     inCalls,
     eqCallsFor: (table: string) =>
@@ -137,22 +157,140 @@ describe("createCalendarEvent", () => {
     expect(r.error).toMatch(/失敗/)
     expect(logSupabaseError).toHaveBeenCalled()
   })
+
+  it("作成した行の版（updated_at）も返す（作成直後の編集を古い画面として弾かぬため）", async () => {
+    const V = "2026-07-09T00:00:00.123456+00:00"
+    const sb = makeSupabase({ single: { data: { id: "ev-9", updated_at: V }, error: null } })
+    setContext(sb.client)
+    const r = await createCalendarEvent(baseInput)
+    expect(r.error).toBeNull()
+    expect((r as { updatedAt: string }).updatedAt).toBe(V)
+  })
 })
 
+/**
+ * 予定の更新は `updated_at` を版にした楽観的排他（育児日記 P1-06 と同じ契約）。
+ * 配偶者が先に直した予定を、古い画面からの保存で無言のまま巻き戻さぬことが要じゃ。
+ */
 describe("updateCalendarEvent", () => {
-  it("0 行(同期予定/権限なし)で「編集できません」を返す", async () => {
-    const sb = makeSupabase({ mutate: { data: [], error: null } })
+  const V1 = "2026-07-09T00:00:00.123456+00:00"
+  const V2 = "2026-07-09T00:05:00.654321+00:00"
+  const storedRow = {
+    id: "ev-1",
+    title: "検診",
+    memo: null,
+    is_all_day: true,
+    start_date: "2026-07-09",
+    end_date: "2026-07-09",
+    start_at: null,
+    end_at: null,
+    source: "native",
+    series_id: null,
+    updated_at: V2,
+  }
+
+  it("版を送らぬ呼び出し（デプロイを跨いだ古いバンドル）は上書きせず再読み込みを促す", async () => {
+    const sb = makeSupabase({})
     setContext(sb.client)
-    const r = await updateCalendarEvent({ ...baseInput, id: "ev-1" })
-    expect(r.error).toMatch(/編集できません/)
+    const r = await updateCalendarEvent({ ...baseInput, id: "ev-1" } as never)
+    expect(r.error).toMatch(/画面が古い/)
+    expect(sb.update).not.toHaveBeenCalled()
+    expect(revalidatePath).not.toHaveBeenCalled()
   })
 
-  it("1 行更新で成功", async () => {
-    const sb = makeSupabase({ mutate: { data: [{ id: "ev-1" }], error: null } })
+  it("版の表記でない値（Date で丸めた ms 表記を含まぬ偽値）も上書きへ倒さぬ", async () => {
+    const sb = makeSupabase({})
     setContext(sb.client)
-    const r = await updateCalendarEvent({ ...baseInput, id: "ev-1" })
+    const r = await updateCalendarEvent({ ...baseInput, id: "ev-1", expectedUpdatedAt: "2026-07-09" })
+    expect(r.error).toMatch(/画面が古い/)
+    expect(sb.update).not.toHaveBeenCalled()
+  })
+
+  it("版が一致すれば updated_at を条件に UPDATE し、新しい版を返す", async () => {
+    const sb = makeSupabase({
+      mutate: { data: [{ id: "ev-1", updated_at: V2 }], error: null },
+    })
+    setContext(sb.client)
+    const r = await updateCalendarEvent({ ...baseInput, id: "ev-1", expectedUpdatedAt: V1 })
     expect(r.error).toBeNull()
+    expect((r as { updatedAt: string }).updatedAt).toBe(V2)
+    // 版は表記のまま渡す（Date に通すとマイクロ秒が落ちて一致しなくなる）
+    expect(sb.eqCallsFor("calendar_events")).toEqual([
+      ["id", "ev-1"],
+      ["household_id", HOUSEHOLD],
+      ["source", "native"],
+      ["updated_at", V1],
+    ])
     expect(revalidatePath).toHaveBeenCalledWith("/calendar")
+  })
+
+  it("版が合わず中身も違えば上書きせず衝突を返す（配偶者の修正を巻き戻さぬ）", async () => {
+    const sb = makeSupabase({
+      mutate: { data: [], error: null },
+      reread: { data: { ...storedRow, title: "検診（家族が変更）" }, error: null },
+    })
+    setContext(sb.client)
+    const r = await updateCalendarEvent({ ...baseInput, id: "ev-1", expectedUpdatedAt: V1 })
+    expect(r.error).toMatch(/先に更新されていました/)
+    expect((r as { conflict?: boolean }).conflict).toBe(true)
+    // 読み直しも世帯で絞る。UPDATE と読み直しは同じ記録を共有するゆえ、順序つきの全列で
+    // 照合する（含むかだけを見ると、読み直しから世帯の条件を消しても UPDATE の分で緑になる）
+    expect(sb.eqCallsFor("calendar_events")).toEqual([
+      ["id", "ev-1"],
+      ["household_id", HOUSEHOLD],
+      ["source", "native"],
+      ["updated_at", V1],
+      // 読み直し
+      ["id", "ev-1"],
+      ["household_id", HOUSEHOLD],
+    ])
+    expect(revalidatePath).not.toHaveBeenCalled()
+  })
+
+  it("版が合わずとも中身が今回と同じなら成功（応答を失った自分の保存の再試行）", async () => {
+    const sb = makeSupabase({
+      mutate: { data: [], error: null },
+      reread: { data: storedRow, error: null },
+    })
+    setContext(sb.client)
+    const r = await updateCalendarEvent({ ...baseInput, id: "ev-1", expectedUpdatedAt: V1 })
+    expect(r.error).toBeNull()
+    expect((r as { updatedAt: string }).updatedAt).toBe(V2)
+    expect(revalidatePath).toHaveBeenCalledWith("/calendar")
+  })
+
+  it("読み直して行が無ければ（他端末で削除・権限なし）見つからぬと返す", async () => {
+    const sb = makeSupabase({
+      mutate: { data: [], error: null },
+      reread: { data: null, error: null },
+    })
+    setContext(sb.client)
+    const r = await updateCalendarEvent({ ...baseInput, id: "ev-1", expectedUpdatedAt: V1 })
+    expect(r.error).toMatch(/見つかりませんでした/)
+    expect((r as { conflict?: boolean }).conflict).toBe(true)
+  })
+
+  it("同期予定（source=google）は「編集できません」を返す", async () => {
+    const sb = makeSupabase({
+      mutate: { data: [], error: null },
+      reread: { data: { ...storedRow, source: "google" }, error: null },
+    })
+    setContext(sb.client)
+    const r = await updateCalendarEvent({ ...baseInput, id: "ev-1", expectedUpdatedAt: V1 })
+    expect(r.error).toMatch(/編集できません/)
+    expect((r as { conflict?: boolean }).conflict).toBeUndefined()
+  })
+
+  it("読み直しが失敗したら衝突とも成功とも断定せず、ログを残して失敗を返す", async () => {
+    const sb = makeSupabase({
+      mutate: { data: [], error: null },
+      reread: { data: null, error: { message: "boom", code: "500", details: "", hint: "" } },
+    })
+    setContext(sb.client)
+    const r = await updateCalendarEvent({ ...baseInput, id: "ev-1", expectedUpdatedAt: V1 })
+    expect(r.error).toMatch(/確かめられませんでした/)
+    expect((r as { conflict?: boolean }).conflict).toBeUndefined()
+    expect(logSupabaseError).toHaveBeenCalled()
   })
 })
 
@@ -422,7 +560,15 @@ describe("calendar_events を書く経路は読者ページを漏れなく無効
           repeatUntil: "2026-07-30",
         }),
     ],
-    ["updateCalendarEvent", () => updateCalendarEvent({ id: "ev-1", ...baseInput })],
+    [
+      "updateCalendarEvent",
+      () =>
+        updateCalendarEvent({
+          id: "ev-1",
+          ...baseInput,
+          expectedUpdatedAt: "2026-07-09T00:00:00.123456+00:00",
+        }),
+    ],
     ["deleteCalendarEvent", () => deleteCalendarEvent("ev-1")],
     ["deleteCalendarEventSeries", () => deleteCalendarEventSeries("series-1")],
   ]

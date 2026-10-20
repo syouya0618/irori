@@ -11,6 +11,7 @@
 
 import { describe, it, expect } from "vitest"
 import {
+  applyRepeatChange,
   applyStartDateShift,
   formValueToTimestamps,
   validateCalendarFormValue,
@@ -106,6 +107,42 @@ describe("applyStartDateShift - 開始日の変更に終了日が追従する", 
     expect(next.startDate).toBe("2026-07-20")
     expect(next.endDate).toBe("2026-07-17")
   })
+})
+
+describe("applyRepeatChange - 繰り返し種別の切替", () => {
+  it("未入力の終了日は開始日 + 3ヶ月で補う", () => {
+    const next = applyRepeatChange(form({ startDate: "2026-07-15" }), "weekly")
+    expect(next.repeat).toBe("weekly")
+    expect(next.repeatUntil).toBe("2026-10-15")
+  })
+
+  it("入力済みの終了日は尊重する", () => {
+    const next = applyRepeatChange(
+      form({ repeatUntil: "2026-08-01" }),
+      "daily",
+    )
+    expect(next.repeatUntil).toBe("2026-08-01")
+  })
+
+  it("「なし」へ戻しても終了日は補わぬ", () => {
+    expect(applyRepeatChange(form(), "none").repeatUntil).toBe("")
+  })
+
+  // 開始日をピッカーの「クリア」で空にしてから繰り返しを選ぶと、以前は
+  // addMonthsYmd("") → Date.UTC(NaN) → toISOString() の RangeError が setState の
+  // updater 内で投げられ、画面ごとエラー境界へ落ちて入力中の予定が消えた。
+  it.each(["", "2026-02-30", "garbage"])(
+    "開始日が %j（空・実在せぬ・不正）でも throw せず、終了日は空のまま",
+    (startDate) => {
+      expect(() =>
+        applyRepeatChange(form({ startDate }), "monthly"),
+      ).not.toThrow()
+      const next = applyRepeatChange(form({ startDate }), "monthly")
+      expect(next.repeat).toBe("monthly")
+      // 保存時の検証（同じ validateCalendarFormValue）が形式不正として弾く
+      expect(next.repeatUntil).toBe("")
+    },
+  )
 })
 
 describe("formValueToTimestamps", () => {

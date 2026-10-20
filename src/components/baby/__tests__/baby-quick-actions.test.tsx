@@ -218,6 +218,166 @@ describe("BabyQuickActions の楽観 append (B-03)", () => {
     lastSuccessOptions()?.action?.onClick()
     await waitFor(() => expect(onLogRemoved).toHaveBeenCalledWith("diaper-77"))
   })
+
+  it("取り消し対象が他端末で既に削除済み（alreadyDeleted）でも onLogRemoved で画面から外す", async () => {
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-88" })
+    mockedDeleteLog.mockResolvedValue({
+      error: "既に削除されています。",
+      alreadyDeleted: true,
+    })
+    const onLogRemoved = vi.fn<(id: string) => void>()
+    render(
+      <BabyQuickActions
+        userId="u1"
+        onCreateLog={() => {}}
+        onStartTimer={() => {}}
+        onCreateFeeding={() => {}}
+        onLogRemoved={onLogRemoved}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
+    await waitFor(() => expect(mockedToast.success).toHaveBeenCalled())
+    lastSuccessOptions()?.action?.onClick()
+    await waitFor(() => expect(onLogRemoved).toHaveBeenCalledWith("diaper-88"))
+    expect(mockedToast.error).toHaveBeenCalledWith("既に削除されています。")
+  })
+})
+
+describe("BabyQuickActions の冪等 id（P2-08: 通信断の再タップで二重記録を作らない）", () => {
+  function renderActions() {
+    render(
+      <BabyQuickActions
+        userId="u1"
+        onCreateLog={() => {}}
+        onStartTimer={() => {}}
+        onCreateFeeding={() => {}}
+      />,
+    )
+  }
+
+  function clientIdOf(call: unknown[] | undefined): string | undefined {
+    return (call?.[0] as { clientId?: string } | undefined)?.clientId
+  }
+
+  it("通信断で reject した直後の同じ操作は同じ id を送り、応答が届いた後は新しい id になる", async () => {
+    mockedRecordFeeding
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce({ error: null, id: "log-1" })
+      .mockResolvedValueOnce({ error: null, id: "log-2" })
+    renderActions()
+
+    fireEvent.click(screen.getByRole("button", { name: "ミルク" }))
+    await waitFor(() => expect(mockedToast.error).toHaveBeenCalledWith(OFFLINE_MESSAGE))
+    fireEvent.click(screen.getByRole("button", { name: "ミルク" }))
+    await waitFor(() => expect(mockedRecordFeeding).toHaveBeenCalledTimes(2))
+    const first = clientIdOf(mockedRecordFeeding.mock.calls[0])
+    const retry = clientIdOf(mockedRecordFeeding.mock.calls[1])
+    expect(first).toMatch(/^[0-9a-f-]{36}$/)
+    expect(retry).toBe(first)
+
+    // 成功の応答が届いた後の 3 回目は別の意図ゆえ新しい id
+    fireEvent.click(screen.getByRole("button", { name: "ミルク" }))
+    await waitFor(() => expect(mockedRecordFeeding).toHaveBeenCalledTimes(3))
+    expect(clientIdOf(mockedRecordFeeding.mock.calls[2])).not.toBe(first)
+  })
+
+  it("通信断の後でも別の操作（種別が違う）なら新しい id を使う", async () => {
+    mockedRecordFeeding
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce({ error: null, id: "log-3" })
+    renderActions()
+
+    fireEvent.click(screen.getByRole("button", { name: "ミルク" }))
+    await waitFor(() => expect(mockedToast.error).toHaveBeenCalledWith(OFFLINE_MESSAGE))
+    fireEvent.click(screen.getByRole("button", { name: "離乳食" }))
+    await waitFor(() => expect(mockedRecordFeeding).toHaveBeenCalledTimes(2))
+    expect(clientIdOf(mockedRecordFeeding.mock.calls[1])).not.toBe(
+      clientIdOf(mockedRecordFeeding.mock.calls[0]),
+    )
+  })
+
+  it("サーバが拒んだ（検証エラー）後の再タップは新しい id（意図が変わりうる）", async () => {
+    mockedRecordFeeding
+      .mockResolvedValueOnce({ error: "だめ", id: null })
+      .mockResolvedValueOnce({ error: null, id: "log-4" })
+    renderActions()
+
+    fireEvent.click(screen.getByRole("button", { name: "ミルク" }))
+    await waitFor(() => expect(mockedToast.error).toHaveBeenCalledWith("だめ"))
+    fireEvent.click(screen.getByRole("button", { name: "ミルク" }))
+    await waitFor(() => expect(mockedRecordFeeding).toHaveBeenCalledTimes(2))
+    expect(clientIdOf(mockedRecordFeeding.mock.calls[1])).not.toBe(
+      clientIdOf(mockedRecordFeeding.mock.calls[0]),
+    )
+  })
+
+  it("通信断の後でも期限（2 分）を過ぎた同じ種別のタップは新しい記録とみなし、新しい id を送る", async () => {
+    // 期限が無いと、数時間後の本物の「次のおしっこ」が過去の保存に吸収され、成功と出るのに
+    // 行が増えぬ（レビュー P2-2）。期限内の再タップは上の test が同じ id を固定しておる
+    vi.useFakeTimers({ now: new Date("2026-10-19T03:00:00Z"), toFake: ["Date"] })
+    try {
+      mockedRecordFeeding
+        .mockRejectedValueOnce(new Error("network down"))
+        .mockResolvedValueOnce({ error: null, id: "log-5" })
+      renderActions()
+
+      fireEvent.click(screen.getByRole("button", { name: "ミルク" }))
+      await waitFor(() => expect(mockedToast.error).toHaveBeenCalledWith(OFFLINE_MESSAGE))
+      vi.setSystemTime(new Date("2026-10-19T03:02:01Z"))
+      fireEvent.click(screen.getByRole("button", { name: "ミルク" }))
+      await waitFor(() => expect(mockedRecordFeeding).toHaveBeenCalledTimes(2))
+      expect(clientIdOf(mockedRecordFeeding.mock.calls[1])).not.toBe(
+        clientIdOf(mockedRecordFeeding.mock.calls[0]),
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("対照: 期限内（1 分後）の同じ種別のタップは同じ id", async () => {
+    vi.useFakeTimers({ now: new Date("2026-10-19T03:00:00Z"), toFake: ["Date"] })
+    try {
+      mockedRecordDiaper
+        .mockRejectedValueOnce(new Error("network down"))
+        .mockResolvedValueOnce({ error: null, id: "log-6" })
+      renderActions()
+
+      fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
+      await waitFor(() => expect(mockedToast.error).toHaveBeenCalledWith(OFFLINE_MESSAGE))
+      vi.setSystemTime(new Date("2026-10-19T03:01:00Z"))
+      fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
+      await waitFor(() => expect(mockedRecordDiaper).toHaveBeenCalledTimes(2))
+      expect(clientIdOf(mockedRecordDiaper.mock.calls[1])).toBe(
+        clientIdOf(mockedRecordDiaper.mock.calls[0]),
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("再試行が「既に記録済み」（replayed）で受理された時は、取り消しを出さず楽観 append もせぬ", async () => {
+    // 「取り消す」を出すと前回の本物の行を消す導線になる。行は resync / Realtime で揃う
+    mockedRecordFeeding.mockResolvedValueOnce({ error: null, id: "log-7", replayed: true })
+    const onLogRecorded = vi.fn()
+    render(
+      <BabyQuickActions
+        userId="u1"
+        onCreateLog={() => {}}
+        onStartTimer={() => {}}
+        onCreateFeeding={() => {}}
+        onLogRecorded={onLogRecorded}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "ミルク" }))
+    await waitFor(() => expect(mockedToast.success).toHaveBeenCalled())
+    expect(mockedToast.success).toHaveBeenCalledWith(
+      expect.stringContaining("既に記録されています"),
+    )
+    expect(lastSuccessOptions()?.action).toBeUndefined()
+    expect(onLogRecorded).not.toHaveBeenCalled()
+  })
 })
 
 describe("BabyQuickActions のうんちの量（2 段目）", () => {
@@ -241,6 +401,7 @@ describe("BabyQuickActions のうんちの量（2 段目）", () => {
     expect(mockedRecordDiaper).toHaveBeenCalledWith({
       diaperType: "pee",
       poopAmount: null,
+      clientId: expect.any(String),
     })
     // 2 段目は出ていない
     expect(screen.queryByRole("button", { name: "少量" })).toBeNull()
@@ -266,6 +427,7 @@ describe("BabyQuickActions のうんちの量（2 段目）", () => {
     expect(mockedRecordDiaper).toHaveBeenCalledWith({
       diaperType: "poop",
       poopAmount: "small",
+      clientId: expect.any(String),
     })
     await waitFor(() => expect(mockedToast.success).toHaveBeenCalled())
     expect(mockedToast.success.mock.calls.at(-1)?.[0]).toBe(
@@ -288,6 +450,7 @@ describe("BabyQuickActions のうんちの量（2 段目）", () => {
     expect(mockedRecordDiaper).toHaveBeenCalledWith({
       diaperType: "both",
       poopAmount: "large",
+      clientId: expect.any(String),
     })
     expect(onLogRecorded.mock.calls[0][0]).toMatchObject({
       diaper_type: "both",
@@ -304,6 +467,7 @@ describe("BabyQuickActions のうんちの量（2 段目）", () => {
     expect(mockedRecordDiaper).toHaveBeenCalledWith({
       diaperType: "poop",
       poopAmount: null,
+      clientId: expect.any(String),
     })
     expect(mockedToast.success.mock.calls.at(-1)?.[0]).toBe(
       "おむつ交換を記録しました（うんち）",

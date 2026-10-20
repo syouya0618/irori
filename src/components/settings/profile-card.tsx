@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { updateProfile } from "@/app/(main)/settings/actions"
+import { preventFormAutoReset } from "@/app/(main)/settings/prevent-form-auto-reset"
 // startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）
 import { toastOfflineError } from "@/lib/utils/offline-error"
 
@@ -40,7 +41,7 @@ export function ProfileCard({ profile, email }: ProfileCardProps) {
           router.refresh()
         }
       } catch (err) {
-        // 楽観更新は無いため巻き戻し不要（表示はサーバー値のまま）
+        // 楽観更新は無いため巻き戻し不要（入力は打ったまま残る）
         toastOfflineError("[profile-card] updateProfile", err)
       }
     })
@@ -55,7 +56,15 @@ export function ProfileCard({ profile, email }: ProfileCardProps) {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <form action={handleUpdateProfile} className="flex flex-col gap-4">
+        {/* ⚠️ **ref を外すな（P2-30）。** React 19 は action の後でフォームを無条件に reset し、
+            入力が初回描画時の名前へ戻る（失敗時は打ち直しを強いる）。`onReset` では止まらず、
+            onSubmit へ替えると hydration 前の送信が素の GET になる —— 理由は
+            preventFormAutoReset の docstring。 */}
+        <form
+          ref={preventFormAutoReset}
+          action={handleUpdateProfile}
+          className="flex flex-col gap-4"
+        >
           {/* アバタープレースホルダー */}
           <div className="flex items-center gap-4">
             <div className="flex size-14 items-center justify-center rounded-full bg-primary/10 text-primary">

@@ -57,6 +57,56 @@ function makeFeedingLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
   }
 }
 
+describe("BabySummaryBar の取得状態（P2-10 / レビュー P3-5）", () => {
+  const counts = {
+    feedingCount: 2,
+    diaperCount: 3,
+    peeCount: 2,
+    poopCount: 1,
+    breastCycleCount: 1,
+    bottleCount: 1,
+    pumpedCount: 0,
+    solidCount: 0,
+  }
+
+  it.each(["loading", "error"] as const)(
+    "%s の間は数字を出さず「—」にする（空配列を 0 回と偽らぬ）",
+    (status) => {
+      render(
+        <BabySummaryBar
+          {...baseProps}
+          date={PAST_DATE}
+          status={status}
+          todayCounts={counts}
+          lastFeeding={makeFeedingLog()}
+        />,
+      )
+      const summary = screen.getByRole("group", { name: "4/5 のまとめ" })
+      expect(summary).toHaveAttribute("aria-busy", "true")
+      expect(within(summary).getAllByText("—")).toHaveLength(2)
+      expect(within(summary).queryByText(/ミルク1/)).toBeNull()
+      expect(screen.queryByText(formatTimeJst(PAST_FEEDING_LOGGED_AT))).toBeNull()
+      expect(screen.queryByText(/おしっこ2・うんち1/)).toBeNull()
+    },
+  )
+
+  it("対照: ready なら同じ props で数字が出る", () => {
+    render(
+      <BabySummaryBar
+        {...baseProps}
+        date={PAST_DATE}
+        status="ready"
+        todayCounts={counts}
+        lastFeeding={makeFeedingLog()}
+      />,
+    )
+    const summary = screen.getByRole("group", { name: "4/5 のまとめ" })
+    expect(summary).not.toHaveAttribute("aria-busy")
+    expect(within(summary).getByText("母乳1・ミルク1")).toBeInTheDocument()
+    expect(screen.getByText(formatTimeJst(PAST_FEEDING_LOGGED_AT))).toBeInTheDocument()
+  })
+})
+
 describe("BabySummaryBar 今日のまとめ", () => {
   it("今日の授乳内訳・おむつ内訳(おしっこ/うんち)をひと目で表示する", () => {
     render(

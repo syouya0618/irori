@@ -41,7 +41,13 @@
 }
 
 /* ── Liquid Glass: 温かみのある囲炉裏カラーパレット ── */
+/* color-scheme はテーマと対で宣言する。UA 描画の部品（date/time 入力の時計・カレンダー
+ * アイコン、スクロールバー等）は light-dark() で絵を選ぶため、宣言が無いとダーク時も
+ * 明色用の暗いアイコンが暗い欄に載って見えなくなる（Chrome for Android 154 から
+ * Android でもこのアイコンが描かれるようになった）。.dark は system 設定でも
+ * layout.tsx の FOUC 防止 script / use-theme.ts が html へ付けるゆえ、ここだけで足りる。 */
 :root {
+  color-scheme: light;
   --background: oklch(0.985 0.005 75);
   --foreground: oklch(0.18 0.02 50);
   --card: oklch(1 0 0 / 60%);
@@ -69,6 +75,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --background: oklch(0.13 0.005 75);
   --foreground: oklch(0.93 0.01 75);
   --card: oklch(0.18 0.01 50 / 60%);

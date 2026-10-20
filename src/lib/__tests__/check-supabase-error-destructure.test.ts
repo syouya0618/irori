@@ -329,3 +329,26 @@ export async function refresh(registration: { update(): Promise<void> }) {
     expect(res.stdout).toMatch(/\(write\): [1-9]/)
   })
 })
+
+describe("check-supabase-error-destructure.py: 実ツリー（CI との parity）", () => {
+  // 上の fixture 群は検出ロジックの検知力を固定するが、**実際の src/** を走査するのは
+  // CI（.github/workflows/ci.yml の `./scripts/check-supabase-error-destructure.py --strict`）
+  // だけじゃった。ローカルの vitest が緑でも CI で初めて赤くなる差を無くす。
+  // スクリプトは位置引数が無ければ src/ を走査するゆえ、src/ を明示して渡すのと同値。
+  const SRC_DIR = path.resolve(__dirname, "../..")
+
+  it(
+    "src/ 全体を --strict で走査して違反 0（CI と同じ呼び出し）",
+    () => {
+      const res = runScript(SRC_DIR, true)
+      // 違反があれば一覧が失敗メッセージに出る
+      expect(res.status, `${res.stdout}\n${res.stderr}`).toBe(0)
+      expect(res.stdout).toContain("OK")
+      // アンカー全滅による偽緑（何も走査せず OK）を否定する
+      expect(res.stdout).toMatch(/checked \(single\): [1-9]/)
+      expect(res.stdout).toMatch(/\(multi-row\): [1-9]/)
+      expect(res.stdout).toMatch(/\(write\): [1-9]/)
+    },
+    60_000,
+  )
+})

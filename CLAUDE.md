@@ -5,19 +5,19 @@
 Advisor、あなたへ。これは世帯単位の育児記録・予定 PWA で、要は Liquid Glass の一貫した手触り、世帯データの分離、そして「訓練データの記憶で Next.js を書かない」ことだ。全履歴を読み、**通常のレビューに加えて**、判断を特に次の3軸で重く点検せよ:
 
 1. **Liquid Glass デザインの一貫性を崩していないか** ― `glass` カード/warm orange/`transition-colors` のみ/44px タッチ/絵文字は使わない。独自スタイルや `transition-all` を持ち込んでいれば、止めよ。
-2. **世帯（household）単位のデータ分離を破っていないか** ― RLS は SELECT/UPDATE/DELETE 分離（FOR ALL 禁止）、SECURITY DEFINER は `SET search_path=public`。分離を緩めていれば、止めよ。
-3. **現行 Next.js 16 / React 19 の実APIに忠実か** ― 記憶で書かず `node_modules/next/dist/docs/` を読んだか（`unstable_retry`、form auto-reset 無効化 等）。記憶ベースの古いAPIで書いていれば、止めよ。
+2. **世帯（household）単位のデータ分離を破っていないか** ― RLS は SELECT/INSERT/UPDATE/DELETE 分離（FOR ALL 禁止）、SECURITY DEFINER は `SET search_path=public`。分離を緩めていれば、止めよ。
+3. **現行 Next.js 16 / React 19 の実APIに忠実か** ― 記憶で書かず `node_modules/next/dist/docs/` を読んだか（error.tsx の `retry`、form auto-reset 無効化 等）。記憶ベースの古いAPIで書いていれば、止めよ。
 
 衝突したら本質を優先せよ。指摘は短く。**3軸に該当せずとも本質を損なう判断を見れば遠慮なく指摘せよ。**
 
 ## Tech Stack
 
-- **Framework**: Next.js 16.2.6 (App Router)
+- **Framework**: Next.js 16.3.4 (App Router)
 - **React**: 19.2
-- **Tailwind CSS**: v4.2
+- **Tailwind CSS**: v4
 - **UI**: shadcn/ui + Liquid Glass design system
-- **Backend**: Supabase (Auth, Database, Storage, Realtime)
-- **PWA**: Native PWA via `manifest.ts` (Phase 1)
+- **Backend**: Supabase (Auth, Database, Realtime)
+- **PWA**: Native PWA via `manifest.ts` + hand-written `public/sw.js`
 - **Icons**: Lucide React
 - **Language**: All UI text in Japanese
 
@@ -55,9 +55,9 @@ src/
 
 ## Conventions
 
-- Error boundaries use `unstable_retry` (Next.js 16 API, not `reset`)
+- Error boundaries use `retry` (stable since Next.js 16.3; the 16.2 name `unstable_retry` is no longer passed by the runtime — `node_modules/next/dist/client/components/error-boundary.js` passes only `error` / `reset` / `retry`)
 - Server Actions in co-located `actions.ts` files
-- All Supabase RLS: separate SELECT/UPDATE/DELETE policies (never FOR ALL)
+- All Supabase RLS: separate SELECT/INSERT/UPDATE/DELETE policies (never FOR ALL)
 - Feature branches only (never commit to main directly)
 
 ## irori 完了前チェックリスト（グローバルチェックリストに追加）
@@ -71,11 +71,12 @@ src/
 
 ### irori 固有
 
-- **pdfmake v0.3.7: `setFonts()` はモジュールスコープで1回のみ**: リクエストごとに呼ぶと並行リクエストで競合リスク
+- **pdfmake 0.3.x: `setFonts()` はモジュールスコープで1回のみ**: リクエストごとに呼ぶと並行リクエストで競合リスク
 - **SECURITY DEFINER 関数には `SET search_path = public` 必須**: `auth.users` トリガーから呼ばれると `search_path=auth` で狂う
 - **`ALTER TYPE ADD VALUE` と CHECK 制約は別マイグレーションに分離**: 同一トランザクション内で新 ENUM 値を CHECK 制約で参照すると `unsafe use of new value` エラー
 - **授乳行（log_type='feeding'）の `logged_at` は「開始時刻」セマンティクス**: タイマー（startedAt 送信）・手動入力（記録時刻 − 授乳時間）・編集シート（ラベル「開始時刻」）の全書込経路で開始に揃える契約。過去行は backfill（`20260726100003`）で統一済み。**新しい書込経路を足すときは必ず開始時刻を送ること** — 送らねば DB の `now()`（＝終了時刻）が入り、同じ列に2つの意味が無音で混在して事後判別できなくなる（かつて併走していた Flutter 版がこれに未追随のまま廃止された）
-- **母乳サイクル行（feeding_type='breast'）の counts は双方向厳格 CHECK で守られている**: `breast_left_count`/`breast_right_count` は breast 行のみ非NULL・各0..20・合計≥1（`chk_breast_counts_only_breast`/`chk_breast_counts_required`）。ゆえに **`feeding_type` だけを部分 update する経路は breast 行を編集できない = 意図的な fail-loud**。緩めると「ミルクなのに左右回数を持つ」無音破損が DB に居座るため、CHECK を緩める方向の修正は禁止。サーバ Action（`validateBreastCounts`）と UI（0..20 clamp）は同じ契約のミラー
+- **育児ログ・日記・予定の編集は「開いた時点の `updated_at`」を版に送る楽観的排他（P2-07 / P1-06）**: サーバは id・世帯・版を条件にした 1 本の UPDATE で書き、0 行は読み直して衝突・削除済み・冪等の成功を分ける。版は**表記の文字列のまま**運ぶ（`new Date()` を通すとマイクロ秒が落ちて以後の保存が全て衝突する）。**編集の経路を足すときは必ず版を送ること** — 送らねば Server Action（`updateLog` 等）が「画面が古い」で止める（無条件の上書きへは倒さぬ）。**この守りはアプリの層だけ**で、RLS は版を見ぬ — Server Action を通らぬ書込（PostgREST を直に叩く別のクライアント等）を足すなら、同じ条件を自前で持たせよ。楽観 append の行も作成の応答の版を持つ（`buildOptimisticLog` の `updatedAt` は省略不可）。育児ログの編集シートに、衝突の後の「上書きして保存」を置くな — 全項目を開いた時点の値から送るため、家族が直した項目まで巻き戻る（本文 1 欄の日記は上書きが意図どおりゆえ置いてある）
+- **母乳サイクル行（feeding_type='breast'）の counts は双方向厳格 CHECK で守られている**: `breast_left_count`/`breast_right_count` は breast 行のみ非NULL・各0..20・合計≥1（`chk_breast_counts_only_breast`/`chk_breast_counts_required`）。ゆえに **`feeding_type` だけを部分 update する経路は breast 行を編集できない = 意図的な fail-loud**。緩めると「ミルクなのに左右回数を持つ」無音破損が DB に居座るため、CHECK を緩める方向の修正は禁止。サーバ Action（`validateBreastCounts`）と UI（0..20 clamp）は同じ契約のミラーで、上限と丸めは `src/lib/domain/feeding.ts` の `BREAST_COUNT_MAX` / `clampBreastCount` が唯一の正本（ステッパーは `breast-count-stepper.tsx` を共有）
 - **左右別授乳時間（`breast_left_sec`/`breast_right_sec`）は「duration_sec = 左+右」の等式 CHECK 付き**（`chk_breast_side_sec_total`・`IS NOT DISTINCT FROM` で NULL 穴なし）: 合計は常にサーバが左右の和から導出する（クライアントの合計送信は拒否 = 二重真値源の禁止）。ゆえに **合計側を clamp する実装は禁止** — 走行中タイマーは 3h 超に到達しうるため、上限処理は `resolveBreastSideSeconds` が**側ごとに比例縮小**して和の等式を守る（合計 clamp に戻すと等式違反で記録が恒久失敗する）。sides NULL の行（#165 期の旧サイクル行・旧形式 localStorage から復元したタイマー）は「合計のみ持つ行」として合法・退化表示。左右配分の backfill は原理的に不可能ゆえ捏造しない
 - **DB ENUM 由来 nullable フィールドは未知値で落とさず退化させる（enum drift 防御）**: DB の ENUM（`feeding_type`/`diaper_type` 等）は migration で増え、クライアントの型定義は遅れて追随する。未追随の間に未知値で throw する decode を書くと、その行を含む fetch が画面全体を倒す（かつて併走していた Flutter 版で #147/#158 として実際に起きた）。判別子（`log_type`）は required ゆえ厳格に扱ってよいが、**nullable enum は「未知 → null」で退化**させること。**さらに重要なのは判定の向き**: 未知値を含みうる列で振る舞いを分けるときは、除外したい値だけを名指しする denylist で書け（例: 授乳目安の起点判定は `feeding_type !== 'pumped'`）。allowlist で列挙すると、DB に新しい値が増えた瞬間にその行が**無音で機能から漏れる**
 - **`cookies()` + `NextResponse.redirect()` で Cookie 未伝播**: `createServerClient` でレスポンスに直接書き込む

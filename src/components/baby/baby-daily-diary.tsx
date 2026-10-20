@@ -8,6 +8,11 @@ interface BabyDailyDiaryProps {
   /** 選択日の日記（無ければ null）。1日1本。 */
   diary: BabyDiaryData | null
   isToday: boolean
+  /**
+   * 選択日の日記を取得中。本文も「日記を書く」も出さぬ（前の日の本文を新しい日の
+   * 下書きにせぬため。レビュー P2-4）
+   */
+  loading?: boolean
   /** 日記の編集シートを開く（既存本文の編集 / 新規作成の両方） */
   onEdit: () => void
 }
@@ -17,7 +22,12 @@ interface BabyDailyDiaryProps {
  * 常時表示する。切り詰め（line-clamp）はしない。タップで編集シートを開く。
  * 日付キーの機能ゆえ過去日の日記も書ける（isToday はタイトル表示にのみ使う）。
  */
-export function BabyDailyDiary({ diary, isToday, onEdit }: BabyDailyDiaryProps) {
+export function BabyDailyDiary({
+  diary,
+  isToday,
+  loading = false,
+  onEdit,
+}: BabyDailyDiaryProps) {
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between px-1">
@@ -36,7 +46,15 @@ export function BabyDailyDiary({ diary, isToday, onEdit }: BabyDailyDiaryProps) 
       </div>
 
       <div className="glass rounded-2xl shadow-lg shadow-black/[0.04]">
-        {diary ? (
+        {loading ? (
+          <div
+            role="status"
+            aria-label="日記を読み込み中"
+            className="flex min-h-11 items-center p-4"
+          >
+            <div className="h-3 w-2/3 animate-pulse rounded bg-muted" />
+          </div>
+        ) : diary ? (
           <button
             type="button"
             onClick={onEdit}

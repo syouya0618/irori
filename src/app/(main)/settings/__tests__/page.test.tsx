@@ -1,0 +1,238 @@
+/**
+ * 設定ページ（Server Component）→ SettingsContent への配線。
+ *
+ * ## P1-02: 承認カードは**インスタンスの運用者だけ**に出す
+ * かつては世帯の owner なら誰でも `get_pending_approvals` を叩き、相互に信頼せぬ
+ * 他世帯の新規登録者（email 入り）を自世帯の設定画面に「承認待ち」として見ておった。
+ * いまは `is_app_operator()` が true の時だけ一覧を引く。判定に失敗したら**閉じる**
+ * （カードを出さぬ）。運用者が一覧を読めなかった時は「0 件」と偽らず null で渡す。
+ *
+ * ## P2-31: 世帯を読めなかった時に空欄のフォームを渡さぬ
+ * `?? null` と既定の授乳間隔で埋めて渡すと、保存の 1 クリックで名前と生年月日が
+ * NULL に上書きされる。読めなかったことを null で運ぶ。
+ *
+ * page.tsx を描画はせず、返る要素の props だけを見る（SettingsContent は spy）。
+ */
+
+import { describe, it, expect, vi, beforeEach } from "vitest"
+import type { ReactElement } from "react"
+
+class RedirectSignal extends Error {
+  constructor(readonly to: string) {
+    super(`redirect:${to}`)
+  }
+}
+
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new RedirectSignal(to)
+  },
+}))
+
+type Result = { data: unknown; error: unknown }
+
+let tableResults: Record<string, Result> = {}
+let rpcResults: Record<string, Result> = {}
+const rpc = vi.fn((name: string) =>
+  Promise.resolve(rpcResults[name] ?? { data: null, error: null }),
+)
+
+/** select/eq/... を何段でも受け、single/maybeSingle/await のどれでも結果を返す鎖 */
+function chain(table: string) {
+  const result = () =>
+    Promise.resolve(tableResults[table] ?? { data: null, error: null })
+  const c: Record<string, unknown> = {}
+  for (const method of ["select", "eq", "not", "order", "limit", "in"]) {
+    c[method] = () => c
+  }
+  c.single = result
+  c.maybeSingle = result
+  c.then = (
+    onFulfilled: (value: Result) => unknown,
+    onRejected?: (reason: unknown) => unknown,
+  ) => result().then(onFulfilled, onRejected)
+  return c
+}
+
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: async () => ({
+    from: (table: string) => chain(table),
+    rpc: (name: string) => rpc(name),
+  }),
+}))
+
+vi.mock("@/lib/supabase/verified-user", () => ({
+  getVerifiedUser: async () => ({ userId: "u1", email: "me@example.com" }),
+}))
+
+const logSupabaseError = vi.fn()
+vi.mock("@/lib/supabase/log-error", () => ({
+  logSupabaseError: (...args: unknown[]) => logSupabaseError(...args),
+}))
+
+vi.mock("../settings-content", () => ({
+  SettingsContent: () => null,
+}))
+
+import SettingsPage from "../page"
+
+const PENDING_USER = {
+  id: "p1",
+  display_name: "しんき",
+  email: "new@example.com",
+  created_at: "2026-10-01T00:00:00.000Z",
+}
+
+function profileRow(role: "owner" | "member" = "owner") {
+  return {
+    data: {
+      id: "u1",
+      display_name: "テスト",
+      avatar_url: null,
+      household_id: "h1",
+      role,
+      default_page: "baby",
+    },
+    error: null,
+  }
+}
+
+const HOUSEHOLD_OK: Result = {
+  data: {
+    id: "h1",
+    name: "我が家",
+    baby_name: "あかり",
+    baby_birth_date: "2026-05-01",
+    feeding_interval_min: 150,
+  },
+  error: null,
+}
+
+const DB_ERROR = { message: "boom", code: "XX000", details: null, hint: null }
+
+async function renderProps(): Promise<Record<string, unknown>> {
+  const element = (await SettingsPage({
+    searchParams: Promise.resolve({}),
+  })) as ReactElement<Record<string, unknown>>
+  return element.props
+}
+
+const rpcNames = () => rpc.mock.calls.map(([name]) => name)
+
+beforeEach(() => {
+  rpc.mockClear()
+  logSupabaseError.mockClear()
+  tableResults = {
+    profiles: profileRow("owner"),
+    households: HOUSEHOLD_OK,
+    google_connections: { data: [], error: null },
+    push_subscriptions: { data: [], error: null },
+    notification_heartbeat: { data: null, error: null },
+    notification_deliveries: { data: null, error: null },
+    notification_preferences: { data: null, error: null },
+  }
+  rpcResults = {
+    is_app_operator: { data: false, error: null },
+    get_pending_approvals: { data: [PENDING_USER], error: null },
+  }
+})
+
+describe("承認カードの可否は is_app_operator で決める（P1-02）", () => {
+  it("運用者でない owner には一覧を引かず、カードも出さぬ", async () => {
+    const props = await renderProps()
+
+    expect(rpcNames()).toContain("is_app_operator")
+    expect(rpcNames()).not.toContain("get_pending_approvals")
+    expect(props.isAppOperator).toBe(false)
+    expect(props.pendingUsers).toEqual([])
+  })
+
+  it("運用者には一覧を引いて渡す", async () => {
+    rpcResults.is_app_operator = { data: true, error: null }
+
+    const props = await renderProps()
+
+    expect(rpcNames()).toContain("get_pending_approvals")
+    expect(props.isAppOperator).toBe(true)
+    expect(props.pendingUsers).toEqual([PENDING_USER])
+  })
+
+  it("運用者なら世帯の役割（member）に依らず一覧を引く", async () => {
+    tableResults.profiles = profileRow("member")
+    rpcResults.is_app_operator = { data: true, error: null }
+
+    const props = await renderProps()
+
+    expect(rpcNames()).toContain("get_pending_approvals")
+    expect(props.isAppOperator).toBe(true)
+  })
+
+  it("判定に失敗したら閉じる: ログに残し、一覧を引かず、カードを出さぬ", async () => {
+    rpcResults.is_app_operator = { data: null, error: DB_ERROR }
+
+    const props = await renderProps()
+
+    expect(logSupabaseError).toHaveBeenCalledWith(
+      "settings",
+      expect.stringContaining("is_app_operator"),
+      DB_ERROR,
+      expect.objectContaining({ userId: "u1" }),
+    )
+    expect(rpcNames()).not.toContain("get_pending_approvals")
+    expect(props.isAppOperator).toBe(false)
+  })
+
+  it("true 以外の値（null・文字列）は運用者とみなさぬ", async () => {
+    for (const data of [null, "true", 1]) {
+      rpc.mockClear()
+      rpcResults.is_app_operator = { data, error: null }
+      const props = await renderProps()
+      expect(props.isAppOperator, String(data)).toBe(false)
+      expect(rpcNames()).not.toContain("get_pending_approvals")
+    }
+  })
+
+  it("運用者が一覧を読めなかったら「0 件」と偽らず null を渡す", async () => {
+    rpcResults.is_app_operator = { data: true, error: null }
+    rpcResults.get_pending_approvals = { data: null, error: DB_ERROR }
+
+    const props = await renderProps()
+
+    expect(logSupabaseError).toHaveBeenCalledWith(
+      "settings",
+      "pending approvals lookup failed",
+      DB_ERROR,
+      expect.any(Object),
+    )
+    expect(props.isAppOperator).toBe(true)
+    expect(props.pendingUsers).toBeNull()
+  })
+})
+
+describe("世帯を読めなかった時（P2-31）", () => {
+  it("households の取得に失敗したら babyProfile / household を null で渡す（空欄のフォームにせぬ）", async () => {
+    tableResults.households = { data: null, error: DB_ERROR }
+
+    const props = await renderProps()
+
+    expect(logSupabaseError).toHaveBeenCalledWith(
+      "settings",
+      "household lookup failed",
+      DB_ERROR,
+      expect.objectContaining({ householdId: "h1" }),
+    )
+    expect(props.babyProfile).toBeNull()
+    expect(props.household).toBeNull()
+  })
+
+  it("読めた時は値をそのまま渡す（対照）", async () => {
+    const props = await renderProps()
+
+    expect(props.babyProfile).toEqual({
+      name: "あかり",
+      birthDate: "2026-05-01",
+      feedingIntervalMin: 150,
+    })
+    expect(props.household).toEqual({ id: "h1", name: "我が家" })
+  })
+})

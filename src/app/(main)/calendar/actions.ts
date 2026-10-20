@@ -9,6 +9,11 @@ import {
   type CalendarRepeat,
 } from "@/lib/domain/calendar-validation"
 import { generateRecurrenceDates } from "@/lib/domain/calendar-recurrence"
+import { sameCalendarEventContent } from "@/lib/domain/calendar-event-conflict"
+import {
+  isTimestamptzText,
+  STALE_SCREEN_SAVE_ERROR,
+} from "@/lib/domain/timestamptz-text"
 import { latestIsoTimestamp } from "@/lib/domain/google-sync-signal"
 import {
   isReminderChoice,
@@ -97,7 +102,8 @@ export async function createCalendarEvent(input: CalendarEventActionInput) {
       source: "native",
       created_by: userId,
     })
-    .select("id")
+    // updated_at は作成直後の楽観行に版を持たせるため（無いと直後の編集が古い画面扱いになる）
+    .select("id, updated_at")
     .single()
 
   // error と「行なし」を分離: logSupabaseError は非 null の PostgrestError を要求
@@ -112,7 +118,11 @@ export async function createCalendarEvent(input: CalendarEventActionInput) {
   }
 
   revalidateCalendarConsumers()
-  return { error: null, eventId: data.id }
+  return {
+    error: null,
+    eventId: data.id,
+    updatedAt: isTimestamptzText(data.updated_at) ? data.updated_at : null,
+  }
 }
 
 /**
@@ -224,11 +234,36 @@ async function createCalendarEventSeries(args: {
   return { error: null, seriesId, count: data.length }
 }
 
+export type UpdateCalendarEventResult =
+  | { error: null; updatedAt: string | null; conflict?: undefined }
+  /**
+   * `conflict: true` は「画面の予定が古い」（別の端末が先に更新・削除した）。
+   * 呼び出し側は手元の楽観行を捨てて取り直す。読み直し自体の失敗や同期予定は
+   * conflict を付けぬ（衝突と断定できぬ・取り直しても直らぬ）。
+   */
+  | { error: string; updatedAt?: undefined; conflict?: true }
+
+/**
+ * 予定を 1 件更新する。`updated_at` を版にした楽観的排他（育児日記 P1-06 と同じ契約）。
+ *
+ * `expectedUpdatedAt` は編集シートを開いた時点で見ていた版（PostgREST が返した表記の
+ * まま。`Date` に通すとマイクロ秒が落ちて二度と一致せぬ）。版の一致を UPDATE の条件に
+ * し、0 行なら読み直して次のどれかを返す:
+ * - 中身が今回と同じ: 応答だけを失った自分の保存の再試行。成功（冪等）
+ * - 中身が違う: 別の端末（家族またはご自身）が先に更新した。上書きせず衝突
+ * - 行が無い: 他端末で削除されたか、権限が無い。衝突（取り直せば画面から消える）
+ * - 同期予定: 編集できぬ（source='native' 以外）
+ *
+ * 版を送らぬ呼び出し（デプロイを跨いだ古いバンドル）を無条件の上書きへ倒さぬ。
+ */
 export async function updateCalendarEvent(
-  input: CalendarEventActionInput & { id: string },
-) {
+  input: CalendarEventActionInput & { id: string; expectedUpdatedAt: string },
+): Promise<UpdateCalendarEventResult> {
   const v = validateCalendarEventInput(input)
   if (v.error !== null) return { error: v.error }
+  if (!isTimestamptzText(input.expectedUpdatedAt)) {
+    return { error: STALE_SCREEN_SAVE_ERROR }
+  }
 
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error }
@@ -250,18 +285,61 @@ export async function updateCalendarEvent(
     .eq("id", input.id)
     .eq("household_id", householdId)
     .eq("source", "native")
-    .select("id")
+    .eq("updated_at", input.expectedUpdatedAt)
+    .select("id, updated_at")
 
   if (error) {
     logSupabaseError("calendar", "update failed", error, { id: input.id, householdId })
     return { error: "予定の更新に失敗しました。もう一度お試しください。" }
   }
-  if (!data || data.length === 0) {
-    return { error: "この予定は編集できません（同期予定か、権限がありません）。" }
+  const saved = data?.[0]
+  if (saved) {
+    revalidateCalendarConsumers()
+    return {
+      error: null,
+      updatedAt: isTimestamptzText(saved.updated_at) ? saved.updated_at : null,
+    }
   }
 
-  revalidateCalendarConsumers()
-  return { error: null }
+  // 0 行: 版が合わぬか、行が無いか、同期予定か。読み直して見分ける（世帯で絞る）。
+  const { data: current, error: rereadError } = await supabase
+    .from("calendar_events")
+    .select("title, memo, is_all_day, start_date, end_date, start_at, end_at, source, updated_at")
+    .eq("id", input.id)
+    .eq("household_id", householdId)
+    .maybeSingle()
+  if (rereadError) {
+    logSupabaseError("calendar", "update conflict re-read failed", rereadError, {
+      id: input.id,
+      householdId,
+    })
+    return {
+      error:
+        "予定を更新できたか確かめられませんでした。画面を更新して予定を確かめてください。",
+    }
+  }
+  if (!current) {
+    return {
+      error: "この予定は見つかりませんでした（他の端末で削除されたか、権限がありません）。",
+      conflict: true,
+    }
+  }
+  if (current.source !== "native") {
+    return { error: "この予定は編集できません（同期予定か、権限がありません）。" }
+  }
+  if (sameCalendarEventContent(current, v.value)) {
+    revalidateCalendarConsumers()
+    return {
+      error: null,
+      updatedAt: isTimestamptzText(current.updated_at) ? current.updated_at : null,
+    }
+  }
+  // 書いた人は断定しない（応答を失った自分の別端末の保存も同じ形で衝突する）
+  return {
+    error:
+      "この予定は別の端末で先に更新されていました（家族またはご自身）。最新の内容を確かめてから、もう一度編集してください。",
+    conflict: true,
+  }
 }
 
 export async function deleteCalendarEvent(id: string) {

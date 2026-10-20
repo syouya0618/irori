@@ -13,6 +13,7 @@ vi.mock("@/lib/supabase/auth-context", () => ({
 }))
 
 import {
+  approveUser,
   updateBabyProfile,
   updateDefaultPage,
   updateDigestTime,
@@ -249,6 +250,59 @@ function makeGoogleSupabase(result: {
   const from = vi.fn(() => ({ update }))
   return { client: { from }, from, update, eqId, eqHousehold, select }
 }
+
+/**
+ * approveUser（P1-02）。承認は運用者だけ —— approve_user は運用者でなければ
+ * 42501 を投げる。文言の部分一致（"Only owners"）に頼ると、DB 側の文言が変わった
+ * 瞬間に「権限が無い」が「承認に失敗しました」へ化け、真因が消える。
+ */
+describe("approveUser", () => {
+  function makeRpcSupabase(result: { error: unknown }) {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: result.error })
+    return { client: { rpc }, rpc }
+  }
+
+  it("運用者でない（42501）は権限の無さとして返し、構造化ログへ落とす", async () => {
+    const denied = { message: "only app operators can approve", code: "42501" }
+    const { client, rpc } = makeRpcSupabase({ error: denied })
+    setContext(client)
+
+    const result = await approveUser("target-1")
+
+    expect(rpc).toHaveBeenCalledWith("approve_user", { target_user_id: "target-1" })
+    expect(result).toEqual({ error: "承認権限がありません" })
+    expect(mockedLog).toHaveBeenCalledWith(
+      "settings",
+      "approve user failed",
+      denied,
+      expect.objectContaining({ targetUserId: "target-1" }),
+    )
+  })
+
+  it("それ以外の DB エラーは汎用文言 + 構造化ログ（握り潰さぬ）", async () => {
+    const boom = { message: "User not found or already approved", code: "P0001" }
+    const { client } = makeRpcSupabase({ error: boom })
+    setContext(client)
+
+    const result = await approveUser("target-1")
+
+    expect(result).toEqual({ error: "承認に失敗しました" })
+    expect(mockedLog).toHaveBeenCalledWith(
+      "settings",
+      "approve user failed",
+      boom,
+      expect.any(Object),
+    )
+  })
+
+  it("成功なら success（対照）", async () => {
+    const { client } = makeRpcSupabase({ error: null })
+    setContext(client)
+
+    await expect(approveUser("target-1")).resolves.toEqual({ success: true })
+    expect(mockedLog).not.toHaveBeenCalled()
+  })
+})
 
 describe("updateGoogleCalendarSelection", () => {
   it("認証前に入力を検証する（空 ID は DB へ到達せぬ）", async () => {

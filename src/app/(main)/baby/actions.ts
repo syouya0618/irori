@@ -1,15 +1,25 @@
 "use server"
 
 import { revalidatePath } from "next/cache"
-import { getAuthContext } from "@/lib/supabase/auth-context"
+import { getAuthContext, type AuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
+import { isClientId } from "@/lib/utils/client-id"
+import type { Database } from "@/lib/types/database"
 import {
+  BREAST_COUNT_MAX,
   deriveDurationMinFromSec,
   FEEDING_DURATION_SEC_MIN,
   FEEDING_DURATION_SEC_MAX,
 } from "@/lib/domain/feeding"
 import { validateLogTime } from "@/lib/domain/baby-log-time"
+import type { UpsertBabyDiaryResult } from "@/lib/domain/baby-diary"
+import { BABY_LOG_COLUMNS } from "@/lib/domain/baby-log-columns"
 import { todayJstString } from "@/lib/utils/date-jst"
+import {
+  isTimestamptzText,
+  STALE_SCREEN_SAVE_ERROR,
+} from "@/lib/domain/timestamptz-text"
+import type { BabyDiaryData, BabyLogData } from "@/lib/types/baby"
 import type {
   FeedingType,
   DiaperType,
@@ -68,6 +78,146 @@ function validateCreateLoggedAt(loggedAt?: string | null): string | null {
   return validateLogTime(loggedAt)
 }
 
+// 冪等 id（P2-08）。クライアントが「操作の意図」ごとに 1 回だけ作り、応答を失った再試行でも
+// 同じ id を送る。形は UUID に限る（主キーに入れるため。形が違えば DB に届く前に拒む）。
+const CLIENT_ID_ERROR =
+  "記録の識別子が不正です。画面を再読み込みしてからもう一度お試しください。"
+
+function validateClientId(clientId: string | undefined): string | null {
+  if (clientId === undefined) return null
+  return isClientId(clientId) ? null : CLIENT_ID_ERROR
+}
+
+type BabyLogInsert = Database["public"]["Tables"]["baby_logs"]["Insert"]
+type BabyLogInsertBody = Omit<BabyLogInsert, "id" | "household_id" | "logged_by">
+type BabyLogUpdate = Database["public"]["Tables"]["baby_logs"]["Update"]
+
+// 編集しようとした記録が見えぬ（他端末で削除済み・別世帯）。別世帯の行も同じ文言にする。
+const LOG_DELETED_ERROR = "この記録は他の端末で削除されていました。"
+/**
+ * 作成系 Action の結果。`replayed` は「同じ冪等 id の記録が既に在り、内容も同じだった」
+ * 再試行の吸収（二重には記録していない）。呼び出し側は成功として扱ってよいが、
+ * 「取り消す」を前回の本物の行へ向けぬよう、必要なら表示を分ける。
+ *
+ * 新しく書けた時は行の版（`updatedAt`）も返す。楽観 append の行はこの版を持つ —
+ * 持たねば Realtime の echo / 再取得が届くまで、作成直後の編集が版を送れぬ（P2-07）。
+ */
+type InsertOutcome =
+  | { error: string | null; id: string | null; updatedAt?: undefined; replayed?: undefined }
+  | { error: null; id: string; updatedAt: string; replayed?: undefined }
+  | { error: null; id: string; updatedAt?: undefined; replayed: true }
+
+const REPLAY_MISMATCH_ERROR =
+  "この操作は少し前に別の内容で記録済みです。画面を更新して記録を確かめてください。"
+
+/**
+ * DB の行が、今回送った内容と一致するか。二つの再試行で共有する:
+ * - 作成の冪等 id（P2-08 の契約: 世帯**と内容**が一致した時だけ成功）
+ * - 編集の版ガード（P2-07: 版が合わず 0 行でも、行が送った内容そのものなら、応答だけが
+ *   失われた自分の保存の再試行ゆえ成功）
+ * 比べるのは今回送った列だけ（logged_at を送らぬクイック記録は DB の now() 既定と、
+ * 編集で送らなかった列は家族の変更と比べぬ）。数値は等値、文字列は同値、null と
+ * undefined は同じ「無し」。logged_at は表記が揺れる（"Z" と "+00:00"）ため epoch で比べる。
+ */
+function sameRecordedContent(
+  existing: Record<string, unknown>,
+  body: Record<string, unknown>,
+): boolean {
+  for (const [key, sent] of Object.entries(body)) {
+    // 送っていない列（DB 既定に委ねた logged_at 等）は比べぬ
+    if (sent === undefined) continue
+    const stored = existing[key]
+    if (key === "logged_at") {
+      if (new Date(String(sent)).getTime() !== new Date(String(stored)).getTime()) {
+        return false
+      }
+      continue
+    }
+    const a = sent ?? null
+    const b = stored ?? null
+    if (a === b) continue
+    if (typeof a === "number" && typeof b === "number" && a === b) continue
+    return false
+  }
+  return true
+}
+
+/**
+ * baby_logs へ 1 行書く共通経路（record* の 5 本が共有する）。
+ *
+ * `clientId` があれば主キーとして INSERT する。主キー重複（23505）は「前回の保存は DB で
+ * 成立したが応答だけが失われ、利用者が再試行した」形ゆえ、同じ世帯にその id の行が在り
+ * **内容も同じ**なら、既に記録済みとして同じ id を成功（`replayed`）で返す（二重記録を
+ * 作らぬ。P2-08）。内容が違う（直して押し直した）なら、画面と DB が無言で食い違わぬよう
+ * fail-loud にする。別世帯の id や削除済みなら重複とは扱わず、通常の失敗にする
+ * （id は推測されうるため、世帯で絞る）。
+ */
+async function insertBabyLog(
+  supabase: AuthContext["supabase"],
+  householdId: string,
+  userId: string,
+  body: BabyLogInsertBody,
+  clientId: string | undefined,
+  label: string,
+): Promise<InsertOutcome> {
+  const failure: InsertOutcome = { error: `${label}に失敗しました。`, id: null }
+  const { data, error } = await supabase
+    .from("baby_logs")
+    .insert({
+      ...(clientId !== undefined && { id: clientId }),
+      household_id: householdId,
+      logged_by: userId,
+      ...body,
+    })
+    .select("id, updated_at")
+    .single()
+
+  if (error) {
+    if (error.code === "23505" && clientId !== undefined) {
+      const { data: existing, error: lookupError } = await supabase
+        .from("baby_logs")
+        .select(BABY_LOG_COLUMNS)
+        .eq("id", clientId)
+        .eq("household_id", householdId)
+        .maybeSingle()
+      if (lookupError) {
+        logSupabaseError("baby", `${label}: 重複 id の読み直しに失敗`, lookupError, {
+          userId,
+          householdId,
+          clientId,
+        })
+        return failure
+      }
+      if (existing) {
+        if (!sameRecordedContent(existing as Record<string, unknown>, body)) {
+          // 前回の保存は成立しており、今回は別の内容。黙ってどちらかを採らぬ
+          console.warn(`[baby] ${label}: 同じ冪等 id に別の内容の再試行`, {
+            householdId,
+            clientId,
+          })
+          return { error: REPLAY_MISMATCH_ERROR, id: null }
+        }
+        // 応答を失った前回の保存が成立していた。再試行を吸収して同じ id を返す
+        console.info(`[baby] ${label}: 再試行を既存の記録として受理`, {
+          householdId,
+          clientId,
+        })
+        revalidatePath("/baby")
+        return { error: null, id: existing.id, replayed: true }
+      }
+    }
+    logSupabaseError("baby", `${label}に失敗`, error, { userId, householdId })
+    return failure
+  }
+  if (!data) {
+    console.error(`[baby] ${label}: 行が返らず`, { userId, householdId })
+    return failure
+  }
+
+  revalidatePath("/baby")
+  return { error: null, id: data.id, updatedAt: data.updated_at }
+}
+
 // 母乳サイクル行（feeding_type: 'breast'）の左右吸わせ回数を検証する。
 // DB CHECK chk_breast_counts_required（supabase/migrations/20260726100002）のミラー:
 // 両方必須・整数・各 0..20・合計 >= 1。recordFeeding / updateLog で共有する。
@@ -96,9 +246,9 @@ function validateBreastSideSeconds(
     !Number.isInteger(leftSec) ||
     !Number.isInteger(rightSec) ||
     leftSec < 0 ||
-    leftSec > 10800 ||
+    leftSec > FEEDING_DURATION_SEC_MAX ||
     rightSec < 0 ||
-    rightSec > 10800 ||
+    rightSec > FEEDING_DURATION_SEC_MAX ||
     leftSec + rightSec < 1
   ) {
     return BREAST_SIDES_ERROR
@@ -116,9 +266,9 @@ function validateBreastCounts(
     !Number.isInteger(leftCount) ||
     !Number.isInteger(rightCount) ||
     leftCount < 0 ||
-    leftCount > 20 ||
+    leftCount > BREAST_COUNT_MAX ||
     rightCount < 0 ||
-    rightCount > 20 ||
+    rightCount > BREAST_COUNT_MAX ||
     leftCount + rightCount < 1
   ) {
     return BREAST_COUNTS_ERROR
@@ -161,6 +311,11 @@ interface RecordFeedingInput {
   /** 記録時刻（ISO 8601）。未指定時は DB の now() 既定に依存する。 */
   loggedAt?: string
   memo?: string
+  /**
+   * 冪等 id（UUID。P2-08）。操作の意図ごとに 1 回だけ作り、再試行でも同じ値を送る。
+   * 省略時はサーバ（DB 既定）が id を振る = 再試行の吸収は効かぬ。
+   */
+  clientId?: string
 }
 
 interface RecordDiaperInput {
@@ -173,6 +328,8 @@ interface RecordDiaperInput {
   /** 記録時刻（ISO 8601）。未指定時は DB の now() 既定に依存する。 */
   loggedAt?: string
   memo?: string
+  /** 冪等 id（UUID。P2-08）。RecordFeedingInput と同じ契約。 */
+  clientId?: string
 }
 
 interface RecordTemperatureInput {
@@ -180,6 +337,8 @@ interface RecordTemperatureInput {
   /** 記録時刻（ISO 8601）。未指定時は DB の now() 既定に依存する。 */
   loggedAt?: string
   memo?: string
+  /** 冪等 id（UUID。P2-08）。RecordFeedingInput と同じ契約。 */
+  clientId?: string
 }
 
 interface RecordGrowthInput {
@@ -188,12 +347,16 @@ interface RecordGrowthInput {
   /** 記録時刻（ISO 8601）。未指定時は DB の now() 既定に依存する。 */
   loggedAt?: string
   memo?: string
+  /** 冪等 id（UUID。P2-08）。RecordFeedingInput と同じ契約。 */
+  clientId?: string
 }
 
 interface RecordMemoInput {
   memo: string
   /** 記録時刻（ISO 8601）。未指定時は DB の now() 既定に依存する。 */
   loggedAt?: string
+  /** 冪等 id（UUID。P2-08）。RecordFeedingInput と同じ契約。 */
+  clientId?: string
 }
 
 export async function recordFeeding(input: RecordFeedingInput) {
@@ -201,6 +364,8 @@ export async function recordFeeding(input: RecordFeedingInput) {
   if (memoError) return { error: memoError, id: null }
   const timeError = validateCreateLoggedAt(input.loggedAt)
   if (timeError) return { error: timeError, id: null }
+  const clientIdError = validateClientId(input.clientId)
+  if (clientIdError) return { error: clientIdError, id: null }
 
   // breast_left_count / breast_right_count の検証（DB CHECK
   // chk_breast_counts_only_breast / chk_breast_counts_required のミラー）。
@@ -252,12 +417,12 @@ export async function recordFeeding(input: RecordFeedingInput) {
   const durationSec = hasSides
     ? input.breastLeftSec! + input.breastRightSec!
     : input.durationSec ?? null
-  const { data, error } = await supabase
-    .from("baby_logs")
-    .insert({
-      household_id: householdId,
+  return insertBabyLog(
+    supabase,
+    householdId,
+    userId,
+    {
       log_type: "feeding",
-      logged_by: userId,
       feeding_type: input.feedingType,
       amount_ml: input.amountMl ?? null,
       // 秒を source of truth に、分は後方互換のため round で併記（1経路で両列を書く）
@@ -276,21 +441,10 @@ export async function recordFeeding(input: RecordFeedingInput) {
       // 未指定時は logged_at を送らず DB の now() 既定に委ねる（従来挙動）
       ...(input.loggedAt != null && { logged_at: input.loggedAt }),
       memo: input.memo || null,
-    })
-    .select("id")
-    .single()
-
-  if (error) {
-    logSupabaseError("baby", "授乳の記録に失敗", error, { userId, householdId })
-    return { error: "授乳の記録に失敗しました。", id: null }
-  }
-  if (!data) {
-    console.error("[baby] 授乳の記録: 行が返らず", { userId, householdId })
-    return { error: "授乳の記録に失敗しました。", id: null }
-  }
-
-  revalidatePath("/baby")
-  return { error: null, id: data.id }
+    },
+    input.clientId,
+    "授乳の記録",
+  )
 }
 
 export async function recordDiaper(input: RecordDiaperInput) {
@@ -298,6 +452,8 @@ export async function recordDiaper(input: RecordDiaperInput) {
   if (memoError) return { error: memoError, id: null }
   const timeError = validateCreateLoggedAt(input.loggedAt)
   if (timeError) return { error: timeError, id: null }
+  const clientIdError = validateClientId(input.clientId)
+  if (clientIdError) return { error: clientIdError, id: null }
 
   // うんちの量（chk_poop_amount_value / chk_poop_amount_only_poop のミラー）。
   // null / 未指定は「量の記録なし」として素通し（クイック記録の「指定なし」）。
@@ -314,12 +470,12 @@ export async function recordDiaper(input: RecordDiaperInput) {
   if (result.error !== null) return { error: result.error, id: null }
   const { supabase, userId, householdId } = result.context
 
-  const { data, error } = await supabase
-    .from("baby_logs")
-    .insert({
-      household_id: householdId,
+  return insertBabyLog(
+    supabase,
+    householdId,
+    userId,
+    {
       log_type: "diaper",
-      logged_by: userId,
       diaper_type: input.diaperType,
       // pee は上で拒否済みゆえ常に null（chk_poop_amount_only_poop のミラー）
       poop_amount: allowsPoopAmount(input.diaperType)
@@ -327,21 +483,10 @@ export async function recordDiaper(input: RecordDiaperInput) {
         : null,
       ...(input.loggedAt != null && { logged_at: input.loggedAt }),
       memo: input.memo || null,
-    })
-    .select("id")
-    .single()
-
-  if (error) {
-    logSupabaseError("baby", "おむつの記録に失敗", error, { userId, householdId })
-    return { error: "おむつの記録に失敗しました。", id: null }
-  }
-  if (!data) {
-    console.error("[baby] おむつの記録: 行が返らず", { userId, householdId })
-    return { error: "おむつの記録に失敗しました。", id: null }
-  }
-
-  revalidatePath("/baby")
-  return { error: null, id: data.id }
+    },
+    input.clientId,
+    "おむつの記録",
+  )
 }
 
 export async function recordTemperature(input: RecordTemperatureInput) {
@@ -349,36 +494,27 @@ export async function recordTemperature(input: RecordTemperatureInput) {
   if (memoError) return { error: memoError, id: null }
   const timeError = validateCreateLoggedAt(input.loggedAt)
   if (timeError) return { error: timeError, id: null }
+  const clientIdError = validateClientId(input.clientId)
+  if (clientIdError) return { error: clientIdError, id: null }
 
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error, id: null }
   const { supabase, userId, householdId } = result.context
 
   // B-03: 楽観 append 用に作成ログの id を返す。
-  const { data, error } = await supabase
-    .from("baby_logs")
-    .insert({
-      household_id: householdId,
+  return insertBabyLog(
+    supabase,
+    householdId,
+    userId,
+    {
       log_type: "temperature",
-      logged_by: userId,
       temperature: input.temperature,
       ...(input.loggedAt != null && { logged_at: input.loggedAt }),
       memo: input.memo || null,
-    })
-    .select("id")
-    .single()
-
-  if (error) {
-    logSupabaseError("baby", "体温の記録に失敗", error, { userId, householdId })
-    return { error: "体温の記録に失敗しました。", id: null }
-  }
-  if (!data) {
-    console.error("[baby] 体温の記録: 行が返らず", { userId, householdId })
-    return { error: "体温の記録に失敗しました。", id: null }
-  }
-
-  revalidatePath("/baby")
-  return { error: null, id: data.id }
+    },
+    input.clientId,
+    "体温の記録",
+  )
 }
 
 export async function recordGrowth(input: RecordGrowthInput) {
@@ -386,37 +522,28 @@ export async function recordGrowth(input: RecordGrowthInput) {
   if (memoError) return { error: memoError, id: null }
   const timeError = validateCreateLoggedAt(input.loggedAt)
   if (timeError) return { error: timeError, id: null }
+  const clientIdError = validateClientId(input.clientId)
+  if (clientIdError) return { error: clientIdError, id: null }
 
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error, id: null }
   const { supabase, userId, householdId } = result.context
 
   // B-03: 楽観 append 用に作成ログの id を返す。
-  const { data, error } = await supabase
-    .from("baby_logs")
-    .insert({
-      household_id: householdId,
+  return insertBabyLog(
+    supabase,
+    householdId,
+    userId,
+    {
       log_type: "growth",
-      logged_by: userId,
       weight_g: input.weightG ?? null,
       height_cm: input.heightCm ?? null,
       ...(input.loggedAt != null && { logged_at: input.loggedAt }),
       memo: input.memo || null,
-    })
-    .select("id")
-    .single()
-
-  if (error) {
-    logSupabaseError("baby", "成長記録に失敗", error, { userId, householdId })
-    return { error: "成長記録に失敗しました。", id: null }
-  }
-  if (!data) {
-    console.error("[baby] 成長記録: 行が返らず", { userId, householdId })
-    return { error: "成長記録に失敗しました。", id: null }
-  }
-
-  revalidatePath("/baby")
-  return { error: null, id: data.id }
+    },
+    input.clientId,
+    "成長記録",
+  )
 }
 
 export async function recordMemo(input: RecordMemoInput) {
@@ -425,35 +552,26 @@ export async function recordMemo(input: RecordMemoInput) {
   if (memoError) return { error: memoError, id: null }
   const timeError = validateCreateLoggedAt(input.loggedAt)
   if (timeError) return { error: timeError, id: null }
+  const clientIdError = validateClientId(input.clientId)
+  if (clientIdError) return { error: clientIdError, id: null }
 
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error, id: null }
   const { supabase, userId, householdId } = result.context
 
   // B-03: 楽観 append 用に作成ログの id を返す。
-  const { data, error } = await supabase
-    .from("baby_logs")
-    .insert({
-      household_id: householdId,
+  return insertBabyLog(
+    supabase,
+    householdId,
+    userId,
+    {
       log_type: "memo",
-      logged_by: userId,
       ...(input.loggedAt != null && { logged_at: input.loggedAt }),
       memo: input.memo,
-    })
-    .select("id")
-    .single()
-
-  if (error) {
-    logSupabaseError("baby", "メモの記録に失敗", error, { userId, householdId })
-    return { error: "メモの記録に失敗しました。", id: null }
-  }
-  if (!data) {
-    console.error("[baby] メモの記録: 行が返らず", { userId, householdId })
-    return { error: "メモの記録に失敗しました。", id: null }
-  }
-
-  revalidatePath("/baby")
-  return { error: null, id: data.id }
+    },
+    input.clientId,
+    "メモの記録",
+  )
 }
 
 export async function updateLog(
@@ -512,7 +630,23 @@ export async function updateLog(
     heightCm?: number | null
     memo?: string | null
   },
-) {
+  /**
+   * 編集を始めた時点の行の版（`updated_at` の表記のまま。`new Date()` を通すとマイクロ秒が
+   * 落ちて常に衝突する）。サーバはこの版を条件にした 1 本の UPDATE で書き、版が進んで
+   * おれば 0 行 = 衝突として返す（P2-07: 家族が先に保存した記録を古い画面から無言で
+   * 上書きせぬ。日記 P1-06・予定と同じ楽観的排他。版は trg_baby_logs_updated_at が
+   * UPDATE ごとに進める）。
+   */
+  expectedUpdatedAt: string,
+  // 成功時は更新後の行（サーバ真値）を返す。呼び出し側はこれで画面を即時に書き換える —
+  // Realtime UPDATE の到達だけに頼ると、不達の間「更新しました」と出るのに旧値のまま
+  // 残る（作成・削除が B-03 で楽観反映へ移った後も、編集だけが取り残されておった）。
+  // log が optional なのは、行を返さぬ旧形の応答でも呼び出し側が壊れぬようにするため。
+  // 衝突時は `conflict.current` に最新の行（他端末で削除済み・別世帯なら null）を返す。
+): Promise<
+  | { error: string; log?: undefined; conflict?: { current: BabyLogData | null } }
+  | { error: null; log?: BabyLogData; conflict?: undefined }
+> {
   const memoError = validateMemoLength(updates.memo)
   if (memoError) return { error: memoError }
 
@@ -594,6 +728,12 @@ export async function updateLog(
     if (timeError) return { error: timeError }
   }
 
+  // 版を送らぬ呼び出し（デプロイを跨いだ古い PWA バンドル等）を無条件の上書きへ倒さない。
+  // undefined も null も不正な表記もここで止める（ログの編集に「行が無い」版は無い）。
+  if (!isTimestamptzText(expectedUpdatedAt)) {
+    return { error: STALE_SCREEN_SAVE_ERROR }
+  }
+
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
@@ -602,6 +742,8 @@ export async function updateLog(
   // 既存行が sides を持つなら fail-loud で拒否する（合計だけ書き換えると
   // chk_breast_side_sec_total の等式違反で生の Postgres エラーになるか、
   // 無音で sides を捨てるかの二択になるため、手前で明示的に拒む）。
+  // 読んだ後に行が変わっても、下の UPDATE は版で絞るため 0 行（衝突）になる —
+  // この先読みは判定材料を得るだけで、書き込みの可否は版の条件が一度に決める。
   const needsExistingRow = updates.durationSec !== undefined && !sidesPresent
   if (needsExistingRow) {
     const { data: existing, error: fetchError } = await supabase
@@ -618,96 +760,136 @@ export async function updateLog(
       return { error: "ログの更新に失敗しました。" }
     }
     if (!existing) {
-      return { error: "ログの更新に失敗しました。" }
+      return { error: LOG_DELETED_ERROR, conflict: { current: null } }
     }
     if (existing.breast_left_sec != null) {
       return { error: BREAST_SIDES_TOTAL_ONLY_ERROR }
     }
   }
 
-  // .update() は 0 行更新でも error: null を返す（別世帯・不在 id なら 0 行マッチ）。
-  // .select("id").single() で更新行を要求し、0 行を「成功」と偽らないようにする。
+  // 書く列は一度だけ組み、UPDATE と「0 行の時に行が送った内容そのものか」の比較で
+  // 同じものを使う（別々に組むと、比較だけが古い規約のまま残りうる）。
+  const payload: BabyLogUpdate = {
+    ...(updates.loggedAt !== undefined && { logged_at: updates.loggedAt }),
+    ...(updates.feedingType !== undefined && {
+      feeding_type: updates.feedingType,
+      // chk_breast_counts_only_breast のミラー: 'breast' 以外へ変更する時は
+      // 必ず counts を null 化する（クライアントの送り忘れ/消し忘れで DB CHECK
+      // 違反にしない）。'breast' への変更時は上の検証済み値をそのまま書く。
+      breast_left_count:
+        updates.feedingType === "breast" ? updates.breastLeftCount : null,
+      breast_right_count:
+        updates.feedingType === "breast" ? updates.breastRightCount : null,
+    }),
+    // sides / 開始側の null 化は種別変更時のみ（'breast' のまま未指定の編集 —
+    // 旧形サイクル行の合計編集など — では列に触れない）
+    ...(updates.feedingType !== undefined &&
+      updates.feedingType !== "breast" && {
+        breast_left_sec: null,
+        breast_right_sec: null,
+        breast_start_side: null,
+      }),
+    // 開始側は feedingType='breast' と対で指定された時だけ書く（null = 不明へ戻す）
+    ...(updates.breastStartSide !== undefined &&
+      updates.feedingType === "breast" && {
+        breast_start_side: updates.breastStartSide,
+      }),
+    // sides 指定時は合計をサーバ導出（validateBreastSideSeconds 通過済み・
+    // durationSec の同時指定は上で拒否済み → duration_sec の書込はこの1経路のみ）
+    ...(sidesPresent && {
+      breast_left_sec: updates.breastLeftSec,
+      breast_right_sec: updates.breastRightSec,
+      duration_sec: updates.breastLeftSec! + updates.breastRightSec!,
+      duration_min: deriveDurationMinFromSec(
+        updates.breastLeftSec! + updates.breastRightSec!,
+      ),
+    }),
+    ...(updates.amountMl !== undefined && { amount_ml: updates.amountMl }),
+    ...(updates.durationSec !== undefined && {
+      duration_sec: updates.durationSec,
+      duration_min: deriveDurationMinFromSec(updates.durationSec),
+    }),
+    ...(updates.diaperType !== undefined && {
+      diaper_type: updates.diaperType,
+    }),
+    // pee へ変更する時は量を必ず null 化する（chk_poop_amount_only_poop のミラー。
+    // クライアントの送り忘れ/消し忘れで DB CHECK 違反にしない）
+    ...(updates.diaperType !== undefined &&
+      !allowsPoopAmount(updates.diaperType) && { poop_amount: null }),
+    // poop / both では指定された時だけ書く（null = 量なしへ戻す）
+    ...(updates.poopAmount !== undefined &&
+      updates.diaperType !== undefined &&
+      allowsPoopAmount(updates.diaperType) && {
+        poop_amount: updates.poopAmount,
+      }),
+    ...(updates.temperature !== undefined && {
+      temperature: updates.temperature,
+    }),
+    ...(updates.weightG !== undefined && { weight_g: updates.weightG }),
+    ...(updates.heightCm !== undefined && { height_cm: updates.heightCm }),
+    ...(updates.memo !== undefined && { memo: updates.memo }),
+  }
+
+  // id・世帯・版の三点で絞った 1 本の UPDATE（先に版を読んでから無条件に書く形にせぬ —
+  // 読みと書きの間に家族の保存が挟まると、その変更を無言で上書きする）。行ロックの後で
+  // 条件を評価し直すため、同時の保存でも版の合う側の 1 本だけが書ける。
+  // .update() は 0 行でも error: null を返す（版違い・別世帯・不在 id）。結果は配列で
+  // 受け、0 行を「成功」と偽らない（0 行の非 GET に maybeSingle / single を使うと
+  // postgrest-js の版で扱いが揺れる — 日記と同じ受け方）。
+  // 列は BABY_LOG_COLUMNS 一式 — 返した行で画面を書き換えるため（duration_min の導出や
+  // 種別変更に伴う null 化もサーバの結果をそのまま使い、クライアントで再現せぬ）。
   const { data, error } = await supabase
     .from("baby_logs")
-    .update({
-      ...(updates.loggedAt !== undefined && { logged_at: updates.loggedAt }),
-      ...(updates.feedingType !== undefined && {
-        feeding_type: updates.feedingType,
-        // chk_breast_counts_only_breast のミラー: 'breast' 以外へ変更する時は
-        // 必ず counts を null 化する（クライアントの送り忘れ/消し忘れで DB CHECK
-        // 違反にしない）。'breast' への変更時は上の検証済み値をそのまま書く。
-        breast_left_count:
-          updates.feedingType === "breast" ? updates.breastLeftCount : null,
-        breast_right_count:
-          updates.feedingType === "breast" ? updates.breastRightCount : null,
-      }),
-      // sides / 開始側の null 化は種別変更時のみ（'breast' のまま未指定の編集 —
-      // 旧形サイクル行の合計編集など — では列に触れない）
-      ...(updates.feedingType !== undefined &&
-        updates.feedingType !== "breast" && {
-          breast_left_sec: null,
-          breast_right_sec: null,
-          breast_start_side: null,
-        }),
-      // 開始側は feedingType='breast' と対で指定された時だけ書く（null = 不明へ戻す）
-      ...(updates.breastStartSide !== undefined &&
-        updates.feedingType === "breast" && {
-          breast_start_side: updates.breastStartSide,
-        }),
-      // sides 指定時は合計をサーバ導出（validateBreastSideSeconds 通過済み・
-      // durationSec の同時指定は上で拒否済み → duration_sec の書込はこの1経路のみ）
-      ...(sidesPresent && {
-        breast_left_sec: updates.breastLeftSec,
-        breast_right_sec: updates.breastRightSec,
-        duration_sec: updates.breastLeftSec! + updates.breastRightSec!,
-        duration_min: deriveDurationMinFromSec(
-          updates.breastLeftSec! + updates.breastRightSec!,
-        ),
-      }),
-      ...(updates.amountMl !== undefined && { amount_ml: updates.amountMl }),
-      ...(updates.durationSec !== undefined && {
-        duration_sec: updates.durationSec,
-        duration_min: deriveDurationMinFromSec(updates.durationSec),
-      }),
-      ...(updates.diaperType !== undefined && {
-        diaper_type: updates.diaperType,
-      }),
-      // pee へ変更する時は量を必ず null 化する（chk_poop_amount_only_poop のミラー。
-      // クライアントの送り忘れ/消し忘れで DB CHECK 違反にしない）
-      ...(updates.diaperType !== undefined &&
-        !allowsPoopAmount(updates.diaperType) && { poop_amount: null }),
-      // poop / both では指定された時だけ書く（null = 量なしへ戻す）
-      ...(updates.poopAmount !== undefined &&
-        updates.diaperType !== undefined &&
-        allowsPoopAmount(updates.diaperType) && {
-          poop_amount: updates.poopAmount,
-        }),
-      ...(updates.temperature !== undefined && {
-        temperature: updates.temperature,
-      }),
-      ...(updates.weightG !== undefined && { weight_g: updates.weightG }),
-      ...(updates.heightCm !== undefined && { height_cm: updates.heightCm }),
-      ...(updates.memo !== undefined && { memo: updates.memo }),
-    })
+    .update(payload)
     .eq("id", logId)
     .eq("household_id", householdId)
-    .select("id")
-    .single()
+    .eq("updated_at", expectedUpdatedAt)
+    .select(BABY_LOG_COLUMNS)
 
-  // PGRST116 は「該当行なし」= 対象ログが存在しない/別世帯という正常な失敗ゆえ
-  // ログ対象外。それ以外の error は真の失敗として構造化ログに残す。
   if (error) {
-    if (error.code !== "PGRST116") {
-      logSupabaseError("baby", "ログの更新に失敗", error, { logId, householdId })
-    }
+    logSupabaseError("baby", "ログの更新に失敗", error, { logId, householdId })
     return { error: "ログの更新に失敗しました。" }
   }
-  if (!data) {
-    return { error: "ログの更新に失敗しました。" }
+  const saved = data?.[0]
+  if (saved) {
+    revalidatePath("/baby")
+    return { error: null, log: saved as BabyLogData }
   }
 
-  revalidatePath("/baby")
-  return { error: null }
+  // 0 行: 版が進んでおる（家族・自分の別端末が先に保存）か、行が無い（削除済み・別世帯）。
+  // 読み直して確かめる。読み直しまで失敗したら衝突とも削除とも断定せぬ。
+  const { data: current, error: readError } = await supabase
+    .from("baby_logs")
+    .select(BABY_LOG_COLUMNS)
+    .eq("id", logId)
+    .eq("household_id", householdId)
+    .maybeSingle()
+  if (readError) {
+    logSupabaseError("baby", "log conflict re-read failed", readError, {
+      logId,
+      householdId,
+    })
+    return {
+      error: "記録を更新できたか確かめられませんでした。画面を更新して記録を確かめてください。",
+    }
+  }
+  // 別世帯の行も RLS と世帯の絞り込みで見えぬゆえ、削除済みと同じ応答になる（他の世帯の
+  // 記録の存在を漏らさぬ）。
+  if (!current) {
+    return { error: LOG_DELETED_ERROR, conflict: { current: null } }
+  }
+  // 応答だけが失われた保存の再試行は、版が進んでおるゆえ 0 行になるが、行は今送った内容
+  // そのものじゃ。それは衝突ではなく既に成立した保存ゆえ、成功として返す（冪等。日記と
+  // 同じ扱い）。送っていない列は比べぬ — その後の家族の変更（時刻など）は残したまま返す。
+  if (sameRecordedContent(current as Record<string, unknown>, payload)) {
+    revalidatePath("/baby")
+    return { error: null, log: current as BabyLogData }
+  }
+  // 書いた人は断定しない（応答が失われた自分の保存・同じ利用者の別端末も同じ形になる）。
+  return {
+    error: "この記録は別の端末で先に更新されていました（家族またはご自身）。",
+    conflict: { current: current as BabyLogData },
+  }
 }
 
 export async function deleteLog(logId: string) {
@@ -729,7 +911,10 @@ export async function deleteLog(logId: string) {
     return { error: "ログの削除に失敗しました。" }
   }
   if (!data || data.length === 0) {
-    return { error: "既に削除されています。" }
+    // 成功とは偽らないが、呼び出し側が画面の幽霊行を外せるよう印を付ける
+    // （他端末の削除はフィルタ付き Realtime で届かぬため、画面に残ったままの行を
+    // 消そうとしてここへ来る。P1-04）。RLS 下では別世帯の行は画面に出ない。
+    return { error: "既に削除されています。", alreadyDeleted: true as const }
   }
 
   revalidatePath("/baby")
@@ -742,14 +927,41 @@ export async function deleteLog(logId: string) {
 
 const MAX_DIARY_LENGTH = 5000
 const DIARY_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+const BABY_DIARY_COLUMNS = "id, diary_date, content, updated_at"
+const DIARY_SAVE_ERROR = "日記の保存に失敗しました。もう一度お試しください。"
+const DIARY_DELETE_ERROR = "日記の削除に失敗しました。もう一度お試しください。"
 
 /**
- * その日の育児日記を保存する（1日1本、upsert 1経路）。
- * - content の trim 後が空なら「その日の日記を消す」= 行 DELETE（冪等: 行が無くても成功）。
- * - 日付キー（diary_date）ゆえ過去日の日記も作成・編集できる（ぴよログ準拠）。
- *   未来日は拒否（date nav は未来へ進めない前提の二重防御）。
+ * 期待版は null（＝行が無いことを期待）か、updated_at の表記の文字列だけを受ける。
+ * 表記は形だけ確かめて文字列のまま `.eq()` へ渡す（`new Date()` を通すとマイクロ秒が
+ * 落ち、以後の保存がすべて衝突する）。形の検査は予定の版・検索 cursor と共有する。
  */
-export async function upsertBabyDiary(diaryDate: string, content: string) {
+function isDiaryVersion(value: unknown): value is string | null {
+  return value === null || isTimestamptzText(value)
+}
+
+/**
+ * その日の育児日記を保存する（1日1本）。`updated_at` を版とする楽観的排他（P1-06）。
+ *
+ * `expectedUpdatedAt` は編集を始めた時点で見ていた版（行が無ければ null）。
+ * - null: INSERT … ON CONFLICT DO NOTHING。既に行が在れば衝突（取得失敗で空欄に
+ *   見えていた日記を、空欄からの一言で置き換える経路を塞ぐ）。
+ * - 版あり: `updated_at = 期待版` を条件に UPDATE。0 行なら衝突（配偶者が先に保存
+ *   した本文を無言で上書きしない。トリガ trg_baby_diaries_updated_at が UPDATE ごとに
+ *   版を進める）。
+ * - content の trim 後が空 = その日の日記を消す。版ありなら同じ条件付きの DELETE、
+ *   null なら行が無いことの確認だけ（DELETE を発行しない）。行が既に無ければ冪等に成功。
+ * 衝突時は最新の行を読み直して `conflict.current` で返す。呼び出し側は下書きを捨てず、
+ * 版を current へ進めてから保存し直す（＝意図した上書きになる）。
+ *
+ * 日付キー（diary_date）ゆえ過去日の日記も作成・編集できる（ぴよログ準拠）。
+ * 未来日は拒否（date nav は未来へ進めない前提の二重防御）。
+ */
+export async function upsertBabyDiary(
+  diaryDate: string,
+  content: string,
+  expectedUpdatedAt: string | null,
+): Promise<UpsertBabyDiaryResult> {
   if (!DIARY_DATE_RE.test(diaryDate)) {
     return { error: "日付の形式が不正です", diary: null }
   }
@@ -764,55 +976,139 @@ export async function upsertBabyDiary(diaryDate: string, content: string) {
       diary: null,
     }
   }
+  // 版を送らぬ呼び出し（デプロイを跨いだ古い PWA バンドル等）を無条件の上書きへ
+  // 倒さない。undefined も不正な表記もここで止める。
+  if (!isDiaryVersion(expectedUpdatedAt)) {
+    return {
+      error: STALE_SCREEN_SAVE_ERROR,
+      diary: null,
+    }
+  }
 
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error, diary: null }
   const { supabase, userId, householdId } = result.context
 
+  // 衝突の確定: 最新の行を読み直して返す。読み直しまで失敗したら conflict を付けない
+  // （current: null は「削除済み」の意味ゆえ、読めなかったことと混同させない）。
+  const readConflict = async (): Promise<UpsertBabyDiaryResult> => {
+    const { data: current, error: readError } = await supabase
+      .from("baby_diaries")
+      .select(BABY_DIARY_COLUMNS)
+      .eq("household_id", householdId)
+      .eq("diary_date", diaryDate)
+      .maybeSingle()
+    if (readError) {
+      logSupabaseError("baby", "diary conflict re-read failed", readError, {
+        householdId,
+        diaryDate,
+      })
+      return {
+        error: "この日の日記は他の端末で更新されています。最新の内容を読み込めませんでした。もう一度お試しください。",
+        diary: null,
+      }
+    }
+    // 書いた人は断定しない: 応答が失われた自分の保存や、同じ利用者の別端末の保存も
+    // 同じ形で衝突する（読み直しは版を比べるだけで、書き手は見ていない）。
+    return {
+      error: current
+        ? "この日の日記は別の端末で先に保存されていました（家族またはご自身）。"
+        : "この日の日記は他の端末で削除されていました。",
+      diary: null,
+      conflict: { current: current ?? null },
+    }
+  }
+
   if (trimmed === "") {
     // 空保存 = その日の日記を削除（DB CHECK も空行を禁じており、空行は残さない）。
-    const { error } = await supabase
+    if (expectedUpdatedAt === null) {
+      // 「行が無い」と思って空保存した。在れば相手の本文ゆえ消さずに衝突とする。
+      const conflict = await readConflict()
+      if (conflict.conflict?.current === null) return { error: null, diary: null }
+      return conflict
+    }
+    const { data: deleted, error } = await supabase
       .from("baby_diaries")
       .delete()
       .eq("household_id", householdId)
       .eq("diary_date", diaryDate)
+      .eq("updated_at", expectedUpdatedAt)
+      .select("id")
 
     if (error) {
       logSupabaseError("baby", "diary delete failed", error, {
         householdId,
         diaryDate,
       })
-      return { error: "日記の削除に失敗しました。もう一度お試しください。", diary: null }
+      return { error: DIARY_DELETE_ERROR, diary: null }
+    }
+    if (!deleted || deleted.length === 0) {
+      // 版が合わぬ。既に無ければ消したい状態は満たされている（冪等）。
+      const conflict = await readConflict()
+      if (conflict.conflict?.current === null) return { error: null, diary: null }
+      return conflict
     }
     revalidatePath("/baby")
     return { error: null, diary: null }
   }
 
-  const { data, error } = await supabase
-    .from("baby_diaries")
-    .upsert(
-      {
-        household_id: householdId,
-        diary_date: diaryDate,
-        content: trimmed,
-        updated_by: userId,
-      },
-      { onConflict: "household_id,diary_date" },
-    )
-    .select("id, diary_date, content, updated_at")
-    .single()
-
-  if (error) {
-    logSupabaseError("baby", "diary upsert failed", error, {
-      householdId,
-      diaryDate,
-    })
-    return { error: "日記の保存に失敗しました。もう一度お試しください。", diary: null }
+  // 書き込みの結果は配列で受け 0 行を衝突として検知する（0 行の INSERT/UPDATE に
+  // maybeSingle を使うと非 GET での扱いが postgrest-js の版で揺れる）。
+  let written: BabyDiaryData[] | null
+  if (expectedUpdatedAt === null) {
+    const { data, error } = await supabase
+      .from("baby_diaries")
+      .upsert(
+        {
+          household_id: householdId,
+          diary_date: diaryDate,
+          content: trimmed,
+          updated_by: userId,
+        },
+        { onConflict: "household_id,diary_date", ignoreDuplicates: true },
+      )
+      .select(BABY_DIARY_COLUMNS)
+    if (error) {
+      logSupabaseError("baby", "diary insert failed", error, {
+        householdId,
+        diaryDate,
+      })
+      return { error: DIARY_SAVE_ERROR, diary: null }
+    }
+    written = data
+  } else {
+    const { data, error } = await supabase
+      .from("baby_diaries")
+      .update({ content: trimmed, updated_by: userId })
+      .eq("household_id", householdId)
+      .eq("diary_date", diaryDate)
+      .eq("updated_at", expectedUpdatedAt)
+      .select(BABY_DIARY_COLUMNS)
+    if (error) {
+      logSupabaseError("baby", "diary update failed", error, {
+        householdId,
+        diaryDate,
+      })
+      return { error: DIARY_SAVE_ERROR, diary: null }
+    }
+    written = data
   }
-  if (!data) {
-    return { error: "日記の保存に失敗しました。もう一度お試しください。", diary: null }
+
+  const saved = written?.[0]
+  if (!saved) {
+    const conflict = await readConflict()
+    // 応答だけが失われた保存の再試行は、版が進んでおるゆえ 0 行になるが、読み直した
+    // 本文は今送った本文と同じじゃ。それは衝突ではなく既に成立した保存ゆえ、成功として
+    // 返す（冪等。空保存の側が「既に無い」を成功とするのと対称）。相手が偶然同じ本文を
+    // 書いた場合も、守るべき本文は同じゆえ失うものは無い。
+    const current = conflict.conflict?.current
+    if (current && current.content === trimmed) {
+      revalidatePath("/baby")
+      return { error: null, diary: current }
+    }
+    return conflict
   }
 
   revalidatePath("/baby")
-  return { error: null, diary: data }
+  return { error: null, diary: saved }
 }

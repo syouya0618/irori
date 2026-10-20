@@ -5,6 +5,10 @@ import { runInNewContext } from "node:vm"
 // classic script の sw.js は import できぬゆえ、手動同期の綻びをここで殺す
 // （既定の着地先がアプリ側の定数と一致することを機械で縛る）。
 import { CALENDAR_DATE_PARAM, CALENDAR_PATH } from "@/lib/domain/calendar-link"
+import {
+  isHouseholdCacheName,
+  SW_MESSAGE_PURGE_HOUSEHOLD_CACHES,
+} from "@/lib/pwa/sw-messages"
 
 /**
  * public/sw.js の純粋関数 (self.__TEST_HOOKS__) を node:vm で実行して検証する。
@@ -1364,5 +1368,60 @@ describe("activate リスナ", () => {
     expect(spy.deletedCaches).toEqual([])
     // 消えるのは名指しのエントリだけ
     expect(spy.deletedEntries).toEqual(["/manifest.webmanifest"])
+  })
+})
+
+/**
+ * 世帯キャッシュの破棄（P2-24）。
+ *
+ * ページ側（sw-messages.ts）は ack の `ok` を読み、true の時だけ LAST_USER_ID を消す。
+ * ゆえに SW は**失敗も返さねばならぬ** —— 黙って ack を出さねば、ページは
+ * タイムアウトまで待たされた末に「確かめられぬ」へ倒れるしかない。
+ */
+describe("message リスナ — PURGE_HOUSEHOLD_CACHES", () => {
+  async function runPurge(caches: unknown) {
+    const { listeners } = loadSwWithEvents({ caches })
+    const replies: unknown[] = []
+    let work: Promise<unknown> | null = null
+    listenerFor(listeners, "message")({
+      data: { type: SW_MESSAGE_PURGE_HOUSEHOLD_CACHES },
+      ports: [{ postMessage: (m: unknown) => replies.push(m) }],
+      waitUntil: (p: Promise<unknown>) => {
+        work = p
+      },
+    })
+    if (!work) throw new Error("message が waitUntil を呼んでおらぬ")
+    // 失敗経路で waitUntil が reject しても assert まで辿り着かせる
+    await (work as Promise<unknown>).catch(() => {})
+    return replies
+  }
+
+  it("documents / rsc だけを消し、{ ok: true } を返す", async () => {
+    const deleted: string[] = []
+    const replies = await runPurge({
+      delete: (name: string) => {
+        deleted.push(name)
+        return Promise.resolve(true)
+      },
+    })
+    expect(deleted.sort()).toEqual(["irori-v1-documents", "irori-v1-rsc"])
+    expect(replies).toEqual([{ ok: true }])
+  })
+
+  it("caches.delete が失敗したら { ok: false } を返す（黙らぬ）", async () => {
+    const replies = await runPurge({
+      delete: () => Promise.reject(new Error("quota")),
+    })
+    expect(replies).toEqual([{ ok: false }])
+  })
+
+  it("ページ側の判定（isHouseholdCacheName）と CACHE_NAMES が一致する", () => {
+    const { CACHE_NAMES } = loadSw()
+    // 手動同期の綻びを殺す: 片方だけ名前を変えると、ページからの破棄が空振りする
+    expect(isHouseholdCacheName(CACHE_NAMES.documents)).toBe(true)
+    expect(isHouseholdCacheName(CACHE_NAMES.rsc)).toBe(true)
+    expect(isHouseholdCacheName(CACHE_NAMES.precache)).toBe(false)
+    expect(isHouseholdCacheName(CACHE_NAMES.static)).toBe(false)
+    expect(isHouseholdCacheName(CACHE_NAMES.images)).toBe(false)
   })
 })

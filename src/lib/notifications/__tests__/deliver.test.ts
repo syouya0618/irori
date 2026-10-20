@@ -716,6 +716,76 @@ describe("送信の失敗", () => {
   })
 })
 
+/**
+ * ★ **allowlist 外の宛先へは撃たぬ（P1-03）。**
+ *
+ * 20261002100003 以前は RPC が endpoint を検査せず、承認済みの JWT で直に叩けば
+ * 任意の URL を購読として登録できた。DB に残っておる旧行も、将来どこかの経路が
+ * 検査を外した行も、**送信の直前**で止めねば cron が盲目 SSRF の踏み台になる。
+ *
+ * 送らぬだけでなく「消さぬ・失敗と数えぬ」も対で見る: 失敗の枝へ流せば
+ * failure_count が積まれ、gone の枝へ流せば購読が消える（破棄は 404/410 だけの契約）。
+ */
+describe("allowlist 外の宛先（P1-03）", () => {
+  const BAD_ENDPOINT = "https://legacy.attacker.example:8443/x"
+
+  function seedWithBadSubscription(): FakeNotifyDb {
+    const db = seed()
+    db.push_subscriptions.push({
+      id: "sub-bad",
+      user_id: U2,
+      endpoint: BAD_ENDPOINT,
+      p256dh: "k-bad",
+      auth: "a-bad",
+      failure_count: 0,
+      last_success_at: null,
+      last_failure_at: null,
+    })
+    return db
+  }
+
+  it("**不適合な宛先は sendPush に渡らぬ**（同じ世帯の適合な宛先には送る）", async () => {
+    const db = seedWithBadSubscription()
+    const { promise, sendPush } = run(db)
+    const result = await promise
+
+    const endpoints = sendPush.mock.calls.map(([target]) => target.endpoint)
+    expect(endpoints).not.toContain(BAD_ENDPOINT)
+    // 対照: 送信そのものが止まったのではない（適合な宛先には届く）。
+    expect(endpoints).toEqual(["https://fcm.googleapis.com/u1"])
+    expect(result.sent).toBe(1)
+    expect(result.rejectedEndpoints).toBe(1)
+  })
+
+  it("購読は消さず、失敗とも数えぬ（failure_count を積まぬ・failed は 0）", async () => {
+    const db = seedWithBadSubscription()
+    const result = await run(db).promise
+
+    expect(result.failed).toBe(0)
+    const bad = db.push_subscriptions.find((row) => row.id === "sub-bad")
+    expect(bad).toMatchObject({ failure_count: 0, last_failure_at: null })
+    // 行は claim せず据え置く（grace の後に期限切れ掃除が expired で畳む）。
+    // sent_at を立てれば「送った」嘘になり、skip_reason は CHECK の外ゆえ足さぬ。
+    const row = db.notification_deliveries.find(
+      (delivery) => delivery.subscription_key === "sub-bad",
+    )
+    expect(row).toMatchObject({ sent_at: null, skipped_at: null, skip_reason: null })
+  })
+
+  it("ログに endpoint を出さぬ（数と識別子だけ）", async () => {
+    const db = seedWithBadSubscription()
+    await run(db).promise
+
+    const logged = JSON.stringify([
+      ...vi.mocked(console.error).mock.calls,
+      ...vi.mocked(console.log).mock.calls,
+    ])
+    // 不適合を知らせるログ自体は出ておる（無音で据え置かぬ）。
+    expect(logged).toContain("sub-bad")
+    expect(logged).not.toContain("legacy.attacker.example")
+  })
+})
+
 describe("心拍", () => {
   it("送るものが無くとも必ず書かれる（**故障と無風を分ける唯一の手段**）", async () => {
     const db = emptyNotifyDb()

@@ -6,6 +6,25 @@
  * 日記とは別概念（ぴよログの メモ / 日記 の区別に準拠）。
  */
 
+import type { BabyDiaryData } from "@/lib/types/baby"
+
+/**
+ * 日記保存の衝突（P1-06: updated_at を版とする楽観的排他）。
+ * `current` はサーバが読み直した最新の行。他端末で削除済みなら null。
+ */
+export interface BabyDiaryConflict {
+  current: BabyDiaryData | null
+}
+
+/**
+ * upsertBabyDiary の戻り値。衝突時は error に加えて conflict を返す
+ * （呼び出し側は下書きを捨てず、current を並べて見せ、版を current へ進める）。
+ * 最新行の読み直しまで失敗した時は conflict を付けない（「削除済み」と誤認させぬ）。
+ */
+export type UpsertBabyDiaryResult =
+  | { error: null; diary: BabyDiaryData | null; conflict?: undefined }
+  | { error: string; diary: null; conflict?: BabyDiaryConflict }
+
 /**
  * 日記一覧の1ページあたりの取得件数。サーバ初回取得（diary/page.tsx）と
  * クライアントの「もっと見る」追ページ取得（baby-diary-view.tsx）で同一値を使う。

@@ -1,5 +1,7 @@
 # Phase A: バグ潰し — PR 分割と TDD 詳細
 
+> **状態（2026-10-19 時点）: 完了（歴史記録）。** 親計画とともに実装済み。
+
 > 親計画: `docs/plans/2026-07-08-childcare-ux-and-shared-calendar.md`
 > **For Claude:** 各 PR は必ず **red → green** で進める。落ちるテストを書き、`pnpm test:run` で**実際に落ちることを確認してから**修正する。
 

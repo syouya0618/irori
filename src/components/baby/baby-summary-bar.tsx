@@ -45,6 +45,11 @@ interface BabySummaryBarProps {
   todayCounts: TodayCounts
   /** 表示中の日付（YYYY-MM-DD、JST）。今日か過去日かでラベル・経過表示を切り替える */
   date: string
+  /**
+   * 選択日の記録の取得状態（P2-10）。ready 以外は数字を出さず「—」にする —
+   * 取得中・失敗中の空配列を「0回」「---」と真値のように見せぬ（レビュー P3-5）
+   */
+  status?: "ready" | "loading" | "error"
 }
 
 export function BabySummaryBar({
@@ -54,10 +59,13 @@ export function BabySummaryBar({
   now,
   todayCounts,
   date,
+  status = "ready",
 }: BabySummaryBarProps) {
   // isToday は now 引数由来で判定する（実行環境の実時計は見ない）。
   // テストで now を固定した際に実日付とズレて誤判定しないため。
   const isToday = date === todayJstString(now)
+  const pending = status !== "ready"
+  const PENDING_MARK = "—"
   const [, monthStr, dayStr] = date.split("-")
   const dateLabel = isToday
     ? "今日のまとめ"
@@ -82,18 +90,23 @@ export function BabySummaryBar({
       <div
         role="group"
         aria-label={dateLabel}
+        aria-busy={pending || undefined}
         className="glass flex items-center justify-around rounded-2xl px-3 py-2.5 shadow-lg shadow-black/[0.04]"
       >
         <TodayStat
           icon={<Milk size={14} className="text-amber-600 dark:text-amber-400" />}
           label="授乳"
-          value={formatFeedingBreakdown(todayCounts)}
+          value={pending ? PENDING_MARK : formatFeedingBreakdown(todayCounts)}
         />
         <div className="h-8 w-px bg-border" aria-hidden="true" />
         <TodayStat
           icon={<Droplets size={14} className="text-sky-600 dark:text-sky-400" />}
           label="おむつ"
-          value={`おしっこ${todayCounts.peeCount}・うんち${todayCounts.poopCount}`}
+          value={
+            pending
+              ? PENDING_MARK
+              : `おしっこ${todayCounts.peeCount}・うんち${todayCounts.poopCount}`
+          }
         />
       </div>
 
@@ -106,14 +119,16 @@ export function BabySummaryBar({
           </div>
           <span className="text-[10px] text-muted-foreground">最終授乳</span>
           <span className="font-mono text-xs font-semibold">
-            {isToday
-              ? feedingElapsed !== null
-                ? formatElapsedMinutes(feedingElapsed) + "前"
-                : "---"
-              : // 過去日: lastFeeding はその日の logs 由来なので絶対時刻は正確
-                lastFeeding
-                ? formatTimeJst(lastFeeding.logged_at)
-                : "---"}
+            {pending
+              ? PENDING_MARK
+              : isToday
+                ? feedingElapsed !== null
+                  ? formatElapsedMinutes(feedingElapsed) + "前"
+                  : "---"
+                : // 過去日: lastFeeding はその日の logs 由来なので絶対時刻は正確
+                  lastFeeding
+                  ? formatTimeJst(lastFeeding.logged_at)
+                  : "---"}
           </span>
         </div>
 
@@ -124,9 +139,11 @@ export function BabySummaryBar({
           </div>
           <span className="text-[10px] text-muted-foreground">おむつ</span>
           <span className="font-mono text-xs font-semibold">
-            {todayCounts.diaperCount > 0
-              ? `おしっこ${todayCounts.peeCount}・うんち${todayCounts.poopCount}`
-              : "---"}
+            {pending
+              ? PENDING_MARK
+              : todayCounts.diaperCount > 0
+                ? `おしっこ${todayCounts.peeCount}・うんち${todayCounts.poopCount}`
+                : "---"}
           </span>
         </div>
       </div>

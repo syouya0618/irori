@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition } from "react"
+import { useRef, useState, useTransition } from "react"
 import { Thermometer, Ruler, StickyNote, ChevronLeft } from "lucide-react"
 import { toast } from "sonner"
 import {
@@ -9,6 +9,7 @@ import {
   deleteLog,
 } from "@/app/(main)/baby/actions"
 import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
+import { newClientId } from "@/lib/utils/client-id"
 import {
   formatDiaperSummary,
   getDiaperTypeLabel,
@@ -41,6 +42,38 @@ const DIAPER_OPTIONS: { value: DiaperType; label: string }[] = [
 
 /** うんちを含む種別（量を選ぶ 2 段目へ進む）。DB CHECK chk_poop_amount_only_poop と同じ集合 */
 type PoopDiaperType = Extract<DiaperType, "poop" | "both">
+
+/**
+ * 通信断の後の再タップを「同じ操作の再試行」とみなす期限。これを過ぎた同じ種別のタップは
+ * 新しい記録（新しい冪等 id）。2 分は、圏外から戻って押し直す間隔としては十分に長く、
+ * 次の授乳・おむつ（最短でも数十分後）とは重ならぬ。
+ */
+export const RETRY_WINDOW_MS = 2 * 60_000
+
+interface PendingRetryId {
+  key: string
+  id: string
+  /** 作った時刻（epoch ms）。RETRY_WINDOW_MS を過ぎたら再利用せぬ */
+  at: number
+}
+
+/**
+ * 操作（key）に対する冪等 id。期限内の同じ操作なら前の id を返し、それ以外は新しく作る。
+ * 時計（Date.now）は描画中に読まぬよう、component の外で event handler からだけ呼ぶ。
+ */
+function resolveRetryClientId(
+  ref: { current: PendingRetryId | null },
+  key: string,
+): string {
+  const pending = ref.current
+  const now = Date.now()
+  if (pending && pending.key === key && now - pending.at < RETRY_WINDOW_MS) {
+    return pending.id
+  }
+  const id = newClientId()
+  ref.current = { key, id, at: now }
+  return id
+}
 
 /**
  * うんちの量の選択肢（2 段目）。「指定なし」は従来どおり量なし（poop_amount = null）で
@@ -88,6 +121,25 @@ export function BabyQuickActions({
    */
   const [pendingPoop, setPendingPoop] = useState<PoopDiaperType | null>(null)
 
+  /**
+   * 冪等 id（P2-08）。通信断で reject した直後に**同じ操作**をもう一度押した時は、前と
+   * 同じ id を送る — 「保存は DB で成立したが応答だけ失われた」再試行で同じ記録が二重に
+   * 増えぬよう、サーバが主キー重複を「記録済み」として吸収する。
+   * サーバが拒んだ（検証エラー）・成功した後は意図が変わりうるゆえ捨てる。
+   * 別の操作（種別が違う）を押した時も新しい id にする。
+   *
+   * 再利用には期限（RETRY_WINDOW_MS）を置く。期限が無いと、数時間後の「新しい授乳」の
+   * タップが過去の保存に吸収され、成功と出るのに行が増えぬ（目に見える重複が、見えぬ
+   * 消失に化ける）。期限内の再タップだけを再試行とみなす。
+   */
+  const retryIdRef = useRef<PendingRetryId | null>(null)
+  function clientIdFor(key: string): string {
+    return resolveRetryClientId(retryIdRef, key)
+  }
+  function settleClientId() {
+    retryIdRef.current = null
+  }
+
   // 片手操作での押し間違いをその場で取り消せるようにする（記録直後のトーストから）
   function undoLog(logId: string, label: string) {
     startTransition(async () => {
@@ -95,6 +147,8 @@ export function BabyQuickActions({
         const result = await deleteLog(logId)
         if (result.error) {
           toast.error(result.error)
+          // 他端末で既に削除済み: 画面に残る幽霊行を外す（P1-04）
+          if (result.alreadyDeleted) onLogRemoved?.(logId)
           return
         }
         // B-03: Realtime DELETE echo を待たずローカル state からも除去
@@ -129,11 +183,21 @@ export function BabyQuickActions({
   }
 
   function handleFeeding(feedingType: FeedingType) {
+    const clientId = clientIdFor(`feeding:${feedingType}`)
     startTransition(async () => {
       try {
-        const result = await recordFeeding({ feedingType })
+        const result = await recordFeeding({ feedingType, clientId })
+        // 応答が届いた（成功でも拒否でも）ゆえ、この意図の id は役目を終えた
+        settleClientId()
         if (result.error) {
           toast.error(result.error)
+          return
+        }
+        // 応答を失った前回の保存が受理されていた（二重には記録していない）。手元の行は
+        // 既に resync / Realtime で入っているか、これから入る。「取り消す」は出さぬ
+        // （前回の本物の行を消す導線になる）
+        if (result.replayed) {
+          toast.success("授乳は既に記録されています（二重には記録していません）")
           return
         }
         // B-03: 返却 id で楽観 append（Realtime を待たず timeline/回数を即時更新）
@@ -141,6 +205,7 @@ export function BabyQuickActions({
           onLogRecorded?.(
             buildOptimisticLog({
               id: result.id,
+              updatedAt: result.updatedAt ?? null,
               logType: "feeding",
               loggedBy: userId,
               feedingType,
@@ -164,11 +229,17 @@ export function BabyQuickActions({
   }
 
   function handleDiaper(diaperType: DiaperType, poopAmount: PoopAmount | null) {
+    const clientId = clientIdFor(`diaper:${diaperType}:${poopAmount ?? ""}`)
     startTransition(async () => {
       try {
-        const result = await recordDiaper({ diaperType, poopAmount })
+        const result = await recordDiaper({ diaperType, poopAmount, clientId })
+        settleClientId()
         if (result.error) {
           toast.error(result.error)
+          return
+        }
+        if (result.replayed) {
+          toast.success("おむつ交換は既に記録されています（二重には記録していません）")
           return
         }
         // B-03: 返却 id で楽観 append（feeding/diaper は UNIQUE 防御が無いため、
@@ -177,6 +248,7 @@ export function BabyQuickActions({
           onLogRecorded?.(
             buildOptimisticLog({
               id: result.id,
+              updatedAt: result.updatedAt ?? null,
               logType: "diaper",
               loggedBy: userId,
               diaperType,

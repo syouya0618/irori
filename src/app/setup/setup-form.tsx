@@ -67,7 +67,7 @@ export function SetupForm() {
             className="min-h-11 rounded-lg"
           />
           <p className="text-xs text-muted-foreground">
-            あとから変更できます
+            ご家族がすでに使っている場合は、ここで作らず招待リンクを送ってもらってください。参加する世帯はあとから移れません
           </p>
         </div>
         <Button

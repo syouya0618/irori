@@ -11,7 +11,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
  * ように見せる分だけ有害じゃ。**
  *
  * ゆえにここで固定するのは次の 4 点:
- * 1. 未認証 / 未承認 / 世帯未設定 は**すべて 401**（承認ゲートの二層目）
+ * 1. 未認証は 401・未承認 / 世帯未設定は 403・一過性の参照失敗は 503（承認ゲートの
+ *    二層目）。**401 は「ログインし直せば直る」時だけ**に限る — カードは 401 を
+ *    セッション切れと案内するゆえ、DB の一過性障害まで 401 にすると、待てば直る
+ *    障害で利用者をログアウトへ誘導してしまう（UX-03）
  * 2. **世帯 ID はリクエストではなく認証文脈から取る**（body で受けると世帯跨ぎ）
  * 3. **service role は認可を通った後にしか生成せぬ**（`admin.ts` の契約）
  * 4. 同期の失敗は 500 で、握り潰さず構造化ログを残す
@@ -59,16 +62,19 @@ beforeEach(() => {
 })
 
 describe("認可（session 認証。CRON_SECRET は使わぬ）", () => {
-  const denials: [string, string, string][] = [
-    ["未認証", "認証されていません", "unauthenticated"],
-    ["未承認（承認ゲートの二層目）", "承認待ちです", "not-approved"],
-    ["世帯未設定", "世帯が設定されていません", "no-household"],
-    ["一過性の参照失敗", "読み込みに失敗しました", "lookup-failed"],
+  const denials: [string, string, string, number][] = [
+    ["未認証", "認証されていません", "unauthenticated", 401],
+    ["未承認（承認ゲートの二層目）", "承認待ちです", "not-approved", 403],
+    ["世帯未設定", "世帯が設定されていません", "no-household", 403],
+    // ⭐ 待てば直る障害を 401（＝ログインし直せ）にせぬ（UX-03）
+    ["一過性の参照失敗", "プロフィールの取得に失敗しました", "lookup-failed", 503],
   ]
 
-  it.each(denials)("%s は 401", async (_name, error, reason) => {
+  it.each(
+    denials.map(([name, error, reason, status]) => ({ name, error, reason, status })),
+  )("$name は $status", async ({ error, reason, status }) => {
     getAuthContext.mockResolvedValue({ error, reason, context: null })
-    expect((await POST()).status).toBe(401)
+    expect((await POST()).status).toBe(status)
   })
 
   /**

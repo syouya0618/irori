@@ -43,6 +43,36 @@ function renderedAmounts(): number[] {
   })
 }
 
+describe("BabyTimeline の記録者表示（機能 A）", () => {
+  it("recorderLabelFor があれば各行の logged_by から名前を引いて出す", () => {
+    const logs = [
+      feedingLog({ id: "a", logged_by: "u1", amount_ml: 10 }),
+      feedingLog({ id: "b", logged_by: "u2", amount_ml: 20 }),
+    ]
+    const names: Record<string, string> = { u1: "はな", u2: "たろう" }
+    render(
+      <BabyTimeline
+        logs={logs}
+        onEdit={vi.fn()}
+        recorderLabelFor={(id) => names[id] ?? "家族"}
+      />,
+    )
+    expect(screen.getByText("はな")).toBeInTheDocument()
+    expect(screen.getByText("たろう")).toBeInTheDocument()
+  })
+
+  it("null なら出さぬ（一人の世帯）", () => {
+    render(
+      <BabyTimeline
+        logs={[feedingLog({ id: "a", logged_by: "u1", amount_ml: 10 })]}
+        onEdit={vi.fn()}
+        recorderLabelFor={null}
+      />,
+    )
+    expect(screen.queryByText("家族")).toBeNull()
+  })
+})
+
 describe("BabyTimeline の時系列降順ソート（タスクB: 時刻編集の並び保証）", () => {
   it("logs が順不同で渡されても logged_at 降順で描画する", () => {
     // 全て UTC 同一形式（本番の DB/Realtime 行と同じ）。amount_ml で位置を識別する。

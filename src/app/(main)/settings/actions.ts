@@ -85,7 +85,11 @@ export async function approveUser(targetUserId: string) {
   })
 
   if (error) {
-    if (error.message.includes("Only owners")) {
+    logSupabaseError("settings", "approve user failed", error, { targetUserId })
+    // P1-02: 承認は運用者だけ。approve_user は運用者でなければ 42501 を投げる。
+    // 文言の部分一致は旧関数（owner 判定・既定の SQLSTATE）が残る DB への互換じゃ
+    // （アプリが migration より先に出た窓で「権限が無い」を汎用文言に化けさせぬ）。
+    if (error.code === "42501" || error.message.includes("Only owners")) {
       return { error: "承認権限がありません" }
     }
     return { error: "承認に失敗しました" }

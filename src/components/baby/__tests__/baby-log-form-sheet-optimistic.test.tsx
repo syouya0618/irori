@@ -11,6 +11,7 @@ vi.mock("@/app/(main)/baby/actions", () => ({
   updateLog: vi.fn(),
   deleteLog: vi.fn(),
   recordFeeding: vi.fn(),
+  recordDiaper: vi.fn(),
   recordTemperature: vi.fn(),
   recordGrowth: vi.fn(),
   recordMemo: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 import { BabyLogFormSheet } from "../baby-log-form-sheet"
 import { recordMemo, recordFeeding, deleteLog } from "@/app/(main)/baby/actions"
+import { toast } from "sonner"
 
 const mockedRecordMemo = vi.mocked(recordMemo)
 const mockedRecordFeeding = vi.mocked(recordFeeding)
@@ -133,5 +135,54 @@ describe("BabyLogFormSheet の楽観 append/remove (B-03)", () => {
       expect(mockedDeleteLog).toHaveBeenCalledWith("log-del-1"),
     )
     expect(onLogRemoved).toHaveBeenCalledWith("log-del-1")
+  })
+
+  it("他端末で既に削除済み（alreadyDeleted）でも onLogRemoved で画面から外し、理由を伝えて閉じる（幽霊行を残さない）", async () => {
+    mockedDeleteLog.mockResolvedValue({
+      error: "既に削除されています。",
+      alreadyDeleted: true,
+    })
+    const onLogRemoved = vi.fn<(id: string) => void>()
+    const onOpenChange = vi.fn()
+    render(
+      <BabyLogFormSheet
+        open
+        onOpenChange={onOpenChange}
+        log={memoLog}
+        userId="u1"
+        onLogRemoved={onLogRemoved}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: /この記録を削除/ }))
+    fireEvent.click(screen.getByRole("button", { name: "削除する" }))
+
+    await waitFor(() => expect(onLogRemoved).toHaveBeenCalledWith("log-del-1"))
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith("既に削除されています。")
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it("対照: 通常の削除失敗（alreadyDeleted なし）は行を外さず、シートも閉じない", async () => {
+    mockedDeleteLog.mockResolvedValue({ error: "ログの削除に失敗しました。" })
+    const onLogRemoved = vi.fn<(id: string) => void>()
+    const onOpenChange = vi.fn()
+    render(
+      <BabyLogFormSheet
+        open
+        onOpenChange={onOpenChange}
+        log={memoLog}
+        userId="u1"
+        onLogRemoved={onLogRemoved}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: /この記録を削除/ }))
+    fireEvent.click(screen.getByRole("button", { name: "削除する" }))
+
+    await waitFor(() =>
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith("ログの削除に失敗しました。"),
+    )
+    expect(onLogRemoved).not.toHaveBeenCalled()
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
   })
 })

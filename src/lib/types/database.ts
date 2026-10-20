@@ -686,6 +686,16 @@ export interface Database {
         Args: { invitation_uuid: string }
         Returns: void
       }
+      /**
+       * 呼び手がインスタンス運用者（`app_operators`）か。サインアップの承認は
+       * 運用者の権能で、世帯 owner の権能ではない（20261002100002）。
+       * 承認カードを出すかはこれで決める（owner であることでは決めぬ）。
+       */
+      is_app_operator: {
+        Args: Record<string, never>
+        Returns: boolean
+      }
+      /** 運用者にだけ承認待ちを返す（他は空集合）。 */
       get_pending_approvals: {
         Args: Record<string, never>
         Returns: {

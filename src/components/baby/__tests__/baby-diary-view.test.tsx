@@ -30,6 +30,7 @@ const sheetState = vi.hoisted(() => ({
     open: boolean
     diaryDate: string
     initialContent: string
+    initialUpdatedAt: string | null
     onSaved: (diary: BabyDiaryData | null) => void
   },
 }))
@@ -39,6 +40,7 @@ vi.mock("../baby-diary-edit-sheet", () => ({
     open: boolean
     diaryDate: string
     initialContent: string
+    initialUpdatedAt: string | null
     onSaved: (diary: BabyDiaryData | null) => void
   }) => {
     sheetState.props = props
@@ -143,7 +145,12 @@ describe("BabyDiaryView の編集導線", () => {
       <BabyDiaryView
         householdId="h1"
         initialDiaries={[
-          diaryRow({ id: "a", diary_date: "2026-07-20", content: "過去の日記" }),
+          diaryRow({
+            id: "a",
+            diary_date: "2026-07-20",
+            content: "過去の日記",
+            updated_at: "2026-07-20T10:00:00.123456+00:00",
+          }),
         ]}
       />,
     )
@@ -153,21 +160,40 @@ describe("BabyDiaryView の編集導線", () => {
     expect(screen.getByTestId("diary-edit-sheet")).toBeInTheDocument()
     expect(sheetState.props?.diaryDate).toBe("2026-07-20")
     expect(sheetState.props?.initialContent).toBe("過去の日記")
+    // 楽観的排他の版（P1-06）。渡し損ねると一覧からの編集が毎回衝突する
+    expect(sheetState.props?.initialUpdatedAt).toBe(
+      "2026-07-20T10:00:00.123456+00:00",
+    )
   })
 
-  it("「今日の日記を書く」は当日を対象に開き、既存の今日分があれば本文を seed する", () => {
+  it("「今日の日記を書く」は当日を対象に開き、既存の今日分があれば本文と版を seed する", () => {
     const today = todayJstString()
     render(
       <BabyDiaryView
         householdId="h1"
         initialDiaries={[
-          diaryRow({ id: "t", diary_date: today, content: "今日のぶん" }),
+          diaryRow({
+            id: "t",
+            diary_date: today,
+            content: "今日のぶん",
+            updated_at: "2026-07-22T01:02:03.456789+00:00",
+          }),
         ]}
       />,
     )
     fireEvent.click(screen.getByRole("button", { name: /今日の日記を書く/ }))
     expect(sheetState.props?.diaryDate).toBe(today)
     expect(sheetState.props?.initialContent).toBe("今日のぶん")
+    expect(sheetState.props?.initialUpdatedAt).toBe(
+      "2026-07-22T01:02:03.456789+00:00",
+    )
+  })
+
+  it("今日分が無ければ「今日の日記を書く」は版 null（＝行が無いことを期待）で開く", () => {
+    render(<BabyDiaryView householdId="h1" initialDiaries={[]} />)
+    fireEvent.click(screen.getByRole("button", { name: /今日の日記を書く/ }))
+    expect(sheetState.props?.initialContent).toBe("")
+    expect(sheetState.props?.initialUpdatedAt).toBeNull()
   })
 
   it("onSaved の保存で該当日を置換して降順を保ち、null で一覧から除く", () => {

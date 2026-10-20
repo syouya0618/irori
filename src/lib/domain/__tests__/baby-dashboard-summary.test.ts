@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest"
 import {
+  advanceFeedingFallback,
   deriveDashboardSummary,
+  isOlderLogVersion,
   mergeDateNavLogs,
 } from "../baby-dashboard-summary"
 import type { BabyLogData } from "@/lib/types/baby"
@@ -135,6 +137,170 @@ describe("deriveDashboardSummary / lastFeeding フォールバック（批判レ
 
   it("fallback 未指定（従来呼び出し）は従来どおり null", () => {
     expect(deriveDashboardSummary([]).lastFeeding).toBeNull()
+  })
+})
+
+/**
+ * 日を跨いだ時に「今日より前の最後の授乳」フォールバックを前へ進める。
+ * 進めねば、開いたまま日を跨いで「今日」を見た時、前夜の授乳を飛ばして
+ * ページ読込時点（2 日前など）の授乳を最終授乳・目安の起点にしてしまう。
+ */
+describe("advanceFeedingFallback / 日跨ぎでフォールバックを前へ進める", () => {
+  const NEW_TODAY_START = "2026-07-19T00:00:00+09:00"
+  const stale = makeLog({
+    id: "stale",
+    log_type: "feeding",
+    feeding_type: "bottle",
+    logged_at: "2026-07-17T21:00:00+09:00",
+  })
+
+  it("候補の中で新しい今日の 0 時より前の最新授乳へ進める", () => {
+    const lastNight = makeLog({
+      id: "last-night",
+      log_type: "feeding",
+      feeding_type: "breast",
+      logged_at: "2026-07-18T22:30:00+09:00",
+    })
+    const earlier = makeLog({
+      id: "earlier",
+      log_type: "feeding",
+      feeding_type: "bottle",
+      logged_at: "2026-07-18T19:00:00+09:00",
+    })
+    expect(
+      advanceFeedingFallback(stale, [earlier, lastNight], NEW_TODAY_START, {
+        excludePumped: false,
+      })?.id,
+    ).toBe("last-night")
+  })
+
+  it("授乳以外・新しい今日以降の行は候補にせぬ", () => {
+    const diaper = makeLog({
+      id: "diaper",
+      log_type: "diaper",
+      diaper_type: "pee",
+      logged_at: "2026-07-18T23:00:00+09:00",
+    })
+    const afterMidnight = makeLog({
+      id: "after",
+      log_type: "feeding",
+      feeding_type: "bottle",
+      logged_at: "2026-07-19T00:10:00+09:00",
+    })
+    expect(
+      advanceFeedingFallback(stale, [diaper, afterMidnight], NEW_TODAY_START, {
+        excludePumped: false,
+      }),
+    ).toBe(stale)
+  })
+
+  it("excludePumped では搾乳だけを外す（denylist — 未知の種別は授乳として数える）", () => {
+    const pumped = makeLog({
+      id: "pumped",
+      log_type: "feeding",
+      feeding_type: "pumped",
+      logged_at: "2026-07-18T23:30:00+09:00",
+    })
+    const nursing = makeLog({
+      id: "nursing",
+      log_type: "feeding",
+      feeding_type: "breast",
+      logged_at: "2026-07-18T22:00:00+09:00",
+    })
+    expect(
+      advanceFeedingFallback(stale, [pumped, nursing], NEW_TODAY_START, {
+        excludePumped: true,
+      })?.id,
+    ).toBe("nursing")
+    // 搾乳を外さぬ側（最終授乳表示）は搾乳も採る
+    expect(
+      advanceFeedingFallback(stale, [pumped, nursing], NEW_TODAY_START, {
+        excludePumped: false,
+      })?.id,
+    ).toBe("pumped")
+  })
+
+  it("より古い候補で現在値を巻き戻さぬ（同じ値なら参照を保つ）", () => {
+    const older = makeLog({
+      id: "older",
+      log_type: "feeding",
+      feeding_type: "bottle",
+      logged_at: "2026-07-16T08:00:00+09:00",
+    })
+    expect(
+      advanceFeedingFallback(stale, [older], NEW_TODAY_START, {
+        excludePumped: false,
+      }),
+    ).toBe(stale)
+  })
+
+  it("表記の違う ISO（Z と +09:00）も epoch で比べる", () => {
+    const zForm = makeLog({
+      id: "z",
+      log_type: "feeding",
+      feeding_type: "bottle",
+      // = JST 2026-07-18 23:00
+      logged_at: "2026-07-18T14:00:00.000Z",
+    })
+    const offsetForm = makeLog({
+      id: "offset",
+      log_type: "feeding",
+      feeding_type: "bottle",
+      logged_at: "2026-07-18T22:00:00+09:00",
+    })
+    expect(
+      advanceFeedingFallback(null, [offsetForm, zForm], NEW_TODAY_START, {
+        excludePumped: false,
+      })?.id,
+    ).toBe("z")
+  })
+
+  it("現在値が null で候補も無ければ null", () => {
+    expect(
+      advanceFeedingFallback(null, [], NEW_TODAY_START, { excludePumped: false }),
+    ).toBeNull()
+  })
+})
+
+describe("isOlderLogVersion / 応答と echo の到着順逆転で古い版を捨てる", () => {
+  it("incoming の updated_at が古ければ true", () => {
+    expect(
+      isOlderLogVersion(
+        { updated_at: "2026-10-01T03:00:01.000Z" },
+        { updated_at: "2026-10-01T03:00:02.000Z" },
+      ),
+    ).toBe(true)
+  })
+
+  it("新しい・同時刻なら false（置き換えてよい）", () => {
+    expect(
+      isOlderLogVersion(
+        { updated_at: "2026-10-01T03:00:02.000Z" },
+        { updated_at: "2026-10-01T03:00:01.000Z" },
+      ),
+    ).toBe(false)
+    expect(
+      isOlderLogVersion(
+        { updated_at: "2026-10-01T03:00:01.000Z" },
+        { updated_at: "2026-10-01T03:00:01.000Z" },
+      ),
+    ).toBe(false)
+  })
+
+  it("表記の違い（Z と +00:00・小数桁）を epoch で比べる", () => {
+    // 文字列比較だと "+00:00" の方が辞書順で小さく、誤って古いと判定する
+    expect(
+      isOlderLogVersion(
+        { updated_at: "2026-10-01T03:00:02+00:00" },
+        { updated_at: "2026-10-01T03:00:01.500Z" },
+      ),
+    ).toBe(false)
+  })
+
+  it("どちらかが欠ける・不正なら false（データ欠落で正当な更新を止めぬ）", () => {
+    expect(isOlderLogVersion({ updated_at: null }, { updated_at: "2026-10-01T03:00:02Z" })).toBe(false)
+    expect(isOlderLogVersion({ updated_at: "2026-10-01T03:00:01Z" }, {})).toBe(false)
+    expect(isOlderLogVersion({ updated_at: "garbage" }, { updated_at: "2026-10-01T03:00:02Z" })).toBe(false)
   })
 })
 

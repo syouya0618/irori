@@ -117,7 +117,8 @@ export function CalendarView({
     baseline: initialGoogleSyncedAt,
     fetchSignal: fetchGoogleSyncSignal,
     onAdvanced: () => {
-      void m.refetch(m.monthFirst)
+      // 待つ間に月を送られても、いま表示中の月を取り直す（旧月で上書きせぬ）
+      void m.refetchCurrent()
     },
   })
 
@@ -210,15 +211,18 @@ export function CalendarView({
     }
   }
 
-  /** フォーム値を action 入力 + 楽観行へ変換 */
+  /**
+   * フォーム値を action 入力 + 楽観行へ変換。`meta` は楽観行が持つ id・版・シリーズ
+   * （編集は保存前の行のものを保ち、保存の応答で版だけ進める。作成は版もシリーズも null）。
+   */
   function toRecord(
     v: CalendarEventFormValue,
-    id: string,
+    meta: { id: string; updatedAt: string | null; seriesId: string | null },
   ): { record: CalendarEventRecord; startAt: string | null; endAt: string | null } {
     const { startAt, endAt } = formValueToTimestamps(v)
     return {
       record: {
-        id,
+        id: meta.id,
         title: v.title.trim(),
         memo: v.memo,
         is_all_day: v.isAllDay,
@@ -227,11 +231,51 @@ export function CalendarView({
         start_at: startAt,
         end_at: endAt,
         source: "native",
-        series_id: null,
+        // 編集でシリーズを落とすと、取り直すまで「シリーズをすべて削除」が消える
+        series_id: meta.seriesId,
+        updated_at: meta.updatedAt,
       },
       startAt,
       endAt,
     }
+  }
+
+  /**
+   * **自分の保存**で進んだ id と版の対応（`${id}@${版}` → 進んだ先）。
+   *
+   * シートは開いた時点の行を握る。保存の応答を待つ間（保存ボタンは無効）に同じ予定を
+   * 開き直すと、握った行は保存後の中身・保存前の版になり、そのまま送ると自分の保存と
+   * 衝突して 2 回目の編集が捨てられる。作成の応答前に開いた行は一時 id と版 null の
+   * ままで、送れる id すら無い。
+   *
+   * ゆえに送る直前に、自分の保存が進めた分だけを辿って id と版を置き換える。手元の
+   * 最新行（取り直しで家族の更新を含みうる）の版を読むのではない — それだと家族の
+   * 変更を古い画面から上書きでき、版ガードが無意味になる。
+   */
+  const ownAdvanceRef = useRef(
+    new Map<string, { id: string; updatedAt: string | null }>(),
+  )
+  const ownAdvanceKey = (id: string, version: string | null) =>
+    `${id}@${version ?? "null"}`
+  function recordOwnAdvance(
+    from: { id: string; updatedAt: string | null },
+    to: { id: string; updatedAt: string | null },
+  ) {
+    ownAdvanceRef.current.set(ownAdvanceKey(from.id, from.updatedAt), to)
+  }
+  function resolveOwnAdvance(row: CalendarEventRecord): CalendarEventRecord {
+    let id = row.id
+    let version = row.updated_at
+    // 自分の保存の連鎖だけを辿る（1 シートの操作ゆえ短い。循環への歯止めに上限を置く）
+    for (let i = 0; i < 32; i++) {
+      const next = ownAdvanceRef.current.get(ownAdvanceKey(id, version))
+      if (!next) break
+      id = next.id
+      version = next.updatedAt
+    }
+    return id === row.id && version === row.updated_at
+      ? row
+      : { ...row, id, updated_at: version }
   }
 
   const handleSubmit = (v: CalendarEventFormValue) => {
@@ -256,10 +300,15 @@ export function CalendarView({
     // 新規作成時に書き込む通知の選択(保存ボタンを押した時点の値で固定する)。
     const reminderChoice: ReminderChoice =
       reminder.status === "ready" ? reminder.choice : "none"
-    const editingSnapshot = editing
+    // 開いた後に自分の保存が進めた id と版へ置き換える（家族の更新は辿らぬ）
+    const editingSnapshot = editing ? resolveOwnAdvance(editing) : null
     if (editingSnapshot) {
       // 編集: 楽観置換 → 失敗で復元
-      const { record, startAt, endAt } = toRecord(v, editingSnapshot.id)
+      const { record, startAt, endAt } = toRecord(v, {
+        id: editingSnapshot.id,
+        updatedAt: editingSnapshot.updated_at,
+        seriesId: editingSnapshot.series_id,
+      })
       m.upsertOptimistic(record)
       setSheetOpen(false)
       startTransition(async () => {
@@ -273,11 +322,23 @@ export function CalendarView({
             endDate: v.endDate,
             startAt,
             endAt,
+            // 開いた時点の版（自分の保存で進んだ分は上で辿った）。別の端末が先に直して
+            // いれば上書きせず衝突が返る。版の無い行は送れる版が無く、サーバが断る
+            expectedUpdatedAt: editingSnapshot.updated_at ?? "",
           })
-          if (res.error) {
+          if (res.error !== null) {
             m.upsertOptimistic(editingSnapshot) // 復元
             toast.error(res.error)
+            // 画面の予定が古い（先に更新・削除された）。いま表示中の月を取り直して見せる
+            if (res.conflict) void m.refetchCurrent()
+            return
           }
+          // 新しい版を手元へ。開き直したシートが握る古い版からも辿れるよう対応を残す
+          recordOwnAdvance(
+            { id: editingSnapshot.id, updatedAt: editingSnapshot.updated_at },
+            { id: editingSnapshot.id, updatedAt: res.updatedAt },
+          )
+          m.upsertOptimistic({ ...record, updated_at: res.updatedAt })
         } catch (err) {
           // reject はサーバー未到達 = 確実に未更新。楽観置換を元へ戻す。
           m.upsertOptimistic(editingSnapshot) // 復元
@@ -287,7 +348,11 @@ export function CalendarView({
     } else if (v.repeat !== "none") {
       // 繰り返し作成: 複数行 materialize の楽観再現はコストに見合わないため楽観挿入を
       // スキップし、action 成功後に refetch(use-month-events の既存 refetch)。
-      const { startAt, endAt } = toRecord(v, "recurring")
+      const { startAt, endAt } = toRecord(v, {
+        id: "recurring",
+        updatedAt: null,
+        seriesId: null,
+      })
       setSheetOpen(false)
       startTransition(async () => {
         try {
@@ -305,7 +370,7 @@ export function CalendarView({
           if (res.error) {
             toast.error(res.error)
           } else {
-            void m.refetch(m.monthFirst)
+            void m.refetchCurrent()
             // 宛先の決め方は単発と共通の 1 規則
             // (シリーズは id を運ばず series_id を渡す = 400 件の UUID は URL に載らぬ)。
             await applyReminderAfterCreate(
@@ -321,7 +386,11 @@ export function CalendarView({
     } else {
       // 新規: temp id で楽観挿入 → 成功で確定 id 差し替え / 失敗で除去
       const tempId = `${OPTIMISTIC_EVENT_ID_PREFIX}${optimisticSeq++}`
-      const { record, startAt, endAt } = toRecord(v, tempId)
+      const { record, startAt, endAt } = toRecord(v, {
+        id: tempId,
+        updatedAt: null,
+        seriesId: null,
+      })
       m.upsertOptimistic(record)
       setSheetOpen(false)
       startTransition(async () => {
@@ -339,7 +408,14 @@ export function CalendarView({
             m.removeOptimistic(tempId)
             toast.error(res.error ?? "予定の作成に失敗しました。")
           } else {
-            m.replaceOptimisticId(tempId, res.eventId)
+            // 版も受け取る（無いと作成直後の打ち直しが古い画面として断られる）。
+            // 応答の前に開いたシートは一時 id を握るゆえ、確定 id と版へ辿れるよう残す
+            const createdVersion = "updatedAt" in res ? (res.updatedAt ?? null) : null
+            recordOwnAdvance(
+              { id: tempId, updatedAt: null },
+              { id: res.eventId, updatedAt: createdVersion },
+            )
+            m.replaceOptimisticId(tempId, res.eventId, createdVersion)
             await applyReminderAfterCreate(
               reminderTargetFromCreateResult(res),
               reminderChoice,

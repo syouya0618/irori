@@ -13,6 +13,10 @@ import {
   waitFor,
 } from "@testing-library/react"
 
+// 月の取り直し（refetch）が返す行。既定は空。編集の衝突テストだけがサーバの最新行を置く。
+// `gridEnds` は取り直しが問い合わせた範囲の終端（どの月を取り直したかの記録）。
+const monthRows = vi.hoisted(() => ({ rows: [] as unknown[], gridEnds: [] as string[] }))
+
 // 最小 client mock: realtime 購読が throw しないだけの chainable スタブ
 vi.mock("@/lib/supabase/client", () => {
   const channel = {
@@ -26,9 +30,14 @@ vi.mock("@/lib/supabase/client", () => {
       from: () => ({
         select: () => ({
           eq: () => ({
-            lte: () => ({
-              gte: () => ({ order: () => Promise.resolve({ data: [], error: null }) }),
-            }),
+            lte: (_col: string, gridEnd: string) => {
+              monthRows.gridEnds.push(gridEnd)
+              return {
+                gte: () => ({
+                  order: () => Promise.resolve({ data: monthRows.rows, error: null }),
+                }),
+              }
+            },
           }),
         }),
       }),
@@ -58,7 +67,9 @@ import {
   createCalendarEvent,
   fetchEventReminder,
   setEventReminder,
+  updateCalendarEvent,
 } from "@/app/(main)/calendar/actions"
+import { toast } from "sonner"
 import { jstWallClockToIso, todayJstString } from "@/lib/utils/date-jst"
 
 function ev(o: Partial<CalendarEventRecord> & { id: string }): CalendarEventRecord {
@@ -72,6 +83,7 @@ function ev(o: Partial<CalendarEventRecord> & { id: string }): CalendarEventReco
     end_at: o.end_at ?? null,
     source: o.source ?? "native",
     series_id: o.series_id ?? null,
+    updated_at: o.updated_at ?? "2026-07-01T00:00:00.000000+00:00",
     ...o,
   }
 }
@@ -401,5 +413,224 @@ describe("CalendarView - 既存予定の通知の読み取り(B-2)", () => {
     fireEvent.click(screen.getByRole("button", { name: "予定を追加" }))
     expect(fetchEventReminder).not.toHaveBeenCalled()
     expect(document.getElementById("cal-reminder")).toHaveTextContent("1時間前")
+  })
+})
+
+/**
+ * 予定の編集は開いた時点の版（updated_at）を送る楽観的排他。配偶者が先に直した予定を、
+ * 古い画面からの保存で無言のまま巻き戻さぬ（育児日記 P1-06 と同じ契約）。
+ */
+describe("CalendarView - 編集の版（楽観的排他）", () => {
+  const V1 = "2026-07-15T00:00:00.111111+00:00"
+  const V2 = "2026-07-15T00:05:00.222222+00:00"
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    monthRows.rows = []
+  })
+
+  const openAndSave = (newTitle: string, currentTitle: string) => {
+    fireEvent.click(screen.getByRole("button", { name: "2026-07-15 を選択" }))
+    fireEvent.click(screen.getByText(currentTitle))
+    fireEvent.change(screen.getByLabelText("タイトル"), { target: { value: newTitle } })
+    fireEvent.click(screen.getByRole("button", { name: "更新" }))
+  }
+
+  it("保存は開いた時点の版を送り、応答の新しい版を次の保存で送る", async () => {
+    vi.mocked(updateCalendarEvent).mockResolvedValueOnce({ error: null, updatedAt: V2 })
+    render(
+      <CalendarView
+        {...base}
+        initialEvents={[ev({ id: "e1", title: "検診", start_date: "2026-07-15", updated_at: V1 })]}
+      />,
+    )
+    openAndSave("検診（1回目）", "検診")
+    await waitFor(() =>
+      expect(updateCalendarEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "e1", title: "検診（1回目）", expectedUpdatedAt: V1 }),
+      ),
+    )
+    // 自分の保存で進んだ版を持たねば、続けて直した時に自分の保存と衝突する
+    await waitFor(() => expect(screen.getByText("検診（1回目）")).toBeInTheDocument())
+
+    vi.mocked(updateCalendarEvent).mockResolvedValueOnce({ error: null, updatedAt: V1 })
+    openAndSave("検診（2回目）", "検診（1回目）")
+    await waitFor(() =>
+      expect(updateCalendarEvent).toHaveBeenLastCalledWith(
+        expect.objectContaining({ title: "検診（2回目）", expectedUpdatedAt: V2 }),
+      ),
+    )
+  })
+
+  it("衝突なら手元の楽観表示を捨て、エラーを出して最新を取り直す", async () => {
+    vi.mocked(updateCalendarEvent).mockResolvedValueOnce({
+      error: "この予定は別の端末で先に更新されていました（家族またはご自身）。",
+      conflict: true,
+    })
+    monthRows.rows = [
+      ev({ id: "e1", title: "検診（家族が変更）", start_date: "2026-07-15", updated_at: V2 }),
+    ]
+    render(
+      <CalendarView
+        {...base}
+        initialEvents={[ev({ id: "e1", title: "検診", start_date: "2026-07-15", updated_at: V1 })]}
+      />,
+    )
+    openAndSave("検診（自分の古い画面から）", "検診")
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/先に更新されていました/)),
+    )
+    // サーバの最新（家族の変更）が出て、古い画面からの自分の変更は残らぬ
+    await waitFor(() => expect(screen.getByText("検診（家族が変更）")).toBeInTheDocument())
+    expect(screen.queryByText("検診（自分の古い画面から）")).not.toBeInTheDocument()
+  })
+
+  it("衝突でない失敗（読み直し不能など）は取り直さず、開いた時点の表示へ戻すだけ", async () => {
+    vi.mocked(updateCalendarEvent).mockResolvedValueOnce({
+      error: "予定を更新できたか確かめられませんでした。",
+    })
+    monthRows.rows = [
+      ev({ id: "e1", title: "取り直したら出る行", start_date: "2026-07-15", updated_at: V2 }),
+    ]
+    render(
+      <CalendarView
+        {...base}
+        initialEvents={[ev({ id: "e1", title: "検診", start_date: "2026-07-15", updated_at: V1 })]}
+      />,
+    )
+    openAndSave("検診（変更）", "検診")
+    await waitFor(() => expect(toast.error).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByText("検診")).toBeInTheDocument())
+    expect(screen.queryByText("取り直したら出る行")).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * 独立レビュー P2-1: シートは開いた時点の行を握る。保存の応答待ち（保存ボタンは無効）に
+ * 開き直したシートや、作成の応答前に開いた行が、自分の保存と偽の衝突を起こさぬこと。
+ * ただし辿るのは**自分の保存が進めた版だけ**（家族の更新を取り直した版で上書きせぬ）。
+ */
+describe("CalendarView - 自分の保存で進んだ版を辿る（偽の衝突を作らぬ）", () => {
+  const V1 = "2026-07-15T00:00:00.111111+00:00"
+  const V2 = "2026-07-15T00:05:00.222222+00:00"
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((r) => {
+      resolve = r
+    })
+    return { promise, resolve }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    monthRows.rows = []
+    monthRows.gridEnds = []
+  })
+
+  it("保存の応答待ちに開き直したシートから保存しても、自分の保存で進んだ版を送る", async () => {
+    const first = deferred<{ error: null; updatedAt: string }>()
+    vi.mocked(updateCalendarEvent).mockImplementationOnce(() => first.promise)
+    vi.mocked(updateCalendarEvent).mockResolvedValueOnce({ error: null, updatedAt: V1 })
+    render(
+      <CalendarView
+        {...base}
+        initialEvents={[ev({ id: "e1", title: "検診", start_date: "2026-07-15", updated_at: V1 })]}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "2026-07-15 を選択" }))
+    fireEvent.click(screen.getByText("検診"))
+    fireEvent.change(screen.getByLabelText("タイトル"), { target: { value: "検診（1回目）" } })
+    fireEvent.click(screen.getByRole("button", { name: "更新" }))
+    // 応答の前に開き直す（シートは保存後の中身・保存前の版 V1 を握る）
+    fireEvent.click(screen.getByText("検診（1回目）"))
+    first.resolve({ error: null, updatedAt: V2 })
+    await waitFor(() => expect(screen.getByRole("button", { name: "更新" })).toBeEnabled())
+    fireEvent.change(screen.getByLabelText("タイトル"), { target: { value: "検診（2回目）" } })
+    fireEvent.click(screen.getByRole("button", { name: "更新" }))
+    await waitFor(() =>
+      expect(updateCalendarEvent).toHaveBeenLastCalledWith(
+        expect.objectContaining({ id: "e1", title: "検診（2回目）", expectedUpdatedAt: V2 }),
+      ),
+    )
+  })
+
+  it("シートを開いたまま家族の更新（V2）を取り直しても、開いた時点の V1 を送る", async () => {
+    vi.mocked(updateCalendarEvent).mockResolvedValueOnce({
+      error: "この予定は別の端末で先に更新されていました（家族またはご自身）。",
+      conflict: true,
+    })
+    render(
+      <CalendarView
+        {...base}
+        initialEvents={[ev({ id: "e1", title: "検診", start_date: "2026-07-15", updated_at: V1 })]}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "2026-07-15 を選択" }))
+    fireEvent.click(screen.getByText("検診"))
+    // シートを開いたまま、復帰の取り直しで家族の更新（版 V2）が手元の一覧に入る
+    monthRows.rows = [
+      ev({ id: "e1", title: "検診（家族が変更）", start_date: "2026-07-15", updated_at: V2 }),
+    ]
+    const before = monthRows.gridEnds.length
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true })
+    window.dispatchEvent(new Event("focus"))
+    await waitFor(() => expect(monthRows.gridEnds.length).toBeGreaterThan(before))
+    fireEvent.change(screen.getByLabelText("タイトル"), { target: { value: "検診（古い画面）" } })
+    fireEvent.click(screen.getByRole("button", { name: "更新" }))
+    // 手元の最新（家族の V2）を読んで送ると家族の変更を上書きできてしまう。開いた時点の V1
+    await waitFor(() =>
+      expect(updateCalendarEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "検診（古い画面）", expectedUpdatedAt: V1 }),
+      ),
+    )
+  })
+
+  it("作成の応答前に開いた行を応答後に保存すると、確定 id と版で送り、幽霊行を残さぬ", async () => {
+    const created = deferred<{ error: null; eventId: string; updatedAt: string }>()
+    vi.mocked(createCalendarEvent).mockImplementationOnce(() => created.promise)
+    vi.mocked(updateCalendarEvent).mockResolvedValueOnce({ error: null, updatedAt: V2 })
+    render(<CalendarView {...base} initialEvents={[]} />)
+    fireEvent.click(screen.getByRole("button", { name: "予定を追加" }))
+    fireEvent.change(screen.getByLabelText("タイトル"), { target: { value: "予防接種" } })
+    fireEvent.click(screen.getByRole("button", { name: "追加" }))
+    // 応答の前に楽観行（一時 id・版 null）を開く
+    fireEvent.click(screen.getByText("予防接種"))
+    created.resolve({ error: null, eventId: "ev-real", updatedAt: V1 })
+    await waitFor(() => expect(screen.getByRole("button", { name: "更新" })).toBeEnabled())
+    fireEvent.change(screen.getByLabelText("タイトル"), { target: { value: "予防接種（2回目）" } })
+    fireEvent.click(screen.getByRole("button", { name: "更新" }))
+    await waitFor(() =>
+      expect(updateCalendarEvent).toHaveBeenLastCalledWith(
+        expect.objectContaining({ id: "ev-real", expectedUpdatedAt: V1 }),
+      ),
+    )
+    await waitFor(() => expect(screen.getByText("予防接種（2回目）")).toBeInTheDocument())
+    // 一時 id の行が別に足されて元の件名が残る（幽霊行）ことが無い
+    expect(screen.queryByText("予防接種")).not.toBeInTheDocument()
+  })
+
+  it("衝突の後の取り直しは、待つ間に送った月（いま表示中の月）を読む", async () => {
+    const first = deferred<{ error: string; conflict: true }>()
+    vi.mocked(updateCalendarEvent).mockImplementationOnce(() => first.promise)
+    render(
+      <CalendarView
+        {...base}
+        initialEvents={[ev({ id: "e1", title: "検診", start_date: "2026-07-15", updated_at: V1 })]}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "2026-07-15 を選択" }))
+    fireEvent.click(screen.getByText("検診"))
+    fireEvent.change(screen.getByLabelText("タイトル"), { target: { value: "検診（変更）" } })
+    fireEvent.click(screen.getByRole("button", { name: "更新" }))
+    fireEvent.click(screen.getByRole("button", { name: "次の月" }))
+    expect(screen.getByText("2026年8月")).toBeInTheDocument()
+    const augustEnd = monthRows.gridEnds.at(-1)
+    first.resolve({ error: "この予定は別の端末で先に更新されていました。", conflict: true })
+    await waitFor(() => expect(toast.error).toHaveBeenCalled())
+    await waitFor(() => expect(monthRows.gridEnds.length).toBeGreaterThanOrEqual(2))
+    // 最後の取り直しは 8 月の範囲（7 月へ巻き戻して 8 月の表示を上書きせぬ）
+    expect(monthRows.gridEnds.at(-1)).toBe(augustEnd)
+    expect(augustEnd! > "2026-08-01").toBe(true)
   })
 })
