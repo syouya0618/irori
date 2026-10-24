@@ -1096,6 +1096,7 @@ export function BabyDashboard({
           onStartTimer={handleStartTimer}
           onLogRecorded={appendLog}
           onLogRemoved={removeLog}
+          onLogUpdated={applyUpdatedLog}
         />
       ) : (
         // 過去日は「今」のクイック記録を出さず、日付を見える形で確かめるフォーム経由の

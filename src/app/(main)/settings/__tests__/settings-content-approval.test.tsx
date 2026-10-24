@@ -15,6 +15,8 @@ vi.mock("@/app/(main)/settings/push-actions", () => ({
 }))
 vi.mock("@/lib/pwa/sw-messages", () => ({
   purgeHouseholdCaches: vi.fn(),
+  setCacheOwner: vi.fn(),
+  clearCacheOwner: vi.fn(),
   LAST_USER_ID_STORAGE_KEY: "irori-last-user-id",
 }))
 vi.mock("next/navigation", () => ({

@@ -1879,3 +1879,72 @@ cd "$W" && pnpm e2e:env && pnpm e2e:build && pnpm exec playwright test e2e/baby-
 - 観測 3: 同じ形の最小 script（127.0.0.1 の空きポートで listen → 接続）は、この sandbox で `listen EPERM: operation not permitted 127.0.0.1`。
 - 対照: `next build --webpack`（PostCSS を同じ process で走らせ、静的生成は worker thread）は同じ最終ソースで完走し（exit 0・静的生成 23/23）、その log で `check-proxy-effective.py --strict` 違反 0。
 - 分類: **環境の問題**（sandbox の `allowLocalBinding` が無効）。アプリの問題を示す観測は無い。ただし Turbopack の build が通ることは**未証明**のまま — webpack の完走で代えぬ。通常のターミナル（または `sandbox.network.allowLocalBinding: true`）で `pnpm -C "$W" build` を走らせて確かめること。同じ制約で dev server と `next start` も起動できぬゆえ、irori 本体の画面確認も未実施。
+
+## 14. PR #235 敵対レビューの処置と再開監査（2026-10-21 実装・2026-10-24 監査）
+
+PR #235（HEAD `2e24c41`）に対する敵対レビューが挙げた 3 件 — **P1** 削除と「取り消す」が版を見ずに消す（家族が直した記録を古い画面から編集ごと消す）、**P2** `signOut()` の `{ error }` を読まず redirect し、失敗したログアウトで鍵と計測を消す、**P2** 共用端末の SW キャッシュ分離がクライアント側の持ち主タグに依っており、破棄を経ずにセッションが終わった後に次の利用者の着地 HTML が前の利用者の名で保存される — を 2026-10-21 に直し、独立レビュー r1〜r3 の指摘を畳んだ。本節は 2026-10-24 の再開監査（所在の確認・再検証・独立レビュー r4・本番適用計画）の記録じゃ。
+
+### 14.1 現在地（2026-10-24・確認済み）
+
+- worktree `.claude/worktrees/prod-hardening-2026-10`、branch `feature/prod-hardening-2026-10`、HEAD `2e24c41` = origin の PR head。main `b50c7ea`。未 commit の差分は tracked 29 file + untracked 2 file（`+1975 / −185`）。2026-10-21 の 29 file は欠けも取りこぼしも無い（前 session の marker `git_head` も一致）。
+- 本節と `docs/runbooks/approvals.md` §2.2 / §2.5 の追記、r4 処置の 3 file（`sw-messages.ts`・`settings-content.tsx`・`pending-content.tsx`）と test 5 file が 2026-10-24 の追加分。
+
+### 14.2 修正の要約
+
+| 件 | 直し | 守る test |
+|---|---|---|
+| P1 削除競合・Undo | `deleteLog(logId, expectedUpdatedAt)` が `(id, household_id, updated_at)` の 1 本の条件付き DELETE。0 行は読み直して `alreadyDeleted`（行が無い）/ `conflict.current`（版が進んだ・行は画面から外さず最新へ揃える）/ どちらでもない（読み直し失敗）に分ける。版を送らぬ呼び出しは `STALE_SCREEN_SAVE_ERROR` で止める（無条件の削除へ倒さぬ）。「取り消す」は作成の応答が返した `updatedAt` でだけ出す（ローカル時計から版を作らぬ） | `actions.test.ts`、`baby-quick-actions.test.tsx`、`baby-log-form-sheet-optimistic.test.tsx`、pgTAP `baby_logs_version_guard.sql`（plan 15 → 27。(6)〜(9) が削除・取り消しの版ガードと対照）、e2e `baby-edit-conflict.spec.ts`（削除競合・取り消し競合の 2 本。DB 断面を service role で assert） |
+| P2 ログアウト失敗 | `signOut()`（settings / pending-approval）は成功でだけ `redirect("/login")`、失敗は `{ error }` を返す（通信の例外も同じ結果へ。`unstable_rethrow` は catch の先頭・redirect は try の外）。クライアントは解決して返った値を失敗として扱い、鍵（LAST_USER_ID）・端末の計測・持ち主の記録に触れずボタンを戻す。通信断の reject だけ持ち主を今の利用者へ戻す（`{ error }` では戻さぬ: auth-js 2.110.8 の `_signOut` は 401/403/404 以外の失敗でも `removeCurrentSession()` を**先に**呼んでから `{ error }` を返す — 実物で確認） | `settings/actions.test.ts`、`pending-approval/actions.test.ts`、`settings-content-sign-out.test.tsx`、`pending-content.test.tsx` |
+| P2 共用端末 SW 分離 | 応答の主はサーバが決める: `src/proxy.ts` が承認ゲートを通った素通し応答にだけ `x-irori-cache-owner: <検証済み user id>` を載せる。SW は `irori-meta` の持ち主の記録と主が一致する HTML / RSC だけを保存（`putOwned`）し、一致する項目だけを配る（`matchOwned`。違えば消す）。/login に着いた応答・記録と違う主の応答で記録を消す。破棄は記録を先に消してから行い、両経路の決着を待つ。`CacheUserGuard` は破棄の成否に従属させず持ち主を書く | `proxy.test.ts`、`sw-logic.test.ts`、`sw-messages.test.ts`、`cache-user-guard.test.tsx`、`sw-shared-device.test.tsx`（実物の `sw.js` を vm で動かし、Cache API の 2 つの意味論で 15 場面を撃つ） |
+
+### 14.3 独立レビュー r4（code-reviewer・読み取り専用・別の文脈・2026-10-24）と処置
+
+依頼した 3 件とも P1 / P2 の指摘は無し。P3 が 2 件。どちらも直し、mutation で検知力を確かめた。
+
+| 重大度 | 指摘 | 処置 | mutation（外すと赤） |
+|---|---|---|---|
+| P3 | `putOwned` の保存側ガード（主 ≠ 記録・主の無い応答）を固定する test が無い。既存の assert はオフライン照会の**後**に見ており、照会の `matchOwned` が主の違う項目を消すゆえ「保存されなんだ」と「配られずに消えた」の区別がつかぬ。`matchOwned` の `!owner` 早期 return（記録の無い端末で、主の無い旧版の項目を `null !== null` で配らぬ）も未固定 | 遅延応答の test は保存の有無を照会の**前**に見る。別の利用者の応答の test に「B の着地は保存されておらぬ」を足す。主の無い応答の test を「記録なし → 保存せぬ」「記録あり → 保存せず・A の記録も消さぬ」の対にする。主を持たぬ旧版の項目を seed し、記録の有無にかかわらず配られぬ test を足す | M1 `recorded !== owner` を外す → 遅延応答 ×2・別の利用者の応答 ×2 が赤。M2 `putOwned` の `!owner` を外す → 主の無い応答 ×2 が赤（後段の判定が保存は止めるが A の記録を誤って消す — その副作用で赤）。M3 `matchOwned` の `!owner` を外す → 旧版の項目 ×2 が赤 |
+| P3 | signOut の往復の間に別タブが (main) を開き直すと、その guard は鍵がまだ A ゆえ破棄せず `setCacheOwner(A)` を**書き戻す**。成功の redirect は Server Action の応答に乗る SPA 遷移で SW の nav-passthrough（/login で記録を消す経路）を通らぬゆえ、記録 A が残る。破棄が部分失敗した端末では A の項目も残り、未ログインの者がオフラインで開くと配られる（ログイン中の B には出ぬ — B の最初の応答で記録が消える） | `clearCacheOwner()` を `sw-messages.ts` に足し、settings-content / pending-content の成功分岐（`unstable_rethrow` が投げ返した直後）で待たずに呼ぶ。cookie はもう消えておるゆえ新しい利用者の記録は消さぬ | M0 呼び出しを外す → `sw-shared-device` の新 test ×2 と `settings-content-sign-out` の成功 test が赤 |
+
+r4 の未検証・低確度（記録のみ・変更なし）: `putOwned` の記録削除と guard の `setCacheOwner(B)` の TOCTOU は B の記録を消しうるが fail-closed（次のハードロードまで B の保存が止まるだけ）。`deleteLog` の読み直しの版比較は文字列で、Realtime 形式の版だと取り違えうるが、現 RLS（SELECT と DELETE が同じ述語）では到達不能。ログアウト前に push の購読を解除するゆえ、`{ error }` が返ってセッションがまだ生きておる場合はその端末の通知が止まる（既存の挙動・差分の外）。
+
+### 14.4 検証（2026-10-24・本 session で実走）
+
+| 層 | 結果 |
+|---|---|
+| vitest（worktree 全体） | r4 処置前 157 files / **2398 passed**（基準と同数）→ 処置後 157 files / **2402 passed**（+4 = 新 test 2 本 × 2 意味論） |
+| `tsc --noEmit` | 0（e2e も `**/*.ts` で対象） |
+| eslint | 0 errors / 0 warnings |
+| `check-transition-reject-guard.py --strict` / `check-transition-all.py --strict` | 0 / 0（19 / 345 箇所） |
+| `git diff --check` | 0 |
+| pgTAP `baby_logs_version_guard.sql` | **未実行**（Docker 無し）。`plan(27)` と assert 数 27 の一致は読みで確認。CI `e2e.yml` の `supabase test db` で実走 |
+| Playwright `baby-edit-conflict.spec.ts` | **未実行**。CI `e2e.yml` で実走 |
+| `pnpm build`（Turbopack） | **未実行**（§13.7 の環境の制約）。CI `ci.yml` で実走 |
+| `check-supabase-error-destructure.py` / `check-proxy-effective.py` | **未実行**（guard の script 名拒否・build log が要る）。CI で実走 |
+
+### 14.5 セキュリティ migration 3 本の最終監査（本番は 37 本適用済み・この 3 本だけ未適用 — ユーザー提供）
+
+| migration | 依存（全て適用済み 37 本の内） | 変えるもの | member（妻）への影響 |
+|---|---|---|---|
+| `20261002100001` | `profiles.is_approved`（20260408000002）、`households`、`get_invitation_by_token` / `accept_invitation`（20260407000001） | `create_household` の頭に承認検査（`FOR UPDATE`）。`households_insert` ポリシー削除 + anon / authenticated から INSERT / DELETE / TRUNCATE を剥がす。3 関数から anon の EXECUTE を剥がす | **無し**。既に世帯に属するゆえ `create_household` は呼ばぬ。アプリは `households` を SELECT / UPDATE しかせぬ（`baby-report` / `baby-export` / settings / baby page / settings actions の UPDATE を grep で確認。e2e の INSERT / DELETE は service role）。招待 2 関数は `/invite` が未認証を `/login` へ送った後にしか呼ばれぬ（`invite/[token]/page.tsx:50-53`） |
+| `20261002100002` | `profiles`、`auth.users` | `app_operators` 新設（RLS 有効・ポリシー 0・anon / authenticated 権限 0）。`is_app_operator()` 新設。`get_pending_approvals` / `approve_user` の門を owner → 運用者へ（戻り型・引数は同じゆえ `CREATE OR REPLACE` が通る） | **無し**。member は以前から承認カードを見ず承認もできぬ。`is_app_operator()` は false を返すだけ。**owner（本人）は 2.3 の登録まで承認できぬ**（意図した fail-closed） |
+| `20261002100003` | `push_subscriptions`（20260808100001）。関数の引数名・型・戻りは同じ | `upsert_push_subscription` の頭に endpoint の正規表現検査（22023） | **実質無し**。同じ 3 ホストの allowlist は 2026-08 の購読基盤（#208）から Server Action に在り、アプリ経由で登録された行は全て適合する。PR 側の TS 検査は小文字・port 無し・パス必須まで DB と揃えた（厳しくなる向きのみ）。既存行は runbook 2.1 (c) の件数で確かめる（0 が期待値。0 でなければ送信直前の再検査が据え置くだけで、CHECK は足さぬゆえ落ちぬ） |
+
+RLS・CHECK・GRANT はいずれも締める向きのみ。`baby_logs` / `baby_diaries` / `calendar_events` / `invitations` / `profiles` / `push_subscriptions` / `event_reminders` / `notification_*` / `google_*` のポリシー・表権限・列権限には 1 文も触れぬ（3 file の DDL / GRANT 文を全列挙して確認）。これを**測る**手順（before / after の catalog snapshot の diff）と期待する差分の表を runbook §2.5 に置いた。pgTAP は `create_household_approval.sql`（15）、`approval_functions.sql`（30）、`push_endpoint_allowlist.sql`（36）が 3 本の契約を固定する（CI で実走）。
+
+### 14.6 本番適用の計画（人間が実行。順序と停止条件は `docs/runbooks/approvals.md` §2 が正本）
+
+1. **before snapshot**（runbook §2.5 の query）と §2.1 (a)〜(e) の読み取り監査。今回のインスタンスの期待値（ユーザー提供の事実から）: (a) 世帯 1 件・owner は本人・`member_count` 2・`owner_is_approved_now` true、(b)(d)(e) 0 行、(c) 0。
+2. `supabase migration list --linked` → Local だけの版が 3 本。`supabase db push --dry-run` → 同じ 3 本。`select to_regclass('public.app_operators')` → NULL。どれか一つでも外れたら止める。`--include-all` は付けぬ。
+3. `supabase db push`（history は CLI が書く。SQL Editor へ貼らぬ）。error が出たら再送せず、history の確認 query でどこまで入ったかを見る。
+4. a1〜a15（全て false / 0）、c1〜c2（true）、history 3 行、**after snapshot** → before との diff が §2.5 の期待する行だけ。
+5. §2.3 運用者の登録（本人 1 名）。`select user_id from app_operators` → 1 行。
+6. **ここで初めて** push / merge / deploy（merge = deploy の設定なら merge も 2.3 の後）。deploy 後に妻の端末で §2.5 の 5 点 smoke。アプリは一度閉じて開き直す（古いバンドルは fail-closed で止まる）。
+7. 戻し: migration は §3（新しい migration で、関数定義だけを写す）。運用者は §2.3 の「戻す時」。
+
+### 14.7 残存リスク
+
+- CI 未実行（build・pgTAP・e2e）。ローカルの緑は CI の緑ではない。
+- `/setup`・`/login` の CacheUserGuard は未実装のまま（P2-24。承認済み・世帯なしの利用者が共用端末でオフライン閲覧すると前の世帯のスナップショットが見えうる。今回の運用では該当者 0）。
+- deploy 直後の古い PWA バンドル: Server Action の id 変更と版の必須化で、保存・削除が「見つからぬ」/「画面が古い」で止まる（無言の破壊は無い）。開き直せば直る。
+- 14.3 の未検証 3 件（いずれも fail-closed または到達不能）。

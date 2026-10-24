@@ -12,8 +12,24 @@ vi.mock("@/lib/supabase/auth-context", () => ({
   getAuthContext: () => getAuthContext(),
 }))
 
+// signOut はリクエストの cookie に結び付いたクライアントを使う（createClient）。
+const authSignOut = vi.fn()
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: async () => ({ auth: { signOut: () => authSignOut() } }),
+}))
+// redirect は本物と同じく「投げる」（Next の遷移信号）。呼ばれた先も控える。
+const REDIRECT_SIGNAL = new Error("NEXT_REDIRECT;replace;/login;307;")
+const redirect = vi.fn((_url: string) => {
+  throw REDIRECT_SIGNAL
+})
+vi.mock("next/navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/navigation")>()),
+  redirect: (url: string) => redirect(url),
+}))
+
 import {
   approveUser,
+  signOut,
   updateBabyProfile,
   updateDefaultPage,
   updateDigestTime,
@@ -534,6 +550,52 @@ describe("updateDigestTime", () => {
       "digest time update failed",
       error,
       { userId: "user-1" },
+    )
+  })
+})
+
+/**
+ * ログアウト（PR #235 敵対レビュー P2）。
+ *
+ * `supabase.auth.signOut()` は失敗を throw せず `{ error }` で返す（auth-js の正式な戻り値）。
+ * error を見ずに redirect("/login") すると、失敗したログアウトを成功として扱い、
+ * クライアントは鍵（LAST_USER_ID）・端末タイマーを消して「ログアウト済み」へ進む。
+ * error も例外も明示的な失敗結果で返し、成功の時だけ redirect する。
+ */
+describe("signOut: 失敗を成功と偽らない", () => {
+  beforeEach(() => {
+    authSignOut.mockReset()
+    redirect.mockClear()
+    vi.spyOn(console, "error").mockImplementation(() => {})
+  })
+
+  it("成功（error: null）の時だけ /login へ redirect する（Next の遷移信号は投げたまま返す）", async () => {
+    authSignOut.mockResolvedValue({ error: null })
+    await expect(signOut()).rejects.toBe(REDIRECT_SIGNAL)
+    expect(redirect).toHaveBeenCalledWith("/login")
+  })
+
+  it("⭐ { error } が返ったら redirect せず、明示的な失敗結果を返して構造化ログへ残す", async () => {
+    const error = { name: "AuthApiError", message: "Internal error", status: 500, code: "unexpected_failure" }
+    authSignOut.mockResolvedValue({ error })
+    const result = await signOut()
+    expect(result).toEqual({
+      error: "ログアウトを完了できませんでした。電波の良い場所でもう一度お試しください",
+    })
+    expect(redirect).not.toHaveBeenCalled()
+    expect(mockedLog).toHaveBeenCalledWith("settings", expect.any(String), error, {})
+  })
+
+  it("⭐ 通信例外（signOut が throw）でも redirect せず、失敗結果を返して握り潰さずログへ残す", async () => {
+    authSignOut.mockRejectedValue(new TypeError("fetch failed"))
+    const result = await signOut()
+    expect(result).toEqual({
+      error: "ログアウトを完了できませんでした。電波の良い場所でもう一度お試しください",
+    })
+    expect(redirect).not.toHaveBeenCalled()
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("[settings]"),
+      expect.objectContaining({ message: "fetch failed" }),
     )
   })
 })

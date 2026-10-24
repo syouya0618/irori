@@ -102,6 +102,12 @@ interface BabyQuickActionsProps {
   onLogRecorded?: (log: BabyLogData) => void
   /** Undo 成功時にローカル state から除去する行の id を親へ渡す（B-03） */
   onLogRemoved?: (id: string) => void
+  /**
+   * 取り消しが衝突した時（記録の後に家族・自分の別端末が直していた）、サーバが返した最新の
+   * 行を親へ渡す。行は消えておらぬゆえ画面から外さず、最新版へ揃える（編集シートの衝突と
+   * 同じ反映関数 = BabyDashboard の applyUpdatedLog）。
+   */
+  onLogUpdated?: (log: BabyLogData) => void
 }
 
 export function BabyQuickActions({
@@ -111,6 +117,7 @@ export function BabyQuickActions({
   onStartTimer,
   onLogRecorded,
   onLogRemoved,
+  onLogUpdated,
 }: BabyQuickActionsProps) {
   const [isPending, startTransition] = useTransition()
   /**
@@ -140,11 +147,21 @@ export function BabyQuickActions({
     retryIdRef.current = null
   }
 
-  // 片手操作での押し間違いをその場で取り消せるようにする（記録直後のトーストから）
-  function undoLog(logId: string, label: string) {
+  // 片手操作での押し間違いをその場で取り消せるようにする（記録直後のトーストから）。
+  // 取り消しは作成に成功した時の版でしか消せぬ — 記録の後に家族（または自分の別端末・
+  // 編集シート）が直していたら、直された記録を消さず衝突として返る。
+  function undoLog(logId: string, createdVersion: string, label: string) {
     startTransition(async () => {
       try {
-        const result = await deleteLog(logId)
+        const result = await deleteLog(logId, createdVersion)
+        if (result.conflict) {
+          // 消えておらぬゆえ画面から外さず、最新版へ揃える。「取り消しました」とは偽らぬ
+          onLogUpdated?.(result.conflict.current)
+          toast.error(
+            `${label}の記録は後から更新されていたため、取り消しませんでした（家族またはご自身）。必要なら記録の一覧から確かめてください`,
+          )
+          return
+        }
         if (result.error) {
           toast.error(result.error)
           // 他端末で既に削除済み: 画面に残る幽霊行を外す（P1-04）
@@ -160,10 +177,28 @@ export function BabyQuickActions({
     })
   }
 
-  function successWithUndo(message: string, label: string, logId: string | null) {
-    if (logId) {
+  /**
+   * 記録成功のトースト。「取り消す」は id とサーバが返した版（`updatedAt`）が揃った時だけ
+   * 出す。版をローカルの時計（new Date()）から作ってはならぬ — 表記もマイクロ秒も DB と
+   * 一致せず、取り消しが必ず衝突するか、版ガードを素通りする形に崩れる。版が無い応答では
+   * 安全な取り消しを出せぬゆえ、一覧から消せることだけ伝える。
+   */
+  function successWithUndo(
+    message: string,
+    label: string,
+    logId: string | null,
+    createdVersion: string | null | undefined,
+  ) {
+    if (logId && createdVersion) {
       toast.success(message, {
-        action: { label: "取り消す", onClick: () => undoLog(logId, label) },
+        action: {
+          label: "取り消す",
+          onClick: () => undoLog(logId, createdVersion, label),
+        },
+      })
+    } else if (logId) {
+      toast.success(message, {
+        description: "取り消すには、記録の一覧から開いて削除してください",
       })
     } else {
       toast.success(message)
@@ -212,7 +247,7 @@ export function BabyQuickActions({
             }),
           )
         }
-        successWithUndo("授乳を記録しました", "授乳", result.id)
+        successWithUndo("授乳を記録しました", "授乳", result.id, result.updatedAt)
       } catch (err) {
         toastOfflineError("[baby-quick-actions] recordFeeding", err)
       }
@@ -261,6 +296,7 @@ export function BabyQuickActions({
           `おむつ交換を記録しました（${formatDiaperSummary(diaperType, poopAmount)}）`,
           "おむつ",
           result.id,
+          result.updatedAt,
         )
       } catch (err) {
         toastOfflineError("[baby-quick-actions] recordDiaper", err)

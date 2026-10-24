@@ -216,6 +216,61 @@ describe("proxy: 未認証の扱い（fail-closed）", () => {
   )
 })
 
+/**
+ * 世帯キャッシュの持ち主（PR #235 敵対レビュー P2 / 独立レビュー r1 P1）。
+ *
+ * SW は「この応答の主」が分からぬ（cookie を読めぬ）。クライアントの記録でタグを付けると、
+ * セッションが破棄なしで終わった後、次の利用者の着地 HTML が前の利用者のタグで保存される。
+ * ゆえに主はサーバが決める: 承認ゲートを通った素通し応答にだけ、検証済みの user id を
+ * `x-irori-cache-owner` として載せる。SW はこのヘッダの無い応答を保存せぬ（fail-closed）。
+ */
+describe("proxy: 世帯キャッシュの持ち主ヘッダ（応答の主はサーバが決める）", () => {
+  const HEADER = "x-irori-cache-owner"
+
+  it("⭐ 承認済みの保護ページの素通し応答に、検証済みの user id を載せる", async () => {
+    getClaims.mockResolvedValue(validClaims)
+    const res = await proxy(request("/baby"))
+    expect(res.status).not.toBe(307)
+    expect(res.headers.get(HEADER)).toBe("user-1")
+  })
+
+  it("セッションが更新された素通し応答にも載る（setAll で応答が作り直されても消えぬ）", async () => {
+    session.refresh = [{ name: "sb-test-auth-token", value: "NEW_TOKEN" }]
+    getClaims.mockResolvedValue(validClaims)
+    const res = await proxy(request("/calendar"))
+    expect(res.headers.get(HEADER)).toBe("user-1")
+  })
+
+  it.each([
+    ["未認証の保護ページ（/login への redirect）", null, "/baby"],
+    ["未認証の /login 素通し", null, "/login"],
+  ])("%s には載せぬ", async (_label, _x, pathname) => {
+    getClaims.mockResolvedValue({ data: null, error: null })
+    const res = await proxy(request(pathname))
+    expect(res.headers.get(HEADER)).toBeNull()
+  })
+
+  it("未承認（/pending-approval の素通し・redirect）には載せぬ", async () => {
+    getClaims.mockResolvedValue(validClaims)
+    profileSingle.mockResolvedValue({ data: { is_approved: false }, error: null })
+    expect((await proxy(request("/pending-approval"))).headers.get(HEADER)).toBeNull()
+    expect((await proxy(request("/baby"))).headers.get(HEADER)).toBeNull()
+  })
+
+  it("profiles を引けぬ時（承認を確かめられぬ）は載せぬ", async () => {
+    getClaims.mockResolvedValue(validClaims)
+    profileSingle.mockResolvedValue({ data: null, error: { message: "boom" } })
+    expect((await proxy(request("/pending-approval"))).headers.get(HEADER)).toBeNull()
+  })
+
+  it("承認済みの入口の redirect（/ → default_page）には載せぬ（中身の無い応答）", async () => {
+    getClaims.mockResolvedValue(validClaims)
+    const res = await proxy(request("/"))
+    expect(res.status).toBe(307)
+    expect(res.headers.get(HEADER)).toBeNull()
+  })
+})
+
 describe("proxy: 承認ゲート（DB 読みゆえ即時に効き続ける）", () => {
   it("承認済みは保護ページを通す", async () => {
     getClaims.mockResolvedValue(validClaims)

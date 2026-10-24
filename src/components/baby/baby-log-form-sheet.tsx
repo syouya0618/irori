@@ -226,7 +226,8 @@ export function BabyLogFormSheet({
   // 先に保存しておれば、サーバは 0 行を衝突として返す。開いた時点で固定する（親は開く
   // たびに key で作り直すゆえ、次に開けば最新の行の版から始まる）。
   const [expectedUpdatedAt] = useState(() => log?.updated_at ?? null)
-  // 保存の衝突（P2-07）。current は先に保存されていた最新の行（他端末で削除済みなら null）。
+  // 保存・削除の衝突（P2-07）。current は先に保存されていた最新の行（他端末で削除済みなら
+  // null。削除の衝突は行が在る時だけゆえ常に行を持つ）。
   // 衝突の後は入力を残したまま保存を止め、最新の内容で編集し直す導線だけを出す — この
   // シートは全項目を開いた時点の値から送るゆえ、そのまま上書きすると家族が直した項目まで
   // 無言で巻き戻る。
@@ -683,7 +684,7 @@ export function BabyLogFormSheet({
           // 通知の枠はスクロール領域の先頭にある。下の欄まで送ってから押した時に
           // 「押しても何も起きぬ」に見えぬよう、理由をトーストでも示す
           toast.error(result.error)
-          // 開いておった削除の確認も閉じる（版を見ぬ削除で家族の新しい編集を消させぬ）
+          // 開いておった削除の確認も閉じる（開いた時点の版はもう古く、押しても同じ衝突になる）
           setShowDeleteConfirm(false)
           if (result.conflict.current) {
             onLogUpdated?.(result.conflict.current)
@@ -714,7 +715,22 @@ export function BabyLogFormSheet({
 
     startTransition(async () => {
       try {
-        const result = await deleteLog(log.id)
+        // 削除も開いた時点の版でしか消せぬ（家族が先に直した記録を、古い画面から編集ごと
+        // 消させぬ）。版を持たぬ行は保存と同じく、無条件の削除にせず止める
+        if (!expectedUpdatedAt) {
+          toast.error(STALE_SCREEN_SAVE_ERROR)
+          return
+        }
+        const result = await deleteLog(log.id, expectedUpdatedAt)
+        if (result.conflict) {
+          // 保存の衝突と同じ見せ方: 入力には触れず、確認を閉じ、背後の画面を最新へ揃え、
+          // 最新の内容で編集し直す導線（onReloadLog）を出す。行は画面から外さぬ（消えておらぬ）
+          setConflict(result.conflict)
+          toast.error(result.error)
+          setShowDeleteConfirm(false)
+          onLogUpdated?.(result.conflict.current)
+          return
+        }
         if (result.error) {
           toast.error(result.error)
           // 他端末で既に削除済み: 行はもう無いゆえ画面からも外して閉じる
@@ -790,7 +806,7 @@ export function BabyLogFormSheet({
               </p>
               <p className="text-xs text-muted-foreground">
                 {conflict.current
-                  ? "あなたの入力はそのまま残しています。先に保存された内容を確かめ、「最新の内容で編集し直す」を押してから直してください（入力は最新の内容に置き換わります）。"
+                  ? "あなたの入力はそのまま残しています。先に保存された内容を確かめ、「最新の内容で編集し直す」を押してから、直すか削除するかを選び直してください（入力は最新の内容に置き換わります）。"
                   : "保存先の記録がないため、この入力は保存できません。必要なら内容を控えてから閉じてください。"}
               </p>
               {conflict.current && (
@@ -1180,8 +1196,8 @@ export function BabyLogFormSheet({
                   variant="ghost"
                   size="sm"
                   onClick={() => setShowDeleteConfirm(true)}
-                  // 衝突の後は画面の記録が古い。最新を見ずに消すと家族の変更ごと消える
-                  // （削除は版を見ぬ）ゆえ、編集し直してから選ばせる
+                  // 衝突の後は開いた時点の版が古く、削除しても同じ衝突になる。最新の内容で
+                  // 編集し直して（新しい版で開き直して）から選ばせる
                   disabled={conflict !== null}
                   className="w-full text-destructive hover:text-destructive"
                 >

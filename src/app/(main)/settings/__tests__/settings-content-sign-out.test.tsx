@@ -32,6 +32,8 @@ import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/re
 
 const signOut = vi.fn()
 const purgeHouseholdCaches = vi.fn().mockResolvedValue(true)
+const setCacheOwner = vi.fn<(userId: string) => Promise<boolean>>()
+const clearCacheOwner = vi.fn<() => Promise<boolean>>()
 
 // 実物と同じ鍵名（CacheUserGuard との組み合わせを同じ鍵で確かめるため）
 const LAST_USER_ID_KEY = "irori-last-user-id"
@@ -41,6 +43,8 @@ vi.mock("@/app/(main)/settings/actions", () => ({
 }))
 vi.mock("@/lib/pwa/sw-messages", () => ({
   purgeHouseholdCaches: (...args: unknown[]) => purgeHouseholdCaches(...args),
+  setCacheOwner: (userId: string) => setCacheOwner(userId),
+  clearCacheOwner: () => clearCacheOwner(),
   LAST_USER_ID_STORAGE_KEY: "irori-last-user-id",
 }))
 
@@ -97,7 +101,15 @@ class SignalBoundary extends Component<{ children: ReactNode }, { caught: boolea
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // clearAllMocks は mockResolvedValueOnce の待ち行列を消さぬ。先に落ちたテストの残りが
+  // 次のテストへ漏れて無関係に赤くならぬよう、Once を積む mock は個別に reset する
+  signOut.mockReset()
+  purgeHouseholdCaches.mockReset()
   purgeHouseholdCaches.mockResolvedValue(true)
+  setCacheOwner.mockReset()
+  setCacheOwner.mockResolvedValue(true)
+  clearCacheOwner.mockReset()
+  clearCacheOwner.mockResolvedValue(true)
   localStorage.clear()
   caughtByBoundary = null
   // 本物の unstable_rethrow はフレームワークの信号だけを投げ返す
@@ -201,6 +213,9 @@ describe("SettingsContent の LAST_USER_ID（破棄の確認 + signOut の成功
     await waitFor(() => expect(caughtByBoundary).toBe(REDIRECT))
     expect(localStorage.getItem(LAST_USER_ID_KEY)).toBeNull()
     expect(mockedToast.error).not.toHaveBeenCalled()
+    // 成功の後に持ち主の記録を改めて消す（往復の間に別タブの guard が書き戻しておりうる。
+    // 成功の redirect は SPA 遷移で SW の /login 経路を通らぬ — 独立レビュー r4）
+    expect(clearCacheOwner).toHaveBeenCalledTimes(1)
   })
 
   it("⭐ signOut が通信断で失敗したら鍵を残す（利用者は同じまま・CacheUserGuard の安全網を消さぬ）", async () => {
@@ -212,6 +227,8 @@ describe("SettingsContent の LAST_USER_ID（破棄の確認 + signOut の成功
       expect(mockedToast.error).toHaveBeenCalled(),
     )
     expect(localStorage.getItem(LAST_USER_ID_KEY)).toBe("u1")
+    // 失敗では持ち主の記録を消さぬ（利用者は同じまま。通信断は戻す側）
+    expect(clearCacheOwner).not.toHaveBeenCalled()
   })
 
   it("破棄を確かめられねば、signOut が成功しても鍵を残す（次の利用者の guard に破棄を試み直させる）", async () => {
@@ -226,15 +243,83 @@ describe("SettingsContent の LAST_USER_ID（破棄の確認 + signOut の成功
     expect(localStorage.getItem(LAST_USER_ID_KEY)).toBe("u1")
   })
 
-  it("signOut が redirect せずに解決した時も、破棄を確かめていれば鍵を消す（signOut の後で）", async () => {
+  it("破棄は signOut より前に行う（redirect の後は実行の保証が無い）", async () => {
     localStorage.setItem(LAST_USER_ID_KEY, "u1")
-    signOut.mockResolvedValueOnce(undefined)
+    signOut.mockRejectedValueOnce(REDIRECT)
     fireEvent.click(renderSettings())
 
-    await waitFor(() => expect(localStorage.getItem(LAST_USER_ID_KEY)).toBeNull())
+    await waitFor(() => expect(caughtByBoundary).toBe(REDIRECT))
     expect(purgeHouseholdCaches.mock.invocationCallOrder[0]).toBeLessThan(
       signOut.mock.invocationCallOrder[0],
     )
+  })
+
+  /**
+   * PR #235 敵対レビュー P2: signOut は失敗を `{ error }` で返す（成功は redirect = reject で
+   * 届く）。かつての「redirect せずに解決した = 成功」は、失敗したログアウトで鍵と端末の
+   * 計測を消し、利用者 A がログインしたまま CacheUserGuard の安全網を外していた。
+   */
+  it("⭐ signOut が失敗結果（{ error }）で解決したら、鍵も端末の計測も消さず、ボタンを戻して理由を伝える", async () => {
+    const TIMER_KEY = "irori:feeding-timer"
+    const SAVED_TIMER = JSON.stringify({
+      startedAt: "2026-10-21T03:00:00.000Z",
+      feedingType: "breast_left",
+      userId: "u1",
+    })
+    localStorage.setItem(LAST_USER_ID_KEY, "u1")
+    localStorage.setItem(TIMER_KEY, SAVED_TIMER)
+    signOut.mockResolvedValueOnce({
+      error: "ログアウトを完了できませんでした。電波の良い場所でもう一度お試しください",
+    })
+    const button = renderSettings()
+    fireEvent.click(button)
+
+    await waitFor(() =>
+      expect(mockedToast.error).toHaveBeenCalledWith(
+        "ログアウトを完了できませんでした。電波の良い場所でもう一度お試しください",
+      ),
+    )
+    await waitFor(() => expect(button).not.toBeDisabled())
+    expect(localStorage.getItem(LAST_USER_ID_KEY)).toBe("u1")
+    expect(localStorage.getItem(TIMER_KEY)).toBe(SAVED_TIMER)
+    // 成功の後処理（redirect の再送出）へは進まぬ
+    expect(caughtByBoundary).toBeNull()
+    // 世帯キャッシュの持ち主は戻さぬ: auth-js は失効に失敗した時も端末のセッションを消して
+    // から error を返す。戻すと、実質ログアウト済みの端末で残った項目が再び配られる
+    expect(setCacheOwner).not.toHaveBeenCalled()
+  })
+
+  it("signOut が通信断で reject した時（セッションは残る）は、世帯キャッシュの持ち主を今の利用者へ戻す", async () => {
+    signOut.mockRejectedValueOnce(new TypeError("Failed to fetch"))
+    fireEvent.click(renderSettings())
+    await waitFor(() => expect(mockedToast.error).toHaveBeenCalledWith(SIGN_OUT_FAILED_MESSAGE))
+    expect(setCacheOwner).toHaveBeenCalledWith("u1")
+  })
+
+  it("対照: signOut が成功（redirect）した時は持ち主を戻さぬ（ログアウトした利用者のまま保存させぬ）", async () => {
+    signOut.mockRejectedValueOnce(REDIRECT)
+    fireEvent.click(renderSettings())
+    await waitFor(() => expect(caughtByBoundary).toBe(REDIRECT))
+    expect(setCacheOwner).not.toHaveBeenCalled()
+  })
+
+  it("失敗結果の後は押し直せ、2 回目が成功（redirect）すれば鍵を消す", async () => {
+    localStorage.setItem(LAST_USER_ID_KEY, "u1")
+    signOut
+      .mockResolvedValueOnce({
+        error: "ログアウトを完了できませんでした。電波の良い場所でもう一度お試しください",
+      })
+      .mockRejectedValueOnce(REDIRECT)
+    const button = renderSettings()
+    fireEvent.click(button)
+    await waitFor(() => expect(mockedToast.error).toHaveBeenCalled())
+    await waitFor(() => expect(button).not.toBeDisabled())
+    expect(localStorage.getItem(LAST_USER_ID_KEY)).toBe("u1")
+
+    fireEvent.click(button)
+    await waitFor(() => expect(caughtByBoundary).toBe(REDIRECT))
+    expect(signOut).toHaveBeenCalledTimes(2)
+    expect(localStorage.getItem(LAST_USER_ID_KEY)).toBeNull()
   })
 
   /**

@@ -36,8 +36,10 @@ vi.mock("sonner", async () => {
 })
 
 const purgeHouseholdCaches = vi.fn<() => Promise<boolean>>()
+const clearCacheOwner = vi.fn<() => Promise<boolean>>().mockResolvedValue(true)
 vi.mock("@/lib/pwa/sw-messages", () => ({
   purgeHouseholdCaches: () => purgeHouseholdCaches(),
+  clearCacheOwner: () => clearCacheOwner(),
   LAST_USER_ID_STORAGE_KEY: "irori-last-user-id",
 }))
 
@@ -57,6 +59,9 @@ const CONFIRMED_PENDING = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // clearAllMocks は mockResolvedValueOnce の待ち行列を消さぬ（先に落ちたテストの残りが漏れる）
+  signOut.mockReset()
+  purgeHouseholdCaches.mockReset()
   purgeHouseholdCaches.mockResolvedValue(true)
   localStorage.clear()
 })
@@ -182,13 +187,28 @@ describe("PendingContent のログアウトと授乳タイマーの端末保存"
     expect(localStorage.getItem(TIMER_KEY)).toBe(SAVED)
   })
 
-  it("redirect せずに解決した（成功）時は計測を消す", async () => {
+  /**
+   * PR #235 敵対レビュー P2: signOut は失敗を `{ error }` で返す（成功は redirect = reject で
+   * 届く）。かつての「redirect せずに解決した = 成功」は、失敗したログアウトで計測を消していた。
+   */
+  it("⭐ 失敗結果（{ error }）で解決した時は計測を消さず、ボタンを戻して理由を伝える", async () => {
     localStorage.setItem(TIMER_KEY, SAVED)
-    signOut.mockResolvedValueOnce(undefined)
+    signOut.mockResolvedValueOnce({
+      error: "ログアウトを完了できませんでした。電波の良い場所でもう一度お試しください",
+    })
     render(<PendingContent {...CONFIRMED_PENDING} />)
 
-    fireEvent.click(screen.getByRole("button", { name: "ログアウト" }))
-    await waitFor(() => expect(localStorage.getItem(TIMER_KEY)).toBeNull())
+    const button = screen.getByRole("button", { name: "ログアウト" })
+    fireEvent.click(button)
+    await waitFor(() =>
+      expect(mockedToast.error).toHaveBeenCalledWith(
+        "ログアウトを完了できませんでした。電波の良い場所でもう一度お試しください",
+      ),
+    )
+    await waitFor(() => expect(button).not.toBeDisabled())
+    expect(localStorage.getItem(TIMER_KEY)).toBe(SAVED)
+    // 失敗では世帯キャッシュの持ち主の記録にも触れぬ（消すのは成功の時だけ・独立レビュー r4）
+    expect(clearCacheOwner).not.toHaveBeenCalled()
   })
 
   it("redirect（成功の信号）を再送出する経路でも計測を消す — 構造を固定する", () => {

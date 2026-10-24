@@ -4,8 +4,9 @@ import { useState, useRef, useEffect } from "react"
 import { useRouter, unstable_rethrow } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Loader2, Clock, LogOut, RefreshCw } from "lucide-react"
+import { toast } from "sonner"
 import { signOut } from "./actions"
-import { purgeHouseholdCaches } from "@/lib/pwa/sw-messages"
+import { purgeHouseholdCaches, clearCacheOwner } from "@/lib/pwa/sw-messages"
 import { clearPersistedTimer } from "@/lib/domain/feeding-timer-storage"
 // 注意: ここは startTransition ではなくプレーンな async onClick ゆえ、reject は
 // error boundary へ bubble せず **無言の unhandled rejection** になる（機序が別）。
@@ -67,10 +68,11 @@ export function PendingContent({
   async function handleSignOut() {
     setIsSigningOut(true)
     try {
-      await signOut()
-      // 現行の signOut は常に redirect するゆえ普通はここへ来ぬ。redirect せずに解決した
-      // 場合も成功には違いない
-      clearPersistedTimer()
+      const result = await signOut()
+      // 成功は redirect（下の catch へ reject として届く）。解決して返ったのは失敗の結果
+      // だけじゃ（PR #235 P2）。計測は消さず、押し直せるように戻す
+      setIsSigningOut(false)
+      toast.error(result.error)
     } catch (err) {
       // signOut の成功は redirect の reject として届く（settings-content と同じ機序）。
       // 端末に残る授乳タイマー（P3-08）を消すのは**成功した時だけ**: 承認済みの世帯員も
@@ -83,6 +85,10 @@ export function PendingContent({
         unstable_rethrow(err)
       } catch (frameworkSignal) {
         clearPersistedTimer()
+        // 承認済みの世帯員がここへ送られてログアウトした時、別タブの (main) の guard が
+        // 往復の間に持ち主を書き戻しておりうる（settings-content と同じ機序・独立レビュー r4）。
+        // 成功ゆえ cookie は消えておる。待たぬ
+        void clearCacheOwner()
         throw frameworkSignal
       }
       // ここへ来たのは本物の失敗（圏外など）。計測は残す。

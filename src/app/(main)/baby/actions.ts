@@ -892,33 +892,94 @@ export async function updateLog(
   }
 }
 
-export async function deleteLog(logId: string) {
+const LOG_DELETE_ERROR = "ログの削除に失敗しました。"
+
+export async function deleteLog(
+  logId: string,
+  /**
+   * 削除を選んだ画面が見ていた行の版（`updated_at` の表記のまま）。編集シートは開いた時点の
+   * 版、記録直後の「取り消す」は作成に成功した時にサーバが返した版を送る。サーバはこの版を
+   * 条件にした 1 本の DELETE で消し、版が進んでおれば 0 行 = 衝突として返す（家族が先に
+   * 直した記録を、古い画面から編集ごと消させぬ。updateLog と同じ楽観的排他）。
+   */
+  expectedUpdatedAt: string,
+  // 0 行は読み直して分ける: 行が無い（削除済み・別世帯）→ alreadyDeleted（呼び出し側は
+  // 画面の幽霊行を外す）、版が進んでおる → conflict.current に最新の行（外さず見せる）、
+  // 読み直しまで失敗 → どちらも付けぬ（行を外させぬ）。
+): Promise<
+  | { error: null; alreadyDeleted?: undefined; conflict?: undefined }
+  | { error: string; alreadyDeleted: true; conflict?: undefined }
+  | { error: string; alreadyDeleted?: undefined; conflict: { current: BabyLogData } }
+  | { error: string; alreadyDeleted?: undefined; conflict?: undefined }
+> {
+  // 版を送らぬ呼び出し（デプロイを跨いだ古い PWA バンドル等）を無条件の削除へ倒さない。
+  // undefined も null も不正な表記もここで止める（記録の削除に「行が無い」版は無い）。
+  if (!isTimestamptzText(expectedUpdatedAt)) {
+    return { error: STALE_SCREEN_SAVE_ERROR }
+  }
+
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
 
-  // .delete() は 0 行削除でも error: null を返す（別世帯・不在 id なら 0 行マッチ）。
-  // .select("id") で削除行を要求し、0 行を「成功」と偽らないようにする。
+  // id・世帯・版の三点で絞った 1 本の DELETE（先に版を読んでから無条件に消す形にせぬ —
+  // 読みと削除の間に家族の保存が挟まると、その変更ごと消す）。行ロックの後で条件を評価し
+  // 直すため、同時の保存と削除でも版の合う側だけが通る。
+  // .delete() は 0 行でも error: null を返す（版違い・別世帯・不在 id）。.select("id") で
+  // 削除行を要求し、0 行を「成功」と偽らないようにする。
   const { data, error } = await supabase
     .from("baby_logs")
     .delete()
     .eq("id", logId)
     .eq("household_id", householdId)
+    .eq("updated_at", expectedUpdatedAt)
     .select("id")
 
   if (error) {
     logSupabaseError("baby", "ログの削除に失敗", error, { logId, householdId })
-    return { error: "ログの削除に失敗しました。" }
+    return { error: LOG_DELETE_ERROR }
   }
-  if (!data || data.length === 0) {
-    // 成功とは偽らないが、呼び出し側が画面の幽霊行を外せるよう印を付ける
-    // （他端末の削除はフィルタ付き Realtime で届かぬため、画面に残ったままの行を
-    // 消そうとしてここへ来る。P1-04）。RLS 下では別世帯の行は画面に出ない。
-    return { error: "既に削除されています。", alreadyDeleted: true as const }
+  if (data && data.length > 0) {
+    revalidatePath("/baby")
+    return { error: null }
   }
 
-  revalidatePath("/baby")
-  return { error: null }
+  // 0 行: 行が無い（削除済み・別世帯）か、版が進んでおる（家族・自分の別端末が先に保存）。
+  // 読み直して確かめる。読み直しまで失敗したら、削除済みとも衝突とも断定せぬ。
+  const { data: current, error: readError } = await supabase
+    .from("baby_logs")
+    .select(BABY_LOG_COLUMNS)
+    .eq("id", logId)
+    .eq("household_id", householdId)
+    .maybeSingle()
+  if (readError) {
+    logSupabaseError("baby", "log delete re-read failed", readError, {
+      logId,
+      householdId,
+    })
+    return {
+      error: "記録を削除できませんでした（最新の状態を確かめられませんでした）。画面を更新して記録を確かめてください。",
+    }
+  }
+  if (!current) {
+    // 成功とは偽らないが、呼び出し側が画面の幽霊行を外せるよう印を付ける
+    // （他端末の削除はフィルタ付き Realtime で届かぬため、画面に残ったままの行を
+    // 消そうとしてここへ来る。P1-04）。応答を失った自分の削除の再試行も同じ形じゃ。
+    // 別世帯の行も RLS と世帯の絞り込みで見えぬゆえ同じ応答になる（存在を漏らさぬ）。
+    return { error: "既に削除されています。", alreadyDeleted: true }
+  }
+  if (current.updated_at === expectedUpdatedAt) {
+    // 版は合うのに消えなんだ: 他端末の更新ではなく削除そのものが拒まれた形。
+    // 「先に更新されていた」とは偽らぬ（利用者は存在しない変更を探すことになる）。
+    console.error("[baby] ログの削除が 0 行（版は一致）", { logId, householdId })
+    return { error: LOG_DELETE_ERROR }
+  }
+  // 書いた人は断定しない（自分の別端末・記録直後の自分の編集も同じ形になる）。
+  return {
+    error:
+      "この記録は別の端末で先に更新されていたため、削除しませんでした（家族またはご自身）。",
+    conflict: { current: current as BabyLogData },
+  }
 }
 
 // ---------------------------------------------------------------------------

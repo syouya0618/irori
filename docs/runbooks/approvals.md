@@ -22,6 +22,8 @@
 - 承認モデル（承認はインスタンスの運用者の権限。§4）を人が承認しておること。`db push` した時点で本番に効き、以後この 3 本は凍結される（直すなら新しい migration で出す）。
 - 実行場所は、この 3 本を含む**検証済みの commit** の作業ツリーにする。この 3 本を含まぬ checkout（例: 別作業の残る main の checkout）からは流さぬ。未 link なら先に `supabase link --project-ref <ref>`。
 - 2.2 の `supabase migration list --linked` で、未適用（Local にだけ在る版）が `20261002100001`〜`20261002100003` の 3 本**だけ**であること。`20260909100002` / `20260909100003` が出たら止める。100003 は本番の行を消す不可逆な DROP で、`db push` は未適用の分をまとめて流す。扱いを人が決めるまで `db push` も merge もせぬ。
+- 2.2 の `supabase db push --dry-run` が流すと言う版も、同じ 3 本**だけ**であること（`migration list` と `--dry-run` の両方で同じ 3 本が出て初めて進む）。
+- `select to_regclass('public.app_operators')` が NULL であること。NULL でなければ、誰かが SQL Editor で 100002 を手で流した痕跡じゃ。history が揃っておらぬまま `db push` すると `CREATE TABLE` で落ちる。手で流した版と history を人が照合するまで進めぬ。
 - アプリの deploy（2.4）は 2.2 と 2.3 の**後**。Vercel が main への merge で本番を自動 deploy する設定なら merge = deploy ゆえ、merge も 2.3 の後に置く（設定は Vercel の dashboard で確かめる）。
 - 修正を公開リポジトリへ push するのは、この 3 本が本番に効いた後にする（SECURITY.md の非公開報告の方針と同じく、未適用の間に攻略の経路を公開せぬ）。
 
@@ -79,9 +81,34 @@ rollback;
 ### 2.2 migration の適用
 
 ```bash
-supabase migration list --linked   # 履歴が repo と揃っておるか先に確かめる
-supabase db push
+supabase migration list --linked   # 履歴が repo と揃っておるか先に確かめる（Local だけの版 = 3 本）
+supabase db push --dry-run         # 流れる版を印字するだけ。3 本以外が混じれば止める
+supabase db push                   # 3 本を version 順に適用し、history も書く
 ```
+
+`--include-all` は付けぬ。既定の `db push` は remote の最新版より**新しい**未適用の版だけを流す。古い版が未適用で残っておれば CLI はそれを告げて止まるが、それを `--include-all` で黙らせると `20260909100002/3` のような不可逆な版まで一緒に流れる。
+
+**history（`supabase_migrations.schema_migrations`）の更新は `db push` に任せる。** `db push` は migration file を 1 本ずつ適用し、成功した版だけを history へ書く（version・name・statements）。途中の 1 本が落ちたら、その版と後続は history に残らぬ ＝ 原因を直して再度 `db push` すれば残りだけが流れる。**SQL Editor へ file を貼って流す経路は採らぬ**（history が更新されず、次の `db push` が同じ file をもう一度流して `CREATE TABLE app_operators` で落ちる）。やむを得ず手で流した時だけ `supabase migration repair --status applied <version>` で history を揃えるが、それは本手順の外じゃ。
+
+history の確認（3 行が正）:
+
+```sql
+select version, name from supabase_migrations.schema_migrations
+ where version in ('20261002100001', '20261002100002', '20261002100003')
+ order by version;
+```
+
+**止める条件（どれか一つでも当たれば、次の文を流さず人が判断する）:**
+
+| 観測 | 判断 |
+|---|---|
+| `migration list` の Local だけの版が 3 本以外 | 止める（`20260909100002/3` は不可逆な DROP） |
+| `db push --dry-run` が 3 本以外を印字する | 止める（list と dry-run の食い違いは history の破れ） |
+| `to_regclass('public.app_operators')` が NULL でない | 止める（手で流した痕跡。history を人が照合する） |
+| 2.1 の (a) に見覚えの無い世帯・owner、(b)(d)(e) が 0 行でない | 止めて扱いを決める（削除は不可逆ゆえ本手順では行わぬ） |
+| `db push` が途中で error を返す | **再送せぬ。** error 全文と上の history の確認を読み、どこまで入ったかを確かめてから直す |
+| 下の a1〜a15 に true / 0 でない値が残る | deploy へ進まぬ。接続先と error を疑う |
+| 2.5 の snapshot の差分に、期待する行以外が在る | deploy へ進まぬ。差分の行を読んで原因を特定する |
 
 適用後の確認（a1〜a15 はすべて false / 0 が正）:
 
@@ -148,6 +175,69 @@ update public.profiles set is_approved = false
 ### 2.4 アプリの deploy（2.2 の後）
 
 設定画面は `rpc("is_app_operator")` で承認カードを出し分ける。migration より先に deploy すると、その関数が無いため誰にもカードが出ず、設定画面を開くたびに `is_app_operator lookup failed` がログに出る（fail-closed）。
+
+deploy の直後、開いたままの PWA は古いバンドルで動いておる。Server Action の id が変わるゆえ、古い画面からの保存・削除は「見つからぬ」か「画面が古い」で止まる（fail-closed・無言の破壊は無い）。家族には deploy の後にアプリを一度閉じて開き直してもらう。
+
+### 2.5 member（世帯の家族）の日常利用が変わらぬことの証拠
+
+3 本が触るのは `households`（INSERT ポリシーの削除と INSERT / DELETE / TRUNCATE の権限）、`app_operators`（新設・deny-all）、関数 7 本の本文または anon の EXECUTE だけじゃ。`baby_logs` / `baby_diaries` / `calendar_events` / `invitations` / `profiles` / `push_subscriptions` / `event_reminders` / `notification_*` / `google_*` のポリシー・表権限・列権限には一切触れぬ。これを「読んだ」ではなく「測った」にするため、**2.1 の前（before）と 2.2 の後（after）に同じ query を流し、出力を手元で diff する。**
+
+```sql
+-- before / after の両方で同じものを流す（読み取りのみ）。catalog を直に読む —
+-- information_schema は「現在有効なロール」次第で黙って 0 行になる（profiles_column_grants.sql の注記）。
+begin; set transaction read only;
+select kind, object, grantee, priv
+  from (
+    select 'table' as kind, c.relname::text as object,
+           acl.grantee::regrole::text as grantee, acl.privilege_type as priv
+      from pg_class c cross join lateral aclexplode(c.relacl) acl
+     where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p', 'v')
+       and acl.grantee in ('anon'::regrole, 'authenticated'::regrole)
+    union all
+    select 'column', c.relname || '.' || a.attname,
+           acl.grantee::regrole::text, acl.privilege_type
+      from pg_class c
+      join pg_attribute a on a.attrelid = c.oid and a.attacl is not null
+      cross join lateral aclexplode(a.attacl) acl
+     where c.relnamespace = 'public'::regnamespace
+       and acl.grantee in ('anon'::regrole, 'authenticated'::regrole)
+    union all
+    select 'policy', tablename || '.' || policyname,
+           coalesce(array_to_string(roles, ','), ''), cmd::text
+      from pg_policies where schemaname = 'public'
+    union all
+    select 'function', p.oid::regprocedure::text, r.rolname, 'EXECUTE'
+      from pg_proc p cross join (values ('anon'), ('authenticated')) r(rolname)
+     where p.pronamespace = 'public'::regnamespace
+       and has_function_privilege(r.rolname::name, p.oid, 'EXECUTE')
+  ) s
+ order by 1, 2, 3, 4;
+rollback;
+```
+
+期待する差分は次の行**だけ**（before に無い行は現れず、after に無い行は消える）。
+
+| 種類 | 消える行 | 増える行 |
+|---|---|---|
+| table | `households` の anon / authenticated の INSERT・DELETE・TRUNCATE（最大 6 行。before に無ければその分は出ぬ） | なし（`app_operators` は anon / authenticated に 1 行も出ぬのが正） |
+| column | なし | なし |
+| policy | `households.households_insert` | なし |
+| function | anon の EXECUTE: `create_household(text)` `get_invitation_by_token(text)` `accept_invitation(uuid)` `get_pending_approvals()` `approve_user(uuid)` `upsert_push_subscription(text,text,text,text)`（before に anon の行が在った分だけ） | authenticated の EXECUTE: `is_app_operator()` |
+
+それ以外の行が 1 行でも増減しておれば、2.2 の停止条件に当たる。
+
+**member の経路ごとの影響（読みで確かめた分）:**
+
+| member が日常にすること | 通る経路 | 3 本の影響 |
+|---|---|---|
+| 育児記録の記録・編集・削除、日記 | `baby_logs` / `baby_diaries` の RLS と GRANT | 触れぬ |
+| 予定の閲覧・作成・Google 同期 | `calendar_events` / `google_*` | 触れぬ |
+| 設定で世帯の赤ちゃん情報を直す | `households_update`（UPDATE） | 触れぬ（締めたのは INSERT / DELETE / TRUNCATE だけ） |
+| 家族を招待する・招待リンクを開く | `invitations_insert`（role=member）、`get_invitation_by_token` / `accept_invitation` を**ログイン後**に呼ぶ | 触れぬ。anon から剥がした 2 関数は `/invite` が未認証を `/login` へ送った後にしか呼ばれぬ |
+| 通知の購読・再購読 | `upsert_push_subscription` | 本文の検査が RPC 内にも入るだけ。宛先の allowlist は 2026-08 の購読基盤（#208）から Server Action に在り、アプリ経由で登録された行は同じ 3 ホストに限られる。2.1 (c) が 0 なら既存の購読は全て適合 |
+| 設定画面を開く | `is_app_operator()` → false | 承認カードは出ぬ（member には以前から出ておらぬ） |
+
+**deploy の後に member の端末で確かめること（5 つ、各 1 分）:** 育児記録を 1 件記録して取り消す／予定を 1 件作って消す／設定を開き承認カードが出ぬこと／招待リンクを 1 本作れること（使わずに捨ててよい）／通知のテスト送信が届くこと。
 
 ## 3. 戻し方（migration）
 

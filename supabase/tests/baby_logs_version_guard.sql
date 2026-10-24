@@ -14,6 +14,17 @@
 -- を確かめる。どれかが崩れれば、家族の記録の無言上書き（P2-07）が戻るか、毎回の保存が
 -- 誤って衝突になる。
 --
+-- ## 削除の版ガード（PR #235 敵対レビュー P1）
+-- deleteLog も同じ版で
+--   DELETE FROM baby_logs WHERE id = ? AND household_id = ? AND updated_at = 期待版
+-- の 1 本で消し、0 行を「先に更新されていた」衝突として扱う（編集シートの削除・記録直後の
+-- 「取り消す」）。ここでは
+-- (6) A が先に更新した記録を、B が古い版で削除しても 0 行で、A の更新が残ること
+-- (7) 取り消し（作成時の版）の前に家族が更新していたら、取り消しは 0 行で家族の更新が残ること
+-- (8) 別世帯・未承認の利用者は、正しい版を知っていても 1 行も消せぬこと
+-- (9) 対照: 読み直した最新の版での削除は 1 行で通ること（版ガードが常に 0 行の偽緑でない）
+-- を固定する。
+--
 -- ## 版の値は明示する
 -- 同じトランザクションの now() は一定じゃ。ゆえに seed の版を過去の固定値で入れ、
 -- UPDATE が trigger で now()（= それと異なる値）へ進むことを見る。A の保存の後の版は
@@ -27,7 +38,7 @@
 -- 合う側の 1 本だけが書ける。本ファイルは製品の場面そのもの（A の保存の後に B が古い
 -- 画面から保存する）を、別々の要求として順に撃つ。
 BEGIN;
-SELECT plan(15);
+SELECT plan(27);
 
 -- ── seed（superuser = RLS バイパス）─────────────────────────────
 -- H1 = A(owner) / B(member)、H2 = 他世帯の利用者、UP = 未承認（household_id NULL）
@@ -55,11 +66,23 @@ UPDATE profiles SET display_name = 'VG pending'
 INSERT INTO baby_logs (id, household_id, log_type, diaper_type, logged_by, updated_at) VALUES
   ('d6666666-6666-6666-6666-666666666666', 'd1111111-1111-1111-1111-111111111111',
    'diaper', 'pee', 'd2222222-2222-2222-2222-222222222222',
-   '2026-10-01T03:00:00.123456+00:00');
+   '2026-10-01T03:00:00.123456+00:00'),
+  -- (6)(8)(9) 削除の版ガード: A と B が同じ記録を開いた時点の版
+  ('d7777777-7777-7777-7777-777777777777', 'd1111111-1111-1111-1111-111111111111',
+   'diaper', 'pee', 'd2222222-2222-2222-2222-222222222222',
+   '2026-10-01T04:00:00.111111+00:00'),
+  -- (7) 取り消し: A がクイック記録した直後の版（作成の応答で返る updated_at）
+  ('d8888888-8888-8888-8888-888888888888', 'd1111111-1111-1111-1111-111111111111',
+   'diaper', 'pee', 'd2222222-2222-2222-2222-222222222222',
+   '2026-10-01T05:00:00.222222+00:00');
 
 -- seed の固定（ここが赤いなら以降は行が無いだけの偽緑）
 SELECT is((SELECT count(*) FROM baby_logs WHERE id = 'd6666666-6666-6666-6666-666666666666'),
   1::bigint, 'seed: 編集の対象の行が 1 行在る');
+SELECT is((SELECT count(*) FROM baby_logs
+            WHERE id IN ('d7777777-7777-7777-7777-777777777777',
+                         'd8888888-8888-8888-8888-888888888888')),
+  2::bigint, 'seed: 削除の版ガードの対象の 2 行が在る');
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON baby_logs TO authenticated;
 
@@ -184,6 +207,107 @@ SELECT is(
   (SELECT count(*) FROM baby_logs WHERE id = 'd6666666-6666-6666-6666-666666666666'),
   0::bigint,
   '削除済み: 読み直しも 0 行（アプリは「削除されていました」を返す）');
+
+-- ══ (6) A が先に更新した記録を、B が古い版のまま削除する ═══════════════
+-- A と B は同じ記録を版 04:00:00.111111 で開いた。A が先に保存（trigger が版を now() へ進める）。
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', 'd2222222-2222-2222-2222-222222222222', 'role', 'authenticated')::text, true);
+WITH upd AS (
+  UPDATE baby_logs SET diaper_type = 'poop', poop_amount = 'small', memo = 'A が削除の前に保存'
+   WHERE id = 'd7777777-7777-7777-7777-777777777777'
+     AND household_id = 'd1111111-1111-1111-1111-111111111111'
+     AND updated_at = '2026-10-01T04:00:00.111111+00:00'
+  RETURNING 1)
+SELECT is((SELECT count(*) FROM upd), 1::bigint,
+  '削除の版ガード: A が開いた時点の版で先に保存する（1 行）');
+
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', 'd3333333-3333-3333-3333-333333333333', 'role', 'authenticated')::text, true);
+WITH del AS (
+  DELETE FROM baby_logs
+   WHERE id = 'd7777777-7777-7777-7777-777777777777'
+     AND household_id = 'd1111111-1111-1111-1111-111111111111'
+     AND updated_at = '2026-10-01T04:00:00.111111+00:00'
+  RETURNING 1)
+SELECT is((SELECT count(*) FROM del), 0::bigint,
+  '削除の版ガード: B が古い版で削除しても 0 行（A の更新ごと消さぬ）');
+SELECT is(
+  (SELECT memo || '/' || diaper_type::text || '/' || poop_amount::text
+     FROM baby_logs WHERE id = 'd7777777-7777-7777-7777-777777777777'),
+  'A が削除の前に保存/poop/small',
+  '削除の版ガード: A の最新版が DB に残る（読み直しで B に見せる行）');
+
+-- ══ (7) 取り消し（作成時の版）の前に、家族が同じ記録を更新する ═══════════
+-- B（家族）が A のクイック記録を直す。版は作成時の 05:00:00.222222 から now() へ進む。
+WITH upd AS (
+  UPDATE baby_logs SET memo = '家族が取り消しの前に足したメモ'
+   WHERE id = 'd8888888-8888-8888-8888-888888888888'
+     AND household_id = 'd1111111-1111-1111-1111-111111111111'
+     AND updated_at = '2026-10-01T05:00:00.222222+00:00'
+  RETURNING 1)
+SELECT is((SELECT count(*) FROM upd), 1::bigint,
+  '取り消しの版ガード: 家族が作成時の版のまま先に更新する（1 行）');
+
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', 'd2222222-2222-2222-2222-222222222222', 'role', 'authenticated')::text, true);
+WITH del AS (
+  DELETE FROM baby_logs
+   WHERE id = 'd8888888-8888-8888-8888-888888888888'
+     AND household_id = 'd1111111-1111-1111-1111-111111111111'
+     AND updated_at = '2026-10-01T05:00:00.222222+00:00'
+  RETURNING 1)
+SELECT is((SELECT count(*) FROM del), 0::bigint,
+  '取り消しの版ガード: A の「取り消す」（作成時の版）は 0 行');
+SELECT is(
+  (SELECT memo FROM baby_logs WHERE id = 'd8888888-8888-8888-8888-888888888888'),
+  '家族が取り消しの前に足したメモ',
+  '取り消しの版ガード: 家族の更新が DB に残る');
+
+-- ══ (8) 別世帯・未承認の利用者は、正しい版を知っていても消せぬ ═════════
+-- A の保存の後の版はこのトランザクションの now() に等しい（「版を知らぬから 0 行」の偽緑を避ける）
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', 'd4444444-4444-4444-4444-444444444444', 'role', 'authenticated')::text, true);
+WITH del AS (
+  DELETE FROM baby_logs
+   WHERE id = 'd7777777-7777-7777-7777-777777777777'
+     AND household_id = 'd1111111-1111-1111-1111-111111111111'
+     AND updated_at = now()
+  RETURNING 1)
+SELECT is((SELECT count(*) FROM del), 0::bigint,
+  '削除の版ガード: 他世帯は正しい版でも DELETE 0 行');
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', 'd5555555-5555-5555-5555-555555555555', 'role', 'authenticated')::text, true);
+WITH del AS (
+  DELETE FROM baby_logs
+   WHERE id = 'd7777777-7777-7777-7777-777777777777'
+     AND household_id = 'd1111111-1111-1111-1111-111111111111'
+     AND updated_at = now()
+  RETURNING 1)
+SELECT is((SELECT count(*) FROM del), 0::bigint,
+  '削除の版ガード: 未承認も正しい版で DELETE 0 行');
+RESET ROLE;
+SELECT is(
+  (SELECT count(*) FROM baby_logs WHERE id = 'd7777777-7777-7777-7777-777777777777'),
+  1::bigint,
+  '削除の版ガード: 他世帯・未承認の DELETE は行を消しておらぬ（superuser で確認）');
+
+-- ══ (9) 対照: B が最新を読み直してから削除すれば通る ═════════════════
+SET LOCAL role authenticated;
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', 'd3333333-3333-3333-3333-333333333333', 'role', 'authenticated')::text, true);
+WITH del AS (
+  DELETE FROM baby_logs
+   WHERE id = 'd7777777-7777-7777-7777-777777777777'
+     AND household_id = 'd1111111-1111-1111-1111-111111111111'
+     AND updated_at = (SELECT (to_json(updated_at) #>> '{}')::timestamptz FROM baby_logs
+                        WHERE id = 'd7777777-7777-7777-7777-777777777777')
+  RETURNING 1)
+SELECT is((SELECT count(*) FROM del), 1::bigint,
+  '削除の版ガード（対照）: 読み直した最新の版（JSON 表記）での DELETE は 1 行');
+SELECT is(
+  (SELECT count(*) FROM baby_logs WHERE id = 'd7777777-7777-7777-7777-777777777777'),
+  0::bigint,
+  '削除の版ガード（対照）: 最新の版で消した行は無くなる');
 
 RESET ROLE;
 SELECT * FROM finish();

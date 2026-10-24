@@ -758,7 +758,12 @@ describe("BabyDashboard / baby_logs の復帰時再取得（P1-04）", () => {
   })
 
   it("取得中に取り消した行は、削除前の snapshot が届いても蘇らない", async () => {
-    vi.mocked(recordDiaper).mockResolvedValue({ error: null, id: "undo-1" })
+    // 取り消しは作成に成功した時の版でしか消せぬ（版の無い応答には「取り消す」を出さぬ）
+    vi.mocked(recordDiaper).mockResolvedValue({
+      error: null,
+      id: "undo-1",
+      updatedAt: "2026-07-18T02:59:00.123456+00:00",
+    })
     vi.mocked(deleteLog).mockResolvedValue({ error: null })
     await renderDashboard()
     const summary = () => screen.getByLabelText("今日のまとめ")

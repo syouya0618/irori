@@ -63,6 +63,7 @@ vi.mock("sonner", async () => {
 const purgeHouseholdCaches = vi.fn<() => Promise<boolean>>()
 vi.mock("@/lib/pwa/sw-messages", () => ({
   purgeHouseholdCaches: () => purgeHouseholdCaches(),
+  clearCacheOwner: () => Promise.resolve(true),
   LAST_USER_ID_STORAGE_KEY: "irori-last-user-id",
 }))
 

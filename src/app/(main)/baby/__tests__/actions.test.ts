@@ -135,14 +135,49 @@ function makeUpdateSupabaseWithFetch(
   })
 }
 
-/** delete().eq().eq().select("id") を模した fake client（.single() なし、data は配列）。 */
-function makeDeleteSupabase(deleteResult: { data: unknown; error: unknown }) {
-  const select = vi.fn().mockResolvedValue(deleteResult)
-  const eqHousehold = vi.fn(() => ({ select }))
-  const eqId = vi.fn(() => ({ eq: eqHousehold }))
-  const del = vi.fn(() => ({ eq: eqId }))
-  const from = vi.fn(() => ({ delete: del }))
-  return { client: { from } }
+/**
+ * deleteLog の fake client（どれも supabase.from("baby_logs") 起点）。
+ * - 削除: delete().eq()….select(cols) を await → 配列の行（.single() なし）。
+ * - 0 行だった時の読み直し: select(cols).eq()….maybeSingle()。
+ *
+ * **`.eq()` は経路ごとに記録する**（makeLogUpdateSupabase と同じ理由）。削除の絞り込み
+ * （id・世帯・版の三点）と読み直しの絞り込みが混ざると、「版で絞った」の assert が
+ * 読み直しの eq で偽って通る。`.eq()` は何本でも受ける — 版を足す前の実装（二本）に
+ * 対しても、RED が呼び出し形の TypeError で濁らず、版ガードの検査だけが赤くなるように。
+ */
+function makeLogDeleteSupabase(
+  opts: {
+    del?: { data: unknown; error: unknown }
+    reread?: { data: unknown; error: unknown }
+  } = {},
+) {
+  const deleteResult = opts.del ?? { data: [{ id: "log-1" }], error: null }
+  const deleteEqs: [string, unknown][] = []
+  const readEqs: [string, unknown][] = []
+
+  const select = vi.fn((_cols: string) => Promise.resolve(deleteResult))
+  const deleteChain: Record<string, unknown> = {
+    eq: vi.fn((col: string, val: unknown) => {
+      deleteEqs.push([col, val])
+      return deleteChain
+    }),
+    select,
+  }
+  const del = vi.fn(() => deleteChain)
+
+  const fetchSelect = vi.fn((_cols: string) => {
+    const chain: Record<string, unknown> = {
+      eq: vi.fn((col: string, val: unknown) => {
+        readEqs.push([col, val])
+        return chain
+      }),
+      maybeSingle: () => Promise.resolve(opts.reread ?? { data: null, error: null }),
+    }
+    return chain
+  })
+
+  const from = vi.fn((_table: string) => ({ delete: del, select: fetchSelect }))
+  return { client: { from }, from, del, select, fetchSelect, deleteEqs, readEqs }
 }
 
 function setContext(supabase: unknown) {
@@ -537,39 +572,46 @@ describe("record* は作成した行の版も返す（P2-07: 作成直後の編�
 
 describe("deleteLog が 0 行削除を成功と偽らない", () => {
   it("成功時（1 行削除）は error: null を返す", async () => {
-    const { client } = makeDeleteSupabase({ data: [{ id: "log-1" }], error: null })
+    const { client } = makeLogDeleteSupabase({ del: { data: [{ id: "log-1" }], error: null } })
     setContext(client)
-    const result = await deleteLog("log-1")
+    const result = await deleteLog("log-1", V0)
     expect(result).toEqual({ error: null })
+    expect(revalidatePath).toHaveBeenCalledWith("/baby")
   })
 
-  it("0 行マッチ（既に削除済み/別世帯）は success を偽らず error を返し、ノイズログを出さない", async () => {
-    const { client } = makeDeleteSupabase({ data: [], error: null })
+  it("0 行で読み直しても無い（既に削除済み）は success を偽らず alreadyDeleted を返し、ノイズログを出さない", async () => {
+    // 応答を失った自分の削除の再試行も同じ形になる（行はもう無い = 消したい状態は満たされている）
+    const { client } = makeLogDeleteSupabase({
+      del: { data: [], error: null },
+      reread: { data: null, error: null },
+    })
     setContext(client)
-    const result = await deleteLog("missing-id")
-    expect(result.error).toBeTruthy()
+    const result = await deleteLog("missing-id", V0)
+    expect(result.error).toBe("既に削除されています。")
     // 画面に残る幽霊行（他端末の削除は Realtime で届かぬ）を呼び出し側が外せる印
     expect(result.alreadyDeleted).toBe(true)
+    expect(result.conflict).toBeUndefined()
     expect(mockedLog).not.toHaveBeenCalled()
   })
 
   it("DB エラーは alreadyDeleted を付けない（行を画面から外させない）", async () => {
-    const { client } = makeDeleteSupabase({
-      data: null,
-      error: { code: "XX000", message: "boom" },
+    const { client, fetchSelect } = makeLogDeleteSupabase({
+      del: { data: null, error: { code: "XX000", message: "boom" } },
     })
     setContext(client)
-    const result = await deleteLog("log-1")
+    const result = await deleteLog("log-1", V0)
     expect(result.alreadyDeleted).toBeUndefined()
+    expect(result.conflict).toBeUndefined()
+    // 失敗を 0 行（削除済み・衝突）と取り違えて読み直さぬ
+    expect(fetchSelect).not.toHaveBeenCalled()
   })
 
   it("DB エラーは logSupabaseError で構造化ログに残す", async () => {
-    const { client } = makeDeleteSupabase({
-      data: null,
-      error: { code: "XX000", message: "boom" },
+    const { client } = makeLogDeleteSupabase({
+      del: { data: null, error: { code: "XX000", message: "boom" } },
     })
     setContext(client)
-    const result = await deleteLog("log-1")
+    const result = await deleteLog("log-1", V0)
     expect(result.error).toBeTruthy()
     expect(mockedLog).toHaveBeenCalledWith(
       "baby",
@@ -577,6 +619,136 @@ describe("deleteLog が 0 行削除を成功と偽らない", () => {
       expect.objectContaining({ code: "XX000" }),
       expect.objectContaining({ householdId: HOUSEHOLD }),
     )
+  })
+})
+
+/**
+ * 削除の版ガード（PR #235 敵対レビュー P1）。
+ *
+ * 編集（updateLog）だけが版を見ても、削除が id と世帯だけで消せば、A が先に直した記録を
+ * B が古い画面から丸ごと消せる（A の編集ごと失われる）。削除も開いた時点の版を条件にした
+ * 1 本の DELETE で書き、0 行なら読み直して「削除済み」「他端末で更新済み」「確かめられぬ」を
+ * 分ける。
+ */
+describe("deleteLog の版ガード（開いた時点の版でしか消せぬ）", () => {
+  // 家族（または自分の別端末）が先に保存した後の行。版は V1 へ進んでおる。
+  const CURRENT = {
+    id: "log-1",
+    log_type: "diaper",
+    logged_at: "2026-10-01T00:01:00+00:00",
+    diaper_type: "poop",
+    poop_amount: "large",
+    memo: "家族が直したメモ",
+    updated_at: V1,
+  }
+
+  it.each([
+    ["版なし（デプロイを跨いだ古い画面）", undefined],
+    ["null（記録の削除に「行が無い」版は無い）", null],
+    ["日付だけ", "2026-10-01"],
+    ["表記でない文字列", "not-a-version"],
+  ])("版が %s なら DB に触れず、画面が古いと返す（無条件の削除へ倒さぬ）", async (_label, bad) => {
+    const { client, from } = makeLogDeleteSupabase()
+    setContext(client)
+    const result = await deleteLog("log-1", bad as unknown as string)
+    expect(result.error).toMatch(/画面が古いため/)
+    expect(result.alreadyDeleted).toBeUndefined()
+    expect(result.conflict).toBeUndefined()
+    expect(from).not.toHaveBeenCalled()
+  })
+
+  it("削除は id・世帯・版（送られた表記のまま・マイクロ秒つき）の三点で 1 本の DELETE に絞る", async () => {
+    const { client, del, deleteEqs, fetchSelect } = makeLogDeleteSupabase()
+    setContext(client)
+    await deleteLog("log-1", V0)
+    expect(del).toHaveBeenCalledTimes(1)
+    expect(deleteEqs).toEqual([
+      ["id", "log-1"],
+      ["household_id", HOUSEHOLD],
+      ["updated_at", V0],
+    ])
+    // 先に版を SELECT してから無条件に DELETE する形（TOCTOU）ではない
+    expect(fetchSelect).not.toHaveBeenCalled()
+  })
+
+  it("⭐ 0 行で読み直した行の版が進んでおる（A が先に更新）→ 消さず、最新の行を衝突として返す", async () => {
+    const { client, readEqs } = makeLogDeleteSupabase({
+      del: { data: [], error: null },
+      reread: { data: CURRENT, error: null },
+    })
+    setContext(client)
+    const result = await deleteLog("log-1", V0)
+    expect(result.error).toMatch(/別の端末で先に更新されていた/)
+    expect(result.conflict).toEqual({ current: CURRENT })
+    // 「削除済み」と取り違えて画面から外させぬ（A の記録は DB に残っておる）
+    expect(result.alreadyDeleted).toBeUndefined()
+    expect(revalidatePath).not.toHaveBeenCalled()
+    // 読み直しも世帯で絞る（別世帯の行を拾って見せぬ）
+    expect(readEqs).toEqual([
+      ["id", "log-1"],
+      ["household_id", HOUSEHOLD],
+    ])
+    expect(mockedLog).not.toHaveBeenCalled()
+  })
+
+  it("0 行で読み直しても無い別世帯の行は、削除済みと同じ応答にする（存在を漏らさぬ）", async () => {
+    // 別世帯の行は RLS と世帯の絞り込みで削除にも読み直しにも見えぬ
+    const { client, deleteEqs, readEqs } = makeLogDeleteSupabase({
+      del: { data: [], error: null },
+      reread: { data: null, error: null },
+    })
+    setContext(client)
+    const result = await deleteLog("other-household-log", V0)
+    expect(result).toEqual({ error: "既に削除されています。", alreadyDeleted: true })
+    expect(deleteEqs).toContainEqual(["household_id", HOUSEHOLD])
+    expect(readEqs).toContainEqual(["household_id", HOUSEHOLD])
+  })
+
+  it("0 行で読み直しに失敗 → 削除済みとも衝突とも断定せず、行を画面から外させぬ", async () => {
+    const { client } = makeLogDeleteSupabase({
+      del: { data: [], error: null },
+      reread: { data: null, error: { code: "XX000", message: "boom" } },
+    })
+    setContext(client)
+    const result = await deleteLog("log-1", V0)
+    expect(result.error).toMatch(/確かめられませんでした/)
+    expect(result.alreadyDeleted).toBeUndefined()
+    expect(result.conflict).toBeUndefined()
+    expect(revalidatePath).not.toHaveBeenCalled()
+    expect(mockedLog).toHaveBeenCalledWith(
+      "baby",
+      expect.any(String),
+      expect.objectContaining({ code: "XX000" }),
+      expect.objectContaining({ householdId: HOUSEHOLD, logId: "log-1" }),
+    )
+  })
+
+  it("0 行なのに読み直した行の版が送った版と同じ → 衝突とは偽らず、削除の失敗として返す", async () => {
+    // 版が合うのに消えぬのは、他端末の更新ではなく削除そのものが拒まれた形。
+    // 「先に更新されていた」と見せると、利用者は存在しない変更を探すことになる
+    const sameVersion = { ...CURRENT, updated_at: V0 }
+    const { client } = makeLogDeleteSupabase({
+      del: { data: [], error: null },
+      reread: { data: sameVersion, error: null },
+    })
+    setContext(client)
+    const result = await deleteLog("log-1", V0)
+    expect(result.error).toBe("ログの削除に失敗しました。")
+    expect(result.conflict).toBeUndefined()
+    expect(result.alreadyDeleted).toBeUndefined()
+    expect(revalidatePath).not.toHaveBeenCalled()
+  })
+
+  it("未承認の利用者は DB に触れず拒否される", async () => {
+    getAuthContext.mockResolvedValue({
+      error: "承認待ちです",
+      reason: "not-approved",
+      context: null,
+    })
+    const { from } = makeLogDeleteSupabase()
+    const result = await deleteLog("log-1", V0)
+    expect(result.error).toBe("承認待ちです")
+    expect(from).not.toHaveBeenCalled()
   })
 })
 

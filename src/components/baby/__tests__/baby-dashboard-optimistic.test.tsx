@@ -192,7 +192,13 @@ describe("BabyDashboard / 記録の楽観 append (B-03)", () => {
   })
 
   it("Undo（取り消す）成功で logs から除去され、今日のまとめが 0 に戻る", async () => {
-    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-opt-2" })
+    // 取り消しは作成に成功した時の版でしか消せぬ（版の無い応答には「取り消す」を出さぬ）
+    const createdVersion = "2026-10-21T03:00:00.123456+00:00"
+    mockedRecordDiaper.mockResolvedValue({
+      error: null,
+      id: "diaper-opt-2",
+      updatedAt: createdVersion,
+    })
     mockedDeleteLog.mockResolvedValue({ error: null })
     render(<BabyDashboard {...defaultProps()} />)
 
@@ -211,7 +217,7 @@ describe("BabyDashboard / 記録の楽観 append (B-03)", () => {
     })
 
     await waitFor(() =>
-      expect(mockedDeleteLog).toHaveBeenCalledWith("diaper-opt-2"),
+      expect(mockedDeleteLog).toHaveBeenCalledWith("diaper-opt-2", createdVersion),
     )
     // Realtime DELETE echo 無しでも logs から消える
     await waitFor(() =>

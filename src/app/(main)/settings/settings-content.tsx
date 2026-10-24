@@ -22,6 +22,8 @@ import { unsubscribeCurrentDevice } from "@/app/(main)/settings/push-actions"
 import { unsubscribePushForSignOut } from "@/lib/pwa/push-unsubscribe"
 import {
   purgeHouseholdCaches,
+  setCacheOwner,
+  clearCacheOwner,
   LAST_USER_ID_STORAGE_KEY,
 } from "@/lib/pwa/sw-messages"
 import { clearPersistedTimer } from "@/lib/domain/feeding-timer-storage"
@@ -112,6 +114,17 @@ function clearDeviceTimer() {
   clearPersistedTimer()
 }
 
+/**
+ * ログアウトの要求がサーバへ届かなかった（通信断で reject）時、破棄（purgeHouseholdCaches）で
+ * 先に消した世帯キャッシュの持ち主を今の利用者へ戻す。セッションは残っておるゆえ利用者は
+ * 同じまま使い続け、戻さねば (main) を開き直すまでオフライン用の保存が止まったままになる。
+ * 前の利用者の項目は破棄済みで、残っておっても次の利用者の CacheUserGuard が持ち主の交代
+ * として破棄し直す（鍵は残しておる）。`{ error }` が返った時は戻さぬ（→ handleSignOut）。
+ */
+function restoreCacheOwner(userId: string) {
+  void setCacheOwner(userId)
+}
+
 export function SettingsContent({
   profile,
   household,
@@ -154,11 +167,17 @@ export function SettingsContent({
             "[settings] 世帯キャッシュの破棄を確認できず。LAST_USER_ID を残す",
           )
         }
-        await signOut()
-        // 現行の signOut は常に redirect するゆえ普通はここへ来ぬ。redirect せずに
-        // 解決した場合も成功には違いないゆえ、同じ条件で鍵を消す。
-        clearDeviceTimer()
-        if (purged) clearLastUserId()
+        const result = await signOut()
+        // 成功は redirect（下の catch へ reject として届く）。解決して返ったのは失敗の結果
+        // だけじゃ（PR #235 P2）。成功の後処理はせぬ: 鍵（LAST_USER_ID）も端末の計測も残し、
+        // 押し直せるように戻す。鍵を残せば、後で別の利用者がログインした時に CacheUserGuard が
+        // 持ち主の交代として破棄し直せる。
+        // 世帯キャッシュの持ち主は戻さぬ: auth-js は失効に失敗した時も端末のセッションを
+        // 消してから error を返すゆえ、ここに来た端末は実質ログアウト済みのことが多い。戻すと
+        // 破棄に失敗して残った項目が再び配られる（独立レビュー r2）。まだログイン中なら、
+        // 次に (main) を開いた時に CacheUserGuard が書き直す。
+        setIsSigningOut(false)
+        toast.error(result.error)
       } catch (err) {
         // catch 先頭で必ず: signOut() の redirect("/login") 内部エラーは
         // フレームワークへ再送出する（握り潰すと遷移が死ぬ）。
@@ -172,9 +191,16 @@ export function SettingsContent({
         } catch (frameworkSignal) {
           clearDeviceTimer()
           if (purged) clearLastUserId()
+          // 持ち主の記録を改めて消す。破棄で先に消してあるが、signOut の往復の間に別タブが
+          // (main) を開き直しておれば、その guard が（鍵はまだこの利用者ゆえ）持ち主を書き
+          // 戻しておる。成功の redirect は SPA 遷移で SW の /login 経路を通らぬゆえ、ここで
+          // 消さねば、破棄に失敗して残った項目が未ログインの端末で配られる（独立レビュー r4）。
+          // 待たぬ（遷移を遅らせぬ）。cookie はもう消えておるゆえ、新しい利用者の記録は消さぬ
+          void clearCacheOwner()
           throw frameworkSignal
         }
         // ここへ来たのは本物の失敗（圏外など）。鍵は残す（上記）。
+        restoreCacheOwner(profile.id)
         // 圏外 reject でボタンが押せないまま固まるのを防ぐ（永久ローディング対策）。
         setIsSigningOut(false)
         logOfflineError("[settings-content] purgeHouseholdCaches/signOut", err)
