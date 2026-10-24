@@ -21,6 +21,7 @@ function ev(o: Partial<CalendarEventRecord> & { id: string }): CalendarEventReco
     end_at: o.end_at ?? null,
     source: o.source ?? "native",
     series_id: o.series_id ?? null,
+    updated_at: o.updated_at ?? "2026-07-01T00:00:00.000000+00:00",
     ...o,
   }
 }

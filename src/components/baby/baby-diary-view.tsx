@@ -45,6 +45,8 @@ export function BabyDiaryView({
   const [editOpen, setEditOpen] = useState(false)
   const [editDate, setEditDate] = useState("")
   const [editContent, setEditContent] = useState("")
+  // 編集を始めた時点の版（updated_at。無ければ null）。楽観的排他（P1-06）の期待版。
+  const [editUpdatedAt, setEditUpdatedAt] = useState<string | null>(null)
   const [editKey, setEditKey] = useState(0)
 
   // 次に取得すべきオフセット = これまでに受領した件数。diaries 更新に追従させる。
@@ -98,9 +100,10 @@ export function BabyDiaryView({
     }
   }, [loadToken, householdId])
 
-  const openEdit = (date: string, content: string) => {
+  const openEdit = (date: string, diary: BabyDiaryData | null) => {
     setEditDate(date)
-    setEditContent(content)
+    setEditContent(diary?.content ?? "")
+    setEditUpdatedAt(diary?.updated_at ?? null)
     setEditKey((k) => k + 1)
     setEditOpen(true)
   }
@@ -122,7 +125,7 @@ export function BabyDiaryView({
   const writeButton = (
     <button
       type="button"
-      onClick={() => openEdit(today, todayDiary?.content ?? "")}
+      onClick={() => openEdit(today, todayDiary)}
       className="glass flex min-h-11 items-center justify-center gap-2 rounded-2xl px-4 text-sm font-medium text-primary shadow-lg shadow-black/[0.04] transition-colors duration-200 hover:text-primary/80"
     >
       <PenLine size={16} />
@@ -137,6 +140,7 @@ export function BabyDiaryView({
       onOpenChange={setEditOpen}
       diaryDate={editDate || today}
       initialContent={editContent}
+      initialUpdatedAt={editUpdatedAt}
       onSaved={handleSaved}
     />
   )
@@ -165,7 +169,7 @@ export function BabyDiaryView({
           </h2>
           <button
             type="button"
-            onClick={() => openEdit(diary.diary_date, diary.content)}
+            onClick={() => openEdit(diary.diary_date, diary)}
             aria-label={`${diary.diary_date} の日記を編集`}
             className="glass block min-h-11 w-full rounded-2xl p-4 text-left shadow-lg shadow-black/[0.04] transition-colors duration-200 hover:bg-accent/30"
           >

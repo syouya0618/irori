@@ -14,14 +14,14 @@
 主な実装済み機能:
 
 - 認証: Supabase magic link、callback、未認証リダイレクト、承認待ち画面
-- 世帯管理: 世帯作成、招待リンク、招待受け入れ、ownerによる承認
-- 育児ログ: 授乳、おむつ、体温、成長記録、メモ、日記、授乳タイマー、週間サマリー、Realtime
+- 世帯管理: 世帯作成、招待リンク、招待受け入れ、運用者による承認（`docs/runbooks/approvals.md`）
+- 育児ログ: 授乳、おむつ、体温、成長記録（身長・体重の推移グラフ）、メモ、日記、授乳タイマー（閉じても計測が続く）、週間サマリー、記録者の表示、日付へ移動、全履歴の検索（`/baby/search`）、過去日の追記と日時の修正、Realtime
 - 予定: 共有カレンダー（月表示・アジェンダ・繰り返し）、Google カレンダー連携（読み取り同期）、Web Push 通知（予定リマインダー・毎朝のまとめ）、「今日・明日の予定」カード
-- 設定: 起動時のページ、テーマ、赤ちゃん情報、通知、Google 連携、PDFエクスポート
+- 設定: 起動時のページ、テーマ、赤ちゃん情報、通知、Google 連携、エクスポート（小児科用 PDF / 機械可読な JSON）
 
 未実装の大きな塊:
 
-- 成長曲線グラフ
+- 成長曲線のパーセンタイル帯（標準曲線との比較。測定値の推移グラフ自体は実装済み）
 - 予防接種、検診、アレルギー管理
 - 家事分担レポート
 
@@ -29,12 +29,12 @@
 
 ### Web（Next.js）
 
-- Next.js 16.2.6 App Router
+- Next.js 16.3 App Router
 - React 19.2
 - TypeScript
-- Tailwind CSS v4.2
+- Tailwind CSS v4
 - shadcn/ui + Liquid Glass design system
-- Supabase Auth / Database / Storage / Realtime
+- Supabase Auth / Database / Realtime（Storage は 2026-09 の機能廃止以降使っていない）
 - Vitest
 - pdfmake
 
@@ -49,19 +49,27 @@ supabase start               # ローカルスタック（または supabase db 
 pnpm dev                     # http://localhost:3000
 ```
 
-検証:
+検証（CI `.github/workflows/ci.yml` と同じ順）:
 
 ```bash
-pnpm test:run
 pnpm lint
 pnpm exec tsc --noEmit
-pnpm build
+pnpm test:run
+pnpm build | tee /tmp/next-build.log
+# 静的検出器（いずれも --strict。CI と同じ引数）
+./scripts/check-proxy-effective.py --strict --build-log /tmp/next-build.log
+./scripts/check-supabase-error-destructure.py --strict
+./scripts/check-transition-reject-guard.py --strict
+./scripts/check-transition-all.py --strict
+# DB と実ブラウザ（Docker が必要。CI では e2e.yml が実行する）
+supabase start && supabase test db
+pnpm e2e:env && pnpm e2e:build && pnpm e2e
 ```
 
 ## 重要な注意
 
 - Next.js 16では `middleware.ts` ではなく `proxy.ts` を使う。
-- `pnpm build` は Next.js 16.2.6 で Turbopack build retest 済み（Issue #17）。16.2.2 で発生した compile 待ちが解消されたため `--webpack` 固定を解除した。
+- `pnpm build` は Turbopack で行う（Issue #17: 16.2.2 で発生した compile 待ちが 16.2.6 で解消し、`--webpack` 固定を解除した）。
 - Server Actionsは各route配下の `actions.ts` に置く。
 - Supabase RLSは `FOR ALL` ではなく SELECT/INSERT/UPDATE/DELETE を分離する。
 - `new Date("YYYY-MM-DD")` はUTC解釈の罠があるため、JST日付処理は `src/lib/utils/date-jst.ts` を使う。
@@ -82,3 +90,5 @@ pnpm build
 ## 関連ドキュメント
 
 - [デザインシステム](./docs/DESIGN_SYSTEM.md)
+- 運用 runbook: [承認](./docs/runbooks/approvals.md) / [通知 cron](./docs/runbooks/notify-cron.md) / [締め出し時のログイン](./docs/runbooks/locked-out.md)
+- [本番品質化の監査と台帳（2026-10）](./docs/plans/production-readiness-2026-10.md)

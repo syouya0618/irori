@@ -6,10 +6,10 @@ import { ErrorView } from "@/components/common/error-view"
 
 export default function BabyError({
   error,
-  unstable_retry,
+  retry,
 }: {
   error: Error & { digest?: string }
-  unstable_retry: () => void
+  retry: () => void
 }) {
   useEffect(() => {
     console.error("Baby log error:", error)
@@ -20,7 +20,7 @@ export default function BabyError({
       icon={Baby}
       title="育児ログの読み込みに失敗しました"
       message="通信状況を確認して、もう一度お試しください。"
-      onRetry={unstable_retry}
+      onRetry={retry}
     />
   )
 }

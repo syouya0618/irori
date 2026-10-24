@@ -20,13 +20,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { formatTimeJst } from "@/lib/utils/date-jst"
+import { formatJstTimeInput, formatTimeJst } from "@/lib/utils/date-jst"
 import { segmentCn } from "@/lib/utils/segment-cn"
 import type {
   CalendarEventField,
   CalendarRepeat,
 } from "@/lib/domain/calendar-validation"
 import {
+  applyRepeatChange,
   applyStartDateShift,
   formValueToTimestamps,
   validateCalendarFormValue,
@@ -56,17 +57,6 @@ const REPEAT_OPTIONS: { value: CalendarRepeat; label: string }[] = [
   { value: "monthly", label: "毎月" },
 ]
 
-/** 新規作成時の繰り返し終了日の既定 = 開始日 + N ヶ月。 */
-const DEFAULT_REPEAT_UNTIL_MONTHS = 3
-
-/**
- * "YYYY-MM-DD" を月数シフトする(TZ 非依存。Date.UTC で overflow を正規化)。
- * 繰り返し終了日の既定値算出にのみ使う(UTC 罠を避けるため new Date(str) は使わない)。
- */
-function addMonthsYmd(ymd: string, months: number): string {
-  const [y, m, d] = ymd.split("-").map(Number)
-  return new Date(Date.UTC(y, m - 1 + months, d)).toISOString().slice(0, 10)
-}
 
 /** エラー文言の DOM id。aria-describedby で不正な入力と紐付ける。 */
 const ERROR_MESSAGE_ID = "cal-form-error"
@@ -199,10 +189,12 @@ function initialValue(
       isAllDay: editing.is_all_day,
       startDate: editing.start_date,
       endDate: editing.end_date,
+      // <input type="time"> の seed は h23 固定の formatJstTimeInput で作る
+      // （formatTimeJst は環境により深夜 0 時を "24:xx" と出し、欄が空になる）
       startTime: editing.start_at
-        ? formatTimeJst(editing.start_at)
+        ? formatJstTimeInput(editing.start_at)
         : DEFAULT_START_TIME,
-      endTime: editing.end_at ? formatTimeJst(editing.end_at) : "",
+      endTime: editing.end_at ? formatJstTimeInput(editing.end_at) : "",
       // 編集モードは繰り返し変更をスコープ外とするため常に "none"。
       repeat: "none",
       repeatUntil: "",
@@ -277,17 +269,10 @@ export function CalendarEventFormSheet({
         : { ...prev, isAllDay: false },
     )
 
-  // 繰り返し種別の切替。none 以外へ変える際、終了日が未入力なら開始日 + 3ヶ月を
-  // 既定として補う(startDate 変更後に空へ戻していなければ既存値を尊重)。
+  // 繰り返し種別の切替（終了日の既定補完と、開始日が空・不正な時の扱いは
+  // calendar-form.ts の applyRepeatChange が持つ）。
   const setRepeat = (repeat: CalendarRepeat) =>
-    update((prev) => ({
-      ...prev,
-      repeat,
-      repeatUntil:
-        repeat !== "none" && !prev.repeatUntil
-          ? addMonthsYmd(prev.startDate, DEFAULT_REPEAT_UNTIL_MONTHS)
-          : prev.repeatUntil,
-    }))
+    update((prev) => applyRepeatChange(prev, repeat))
 
   // 開始日の変更は終了日・繰り返し終了日を同差分でシフトする(期間を保つ)。
   const setStartDate = (startDate: string) =>
@@ -341,7 +326,13 @@ export function CalendarEventFormSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom" className="rounded-t-2xl safe-bottom">
+      {/* 上限 + 本文スクロールは育児ログ側のシートと同じ形。シートは下端固定で高さは
+          中身なりゆえ、上限が無いと「時刻あり」や繰り返しで伸びた分だけ上端（閉じる・
+          タイトル欄）が画面外へ出て、fixed ゆえスクロールでも戻せぬ */}
+      <SheetContent
+        side="bottom"
+        className="max-h-[85dvh] overflow-hidden rounded-t-2xl safe-bottom"
+      >
         <SheetHeader>
           <SheetTitle>
             {isGoogle ? "予定（Google）" : isEditing ? "予定を編集" : "予定を追加"}
@@ -354,7 +345,7 @@ export function CalendarEventFormSheet({
         </SheetHeader>
 
         {isGoogle ? (
-          <div className="flex flex-col gap-2 py-4">
+          <div className="flex flex-col gap-2 overflow-y-auto px-4 py-4">
             <p className="text-base font-medium">{editing.title}</p>
             <p className="text-sm tabular-nums text-muted-foreground">
               {googleWhenLabel(editing)}
@@ -368,7 +359,7 @@ export function CalendarEventFormSheet({
             <div className="pt-2">{reminderField}</div>
           </div>
         ) : (
-          <div className="flex flex-col gap-4 py-4">
+          <div className="flex flex-col gap-4 overflow-y-auto px-4 py-4">
             <div className="flex flex-col gap-2">
               <Label htmlFor="cal-title">タイトル</Label>
               <Input
@@ -501,18 +492,6 @@ export function CalendarEventFormSheet({
               />
             </div>
 
-            {/* 保存前検証のエラー。シートは開いたままで入力は保持される。 */}
-            {error && (
-              <p
-                id={ERROR_MESSAGE_ID}
-                role="alert"
-                className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-              >
-                <AlertCircle size={16} className="mt-0.5 shrink-0" />
-                {error.message}
-              </p>
-            )}
-
             {/* 繰り返しシリーズに属する予定はシリーズ一括削除を提供する。
                 既存の単発削除(フッタのゴミ箱)は「この 1 件のみ」を担い続ける。 */}
             {seriesId && (
@@ -526,6 +505,23 @@ export function CalendarEventFormSheet({
                 この繰り返し予定をすべて削除
               </Button>
             )}
+          </div>
+        )}
+
+        {/* 保存前検証のエラー。シートは開いたままで入力は保持される。本文（上限付きの
+            スクロール領域）の外、保存ボタンの直上に置く — 本文の末尾だと、背の低い画面で
+            最上部のまま「追加」を押した時に文言が画面外へ出て、押しても何も起きぬように
+            見える。エラーがある時だけ描く（常に枠を置くと gap が一つ増える）。 */}
+        {!isGoogle && error && (
+          <div className="shrink-0 px-4">
+            <p
+              id={ERROR_MESSAGE_ID}
+              role="alert"
+              className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              <AlertCircle size={16} className="mt-0.5 shrink-0" />
+              {error.message}
+            </p>
           </div>
         )}
 

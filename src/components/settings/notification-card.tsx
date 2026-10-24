@@ -558,9 +558,9 @@ export function NotificationCard({
                 `data-[size=default]:h-8` を持っており、修飾子つきのそれと素の
                 `h-11` は tailwind-merge の別キーゆえ**両方が残る** — そして CSS の
                 詳細度は属性セレクタを伴う変種が勝つ（32px になる）。`min-height` なら
-                どちらが勝っても 44px を下回らぬ。カレンダーの通知 Select が
-                `h-11` なのは閉じたシートの中で実測されぬためで、こちらは
-                /settings に常時出るゆえ `e2e/touch-targets.spec.ts` の対象じゃ。 */}
+                どちらが勝っても 44px を下回らぬ。いまは SelectTrigger の基底自体が
+                `min-h-11` を持つ（予定シートの `h-11` が 32px に負けておった穴を
+                プリミティブで塞いだ）ゆえ、ここの指定は二重の保険じゃ。 */}
             <SelectTrigger
               id="digest-time"
               aria-label="毎朝のまとめを送る時刻"

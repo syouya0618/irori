@@ -24,6 +24,26 @@ function feedingLog(overrides: Partial<BabyLogData>): BabyLogData {
   } as BabyLogData
 }
 
+describe("BabyTimelineItem の記録者表示（機能 A）", () => {
+  it("recorderLabel を渡すと時刻の下に記録者が出る", () => {
+    render(
+      <BabyTimelineItem
+        log={feedingLog({ amount_ml: 80 })}
+        onEdit={vi.fn()}
+        recorderLabel="はな"
+      />,
+    )
+    expect(screen.getByText("はな")).toBeInTheDocument()
+    // 行のアクセシブル名にも含まれる（読み上げで誰の記録かが分かる）
+    expect(screen.getByRole("button", { name: /はな/ })).toBeInTheDocument()
+  })
+
+  it("渡さねば（一人の世帯）記録者は出ない", () => {
+    render(<BabyTimelineItem log={feedingLog({ amount_ml: 80 })} onEdit={vi.fn()} />)
+    expect(screen.queryByText("はな")).toBeNull()
+  })
+})
+
 describe("BabyTimelineItem の量表示（falsy 0 衝突: B-06 の表示側）", () => {
   it("amount_ml が 0 のとき「0ml」を表示する（0 は有効な記録値）", () => {
     render(<BabyTimelineItem log={feedingLog({ amount_ml: 0 })} onEdit={vi.fn()} />)

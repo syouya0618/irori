@@ -23,8 +23,13 @@ interface BabyTemperatureCardProps {
   logs: BabyLogData[]
   /** 選択日（JST の "YYYY-MM-DD"） */
   date: string
-  /** 選択日が今日か。記録ボタンの出し分けに使う（下記の理由で今日限定） */
+  /** 選択日が今日か。見出しと aria-label の「今日の」接頭辞に使う */
   isToday: boolean
+  /**
+   * 選択日の記録の取得状態（P2-10）。ready 以外は「未測定」と記録ボタンを出さず、
+   * 取得中・失敗中であることを示す（空配列を真値と偽らぬ。レビュー P3-5）
+   */
+  status?: "ready" | "loading" | "error"
   /** 埋まっているスロットのタップで編集シートを開く */
   onEdit: (log: BabyLogData) => void
   /** 空きスロットのタップで logType="temperature" の新規フォームシートを開く */
@@ -114,21 +119,10 @@ function TemperatureSlotCell({
     )
   }
 
-  // 空きスロット。記録ボタンは **今日のみ**に出す。
-  // `baby-log-form-sheet.tsx:222` の `logDate` は新規作成を**今日固定**で導出し
-  // （`logDate` prop は存在しない）、`baby-dashboard.tsx` の `appendLog` は日付を
-  // 検査せず選択日の配列へ prepend する。ゆえに過去日で記録させると
-  // (a) 保存されるのは今日の行 (b) 過去日のタイムラインに今日の行が混入する。
-  // `baby-optimistic-log.ts:14-18` が F-03 として名指しで警告しておる境界じゃ。
-  if (!isToday) {
-    return (
-      <div className="flex min-h-11 flex-col items-start gap-0.5 px-2 py-1.5">
-        <span className="text-[10px] text-muted-foreground">{slotLabel}</span>
-        <span className="text-sm text-muted-foreground">記録なし</span>
-      </div>
-    )
-  }
-
+  // 空きスロット。過去日でも記録できる（機能 C）: 新規フォームは親が渡す選択日
+  // （`createDate`）で作り、日付を見える形で示す。`appendLog` も行の日付で窓を判定する
+  // ため、過去日の行が今日のタイムラインへ混入せぬ（かつて F-03 として見送った境界は
+  // この 2 点で閉じた）。
   return (
     <button
       type="button"
@@ -157,10 +151,38 @@ export function BabyTemperatureCard({
   logs,
   date,
   isToday,
+  status = "ready",
   onEdit,
   onCreate,
 }: BabyTemperatureCardProps) {
   const daily = buildDailyTemperature(logs, date)
+
+  if (status !== "ready") {
+    return (
+      <section className="flex flex-col gap-2">
+        <h2 className="flex items-center gap-1.5 px-1 text-xs font-semibold text-muted-foreground">
+          <Thermometer size={14} />
+          {isToday ? "今日の体温" : "体温"}
+        </h2>
+        <div className="glass rounded-2xl p-4 shadow-lg shadow-black/[0.04]">
+          {status === "loading" ? (
+            <div
+              role="status"
+              aria-label="体温を読み込み中"
+              className="grid min-h-11 grid-cols-2 gap-3"
+            >
+              <div className="h-6 animate-pulse rounded bg-muted" />
+              <div className="h-6 animate-pulse rounded bg-muted" />
+            </div>
+          ) : (
+            <p className="flex min-h-11 items-center text-sm text-muted-foreground">
+              この日の体温を読み込めませんでした
+            </p>
+          )}
+        </div>
+      </section>
+    )
+  }
 
   const handleEditSlot = (entry: TemperatureSlotEntry | null) => () => {
     if (!entry) return

@@ -42,11 +42,20 @@ vi.mock("@/lib/supabase/client", async () => {
   const { buildInlineReducerSupabaseMock } = await import(
     "@/test-utils/supabase-realtime-mock"
   )
-  return buildInlineReducerSupabaseMock(viMod, mockState, {
+  const base = buildInlineReducerSupabaseMock(viMod, mockState, {
     throwMessage:
       "supabase.from() should not be called in feeding-estimate tests " +
       "(selectedDate must not change)",
   })
+  // マウント時の再取得（P1-04）は session を確かめてから問い合わせる。本ファイルは
+  // 目安の導出の検証ゆえ、getSession を解決させずに再取得を保留のまま止める
+  // （再取得そのものは baby-dashboard-resync.test.tsx が持つ）。
+  return {
+    createClient: () => ({
+      ...(base.createClient() as object),
+      auth: { getSession: () => new Promise(() => {}) },
+    }),
+  }
 })
 
 import { BabyDashboard } from "../baby-dashboard"

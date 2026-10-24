@@ -9,6 +9,7 @@ describe("buildOptimisticLog (B-03)", () => {
   it("feeding: 指定フィールドを埋め、未指定は null にする", () => {
     const log = buildOptimisticLog({
       id: "f1",
+      updatedAt: null,
       logType: "feeding",
       loggedBy: "u1",
       feedingType: "bottle",
@@ -32,6 +33,7 @@ describe("buildOptimisticLog (B-03)", () => {
   it("feeding: durationSec は秒精度を保持し duration_min は round で導出する", () => {
     const log = buildOptimisticLog({
       id: "f2",
+      updatedAt: null,
       logType: "feeding",
       loggedBy: "u1",
       feedingType: "breast_left",
@@ -45,6 +47,7 @@ describe("buildOptimisticLog (B-03)", () => {
   it("diaper: diaper_type を埋める", () => {
     const log = buildOptimisticLog({
       id: "d1",
+      updatedAt: null,
       logType: "diaper",
       loggedBy: "u1",
       diaperType: "poop",
@@ -59,6 +62,7 @@ describe("buildOptimisticLog (B-03)", () => {
     vi.setSystemTime(new Date("2026-07-19T05:00:00Z"))
     const log = buildOptimisticLog({
       id: "m1",
+      updatedAt: null,
       logType: "memo",
       loggedBy: "u1",
       memo: "hi",
@@ -71,6 +75,7 @@ describe("buildOptimisticLog (B-03)", () => {
   it("logged_at を明示したらそれを使う", () => {
     const log = buildOptimisticLog({
       id: "t1",
+      updatedAt: null,
       logType: "temperature",
       loggedBy: "u1",
       loggedAt: "2026-07-18T22:00:00+09:00",
@@ -83,6 +88,7 @@ describe("buildOptimisticLog (B-03)", () => {
   it("amountMl=0 の falsy 値も null に潰さず 0 を保持する", () => {
     const log = buildOptimisticLog({
       id: "z1",
+      updatedAt: null,
       logType: "feeding",
       loggedBy: "u1",
       feedingType: "bottle",
@@ -94,6 +100,7 @@ describe("buildOptimisticLog (B-03)", () => {
   it("breast: 左右の吸わせ回数を反映する（母乳サイクル行）", () => {
     const log = buildOptimisticLog({
       id: "b1",
+      updatedAt: null,
       logType: "feeding",
       loggedBy: "u1",
       feedingType: "breast",
@@ -114,6 +121,7 @@ describe("buildOptimisticLog (B-03)", () => {
     // （左右とも NOT NULL）に弾かれ、楽観 append と DB 実体が乖離する
     const log = buildOptimisticLog({
       id: "b2",
+      updatedAt: null,
       logType: "feeding",
       loggedBy: "u1",
       feedingType: "breast",
@@ -127,6 +135,7 @@ describe("buildOptimisticLog (B-03)", () => {
   it("breast 以外の行では左右回数は null（未指定時の既定）", () => {
     const log = buildOptimisticLog({
       id: "b3",
+      updatedAt: null,
       logType: "feeding",
       loggedBy: "u1",
       feedingType: "bottle",
@@ -141,6 +150,7 @@ describe("buildOptimisticLog: うんちの量と母乳サイクルの開始側",
   it("diaper: poopAmount を透過する", () => {
     const log = buildOptimisticLog({
       id: "p1",
+      updatedAt: null,
       logType: "diaper",
       loggedBy: "u1",
       diaperType: "both",
@@ -153,6 +163,7 @@ describe("buildOptimisticLog: うんちの量と母乳サイクルの開始側",
   it("diaper: 未指定なら poop_amount は null（量なし）", () => {
     const log = buildOptimisticLog({
       id: "p2",
+      updatedAt: null,
       logType: "diaper",
       loggedBy: "u1",
       diaperType: "poop",
@@ -163,6 +174,7 @@ describe("buildOptimisticLog: うんちの量と母乳サイクルの開始側",
   it("breast: breastStartSide を透過し、未指定なら null（不明）", () => {
     const withSide = buildOptimisticLog({
       id: "b-side",
+      updatedAt: null,
       logType: "feeding",
       loggedBy: "u1",
       feedingType: "breast",
@@ -173,6 +185,7 @@ describe("buildOptimisticLog: うんちの量と母乳サイクルの開始側",
     expect(withSide.breast_start_side).toBe("left")
     const unknown = buildOptimisticLog({
       id: "b-unknown",
+      updatedAt: null,
       logType: "feeding",
       loggedBy: "u1",
       feedingType: "breast",
@@ -187,6 +200,7 @@ describe("buildOptimisticLog: 左右別授乳時間（sides）", () => {
   it("breastLeftSec/RightSec を透過し、0 を null に化けさせない", () => {
     const log = buildOptimisticLog({
       id: "s1",
+      updatedAt: null,
       logType: "feeding",
       loggedBy: "u1",
       feedingType: "breast",
@@ -203,6 +217,7 @@ describe("buildOptimisticLog: 左右別授乳時間（sides）", () => {
   it("未指定なら null（sides を持たない旧形サイクル行）", () => {
     const log = buildOptimisticLog({
       id: "s2",
+      updatedAt: null,
       logType: "feeding",
       loggedBy: "u1",
       feedingType: "breast",
@@ -212,5 +227,29 @@ describe("buildOptimisticLog: 左右別授乳時間（sides）", () => {
     })
     expect(log.breast_left_sec).toBeNull()
     expect(log.breast_right_sec).toBeNull()
+  })
+})
+
+describe("buildOptimisticLog: 行の版（P2-07）", () => {
+  it("作成の応答の版を表記のまま updated_at に乗せる（作成直後の編集がこの版で保存できる）", () => {
+    const log = buildOptimisticLog({
+      id: "v1",
+      updatedAt: "2026-10-01T00:00:00.123456+00:00",
+      logType: "diaper",
+      loggedBy: "u1",
+      diaperType: "pee",
+    })
+    expect(log.updated_at).toBe("2026-10-01T00:00:00.123456+00:00")
+  })
+
+  it("応答に版が無い時は null（行は出す。その行の編集はサーバが「画面が古い」で止める）", () => {
+    const log = buildOptimisticLog({
+      id: "v2",
+      updatedAt: null,
+      logType: "diaper",
+      loggedBy: "u1",
+      diaperType: "pee",
+    })
+    expect(log.updated_at).toBeNull()
   })
 })

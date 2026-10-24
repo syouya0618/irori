@@ -16,6 +16,7 @@ vi.mock("@/app/(main)/baby/actions", () => ({
   updateLog: vi.fn(),
   deleteLog: vi.fn(),
   recordFeeding: vi.fn(),
+  recordDiaper: vi.fn(),
   recordTemperature: vi.fn(),
   recordGrowth: vi.fn(),
   recordMemo: vi.fn(),
@@ -27,6 +28,9 @@ const mockedDeleteLog = vi.mocked(deleteLog)
 const mockedRecordFeeding = vi.mocked(recordFeeding)
 const mockedRecordMemo = vi.mocked(recordMemo)
 const mockedToast = vi.mocked(toast)
+
+/** 編集を開いた時点の行の版（PostgREST の表記）。保存は必ずこの版を第 3 引数で送る（P2-07）。 */
+const LOG_VERSION = "2026-07-18T03:00:00.123456+00:00"
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -55,6 +59,7 @@ function bottleFeedingLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
     duration_sec: null,
     memo: null,
     created_at: "2026-07-18T12:00:00+09:00",
+    updated_at: LOG_VERSION,
     ...overrides,
   }
 }
@@ -74,6 +79,7 @@ describe("BabyLogFormSheet の amountMl 0ml falsy 衝突", () => {
     expect(mockedUpdateLog).toHaveBeenCalledWith(
       "log-1",
       expect.objectContaining({ amountMl: 0 }),
+      LOG_VERSION,
     )
   })
 
@@ -91,6 +97,7 @@ describe("BabyLogFormSheet の amountMl 0ml falsy 衝突", () => {
     expect(mockedUpdateLog).toHaveBeenCalledWith(
       "log-1",
       expect.objectContaining({ amountMl: null }),
+      LOG_VERSION,
     )
   })
 })
@@ -201,6 +208,7 @@ describe("BabyLogFormSheet の記録時刻の編集・指定（タスクB）", (
     expect(mockedUpdateLog).toHaveBeenCalledWith(
       "log-1",
       expect.objectContaining({ loggedAt: "2026-07-18T04:30:00.000Z" }),
+      LOG_VERSION,
     )
   })
 
@@ -488,6 +496,7 @@ describe("BabyLogFormSheet の授乳時間（duration）編集", () => {
     expect(mockedUpdateLog).toHaveBeenCalledWith(
       "log-1",
       expect.objectContaining({ durationSec: 12 * 60 + 15 }),
+      LOG_VERSION,
     )
   })
 
@@ -512,6 +521,7 @@ describe("BabyLogFormSheet の授乳時間（duration）編集", () => {
     expect(mockedUpdateLog).toHaveBeenCalledWith(
       "log-1",
       expect.objectContaining({ durationSec: null }),
+      LOG_VERSION,
     )
   })
 
@@ -532,6 +542,7 @@ describe("BabyLogFormSheet の授乳時間（duration）編集", () => {
     expect(mockedUpdateLog).toHaveBeenCalledWith(
       "log-1",
       expect.objectContaining({ feedingType: "bottle", durationSec: null }),
+      LOG_VERSION,
     )
   })
 
@@ -627,6 +638,7 @@ describe("BabyLogFormSheet のおむつ編集（うんちの量）", () => {
     expect(mockedUpdateLog).toHaveBeenCalledWith(
       "log-1",
       expect.objectContaining({ diaperType: "poop", poopAmount: "small" }),
+      LOG_VERSION,
     )
   })
 
@@ -647,6 +659,7 @@ describe("BabyLogFormSheet のおむつ編集（うんちの量）", () => {
     expect(mockedUpdateLog).toHaveBeenCalledWith(
       "log-1",
       expect.objectContaining({ diaperType: "pee", poopAmount: null }),
+      LOG_VERSION,
     )
   })
 
@@ -705,6 +718,7 @@ describe("BabyLogFormSheet の母乳サイクルの開始側（breast_start_side
     expect(mockedUpdateLog).toHaveBeenCalledWith(
       "log-1",
       expect.objectContaining({ feedingType: "breast", breastStartSide: null }),
+      LOG_VERSION,
     )
   })
 
@@ -724,6 +738,7 @@ describe("BabyLogFormSheet の母乳サイクルの開始側（breast_start_side
     expect(mockedUpdateLog).toHaveBeenCalledWith(
       "log-1",
       expect.objectContaining({ feedingType: "breast", breastStartSide: "left" }),
+      LOG_VERSION,
     )
   })
 
@@ -860,6 +875,7 @@ describe("BabyLogFormSheet の母乳サイクル（feeding_type='breast'）", ()
         breastLeftCount: 3,
         breastRightCount: 0,
       }),
+      LOG_VERSION,
     )
   })
 
@@ -1047,6 +1063,7 @@ describe("BabyLogFormSheet の母乳サイクル（feeding_type='breast'）", ()
         breastLeftCount: 1,
         breastRightCount: 0,
       }),
+      LOG_VERSION,
     )
   })
 
@@ -1157,5 +1174,25 @@ describe("BabyLogFormSheet の母乳サイクル（feeding_type='breast'）", ()
       ),
     )
     expect(mockedRecordFeeding).not.toHaveBeenCalled()
+  })
+})
+
+describe("BabyLogFormSheet の版ガード（P2-07）", () => {
+  it("版を持たぬ行（作成の応答に版が無かった楽観行）の保存は updateLog を呼ばず「画面が古い」で止める", async () => {
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={bottleFeedingLog({ updated_at: null })}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+    await waitFor(() =>
+      expect(mockedToast.error).toHaveBeenCalledWith(
+        "画面が古いため保存できませんでした。再読み込みしてからもう一度お試しください。",
+      ),
+    )
+    expect(mockedUpdateLog).not.toHaveBeenCalled()
   })
 })

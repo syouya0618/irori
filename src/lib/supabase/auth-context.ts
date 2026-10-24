@@ -2,6 +2,7 @@ import { cache } from "react"
 import { createClient } from "@/lib/supabase/server"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { getVerifiedUserId } from "@/lib/supabase/verified-user"
+import type { AuthDenialReason } from "@/lib/auth/auth-denial-status"
 
 export type AuthContext = {
   supabase: Awaited<ReturnType<typeof createClient>>
@@ -17,11 +18,8 @@ export const getAuthContext = cache(
   async (): Promise<
     | {
         error: string
-        reason:
-          | "unauthenticated"
-          | "not-approved"
-          | "no-household"
-          | "lookup-failed"
+        // 理由の union は route の HTTP status 表と同じ正本（増やすと表の割り当て漏れを tsc が止める）
+        reason: AuthDenialReason
         context: null
       }
     | { error: null; reason: null; context: AuthContext }

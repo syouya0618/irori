@@ -35,7 +35,31 @@ export const ALLOWED_PUSH_HOSTS = [
   "updates.push.services.mozilla.com",
 ] as const
 
-/** push の endpoint として送信を許す URL か。 */
+/**
+ * DB の `upsert_push_subscription`（20261002100003）が持つ正規表現と**同じ文字列**。
+ *
+ * 小文字のホスト・port 無し・userinfo 無し・パス必須を、**生の文字列**に対して要求する。
+ * `[a-z0-9-]+` はラベルの文字種（`_` や空ラベルを通さぬ）まで DB と揃えるためじゃ。
+ * 片方だけ変えると受理集合が食い違う — `push_endpoint_allowlist.sql` の事例表を
+ * vitest と pgTAP の両方が通すゆえ、食い違えばどちらかが赤くなる。
+ */
+const PUSH_ENDPOINT_PATTERN =
+  /^https:\/\/(([a-z0-9-]+\.)+push\.apple\.com|fcm\.googleapis\.com|updates\.push\.services\.mozilla\.com)\//
+
+/**
+ * push の endpoint として送信を許す URL か。
+ *
+ * ## ⚠️ `new URL()` の結果だけで判じるな（正規化が穴を隠す）
+ * URL パーサは大文字のホストを小文字に、`%2e` を `.` に、`\` を `/` に、既定の
+ * `:443` を空に直し、前後の空白を落とす。正規化後の hostname だけを見ると、
+ * DB の正規表現（生の文字列を見る）が弾くものを TS が通してしまい、
+ * 「Action は通ったのに RPC が 22023」という食い違いになる。ゆえに
+ * **生の文字列が正規化後の `https://<host>/` で始まる**ことまで要求し、
+ * 最後に DB と同じ正規表現を生の文字列へ当てる。
+ *
+ * 受理集合は「DB の正規表現 ∩ URL として解釈できる」で、DB 以下に収まる
+ * （DB より甘くなる向きの食い違いは構造的に起こらぬ）。
+ */
 export function isAllowedPushEndpoint(endpoint: string): boolean {
   let url: URL
   try {
@@ -45,9 +69,19 @@ export function isAllowedPushEndpoint(endpoint: string): boolean {
   }
   // http:// を弾く（平文で内部アドレスを叩かせぬ）。
   if (url.protocol !== "https:") return false
-  return ALLOWED_PUSH_HOSTS.some((host) =>
-    host.startsWith(".") ? url.hostname.endsWith(host) : url.hostname === host,
-  )
+  // port・userinfo を持つ宛先は push サービスではない（`:443` は URL が空に直すゆえ、
+  // 下の生文字列の照合が拾う）。
+  if (url.port !== "" || url.username !== "" || url.password !== "") return false
+  // 正規化で姿の変わった文字列を弾く（大文字・%2e・\・空白・パス無し 等）。
+  if (!endpoint.startsWith(`${url.protocol}//${url.host}/`)) return false
+  if (
+    !ALLOWED_PUSH_HOSTS.some((host) =>
+      host.startsWith(".") ? url.hostname.endsWith(host) : url.hostname === host,
+    )
+  ) {
+    return false
+  }
+  return PUSH_ENDPOINT_PATTERN.test(endpoint)
 }
 
 /**

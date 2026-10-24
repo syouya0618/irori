@@ -77,8 +77,9 @@ export const test = base.extend<E2eFixtures>({
 
     await use(user)
 
-    // 未承認ユーザーは世帯を作れない（create_household に到達する前に承認ゲートで
-    // 止まる）ため、承認済み側のような household 掃除は不要。
+    // 未承認ユーザーは世帯を作れない（proxy の承認ゲートで止まり、DB 層でも
+    // create_household が 42501 で拒む — 20261002100001）ため、承認済み側のような
+    // household 掃除は不要。
     await cleanupUser(user.id)
   },
 })

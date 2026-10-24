@@ -1,10 +1,14 @@
 import { TrendingUp } from "lucide-react"
 import { LineChart, type LineChartPoint } from "./line-chart"
+import { daysBetweenYmd } from "@/lib/utils/date-jst"
 import type { GrowthSeries, GrowthPoint } from "@/lib/domain/baby-log-aggregation"
 
 interface GrowthChartSectionProps {
   series: GrowthSeries
 }
+
+/** 数値一覧に出す直近の測定数。グラフの補助ゆえ短く、全件は PDF / エクスポートが担う */
+const RECENT_POINTS = 4
 
 /** "YYYY-MM-DD" → "M/D"（先頭ゼロを落とす） */
 function toMonthDay(ymd: string): string {
@@ -12,8 +16,27 @@ function toMonthDay(ymd: string): string {
   return `${Number(m)}/${Number(d)}`
 }
 
-function toWeightPoints(points: GrowthPoint[]): LineChartPoint[] {
-  return points.map((p) => ({ label: toMonthDay(p.date), value: p.value }))
+/** "YYYY-MM-DD" → "YYYY/M/D"（一覧用。年を跨ぐ系列で M/D だけでは読めぬため） */
+function toYearMonthDay(ymd: string): string {
+  const [y, m, d] = ymd.split("-")
+  return `${y}/${Number(m)}/${Number(d)}`
+}
+
+/**
+ * 横軸を**時間に比例**させる。`t` は系列の最初の測定からの経過日数（同じ日の複数回は
+ * 同じ位置）。配列順に等間隔で並べると 1 日後と 30 日後が同じ幅になり、傾きが嘘になる。
+ * 日付が読めぬ行（想定外）は t を省き、LineChart 側が等間隔へ退化させる。
+ */
+function toChartPoints(points: GrowthPoint[]): LineChartPoint[] {
+  const first = points[0]?.date
+  return points.map((p) => {
+    const days = first ? daysBetweenYmd(first, p.date) : null
+    return {
+      label: toMonthDay(p.date),
+      value: p.value,
+      ...(days !== null ? { t: days } : {}),
+    }
+  })
 }
 
 /** g → "5.2kg"（末尾の 0 を残さない） */
@@ -24,6 +47,37 @@ function formatKg(grams: number): string {
 /** cm → "58cm" */
 function formatCm(cm: number): string {
   return `${Number(cm.toFixed(1))}cm`
+}
+
+/**
+ * グラフの横に置く小さな数値一覧（直近 RECENT_POINTS 件・新しい順）。
+ * SVG の <title> はホバーでしか出ず、タッチ端末や読み上げでは届かぬため、日付・値・単位を
+ * 通常のテキストで併記する。全件は PDF / エクスポートが担う。
+ */
+function RecentMeasurements({
+  points,
+  format,
+  label,
+}: {
+  points: GrowthPoint[]
+  format: (value: number) => string
+  label: string
+}) {
+  const recent = points.slice(-RECENT_POINTS).reverse()
+  if (recent.length === 0) return null
+  return (
+    <ul aria-label={`${label}の直近の測定`} className="flex flex-col gap-0.5">
+      {recent.map((p, index) => (
+        <li
+          key={`${p.date}-${index}`}
+          className="flex items-baseline justify-between text-xs text-muted-foreground"
+        >
+          <span className="font-mono">{toYearMonthDay(p.date)}</span>
+          <span className="font-mono tabular-nums text-foreground">{format(p.value)}</span>
+        </li>
+      ))}
+    </ul>
+  )
 }
 
 export function GrowthChartSection({ series }: GrowthChartSectionProps) {
@@ -54,10 +108,11 @@ export function GrowthChartSection({ series }: GrowthChartSectionProps) {
             </div>
             <LineChart
               ariaLabel="体重の推移"
-              data={toWeightPoints(series.weight)}
+              data={toChartPoints(series.weight)}
               lineColorClassName="text-primary"
               valueFormatter={formatKg}
             />
+            <RecentMeasurements points={series.weight} format={formatKg} label="体重" />
           </div>
 
           <div className="flex flex-col gap-1">
@@ -69,10 +124,11 @@ export function GrowthChartSection({ series }: GrowthChartSectionProps) {
             </div>
             <LineChart
               ariaLabel="身長の推移"
-              data={toWeightPoints(series.height)}
+              data={toChartPoints(series.height)}
               lineColorClassName="text-sky-500"
               valueFormatter={formatCm}
             />
+            <RecentMeasurements points={series.height} format={formatCm} label="身長" />
           </div>
         </div>
       )}

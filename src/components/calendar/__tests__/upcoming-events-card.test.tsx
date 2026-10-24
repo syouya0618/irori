@@ -15,7 +15,10 @@ import { render, screen, cleanup, waitFor } from "@testing-library/react"
 import { act } from "react"
 
 import type { ViFn } from "@/test-utils/supabase-realtime-mock"
-import { setRefetchData } from "@/test-utils/supabase-realtime-mock"
+import {
+  resetRefetchMockState,
+  setRefetchData,
+} from "@/test-utils/supabase-realtime-mock"
 import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
 import { shiftYmd, todayJstString } from "@/lib/utils/date-jst"
 
@@ -29,6 +32,7 @@ const mockState = vi.hoisted(() => ({
   gteMock: undefined as unknown as ViFn,
   lteMock: undefined as unknown as ViFn,
   orderMock: undefined as unknown as ViFn,
+  abortSignalMock: undefined as ViFn | undefined,
   currentResolveData: [] as CalendarEventRecord[],
 }))
 
@@ -62,6 +66,7 @@ function timedEvent(
     memo: null,
     source: "native",
     series_id: null,
+    updated_at: "2026-07-01T00:00:00.000000+00:00",
     ...over,
   }
 }
@@ -79,6 +84,7 @@ function allDayEvent(
     memo: null,
     source: "native",
     series_id: null,
+    updated_at: "2026-07-01T00:00:00.000000+00:00",
     ...over,
   }
 }
@@ -219,5 +225,84 @@ describe("UpcomingEventsCard", () => {
     await waitFor(() =>
       expect(screen.getByText("あとから入った予定")).toBeInTheDocument(),
     )
+  })
+})
+
+// 日跨ぎ後の作り直し（BabyDashboard が key={today} で作り直し、initialEvents を空で渡す）。
+describe("UpcomingEventsCard / refetchOnMount", () => {
+  // 呼び出し回数を数えるゆえ、前のテストの呼び出し記録を消す（cleanup → reset の順が要）
+  beforeEach(() => {
+    cleanup()
+    resetRefetchMockState(mockState)
+  })
+
+  it("既定（読込日のまま）はマウント時に取りに行かぬ — サーバが渡した予定で足りる", async () => {
+    render(
+      <UpcomingEventsCard
+        initialEvents={[allDayEvent({ id: "e1", title: "サーバの予定" })]}
+        householdId="h1"
+        initialToday={TODAY}
+      />,
+    )
+    await act(async () => {})
+    expect(mockState.fromMock).not.toHaveBeenCalled()
+    expect(screen.getByText("サーバの予定")).toBeInTheDocument()
+  })
+
+  it("立てるとマウント直後に取り直し、取得した予定を出す", async () => {
+    setRefetchData(mockState, [
+      allDayEvent({ id: "e2", title: "取り直した予定" }),
+    ])
+    render(
+      <UpcomingEventsCard
+        initialEvents={[]}
+        householdId="h1"
+        initialToday={TODAY}
+        refetchOnMount
+      />,
+    )
+    await waitFor(() =>
+      expect(screen.getByText("取り直した予定")).toBeInTheDocument(),
+    )
+    expect(mockState.fromMock).toHaveBeenCalledWith("calendar_events")
+  })
+
+  // 日跨ぎ後に作り直された直後、Server Action の revalidatePath で親の initialDate が今日へ
+  // 追いつくと、親が渡す refetchOnMount は true → false に反転する（key は変わらぬ）。
+  // prop に追従すると cleanup が取り直しを abort し、カードが空のまま残る。
+  it("取り直しの途中で refetchOnMount が false へ反転しても、取り直しを abort せず予定を出す", async () => {
+    setRefetchData(mockState, [
+      allDayEvent({ id: "e4", title: "反転後も出る予定" }),
+    ])
+    const props = { initialEvents: [], householdId: "h1", initialToday: TODAY }
+    const { rerender } = render(<UpcomingEventsCard {...props} refetchOnMount />)
+    const signal = mockState.abortSignalMock?.mock.calls[0]?.[0] as
+      | AbortSignal
+      | undefined
+
+    rerender(<UpcomingEventsCard {...props} refetchOnMount={false} />)
+    expect(signal?.aborted).toBe(false)
+
+    await waitFor(() =>
+      expect(screen.getByText("反転後も出る予定")).toBeInTheDocument(),
+    )
+  })
+
+  it("取り直しの途中でアンマウントしたら、そのクエリの signal を abort する", async () => {
+    const { unmount } = render(
+      <UpcomingEventsCard
+        initialEvents={[]}
+        householdId="h1"
+        initialToday={TODAY}
+        refetchOnMount
+      />,
+    )
+    const signal = mockState.abortSignalMock?.mock.calls[0]?.[0] as
+      | AbortSignal
+      | undefined
+    expect(signal).toBeInstanceOf(AbortSignal)
+    expect(signal?.aborted).toBe(false)
+    unmount()
+    expect(signal?.aborted).toBe(true)
   })
 })

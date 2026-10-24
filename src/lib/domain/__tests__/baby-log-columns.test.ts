@@ -34,6 +34,8 @@ const COMPLETE: BabyLogData = {
   duration_sec: null,
   memo: null,
   created_at: "",
+  // optional だが SELECT には常に含める（版の比較に使う）。ここに書かねば drift 検出から漏れる
+  updated_at: "",
 }
 
 describe("BABY_LOG_COLUMNS", () => {

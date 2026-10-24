@@ -21,9 +21,17 @@ const nextConfig: NextConfig = {
     //   affected path)」と明記している。settings は router.refresh() を使い、
     //   use-router.md が「refresh() clears the Client Cache for the current
     //   route」と明記している。いずれもこの staleTimes キャッシュを迂回する。
-    // - 配偶者側の変更は最大 10 秒古い可能性があるが、既存の visibilitychange
-    //   / focus 復帰時 refetch（use-visibility-refetch.ts）が可視化のたびに
-    //   実データへ揃えるため、古さは短時間の一過性に留まる。
+    // - 配偶者側の変更は最大 10 秒古い payload で描かれうる。戻る/進むはさらに
+    //   古さを問わず payload を再利用する（router の bfcache）。いずれも
+    //   baby_logs は baby-dashboard.tsx の resyncLogs が**マウント時**と
+    //   visible / focus、channel の SUBSCRIBED（初回と再接続）で取り直すため、
+    //   取り直しに成功する限り、古いのは再マウント直後の 1 往復の間だけに留まる
+    //   （圏外・session 失効中は反映を見送り、次の契機まで古い表示が残る）。
+    //   back/forward の再利用は staleTimes.md「This doesn't change back/forward
+    //   caching behavior」と 04-glossary.md の Client Cache の項を参照。その他（日記・予定等）は
+    //   visibilitychange / focus 復帰時 refetch（use-visibility-refetch.ts）が
+    //   可視化のたびに揃える — 遷移で戻っただけでは発火しないため、次の可視化
+    //   までは古い表示が残りうる（日記の上書きはサーバの版ガードが防ぐ）。
     // - `static`（既定 5 分）はここでは変更しない。
     staleTimes: {
       dynamic: 10,

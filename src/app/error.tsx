@@ -5,10 +5,10 @@ import { AlertTriangle, RotateCcw } from "lucide-react"
 
 export default function GlobalError({
   error,
-  unstable_retry,
+  retry,
 }: {
   error: Error & { digest?: string }
-  unstable_retry: () => void
+  retry: () => void
 }) {
   useEffect(() => {
     console.error("Global error:", error)
@@ -31,7 +31,7 @@ export default function GlobalError({
         </div>
 
         <button
-          onClick={() => unstable_retry()}
+          onClick={() => retry()}
           className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-[oklch(0.65_0.19_50)] px-6 py-3 text-sm font-semibold text-white transition-colors duration-200 hover:bg-[oklch(0.60_0.19_50)]"
         >
           <RotateCcw className="size-4" />

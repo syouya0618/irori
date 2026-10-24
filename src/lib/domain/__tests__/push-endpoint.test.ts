@@ -1,9 +1,39 @@
+import { readFileSync } from "node:fs"
+import path from "node:path"
 import { describe, expect, it } from "vitest"
 import {
   ALLOWED_PUSH_HOSTS,
   isAllowedPushEndpoint,
   summarizeUserAgent,
 } from "../push-endpoint"
+
+/**
+ * DB 側（`upsert_push_subscription` の正規表現）と**同じ事例表**を読む。
+ *
+ * 事例表の正本は pgTAP のファイルじゃ（`push-endpoint-cases:begin` 〜 `:end`）。
+ * ここで写しを持てば、片方だけ足されて受理集合が黙って食い違う。ゆえに
+ * ファイルから直に読み取り、TS の判定が DB と同じ答えを返すことを確かめる。
+ */
+const PGTAP_CASES = path.resolve(
+  __dirname,
+  "../../../../supabase/tests/push_endpoint_allowlist.sql",
+)
+
+function readSharedCases(): { endpoint: string; allowed: boolean }[] {
+  const sql = readFileSync(PGTAP_CASES, "utf8")
+  const begin = sql.indexOf("-- push-endpoint-cases:begin")
+  const end = sql.indexOf("-- push-endpoint-cases:end")
+  if (begin < 0 || end < begin) return []
+  const block = sql.slice(begin, end)
+  // 1 行 1 事例: `  ('<endpoint>', true|false),`。SQL の '' は ' に戻す。
+  const tupleLines = block.split("\n").filter((line) => /^\s*\('/.test(line))
+  const cases = tupleLines.flatMap((line) => {
+    const m = /^\s*\('((?:[^']|'')*)',\s*(true|false)\)[,;]?\s*$/.exec(line)
+    return m ? [{ endpoint: m[1].replace(/''/g, "'"), allowed: m[2] === "true" }] : []
+  })
+  // 読み取れぬ行が 1 つでも在れば件数が合わず、下の assert が赤くなる。
+  return cases.length === tupleLines.length ? cases : []
+}
 
 describe("isAllowedPushEndpoint", () => {
   // ⚠️ この関数は **SSRF と open relay に対する唯一の防御**じゃ。
@@ -66,6 +96,26 @@ describe("isAllowedPushEndpoint", () => {
     expect(isAllowedPushEndpoint("https://api.push.apple.com/x")).toBe(true)
     // 完全一致の側にサブドメインを足すと通らぬ
     expect(isAllowedPushEndpoint("https://a.fcm.googleapis.com/x")).toBe(false)
+  })
+
+  describe("DB の RPC と同じ事例表（P1-03）", () => {
+    const cases = readSharedCases()
+
+    it("事例表を読み取れておる（0 件の空回りで緑にせぬ）", () => {
+      // 拒否・受理の両方が在ることまで見る。片側だけだと「全部通す／全部弾く」
+      // 実装でも緑になる。
+      expect(cases.length).toBeGreaterThanOrEqual(15)
+      expect(cases.some((c) => c.allowed)).toBe(true)
+      expect(cases.some((c) => !c.allowed)).toBe(true)
+      expect(cases).toContainEqual({
+        endpoint: "https://fcm.googleapis.com/fcm/send/x",
+        allowed: true,
+      })
+    })
+
+    it.each(cases)("$endpoint → $allowed（DB の正規表現と同じ答え）", ({ endpoint, allowed }) => {
+      expect(isAllowedPushEndpoint(endpoint)).toBe(allowed)
+    })
   })
 
   it("allowlist は 3 件（増減がそのまま差分に出る）", () => {

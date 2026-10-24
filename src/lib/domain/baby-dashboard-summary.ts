@@ -43,6 +43,69 @@ export function deriveDashboardSummary(
 }
 
 /**
+ * 「今日より前の最後の授乳」フォールバックを、候補の中の新しいものへ前進させる純関数。
+ *
+ * フォールバックはサーバがページ読込時点の今日を基準に取った値ゆえ、画面を開いたまま
+ * 日を跨ぐと古くなる。進めねば、新しい今日にまだ授乳が無い間、前夜の授乳を飛ばして
+ * 2 日前の授乳を「最終授乳」「次の授乳の目安」の起点にしてしまう（夜間授乳の判断を誤る）。
+ *
+ * - 候補は `log_type === "feeding"` かつ `newTodayStartIso` より前のものだけ
+ * - `excludePumped` は**搾乳だけを外す denylist**（page.tsx の目安用クエリ・
+ *   findLastNursing と同じ向き。allowlist にすると DB に増えた種別が無音で漏れる）
+ * - 比較は epoch（楽観行の "Z" とサーバ行の "+00:00" が混在するため文字列比較せぬ）
+ * - 現在値より新しい候補が無ければ**同じ参照**を返す（古い候補で巻き戻さず、
+ *   state 更新も起こさぬ）
+ */
+export function advanceFeedingFallback(
+  current: BabyLogData | null,
+  candidates: readonly BabyLogData[],
+  newTodayStartIso: string,
+  opts: { excludePumped: boolean },
+): BabyLogData | null {
+  const limit = new Date(newTodayStartIso).getTime()
+  let best = current
+  let bestEpoch = current
+    ? new Date(current.logged_at).getTime()
+    : Number.NEGATIVE_INFINITY
+  for (const l of candidates) {
+    if (l.log_type !== "feeding") continue
+    if (opts.excludePumped && l.feeding_type === "pumped") continue
+    const epoch = new Date(l.logged_at).getTime()
+    // 不正 ISO（NaN）はどの比較にも負けて選ばれぬ
+    if (epoch < limit && epoch > bestEpoch) {
+      best = l
+      bestEpoch = epoch
+    }
+  }
+  return best
+}
+
+/**
+ * `incoming` が `existing` より古い版か（＝置き換えてはならぬか）を返す純関数。
+ *
+ * 編集の反映は「自分の updateLog の応答」と「Realtime UPDATE の echo」の二経路で届き、
+ * 到着順は保証されぬ。別端末が同じ行を後から編集すると、その echo（新しい版）が先に届き、
+ * 自分の応答（古い版）が後から着きうる。無条件に置き換えると、DB は新しい版なのに画面は
+ * 古い版で固まる（以後この行の echo は来ない）。
+ *
+ * - 比較は `updated_at` の epoch（応答と echo で表記が違いうるため文字列比較せぬ）
+ * - どちらかが `updated_at` を欠く（楽観 append の行・不正値）なら false — データ欠落で
+ *   正当な更新を止めぬ向きに倒す
+ * - 同時刻は false（置き換えてよい）。updated_at は now() = トランザクション開始時刻ゆえ、
+ *   行ロックで直列化された競合ではコミット順と数 ms 食い違いうる。その窓は受容する
+ */
+export function isOlderLogVersion(
+  incoming: Pick<BabyLogData, "updated_at">,
+  existing: Pick<BabyLogData, "updated_at">,
+): boolean {
+  if (!incoming.updated_at || !existing.updated_at) return false
+  const inc = new Date(incoming.updated_at).getTime()
+  const cur = new Date(existing.updated_at).getTime()
+  if (Number.isNaN(inc) || Number.isNaN(cur)) return false
+  return inc < cur
+}
+
+/**
  * 日付ナビの client refetch 結果（`fetched`、logged_at 降順・選択日窓）を
  * 現在の logs state（`prev`）へ id ベースの dedupe マージで合流させる純関数（B-08）。
  *

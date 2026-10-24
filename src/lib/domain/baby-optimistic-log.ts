@@ -29,6 +29,14 @@ import type {
  */
 export interface BuildOptimisticLogParams {
   id: string
+  /**
+   * 作成で書けた行の版（Server Action が返す `updatedAt` = DB の `updated_at`）。**省略不可** —
+   * 楽観行が版を持たねば、Realtime の echo（同じ id の行は捨てる）や再取得が届くまで、
+   * 作成直後の編集が版を送れず保存できぬ（P2-07 の版ガード）。応答に版が無い時だけ
+   * null を渡す（行は出す — 出さねば記録が見えず再タップの二重記録を招く。その行の
+   * 編集はサーバが「画面が古い」で止め、無条件の上書きにはならぬ）。
+   */
+  updatedAt: string | null
   logType: BabyLogType
   loggedBy: string
   /** 既定は呼び出し時刻（当日）。編集シート等で明示したい場合のみ渡す。 */
@@ -88,5 +96,6 @@ export function buildOptimisticLog(
     duration_min: deriveDurationMinFromSec(params.durationSec),
     memo: params.memo ?? null,
     created_at: now,
+    updated_at: params.updatedAt,
   }
 }

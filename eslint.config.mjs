@@ -20,9 +20,21 @@ const eslintConfig = defineConfig([
     // 除外しないと素の eslint が数万件の重複 lint を report する)
     ".claude/worktrees/**",
     ".codex-pet-runs/**",
+    // Playwright MCP が書き出す診断用の生成物（.gitignore 済み）。lint の対象ではない
+    ".playwright-mcp/**",
   ]),
   {
     rules: {
+      // `_` 始まりは「意図して使わぬ」印（vi.fn の引数の型を示すためだけの仮引数など）。
+      // 警告のままにすると本物の未使用が埋もれるため、慣例どおり除外する
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+        },
+      ],
       // process.env への非null断言 (!) を禁止。Vercel 環境変数のペースト時に
       // 末尾改行が混入すると auth が無音 fail するため、`?.trim() ?? ""` を強制する。
       // (learnings.md L71 / L204)

@@ -27,7 +27,34 @@ const CACHE_NAMES = {
   rsc: `${PREFIX}${CACHE_VERSION}-rsc`,
   static: `${PREFIX}${CACHE_VERSION}-static`,
   images: `${PREFIX}${CACHE_VERSION}-images`,
+  // 世帯キャッシュの持ち主の記録（→ CACHE_OWNER_KEY）。版を持たせぬのは、キャッシュの
+  // 形を変えて版を上げても「今この端末を使っておる利用者」は変わらぬゆえ。ここに載せて
+  // おかねば activate が未知の irori-* として消し、SW を更新するたびに持ち主が消える。
+  meta: `${PREFIX}meta`,
 }
+
+// ───────── 世帯キャッシュ（documents / rsc）の持ち主（共用端末の分離） ─────────
+//
+// 共用端末で A がログアウトして B がログインしても、B のオフライン閲覧に A の世帯を出さぬ。
+// 破棄（PURGE_HOUSEHOLD_CACHES）だけでは足りぬ: 破棄の**後**に届いた A の古い応答
+// （破棄の前に出た要求の遅延応答・破棄から signOut の完了までに別タブが A の cookie で
+// 出した要求）が再び保存され、B のオフライン閲覧に出る。破棄そのものが失敗した端末でも出る。
+//
+// ゆえに二つを突き合わせる（どちらも src/lib/pwa/sw-messages.ts と**手動同期**）:
+//   - 応答の主: src/proxy.ts が承認ゲートを通った応答にだけ載せる CACHE_OWNER_HEADER
+//     （検証済みの user id）。SW は cookie を読めぬゆえ、主はサーバに決めさせる。
+//     クライアントの記録から主を推してはならぬ — セッションが破棄なしで終わった後
+//     （他端末からのサインアウト・失効）、次の利用者の着地 HTML が guard より先に SW を
+//     通り、前の利用者の名で保存される（独立レビュー r1 で確認した漏れ）。
+//   - 持ち主の記録（CACHE_OWNER_KEY）: この端末で今オフライン閲覧を許す利用者。ページの
+//     CacheUserGuard が書き、ログアウト・利用者の交代で消す。
+// 保存: 応答の主が在り、かつ今の記録と一致する時だけ（主の無い応答・記録と違う主の応答・
+//   記録が無い間の応答は保存せぬ）。
+// 配信: 項目の主が**今の**記録と一致する時だけ。一致せねば無いものとして扱い、消す。
+// **荷重を担うのは配信時の照合じゃ。** 保存の直前の確認と put の間に交代が挟まっても、
+// その項目は前の利用者の主のまま残り、配られぬ。主の無い旧版の項目も配られぬ。
+const CACHE_OWNER_KEY = "/__irori/cache-owner"
+const CACHE_OWNER_HEADER = "x-irori-cache-owner"
 
 // オフライン閲覧を許可する認証済みページ。
 // src/lib/constants/pages.ts の VALID_PAGES (+ /settings) と手動同期すること。
@@ -366,6 +393,119 @@ async function maybeRefreshOffline() {
 }
 
 /**
+ * 持ち主の記録を消す（以後、前の主の項目は誰にも配られぬ）。サーバの応答が「記録の主は
+ * もうこの端末のセッションに居らぬ」と示した時に呼ぶ。アプリの破棄（ログアウト・利用者の
+ * 交代）を経ずにセッションが終わる経路 — 他端末からのサインアウト・失効 — では、記録と
+ * 項目が残ったままになり、オフラインで端末を手にした者に配られうるゆえ。
+ */
+async function clearCacheOwner(reason) {
+  try {
+    const meta = await caches.open(CACHE_NAMES.meta)
+    if (await meta.delete(CACHE_OWNER_KEY)) {
+      console.warn("[sw] 世帯キャッシュの持ち主の記録を消した:", reason)
+    }
+  } catch (err) {
+    console.warn("[sw] 世帯キャッシュの持ち主の記録を消せず:", err)
+  }
+}
+
+/**
+ * 応答が /login に着いた（= この端末にセッションが無い）なら、持ち主の記録を消す。
+ * proxy は未認証の要求を /login へ送り、ログイン済みの /login は既定ページへ送るゆえ、
+ * 「/login に着いた」は「セッションが無い」と同じじゃ。ナビゲーションの redirect は
+ * ブラウザが追い（SW 内の fetch は redirect: "manual"）、/login の遷移が改めて
+ * nav-passthrough を通る。RSC の fetch は redirect を追い、res.url が /login になる。
+ */
+async function revokeOwnerIfSignedOut(res) {
+  if (!res || !res.ok || !res.url) return
+  let pathname
+  try {
+    pathname = new URL(res.url).pathname
+  } catch {
+    return
+  }
+  if (pathname === "/login") await clearCacheOwner("セッション無し")
+}
+
+/** 認証系ページ: キャッシュは一切せず、オフライン時のみ /offline を表示 */
+async function handleNavPassthrough(request) {
+  let res
+  try {
+    res = await fetch(request)
+  } catch {
+    return offlineFallback()
+  }
+  await revokeOwnerIfSignedOut(res)
+  return res
+}
+
+/**
+ * 世帯キャッシュの今の持ち主（無ければ null）。読めぬ時も null（＝保存も配信もせぬ側へ倒す）。
+ */
+async function readCacheOwner() {
+  try {
+    const meta = await caches.open(CACHE_NAMES.meta)
+    const res = await meta.match(CACHE_OWNER_KEY)
+    if (!res) return null
+    const owner = (await res.text()).trim()
+    return owner || null
+  } catch (err) {
+    console.warn("[sw] 世帯キャッシュの持ち主を読めず（保存も配信もせぬ）:", err)
+    return null
+  }
+}
+
+/**
+ * 世帯キャッシュへ保存する。応答の主（proxy が載せる CACHE_OWNER_HEADER）が在り、かつ
+ * 今の持ち主の記録と一致する時だけ（主の無い応答・記録が無い間・記録と違う主 — ログアウト
+ * の最中や、交代の直後で guard がまだ記録を書いておらぬ着地 — は保存せぬ）。応答は主の
+ * ヘッダを持ったまま保存され、配信時の照合（matchOwned）にそのまま使われる。
+ * 保存の失敗は握って警告に残す（保存できぬことを理由に、届いた応答まで捨てて
+ * オフライン扱いにせぬ）。
+ */
+async function putOwned(cacheName, key, res, max, recordedAtStart) {
+  const owner = res.headers.get(CACHE_OWNER_HEADER)
+  if (!owner) return
+  try {
+    const recorded = await readCacheOwner()
+    if (recorded !== owner) {
+      console.warn("[sw] 応答の主が今の持ち主と違うため保存せず:", key)
+      // 記録が通信の間ずっと同じなのに、別の利用者のセッションで応答が返った = 記録の主は
+      // もうこの端末のセッションに居らぬ（破棄を経ずに終わった後の交代）。guard が記録を
+      // 書き直す前でも、前の主の項目を配らぬよう記録を消す。
+      // 通信の間に記録が変わっておれば（交代の前に出た要求の遅延応答）消さぬ — 新しい
+      // 持ち主の正しい記録まで消すことになる（独立レビュー r3）
+      if (recorded && recorded === recordedAtStart) {
+        await clearCacheOwner("別の利用者の応答")
+      }
+      return
+    }
+    const cache = await caches.open(cacheName)
+    await cache.put(key, res)
+    await trimCache(cacheName, max)
+  } catch (err) {
+    console.warn("[sw] 世帯キャッシュへの保存に失敗:", key, err)
+  }
+}
+
+/**
+ * 世帯キャッシュから、主が今の持ち主と一致する項目だけを返す（無ければ undefined）。
+ * 主の違う・主の無い項目は配らず、ついでに消す（前の利用者のデータを残さぬ）。
+ */
+async function matchOwned(cacheName, key) {
+  const owner = await readCacheOwner()
+  if (!owner) return undefined
+  const cache = await caches.open(cacheName)
+  const cached = await cache.match(key)
+  if (!cached) return undefined
+  if (cached.headers.get(CACHE_OWNER_HEADER) !== owner) {
+    await cache.delete(key)
+    return undefined
+  }
+  return cached
+}
+
+/**
  * APP_PAGES への navigate: network-first → cache → /offline。
  *
  * キーは `makeDocumentCacheKey` (＝ `?date=` を落とす)。**put と match の両方で
@@ -373,19 +513,25 @@ async function maybeRefreshOffline() {
  * 「当たるのに濃度が増える」のどちらかが残る。
  */
 async function handleDocument(request) {
-  const cache = await caches.open(CACHE_NAMES.documents)
   const key = makeDocumentCacheKey(request.url)
+  // 要求を出す前の記録（putOwned が「通信の間に記録が変わったか」を見分けるため）
+  const recordedAtStart = await readCacheOwner()
   try {
     const res = await fetch(request)
     const contentType = res.headers.get("content-type") || ""
     // text/html のみ保存 (redirect は cacheable が弾く)
     if (cacheable(res) && contentType.includes("text/html")) {
-      await cache.put(key, res.clone())
-      await trimCache(CACHE_NAMES.documents, MAX_ENTRIES.documents)
+      await putOwned(
+        CACHE_NAMES.documents,
+        key,
+        res.clone(),
+        MAX_ENTRIES.documents,
+        recordedAtStart
+      )
     }
     return res
   } catch (err) {
-    const cached = await cache.match(key)
+    const cached = await matchOwned(CACHE_NAMES.documents, key)
     if (cached) return cached
     console.warn("[sw] document オフラインフォールバック:", request.url, err)
     return offlineFallback()
@@ -399,19 +545,21 @@ async function handleDocument(request) {
  * ハードナビゲーションにフォールバックし、documents 経路 (handleDocument) で回復する。
  */
 async function handleRsc(request) {
-  const cache = await caches.open(CACHE_NAMES.rsc)
   const key = makeCacheKey(request.url)
+  // 要求を出す前の記録（handleDocument と同じ）
+  const recordedAtStart = await readCacheOwner()
   try {
     const res = await fetch(request)
+    // セッションが切れておれば /login へ redirect される（RSC の fetch はそれを追う）
+    await revokeOwnerIfSignedOut(res)
     const contentType = res.headers.get("content-type") || ""
     // RSC flight payload (text/x-component) のみ保存
     if (cacheable(res) && contentType.includes("text/x-component")) {
-      await cache.put(key, res.clone())
-      await trimCache(CACHE_NAMES.rsc, MAX_ENTRIES.rsc)
+      await putOwned(CACHE_NAMES.rsc, key, res.clone(), MAX_ENTRIES.rsc, recordedAtStart)
     }
     return res
   } catch (err) {
-    const cached = await cache.match(key)
+    const cached = await matchOwned(CACHE_NAMES.rsc, key)
     if (cached) return cached
     throw err
   }
@@ -450,8 +598,9 @@ self.addEventListener("fetch", (event) => {
       event.respondWith(handleRsc(event.request))
       break
     case "nav-passthrough":
-      // 認証系ページ: キャッシュは一切せず、オフライン時のみ /offline を表示
-      event.respondWith(fetch(event.request).catch(() => offlineFallback()))
+      // 認証系ページ: キャッシュは一切せず、オフライン時のみ /offline を表示。
+      // /login に着いたら持ち主の記録を消す（→ revokeOwnerIfSignedOut）
+      event.respondWith(handleNavPassthrough(event.request))
       break
     case "precached":
       event.respondWith(cacheFirst(event.request, CACHE_NAMES.precache))
@@ -469,18 +618,32 @@ self.addEventListener("fetch", (event) => {
 
 // 別ユーザーのログイン・ログアウト時に世帯データ入りキャッシュ (documents / rsc) を
 // 破棄する。static / images / precache は個人データを含まないため残す。
+//
+// ⚠️ **失敗も ack で返すこと。** ページ側 (src/lib/pwa/sw-messages.ts) は `ok` を読み、
+// true の時だけ LAST_USER_ID を消す。黙って ack を出さねば、ページはタイムアウトまで
+// 待たされた末に「確かめられぬ」へ倒れるしかない (P2-24)。
+//
+// 持ち主の記録を**先に**消す（以後は保存も配信もせぬ）。消してから破棄するゆえ、破棄の
+// 最中・後に届いた前の利用者の応答は保存されず、残っても配られぬ。
 self.addEventListener("message", (event) => {
   const data = event.data
   if (!data || data.type !== "PURGE_HOUSEHOLD_CACHES") return
+  const port = event.ports && event.ports[0]
   event.waitUntil(
     (async () => {
-      await Promise.all([
-        caches.delete(CACHE_NAMES.documents),
-        caches.delete(CACHE_NAMES.rsc),
-      ])
-      if (event.ports && event.ports[0]) {
-        event.ports[0].postMessage({ ok: true })
+      let ok = false
+      try {
+        const meta = await caches.open(CACHE_NAMES.meta)
+        await meta.delete(CACHE_OWNER_KEY)
+        await Promise.all([
+          caches.delete(CACHE_NAMES.documents),
+          caches.delete(CACHE_NAMES.rsc),
+        ])
+        ok = true
+      } catch (err) {
+        console.warn("[sw] 世帯キャッシュの破棄に失敗:", err)
       }
+      if (port) port.postMessage({ ok })
     })()
   )
 })
@@ -740,6 +903,8 @@ self.__TEST_HOOKS__ = {
   isResubscribeAccepted,
   handlePushSubscriptionChange,
   CACHE_NAMES,
+  CACHE_OWNER_KEY,
+  CACHE_OWNER_HEADER,
   MAX_ENTRIES,
   APP_PAGES,
   PRECACHE_URLS,

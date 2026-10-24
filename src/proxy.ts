@@ -4,6 +4,7 @@ import { logSupabaseError } from "@/lib/supabase/log-error"
 import { getAppOrigin } from "@/lib/utils/app-origin"
 import { getVerifiedUserId } from "@/lib/supabase/verified-user"
 import { resolveDefaultPage } from "@/lib/constants/pages"
+import { CACHE_OWNER_RESPONSE_HEADER } from "@/lib/pwa/sw-messages"
 
 /**
  * `Server-Timing` に載せる内訳。proxy は静的アセット以外の**全リクエスト**を通り、
@@ -222,6 +223,15 @@ export async function proxy(request: NextRequest) {
         )
       )
     }
+
+    // 承認ゲートを通った素通し応答にだけ「この応答の主」を載せる。SW は cookie を読めぬ
+    // ゆえ、オフライン用に保存する HTML / RSC の主をこれで知り、主の無い応答は保存せぬ
+    // （public/sw.js の putOwned）。主をクライアントの記録から推すと、セッションが破棄なしで
+    // 終わった後に次の利用者の着地 HTML が前の利用者の名で保存され、別の利用者に配られる。
+    // 値は自分の user id ゆえ、本人のブラウザへ返して漏れるものは無い。
+    const passThrough = finalize(supabaseResponse)
+    passThrough.headers.set(CACHE_OWNER_RESPONSE_HEADER, userId)
+    return passThrough
   }
 
   return finalize(supabaseResponse)

@@ -88,6 +88,8 @@ export async function GET(request: Request) {
       sent: result.sent,
       skipped: result.skipped,
       failed: result.failed,
+      // allowlist 外ゆえ送らなんだ宛先の数（P1-03）。0 でなければ不正な購読行が在る。
+      rejectedEndpoints: result.rejectedEndpoints,
     })
     return Response.json(result)
   } catch (err) {

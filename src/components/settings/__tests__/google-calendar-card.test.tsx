@@ -317,6 +317,159 @@ describe("今すぐ同期", () => {
     vi.unstubAllGlobals()
   })
 
+  it("fetch に redirect: 'manual' を渡す（proxy の 307 を追わせぬ）", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ ok: true, summary: {} }))
+    vi.stubGlobal("fetch", fetchMock)
+    render(<GoogleCalendarCard connections={[connection()]} notice={null} />)
+    fireEvent.click(screen.getByRole("button", { name: /今すぐ同期/ }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/google/sync",
+      expect.objectContaining({ redirect: "manual" }),
+    )
+    vi.unstubAllGlobals()
+  })
+
+  it("opaqueredirect（proxy の 307）は原因を断定せず再読み込みを促し、成功と言わぬ", async () => {
+    // proxy の 307 は未認証（/login）と未承認・profiles の一過性の取得失敗
+    // （/pending-approval）を区別できぬ（N1）。「セッション切れ」と断定するのは route の 401 だけ。
+    // status 0 は Response のコンストラクタが拒むゆえ素の object で作る。
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 0,
+        type: "opaqueredirect",
+        headers: new Headers(),
+        json: async () => {
+          throw new SyntaxError("Unexpected end of JSON input")
+        },
+      })),
+    )
+    render(<GoogleCalendarCard connections={[connection()]} notice={null} />)
+    fireEvent.click(screen.getByRole("button", { name: /今すぐ同期/ }))
+
+    await waitFor(() => {
+      expect(toastError).toHaveBeenCalledWith(
+        "ログイン状態を確認できませんでした。画面を再読み込みしてください",
+      )
+    })
+    expect(toastError).not.toHaveBeenCalledWith(
+      "セッションが切れました。ログインし直してください",
+    )
+    expect(toastSuccess).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it("route の 401 も再ログインを促す", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("Unauthorized", { status: 401 })),
+    )
+    render(<GoogleCalendarCard connections={[connection()]} notice={null} />)
+    fireEvent.click(screen.getByRole("button", { name: /今すぐ同期/ }))
+
+    await waitFor(() => {
+      expect(toastError).toHaveBeenCalledWith(
+        "セッションが切れました。ログインし直してください",
+      )
+    })
+    expect(toastSuccess).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  /**
+   * UX-03: route は 401 を**未認証の時だけ**返す。profiles の一過性の取得失敗は 503、
+   * 未承認・世帯なしは 403 じゃ。どれも「ログインし直して」と案内してはならぬ
+   * （待てば直る障害で利用者をログアウトへ誘導してしまう）。
+   */
+  it.each([503, 500])(
+    "%i（サーバ側の障害）は時間をおいた再試行を促し、セッション切れとは言わぬ",
+    async (status) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response("Service Unavailable", { status })),
+      )
+      render(<GoogleCalendarCard connections={[connection()]} notice={null} />)
+      fireEvent.click(screen.getByRole("button", { name: /今すぐ同期/ }))
+
+      await waitFor(() => expect(toastError).toHaveBeenCalled())
+      expect(toastError).not.toHaveBeenCalledWith(
+        "セッションが切れました。ログインし直してください",
+      )
+      expect(toastError).toHaveBeenCalledWith(
+        "同期に失敗しました。時間をおいてもう一度お試しください",
+      )
+      expect(toastSuccess).not.toHaveBeenCalled()
+      vi.unstubAllGlobals()
+    },
+  )
+
+  it("403（未承認・世帯なし）は事実どおりに伝え、セッション切れとは言わぬ", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("承認待ちです", { status: 403 })),
+    )
+    render(<GoogleCalendarCard connections={[connection()]} notice={null} />)
+    fireEvent.click(screen.getByRole("button", { name: /今すぐ同期/ }))
+
+    await waitFor(() => expect(toastError).toHaveBeenCalled())
+    expect(toastError).not.toHaveBeenCalledWith(
+      "セッションが切れました。ログインし直してください",
+    )
+    expect(toastError).toHaveBeenCalledWith(
+      expect.stringContaining("承認されていないか、世帯に参加していません"),
+    )
+    expect(toastSuccess).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it("200 でも本文が ok:true でなければ成功と言わぬ", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ ok: false })),
+    )
+    render(<GoogleCalendarCard connections={[connection()]} notice={null} />)
+    fireEvent.click(screen.getByRole("button", { name: /今すぐ同期/ }))
+
+    await waitFor(() => expect(toastError).toHaveBeenCalled())
+    expect(toastSuccess).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it("200 でも JSON でない本文（login 画面の HTML 等）は成功と言わぬ", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response("<!doctype html><title>ログイン</title>", {
+            status: 200,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          }),
+      ),
+    )
+    render(<GoogleCalendarCard connections={[connection()]} notice={null} />)
+    fireEvent.click(screen.getByRole("button", { name: /今すぐ同期/ }))
+
+    await waitFor(() => expect(toastError).toHaveBeenCalled())
+    expect(toastSuccess).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it("対照: 本文が ok:true なら成功を伝える", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ ok: true, summary: {} })),
+    )
+    render(<GoogleCalendarCard connections={[connection()]} notice={null} />)
+    fireEvent.click(screen.getByRole("button", { name: /今すぐ同期/ }))
+
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledTimes(1))
+    expect(toastError).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
   it("通信失敗でもボタンが固まらぬ（永久ローディングにせぬ）", async () => {
     vi.stubGlobal(
       "fetch",

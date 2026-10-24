@@ -212,3 +212,23 @@ describe("resolveBreastSideSeconds（左右別秒の正規化 — 和の等式�
     }
   })
 })
+
+describe("clampBreastCount / BREAST_COUNT_MAX（DB CHECK chk_breast_counts_required のミラー）", () => {
+  it("上限は DB CHECK の 20（タイマー・編集シート・サーバが共有する唯一の値）", async () => {
+    const { BREAST_COUNT_MAX } = await import("../feeding")
+    expect(BREAST_COUNT_MAX).toBe(20)
+  })
+
+  it.each([
+    [0, 0],
+    [20, 20],
+    [21, 20],
+    [-1, 0],
+    [3.6, 4],
+    [Number.NaN, 0],
+    [Number.POSITIVE_INFINITY, 0],
+  ])("clampBreastCount(%s) = %s", async (input, expected) => {
+    const { clampBreastCount } = await import("../feeding")
+    expect(clampBreastCount(input)).toBe(expected)
+  })
+})

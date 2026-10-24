@@ -5,6 +5,13 @@ import { runInNewContext } from "node:vm"
 // classic script の sw.js は import できぬゆえ、手動同期の綻びをここで殺す
 // （既定の着地先がアプリ側の定数と一致することを機械で縛る）。
 import { CALENDAR_DATE_PARAM, CALENDAR_PATH } from "@/lib/domain/calendar-link"
+import {
+  isHouseholdCacheName,
+  CACHE_OWNER_CACHE_NAME,
+  CACHE_OWNER_KEY,
+  CACHE_OWNER_RESPONSE_HEADER,
+  SW_MESSAGE_PURGE_HOUSEHOLD_CACHES,
+} from "@/lib/pwa/sw-messages"
 
 /**
  * public/sw.js の純粋関数 (self.__TEST_HOOKS__) を node:vm で実行して検証する。
@@ -78,6 +85,8 @@ interface TestHooks {
   handleNotificationClick: (event: unknown) => Promise<void>
   DEFAULT_NOTIFICATION_URL: string
   CACHE_NAMES: Record<string, string>
+  CACHE_OWNER_KEY: string
+  CACHE_OWNER_HEADER: string
   MAX_ENTRIES: Record<string, number>
   APP_PAGES: string[]
   PRECACHE_URLS: string[]
@@ -483,49 +492,17 @@ describe("sw.js __TEST_HOOKS__", () => {
  * navigate を投げて**、返った本文とキャッシュのキー集合を見る。
  */
 describe("document キャッシュ — `?date=` の着地（B-6）", () => {
-  /** sw.js が触る範囲だけを満たす Response の代役。 */
-  class FakeRes {
-    status: number
-    ok: boolean
-    redirected: boolean
-    body: string
-    headers: { get: (name: string) => string | null }
-    private headerMap: Record<string, string>
-
-    constructor(
-      body: string,
-      init: {
-        status?: number
-        headers?: Record<string, string>
-        redirected?: boolean
-      } = {},
-    ) {
-      this.body = body
-      this.status = init.status ?? 200
-      this.ok = this.status >= 200 && this.status < 300
-      this.redirected = init.redirected ?? false
-      this.headerMap = {}
-      for (const [k, v] of Object.entries(init.headers ?? {})) {
-        this.headerMap[k.toLowerCase()] = v
-      }
-      this.headers = { get: (name) => this.headerMap[name.toLowerCase()] ?? null }
-    }
-
-    clone(): FakeRes {
-      return new FakeRes(this.body, {
-        status: this.status,
-        headers: this.headerMap,
-        redirected: this.redirected,
-      })
-    }
-
-    text(): Promise<string> {
-      return Promise.resolve(this.body)
-    }
-  }
+  /**
+   * 応答は実物の Response / Headers（Node の fetch 実装）で組む。sw.js は応答の主のヘッダ
+   * （proxy が載せる x-irori-cache-owner）を読み、保存した項目は配信のたびに複製して返す
+   * ゆえ、ヘッダの読み取りと本文の一回性まで本物どおりに振る舞う方が偽緑を作らぬ。
+   */
+  type FakeRes = Response
 
   const HTML = { "content-type": "text/html; charset=utf-8" }
   const OFFLINE_BODY = "オフライン画面じゃ"
+  /** この端末の世帯キャッシュの持ち主（CacheUserGuard が書く記録の代わりに seed する） */
+  const OWNER = "user-a"
 
   interface Entry {
     url: string
@@ -547,7 +524,8 @@ describe("document キャッシュ — `?date=` の着地（B-6）", () => {
         keys: () => Promise.resolve(entries.map((e) => ({ url: e.url }))),
         match: (req: string | { url: string }) => {
           const url = keyOf(req)
-          return Promise.resolve(entries.find((e) => e.url === url)?.res)
+          // 実物と同じく読むたびに新しい Response を返す（本文は一度しか読めぬ）
+          return Promise.resolve(entries.find((e) => e.url === url)?.res.clone())
         },
         put: (req: string | { url: string }, res: FakeRes) => {
           const url = keyOf(req)
@@ -585,12 +563,18 @@ describe("document キャッシュ — `?date=` の着地（B-6）", () => {
       fetched.push(href)
       if (!online) return Promise.reject(new Error("offline"))
       const u = new URL(href)
-      return Promise.resolve(new FakeRes(`server:${u.pathname}${u.search}`, { headers: HTML }))
+      // 主（持ち主ヘッダ）は proxy が承認済みの応答に載せる。無い応答は SW が保存せぬ
+      return Promise.resolve(
+        new Response(`server:${u.pathname}${u.search}`, {
+          headers: { ...HTML, "x-irori-cache-owner": OWNER },
+        }),
+      )
     }
     const { hooks, listeners } = loadSwWithEvents({
       caches: store.caches,
       fetch: fetchImpl,
-      Response: FakeRes,
+      Response,
+      Headers,
     })
     // precache に /offline を仕込む。**退化先を判別可能にする要**じゃ ——
     // 無いと offlineFallback が素の 503 を返し、「キャッシュに当たった」と
@@ -599,10 +583,13 @@ describe("document キャッシュ — `?date=` の着地（B-6）", () => {
     store.seed(
       hooks.CACHE_NAMES.precache,
       "/offline",
-      new FakeRes(OFFLINE_BODY, {
+      new Response(OFFLINE_BODY, {
         headers: { ...HTML, date: new Date().toUTCString() },
       }),
     )
+    // 世帯キャッシュの持ち主（ログイン中の利用者）。居らねば SW は世帯キャッシュを保存も
+    // 配信もせぬ（共用端末の分離。持ち主の契約そのものは sw-shared-device.test.tsx が撃つ）
+    store.seed(hooks.CACHE_NAMES.meta, hooks.CACHE_OWNER_KEY, new Response(OWNER))
 
     async function navigate(path: string): Promise<{ status: number; body: string }> {
       let responded: Promise<{ status: number; text: () => Promise<string> }> | null = null
@@ -1358,11 +1345,116 @@ describe("activate リスナ", () => {
     expect(spy.deletedCaches).not.toContain("someone-elses-cache")
   })
 
+  it("世帯キャッシュの持ち主の記録（irori-meta）は消さぬ（SW の更新のたびに持ち主を失わぬ）", async () => {
+    const spy = makeCachesSpy(["irori-meta", "irori-v1-documents", "irori-v0-rsc"])
+    await runActivate(spy.caches)
+    expect(spy.deletedCaches).toEqual(["irori-v0-rsc"])
+  })
+
   it("現行版のオフライン用ドキュメントを巻き添えで捨てぬ（bump ではなく名指しで消す理由）", async () => {
     const spy = makeCachesSpy(["irori-v1-documents", "irori-v1-precache"])
     await runActivate(spy.caches)
     expect(spy.deletedCaches).toEqual([])
     // 消えるのは名指しのエントリだけ
     expect(spy.deletedEntries).toEqual(["/manifest.webmanifest"])
+  })
+})
+
+/**
+ * 世帯キャッシュの破棄（P2-24）。
+ *
+ * ページ側（sw-messages.ts）は ack の `ok` を読み、true の時だけ LAST_USER_ID を消す。
+ * ゆえに SW は**失敗も返さねばならぬ** —— 黙って ack を出さねば、ページは
+ * タイムアウトまで待たされた末に「確かめられぬ」へ倒れるしかない。
+ */
+describe("message リスナ — PURGE_HOUSEHOLD_CACHES", () => {
+  async function runPurge(caches: unknown) {
+    const { listeners } = loadSwWithEvents({ caches })
+    const replies: unknown[] = []
+    let work: Promise<unknown> | null = null
+    listenerFor(listeners, "message")({
+      data: { type: SW_MESSAGE_PURGE_HOUSEHOLD_CACHES },
+      ports: [{ postMessage: (m: unknown) => replies.push(m) }],
+      waitUntil: (p: Promise<unknown>) => {
+        work = p
+      },
+    })
+    if (!work) throw new Error("message が waitUntil を呼んでおらぬ")
+    // 失敗経路で waitUntil が reject しても assert まで辿り着かせる
+    await (work as Promise<unknown>).catch(() => {})
+    return replies
+  }
+
+  /** 持ち主の記録（meta）の削除とキャッシュの削除を、起きた順に ops へ積む CacheStorage */
+  function makePurgeCaches(opts: { deleteRejects?: boolean; openRejects?: boolean } = {}) {
+    const ops: string[] = []
+    return {
+      ops,
+      caches: {
+        open: (name: string) =>
+          opts.openRejects
+            ? Promise.reject(new Error("SecurityError"))
+            : Promise.resolve({
+                delete: (key: string) => {
+                  ops.push(`${name}.delete:${key}`)
+                  return Promise.resolve(true)
+                },
+              }),
+        delete: (name: string) => {
+          if (opts.deleteRejects) return Promise.reject(new Error("quota"))
+          ops.push(`caches.delete:${name}`)
+          return Promise.resolve(true)
+        },
+      },
+    }
+  }
+
+  it("持ち主の記録を先に消し、documents / rsc だけを消して { ok: true } を返す", async () => {
+    const { caches, ops } = makePurgeCaches()
+    const replies = await runPurge(caches)
+    // 持ち主を先に消す（以後は保存も配信もせぬ）→ 破棄
+    expect(ops[0]).toBe("irori-meta.delete:/__irori/cache-owner")
+    expect(ops.slice(1).sort()).toEqual([
+      "caches.delete:irori-v1-documents",
+      "caches.delete:irori-v1-rsc",
+    ])
+    expect(replies).toEqual([{ ok: true }])
+  })
+
+  it("caches.delete が失敗したら { ok: false } を返す（黙らぬ）", async () => {
+    const replies = await runPurge(makePurgeCaches({ deleteRejects: true }).caches)
+    expect(replies).toEqual([{ ok: false }])
+  })
+
+  it("持ち主の記録を消せねば { ok: false } を返す（破棄を確かめたとは言わぬ）", async () => {
+    const replies = await runPurge(makePurgeCaches({ openRejects: true }).caches)
+    expect(replies).toEqual([{ ok: false }])
+  })
+
+  it("持ち主の記録のキャッシュ名・キーがページ側（sw-messages）と一致し、世帯キャッシュには数えぬ", () => {
+    const {
+      CACHE_NAMES,
+      CACHE_OWNER_KEY: swOwnerKey,
+      CACHE_OWNER_HEADER: swOwnerHeader,
+    } = loadSw()
+    // 手動同期の綻びを殺す: 片方だけ変えると、ページが書いた持ち主を SW が読めず、
+    // 世帯キャッシュの保存・配信が全端末で止まる（または消したつもりの持ち主が残る）
+    expect(CACHE_NAMES.meta).toBe(CACHE_OWNER_CACHE_NAME)
+    expect(swOwnerKey).toBe(CACHE_OWNER_KEY)
+    // 応答の主は proxy が載せるヘッダ（sw-messages の定数を proxy が import する）。
+    // 名前が食い違えば、SW は全応答を「主の無い応答」として保存せぬ
+    expect(swOwnerHeader).toBe(CACHE_OWNER_RESPONSE_HEADER)
+    // 破棄は持ち主の記録ごとキャッシュを消すのではなく、記録を消す（名前の判定に入れぬ）
+    expect(isHouseholdCacheName(CACHE_NAMES.meta)).toBe(false)
+  })
+
+  it("ページ側の判定（isHouseholdCacheName）と CACHE_NAMES が一致する", () => {
+    const { CACHE_NAMES } = loadSw()
+    // 手動同期の綻びを殺す: 片方だけ名前を変えると、ページからの破棄が空振りする
+    expect(isHouseholdCacheName(CACHE_NAMES.documents)).toBe(true)
+    expect(isHouseholdCacheName(CACHE_NAMES.rsc)).toBe(true)
+    expect(isHouseholdCacheName(CACHE_NAMES.precache)).toBe(false)
+    expect(isHouseholdCacheName(CACHE_NAMES.static)).toBe(false)
+    expect(isHouseholdCacheName(CACHE_NAMES.images)).toBe(false)
   })
 })

@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { CalendarDays } from "lucide-react"
 
@@ -18,6 +18,12 @@ interface UpcomingEventsCardProps {
   householdId: string
   /** サーバ描画時点の JST 今日(YYYY-MM-DD)。refetch 時はクライアントで再計算する。 */
   initialToday: string
+  /**
+   * マウント直後に一度取り直す。initialEvents が今日のものではない時（開いたまま日を
+   * 跨いだ後に作り直された時）に立てる。復帰の visibilitychange を待つと、それまで
+   * 前日の予定を「今日」と出し続けるため。**マウント時の値だけを使う**（後の変化は無視）。
+   */
+  refetchOnMount?: boolean
 }
 
 interface DayBucket {
@@ -43,18 +49,22 @@ export function UpcomingEventsCard({
   initialEvents,
   householdId,
   initialToday,
+  refetchOnMount = false,
 }: UpcomingEventsCardProps) {
   const [events, setEvents] = useState(initialEvents)
   const [today, setToday] = useState(initialToday)
   const generationRef = useRef(0)
 
-  const refetch = useCallback(async () => {
+  const refetch = useCallback(async (signal?: AbortSignal) => {
     const generation = ++generationRef.current
     // 日跨ぎ対応: 復帰のたびに JST 今日を取り直す（深夜に開いたまま朝に復帰しても
     // 「今日・明日」が実際の日付に追従する）。タイマーは張らない。
     const nextToday = todayJstString()
     const nextTomorrow = shiftYmd(nextToday, 1)
     const supabase = createClient()
+    // destructure と同じ一本の鎖に保つ（scripts/check-supabase-error-destructure.py は
+    // `.select(` から上の destructure を辿る。変数に組み立ててから別の文で受けると
+    // 走査から外れる）。signal が無い経路（復帰時の refetch）は abort されぬ signal を渡す。
     const { data, error } = await supabase
       .from("calendar_events")
       .select(CALENDAR_EVENT_COLUMNS)
@@ -62,7 +72,10 @@ export function UpcomingEventsCard({
       .gte("end_date", nextToday) // 重なり判定: end_date >= 今日
       .lte("start_date", nextTomorrow) //          AND start_date <= 明日
       .order("start_date")
+      .abortSignal(signal ?? new AbortController().signal)
 
+    // 離脱（アンマウント）後の応答は捨てる
+    if (signal?.aborted) return
     // 復帰連打で古い応答が新しい結果を上書きしないよう世代トークンで捨てる
     // （use-month-events.ts の fetchGenerationRef と同流儀）
     if (generation !== generationRef.current) return
@@ -86,6 +99,21 @@ export function UpcomingEventsCard({
       void refetch()
     }, [refetch]),
   )
+
+  // 日跨ぎ後の作り直し（refetchOnMount）。旗はマウント時の値で固定する（親は日ごとに
+  // key で作り直す）— prop に追従すると、作り直し直後に Server Action の revalidatePath で
+  // 親の initialDate が今日へ追いつき旗が false へ反転した時、cleanup が取り直しを abort し
+  // カードが空のまま残る。離脱時は abort し、解決後の反映を捨てる。
+  const [refetchOnMountLatched] = useState(refetchOnMount)
+  useEffect(() => {
+    if (!refetchOnMountLatched) return
+    const abortController = new AbortController()
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- setState は外部（Supabase）の取得を await した後にしか起きぬ（同期の連鎖描画ではない）
+    void refetch(abortController.signal)
+    return () => {
+      abortController.abort()
+    }
+  }, [refetchOnMountLatched, refetch])
 
   const buckets = bucketTodayTomorrow(events, today)
 

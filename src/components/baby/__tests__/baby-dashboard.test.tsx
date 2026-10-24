@@ -55,11 +55,20 @@ vi.mock("@/lib/supabase/client", async () => {
   const { buildInlineReducerSupabaseMock } = await import(
     "@/test-utils/supabase-realtime-mock"
   )
-  return buildInlineReducerSupabaseMock(viMod, mockState, {
+  const base = buildInlineReducerSupabaseMock(viMod, mockState, {
     throwMessage:
       "supabase.from() should not be called in BabyDashboard tests " +
       "(selectedDate must not change to trigger the date-change useEffect)",
   })
+  // マウント時の再取得（P1-04）は session を確かめてから問い合わせる。本ファイルは
+  // Realtime reducer の検証ゆえ、getSession を解決させずに再取得を保留のまま止める
+  // （再取得そのものは baby-dashboard-resync.test.tsx が持つ）。
+  return {
+    createClient: () => ({
+      ...(base.createClient() as object),
+      auth: { getSession: () => new Promise(() => {}) },
+    }),
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -372,45 +381,9 @@ describe("BabyDashboard / Realtime → 週間サマリー反映", () => {
     expect(chartTitles("直近7日の授乳回数")).toContain("4/15: 0回")
   })
 
-  it("真夜中跨ぎ: useNow の interval が発火し today/weeklyStart の ref が前進、chart labels がシフトする", () => {
-    // JST 2026-04-16 23:55:00 = UTC 14:55:00 から開始
-    vi.setSystemTime(new Date("2026-04-16T14:55:00Z"))
-
-    render(<BabyDashboard {...defaultProps()} />)
-
-    // 初期: 週ウィンドウは 4/10 〜 4/16
-    const labelsBefore = chartTitles("直近7日の授乳回数").map((t) =>
-      t.split(":")[0],
-    )
-    expect(labelsBefore).toEqual([
-      "4/10",
-      "4/11",
-      "4/12",
-      "4/13",
-      "4/14",
-      "4/15",
-      "4/16",
-    ])
-
-    // 6 分進めて JST 00:01 に到達 → useNow(60_000) の setInterval が 6 回発火
-    act(() => {
-      vi.advanceTimersByTime(360_000)
-    })
-
-    // 真夜中越え: 週ウィンドウは 4/11 〜 4/17 にシフトする
-    const labelsAfter = chartTitles("直近7日の授乳回数").map((t) =>
-      t.split(":")[0],
-    )
-    expect(labelsAfter).toEqual([
-      "4/11",
-      "4/12",
-      "4/13",
-      "4/14",
-      "4/15",
-      "4/16",
-      "4/17",
-    ])
-  })
+  // 真夜中跨ぎ（週窓のラベル移動）は baby-dashboard-day-rollover.test.tsx へ移した。
+  // 日を跨ぐと選択日も新しい今日へ進み、ログ・日記・フォールバックを取り直す（fetch が
+  // 走る）ため、from() を禁じるこのファイルのモックでは扱えぬ。
 })
 
 /**

@@ -44,6 +44,15 @@ describe("BabyDailyDiary（その日の育児日記・日末セクション）",
     expect(onEdit).toHaveBeenCalledTimes(1)
   })
 
+  it("取得中（loading）は本文も「日記を書く」も出さず、読み込み中を示す（前の日の本文を新しい日の下書きにせぬ）", () => {
+    const onEdit = vi.fn()
+    render(<BabyDailyDiary diary={diary} isToday={false} loading onEdit={onEdit} />)
+    expect(screen.getByRole("status", { name: "日記を読み込み中" })).toBeInTheDocument()
+    expect(screen.queryByText(/1行目/)).toBeNull()
+    expect(screen.queryByRole("button", { name: /日記を書く|日記を編集/ })).toBeNull()
+    expect(onEdit).not.toHaveBeenCalled()
+  })
+
   it("空の日でも /baby/diary への「すべて」導線が常在する", () => {
     render(<BabyDailyDiary diary={null} isToday={true} onEdit={() => {}} />)
     const link = screen.getByRole("link", { name: /すべて/ })

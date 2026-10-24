@@ -9,14 +9,26 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
-import { Loader2, Square, Check, Minus, Plus } from "lucide-react"
+import { Loader2, Square, Check, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 import { recordFeeding } from "@/app/(main)/baby/actions"
 import {
+  clampBreastCount,
   clampFeedingDurationSec,
   resolveBreastSideSeconds,
 } from "@/lib/domain/feeding"
+import { BreastCountStepper } from "@/components/baby/breast-count-stepper"
 import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
+import {
+  belongsToUser,
+  clearPersistedTimer,
+  isTimerStale,
+  readPersistedTimer,
+  writePersistedTimer,
+  type PersistedBreastSide,
+  type PersistedTimerState,
+} from "@/lib/domain/feeding-timer-storage"
+import { newClientId } from "@/lib/utils/client-id"
 import { useWakeLock } from "@/lib/hooks/use-wake-lock"
 import { useNow } from "@/lib/hooks/use-now"
 import { segmentCn } from "@/lib/utils/segment-cn"
@@ -24,23 +36,61 @@ import {
   formatDurationSec,
   formatBreastCounts,
   formatBreastSideBreakdown,
+  formatElapsedMinutes,
 } from "@/lib/utils/baby-log-labels"
-import { toJstDateString, todayJstString } from "@/lib/utils/date-jst"
+import {
+  formatTimeJst,
+  shiftYmd,
+  toJstDateString,
+  todayJstString,
+} from "@/lib/utils/date-jst"
 import type { FeedingType, BreastStartSide } from "@/lib/types/database"
 import type { BabyLogData } from "@/lib/types/baby"
 
-const STORAGE_KEY = "irori:feeding-timer"
-const MAX_TIMER_AGE_MS = 2 * 60 * 60 * 1000 // 2時間で stale 扱い
+// 開いてからこの時間未満のタイマーは「誤って開いた」とみなし、通常の閉じ方（暗幕・×・
+// Esc・Android の戻る）で計測を取り消して閉じる。タイマーはシートを開いた瞬間に始まる
+// ため、誤タップや手動入力のつもりで開いた 0 秒の計測が端末に残ってチップに居座らぬよう
+// にする。失うのは 1 分未満の計測だけで、手動入力で記録し直せる。
+const ACCIDENTAL_OPEN_GRACE_MS = 60_000
 
-// 片側の吸わせ回数の上限。DB CHECK chk_breast_counts_required
-// （supabase/migrations/20260726100002_baby_breast_counts.sql の 0..20）の
-// クライアント側ミラー。
+/**
+ * 誤って開いた直後とみなせるか。**fail-closed** に判じる — 迷えば「計測中」とし、
+ * 閉じる操作では捨てぬ。
+ *
+ * - 経過が負（端末の時計が戻って開始時刻が未来になった）なら猶予外。表示は 00:00 に
+ *   丸めるが、左右の回数・秒数を積んだ長い計測でありうる（ここで捨てれば P1-05 の
+ *   「閉じる 1 回で計測が消える」が戻る）
+ * - 開いた時の seed から一度でも触った（左右の切替・回数の増減・積算）計測は、1 分
+ *   未満でも確認を経ずには捨てぬ
+ */
+function isAccidentalOpen(
+  startedAt: Date,
+  nowMs: number,
+  cycle: CycleState,
+): boolean {
+  const elapsed = nowMs - startedAt.getTime()
+  if (elapsed < 0 || elapsed >= ACCIDENTAL_OPEN_GRACE_MS) return false
+  return isUntouchedSeed(cycle)
+}
+
+/** seedCycle が作ったままで、利用者が何も操作していないサイクルか。 */
+function isUntouchedSeed(cycle: CycleState): boolean {
+  if (cycle.sidesUnknown || cycle.startSide === null) return false
+  if (cycle.side !== cycle.startSide) return false
+  if (cycle.leftSec !== 0 || cycle.rightSec !== 0) return false
+  const seeded = seedCycle(cycle.startSide, cycle.sideSince)
+  return (
+    cycle.leftCount === seeded.leftCount && cycle.rightCount === seeded.rightCount
+  )
+}
+
+// 片側の吸わせ回数は clampBreastCount（@/lib/domain/feeding。上限 BREAST_COUNT_MAX は
+// DB CHECK chk_breast_counts_required の 0..20 のミラー）で丸める。
 //
 // **これは検証ではなく救済である**（削るな）: 21 回目のタップで素通しにすると
 // サーバの validateBreastCounts が記録を拒否し、走行中のタイマーが「停止しても
 // 記録できない」恒久スタックに落ちる。clampFeedingDurationSec が 181 分以上を
 // 180 分で記録するのと同じ方針で、上限に張り付かせて記録は必ず通す。
-const MAX_BREAST_COUNT = 20
 
 // 手動入力の上限。母乳サイクルは左右を何度も往復するため、合計時間は片側だけの
 // 15 分（サイクル化前の上限）を普通に超える。60 分まで選べるようにする
@@ -57,7 +107,7 @@ const DEFAULT_MANUAL_MINUTES = 5
 type TimerMode = "timer" | "manual"
 
 /** 母乳サイクル中に「今どちら側を吸わせているか」。記録は常に 'breast' 1 行。 */
-type BreastSide = "breast_left" | "breast_right"
+type BreastSide = PersistedBreastSide
 
 /**
  * 進行中の母乳サイクルの状態。左右それぞれ何回吸わせたか（stint）と現在側を持つ。
@@ -88,22 +138,15 @@ interface CycleState {
   sidesUnknown: boolean
 }
 
-interface TimerState {
-  startedAt: string // ISO string
-  /**
-   * 現在吸わせている側。旧形式（counts を持たない TimerState）から復元できるよう
-   * キー名は据え置く。
-   */
-  feedingType: BreastSide
-  /** counts を持たない旧形式が localStorage に残っているため optional。 */
-  leftCount?: number
-  rightCount?: number
-  /** 左右別秒（さらに新しい形式）。無ければ sidesUnknown として復元する。 */
-  leftSec?: number
-  rightSec?: number
-  sideSince?: string
-  /** 開始側（さらに新しい形式）。無ければ counts から推定し、推定不能なら不明。 */
-  startSide?: BreastSide
+/**
+ * 親（ダッシュボード）へ知らせる「計測中」の要約。シートを閉じても計測は端末に残る
+ * （UX-04a）ゆえ、親はこれでチップを出して戻る導線を作る。null は計測なし。
+ */
+export interface RunningTimer {
+  startedAt: string
+  side: BreastSide
+  /** 開始から MAX_TIMER_AGE_MS を超えた停め忘れ。開けば記録か破棄を選ぶ */
+  stale: boolean
 }
 
 /** localStorage / DB 用に CycleState の側を DB 値（left / right）へ写す。 */
@@ -164,13 +207,9 @@ function elapsedSinceSideStart(sideSinceIso: string): number {
   return Math.max(0, Math.round((Date.now() - since) / 1000))
 }
 
-function clampCount(value: number): number {
-  return Math.min(Math.max(value, 0), MAX_BREAST_COUNT)
-}
-
 /** localStorage 由来の回数を整数・0..20 へ正規化する。整数でなければ null。 */
 function normalizeStoredCount(value: unknown): number | null {
-  return Number.isInteger(value) ? clampCount(value as number) : null
+  return Number.isInteger(value) ? clampBreastCount(value as number) : null
 }
 
 /**
@@ -180,9 +219,9 @@ function normalizeStoredCount(value: unknown): number | null {
  *   （throw させない。復元に失敗して記録が消えるより退化させる方が実害が小さい）
  * - 合計 0 も現在側 1 へ救済する: timer モードには回数を直す UI が無く、0+0 のままだと
  *   停止＝記録がサーバ検証 / DB CHECK chk_breast_counts_required に必ず弾かれ、
- *   タイマーが恒久スタックする（MAX_TIMER_AGE_MS の stale 破棄と同じ救済方針）
+ *   タイマーが恒久スタックする（stale の扱いと同じ救済方針）
  */
-function restoreCycle(state: TimerState): CycleState {
+function restoreCycle(state: PersistedTimerState): CycleState {
   const side = normalizeSide(state.feedingType)
   const nowIso = new Date().toISOString()
   const left = normalizeStoredCount(state.leftCount)
@@ -243,8 +282,12 @@ function restoreCycle(state: TimerState): CycleState {
   }
 }
 
-function persistTimerState(startedAt: Date, cycle: CycleState) {
-  const state: TimerState = {
+function toPersistedState(
+  startedAt: Date,
+  cycle: CycleState,
+  meta: { userId: string; clientId: string },
+): PersistedTimerState {
+  return {
     startedAt: startedAt.toISOString(),
     feedingType: cycle.side,
     leftCount: cycle.leftCount,
@@ -260,27 +303,30 @@ function persistTimerState(startedAt: Date, cycle: CycleState) {
           rightSec: cycle.rightSec,
           sideSince: cycle.sideSince,
         }),
+    // 持ち主と冪等 id（P3-08 / P2-08）
+    userId: meta.userId,
+    clientId: meta.clientId,
   }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
 }
 
 interface FeedingTimerProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   initialFeedingType: FeedingType
-  /** 記録者（logged_by）。楽観 append 行の作成に使う（B-03） */
+  /** 記録者（logged_by）。楽観 append 行と端末保存の持ち主に使う（B-03 / P3-08） */
   userId: string
   /**
    * 記録成功時に楽観 append する行を親へ渡す（B-03）。深夜跨ぎ（サイクル開始が
-   * JST で前日）の行は呼ばない — 詳細は saveFeeding のコメント。
+   * JST で前日）の行も渡す — どの配列（選択日の logs・週窓・最終授乳の fallback）へ
+   * 入れるかは親の appendLog が行の日付で決める（レビュー P3-8）。
    */
   onLogRecorded?: (log: BabyLogData) => void
   /**
-   * 深夜跨ぎで onLogRecorded を見送った行を親へ渡す（批判レビュー P3）。
-   * timeline（当日窓の logs）には入れられないが、「最終授乳」の fallback を
-   * この行で即時更新しないと、記録直後にチップが「---」へ落ちる。
+   * 計測の有無が変わるたびに親へ知らせる（開始・復元・側の切替・記録・破棄）。
+   * 親はこれでダッシュボードに「授乳を計測中」のチップを出し、閉じたシートへ戻る
+   * 導線を作る（UX-04a: 閉じても計測は端末に残り、破棄は明示の操作だけ）。
    */
-  onPrevDayLogRecorded?: (log: BabyLogData) => void
+  onRunningChange?: (running: RunningTimer | null) => void
 }
 
 export function FeedingTimer({
@@ -289,26 +335,75 @@ export function FeedingTimer({
   initialFeedingType,
   userId,
   onLogRecorded,
-  onPrevDayLogRecorded,
+  onRunningChange,
 }: FeedingTimerProps) {
   const [cycle, setCycle] = useState<CycleState>(() =>
     seedCycle(normalizeSide(initialFeedingType), new Date().toISOString()),
   )
   const [startedAt, setStartedAt] = useState<Date | null>(null)
+  // 停め忘れ（開始から MAX_TIMER_AGE_MS 超）を復元した状態。走らせ直さず、開始時刻を
+  // 保ったまま授乳時間を手で入れて記録するか、破棄するかを利用者が選ぶ（P3-08）。
+  const [stale, setStale] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const isSavingRef = useRef(false)
+  // この計測の冪等 id（P2-08）。開始時に 1 回だけ作り、停止の再試行で同じ値を送る。
+  const clientIdRef = useRef<string | null>(null)
+  // 端末保存に失敗した時の通知は 1 回だけ（切替ごとに鳴らさぬ）
+  const persistWarnedRef = useRef(false)
+  // 手元の計測（state）の鏡。開く effect は deps を絞っておるため、ref で最新を読む
+  // （端末保存が効かぬ環境で、閉じて開き直した時に手元の計測を上書きせぬ。P3-7）
+  const startedAtRef = useRef<Date | null>(null)
+  const cycleRef = useRef<CycleState | null>(null)
+  useEffect(() => {
+    startedAtRef.current = startedAt
+    cycleRef.current = cycle
+  }, [startedAt, cycle])
+  // 「キャンセル（記録しない）」の確認段（P1-05: 破棄は確認を経た明示操作だけ）。
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false)
   // 授乳時間の入力方式。タイマー（既定）と手動入力（分・秒）を切り替える。
   const [mode, setMode] = useState<TimerMode>("timer")
   const [manualLeftMin, setManualLeftMin] = useState(DEFAULT_MANUAL_MINUTES)
   const [manualLeftSec, setManualLeftSec] = useState(0)
   const [manualRightMin, setManualRightMin] = useState(0)
   const [manualRightSec, setManualRightSec] = useState(0)
-  // タイマーが実際に走るのは timer モードの時だけ（手動入力中は tick / wake lock 不要）
+  // タイマーが実際に走るのは timer モードの時だけ（手動入力中は wake lock 不要）
   const timerRunning = open && mode === "timer" && !!startedAt
-  const now = useNow(1000, timerRunning)
+  // 時計は計測中ならモードを問わず進める: 手動入力中も「誤って開いた直後か」の判定が
+  // 1 分で切り替わる必要があるため。
+  const now = useNow(1000, open && !!startedAt)
   const initializedRef = useRef(false)
+  // 一度でも開いた後だけ親へ報告する（開く前の null で、親が端末保存から拾った
+  // 「計測中」を上書きせぬ）。
+  const everOpenedRef = useRef(false)
 
   useWakeLock(timerRunning)
+
+  // 計測の有無・側・停め忘れを親へ知らせる（UX-04a のチップ）。最新の callback を ref で読む。
+  const onRunningChangeRef = useRef(onRunningChange)
+  useEffect(() => {
+    onRunningChangeRef.current = onRunningChange
+  })
+  useEffect(() => {
+    if (!everOpenedRef.current) return
+    onRunningChangeRef.current?.(
+      startedAt
+        ? { startedAt: startedAt.toISOString(), side: cycle.side, stale }
+        : null,
+    )
+  }, [startedAt, cycle.side, stale])
+
+  /** 端末保存へ書く。失敗（容量不足・プライベートモード）は 1 回だけ利用者へ知らせる。 */
+  function persist(at: Date, next: CycleState) {
+    const clientId = clientIdRef.current ?? newClientId()
+    clientIdRef.current = clientId
+    const ok = writePersistedTimer(toPersistedState(at, next, { userId, clientId }))
+    if (!ok && !persistWarnedRef.current) {
+      persistWarnedRef.current = true
+      toast.error(
+        "この端末に計測を保存できませんでした。画面を閉じたり再読み込みすると計測が消えます",
+      )
+    }
+  }
 
   // Restore or initialize timer on open
   useEffect(() => {
@@ -318,42 +413,72 @@ export function FeedingTimer({
     }
     if (initializedRef.current) return
     initializedRef.current = true
+    everOpenedRef.current = true
 
+    /* eslint-disable react-hooks/set-state-in-effect -- 開いた時点の端末保存からタイマーを復元する */
     // 開くたびにタイマー方式・手動入力の既定へ戻す（前回 manual のまま開かない）。
-    // 手動入力の既定は開始側 5:00・反対側 0:00。
+    // 手動入力の既定は開始側 5:00・反対側 0:00。破棄の確認段も畳んで開く。
     setMode("timer")
+    setConfirmingDiscard(false)
+    setStale(false)
     const startSide = normalizeSide(initialFeedingType)
     setManualLeftMin(startSide === "breast_left" ? DEFAULT_MANUAL_MINUTES : 0)
     setManualLeftSec(0)
     setManualRightMin(startSide === "breast_right" ? DEFAULT_MANUAL_MINUTES : 0)
     setManualRightSec(0)
 
-    // Try to restore from localStorage (stale タイマーは破棄)
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY)
-      if (saved) {
-        const state: TimerState = JSON.parse(saved)
-        const savedTime = new Date(state.startedAt)
-        if (Date.now() - savedTime.getTime() < MAX_TIMER_AGE_MS) {
-          /* eslint-disable react-hooks/set-state-in-effect -- localStorageからのタイマー復元 */
-          setStartedAt(savedTime)
-          setCycle(restoreCycle(state))
-          /* eslint-enable react-hooks/set-state-in-effect */
-          return
-        }
-        localStorage.removeItem(STORAGE_KEY)
+    const saved = readPersistedTimer()
+    if (!saved && persistWarnedRef.current && startedAtRef.current && cycleRef.current) {
+      // 端末保存が効かぬ環境（容量不足・プライベートモード）で閉じて開き直した。
+      // 手元の計測がそのまま真値ゆえ、新しいタイマーで上書きせぬ（「閉じても計測は
+      // 続きます」の文言どおり。P3-7）。停め忘れの判定だけは開くたびに行う
+      const kept = startedAtRef.current
+      if (isTimerStale(kept.toISOString(), Date.now())) {
+        setStale(true)
+        setMode("manual")
+        setManualLeftMin(0)
+        setManualRightMin(0)
       }
-    } catch {
-      localStorage.removeItem(STORAGE_KEY)
+      persist(kept, cycleRef.current)
+      return
+    }
+    if (saved) {
+      if (!belongsToUser(saved, userId)) {
+        // 別の利用者の計測（P3-08）。名義を変えて記録せぬよう捨てて始め直す。
+        // 本文は見せぬ（他人の記録）。ログには事実だけ残す
+        console.warn("[feeding-timer] 別の利用者の計測が端末に残っていたため破棄した")
+        clearPersistedTimer()
+      } else {
+        const savedTime = new Date(saved.startedAt)
+        const restored = restoreCycle(saved)
+        const clientId = saved.clientId ?? newClientId()
+        clientIdRef.current = clientId
+        setStartedAt(savedTime)
+        setCycle(restored)
+        if (isTimerStale(saved.startedAt, Date.now())) {
+          // 停め忘れ: 黙って捨てず、開始時刻を保ったまま手動入力で記録するか破棄するかを
+          // 選ばせる。走らせ直すと「3 時間の授乳」を上限で丸めて記録する嘘になる
+          setStale(true)
+          setMode("manual")
+          setManualLeftMin(0)
+          setManualRightMin(0)
+        }
+        // 持ち主と冪等 id を書き足す（旧形式の移行・再試行での id 固定）
+        persist(savedTime, restored)
+        return
+      }
     }
 
     // Start new timer（開始側を 1 回で seed し、banking の基点も開始時刻に置く）
     const start = new Date()
     const seeded = seedCycle(normalizeSide(initialFeedingType), start.toISOString())
+    clientIdRef.current = newClientId()
     setStartedAt(start)
     setCycle(seeded)
-    persistTimerState(start, seeded)
-  }, [open, initialFeedingType])
+    persist(start, seeded)
+    /* eslint-enable react-hooks/set-state-in-effect */
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- persist は userId / ref だけを読む
+  }, [open, initialFeedingType, userId])
 
   /**
    * 吸わせる側を切り替える（タイマー中の stint カウント）。
@@ -369,11 +494,11 @@ export function FeedingTimer({
       side: next,
       leftCount:
         next === "breast_left"
-          ? clampCount(cycle.leftCount + 1)
+          ? clampBreastCount(cycle.leftCount + 1)
           : cycle.leftCount,
       rightCount:
         next === "breast_right"
-          ? clampCount(cycle.rightCount + 1)
+          ? clampBreastCount(cycle.rightCount + 1)
           : cycle.rightCount,
       leftSec:
         cycle.side === "breast_left" ? cycle.leftSec + banked : cycle.leftSec,
@@ -383,17 +508,17 @@ export function FeedingTimer({
     }
     setCycle(bumped)
     // アプリを閉じても回数・左右時間が消えないよう、切替ごとに保存する
-    if (startedAt) persistTimerState(startedAt, bumped)
+    if (startedAt) persist(startedAt, bumped)
   }
 
   /** 手動入力のステッパー（左右の回数を直接増減する）。 */
   function handleCountChange(side: BreastSide, delta: number) {
     const next: CycleState =
       side === "breast_left"
-        ? { ...cycle, leftCount: clampCount(cycle.leftCount + delta) }
-        : { ...cycle, rightCount: clampCount(cycle.rightCount + delta) }
+        ? { ...cycle, leftCount: clampBreastCount(cycle.leftCount + delta) }
+        : { ...cycle, rightCount: clampBreastCount(cycle.rightCount + delta) }
     setCycle(next)
-    if (startedAt) persistTimerState(startedAt, next)
+    if (startedAt) persist(startedAt, next)
   }
 
   /**
@@ -405,7 +530,7 @@ export function FeedingTimer({
     if (cycle.startSide === next) return
     const bumped: CycleState = { ...cycle, startSide: next, side: next }
     setCycle(bumped)
-    if (startedAt) persistTimerState(startedAt, bumped)
+    if (startedAt) persist(startedAt, bumped)
   }
 
   const elapsedSeconds = startedAt
@@ -432,6 +557,9 @@ export function FeedingTimer({
   // loggedAt はサイクルの**開始時刻**（終了時刻ではない）。タイマーは開始時刻、
   // 手動入力は「記録時刻 − 授乳時間」を渡す。過去行も backfill migration
   // （20260726100003_baby_feeding_backfill_start_time）で開始基準へ揃えてある。
+  //
+  // 冪等 id（clientId）は計測ごとに固定ゆえ、応答を失った停止の再タップは同じ id で
+  // 届き、サーバが「既に記録済み」として同じ id を返す（二重記録を作らぬ。P2-08）。
   async function saveFeeding(params: {
     loggedAt: string
     /** sidesUnknown（旧形式復元）のサイクル: 合計のみで保存する */
@@ -460,6 +588,8 @@ export function FeedingTimer({
 
     // 開始側。タイマーはタップした側で確定、旧形式復元は推定（不能なら null = 不明）。
     const breastStartSide = toDbStartSide(cycle.startSide)
+    const clientId = clientIdRef.current ?? newClientId()
+    clientIdRef.current = clientId
 
     let result: Awaited<ReturnType<typeof recordFeeding>>
     try {
@@ -474,9 +604,11 @@ export function FeedingTimer({
           ? { breastLeftSec: sides.leftSec, breastRightSec: sides.rightSec }
           : { durationSec }),
         loggedAt,
+        clientId,
       })
     } catch (err) {
       // recordFeeding は通信断で reject しうる。握り潰さず記録し、再試行を促す。
+      // 計測（端末保存・冪等 id）はそのまま残り、再試行は同じ id で届く
       console.error("[feeding-timer] recordFeeding が例外を投げました", {
         message: err instanceof Error ? err.message : String(err),
         breastLeftCount: leftCount,
@@ -499,48 +631,41 @@ export function FeedingTimer({
     }
 
     // 深夜跨ぎ: logged_at が開始時刻になったため、日付が変わってから停止すると
-    // 前日の行が生まれる。baby-dashboard の Realtime admission guard
-    // （baby-dashboard.tsx: `toJstDateString(newLog.logged_at) !== selectedDateRef.current`）
-    // と同じ「logged_at の JST 日付一致」で入場を判定するが、比較相手は selectedDate
-    // ではなく **今日（JST）** にしてある。<FeedingTimer> は isToday ゲートの外に
-    // 描画されるため、シートを開いたまま日付が変わると today だけが翌日へ進み
-    // selectedDate は前日に留まる。その窓では本ガードは dashboard より**厳しく**、
-    // まだ表示中の前日 timeline なら受け入れられた行の append も見送る（保守側へ倒す）。
-    // 一致しない行を append すると、翌日のタイムラインに前日の記録が現れ、リロードで
-    // 消える不整合になる。ゆえに「選択日=今日だから等価」ではなく、意図して
-    // 厳しくしている分岐である（等価だと読んで消すな）。
-    const isSameJstDay = toJstDateString(loggedAt) === todayJstString()
+    // 前日の行が生まれる（停め忘れなら 2 日以上前の行も）。どの配列へ入れるかは親の
+    // appendLog が行の日付で決める（選択日の logs・週窓・成長・最終授乳の fallback）ゆえ、
+    // ここでは日付で分岐せず常に渡す。トーストだけは「どの日の記録として保存したか」を
+    // 明示する（無言だと「記録されていない」と誤解して再タップし、二重記録になる）。
+    const logDate = toJstDateString(loggedAt)
+    const today = todayJstString()
+    const isSameJstDay = logDate === today
 
     // B-03: 返却 id で楽観 append（Realtime を待たず timeline/回数を即時更新）
     if (result.id) {
-      const optimisticLog = buildOptimisticLog({
-        id: result.id,
-        logType: "feeding",
-        loggedBy: userId,
-        feedingType: "breast",
-        breastLeftCount: leftCount,
-        breastRightCount: rightCount,
-        breastLeftSec: sides?.leftSec ?? null,
-        breastRightSec: sides?.rightSec ?? null,
-        breastStartSide,
-        durationSec,
-        loggedAt,
-      })
-      if (isSameJstDay) {
-        onLogRecorded?.(optimisticLog)
-      } else {
-        // 前日行は timeline へ入れられない（入場条件違反）が、「最終授乳」の
-        // fallback は更新する — さもなくば記録直後にチップが「---」へ落ち、
-        // 前日保存トーストと合わせても「消えた」印象を残す（P3）。
-        onPrevDayLogRecorded?.(optimisticLog)
-      }
+      onLogRecorded?.(
+        buildOptimisticLog({
+          id: result.id,
+          updatedAt: result.updatedAt ?? null,
+          logType: "feeding",
+          loggedBy: userId,
+          feedingType: "breast",
+          breastLeftCount: leftCount,
+          breastRightCount: rightCount,
+          breastLeftSec: sides?.leftSec ?? null,
+          breastRightSec: sides?.rightSec ?? null,
+          breastStartSide,
+          durationSec,
+          loggedAt,
+        }),
+      )
     }
 
-    localStorage.removeItem(STORAGE_KEY)
+    clearPersistedTimer()
+    clientIdRef.current = null
     setStartedAt(null)
+    setStale(false)
     // 内訳（左から・左2・右1）と時間を添えて「何が記録されたか」を確認できるようにする。
-    // 日跨ぎで append を見送った時は必ず前日保存を明示する — 無言でスキップすると
-    // 「記録されていない」と誤解して再タップし、二重記録になる。
+    // 今日でない日の行は必ずその日を明示する — 無言だと「記録されていない」と誤解して
+    // 再タップし、二重記録になる。
     const breakdown = sides
       ? formatBreastSideBreakdown(
           leftCount,
@@ -558,10 +683,15 @@ export function FeedingTimer({
           ? "右から"
           : ""
     const detail = [startLabel, breakdown].filter(Boolean).join("・")
+    // 前日なら「前日」、それより前（停め忘れ）は「M/D」で示す（2 日前の行を「前日」と
+    // 偽らぬ。P3-8）
+    const [, m, d] = logDate.split("-")
+    const dayLabel =
+      logDate === shiftYmd(today, -1) ? "前日" : `${Number(m)}/${Number(d)}`
     toast.success(
       isSameJstDay
         ? `授乳を記録しました（${detail}）`
-        : `授乳を記録しました（${detail}／前日の記録として保存）`,
+        : `授乳を記録しました（${detail}／${dayLabel}の記録として保存）`,
     )
     onOpenChange(false)
   }
@@ -570,6 +700,21 @@ export function FeedingTimer({
     // startedAt が無いのは「記録成功 → 親が閉じるまで」の一瞬だけ。開始時刻が
     // 無いまま now を代用すると logged_at の意味（開始時刻）が壊れるため記録しない。
     if (!startedAt) return
+    // 停め忘れはタイマーの経過で記録しない（手動入力に限る。画面でも停止は出さぬ）
+    if (stale) return
+    // 開いたまま（wake lock で画面が点いたまま）上限を超えた計測も同じ扱い: 膨らんだ
+    // 時間で記録せず、開始時刻を保って手動入力へ回す（判定は開いた時だけでなく停止時にも。
+    // レビュー P3-6）
+    if (isTimerStale(startedAt.toISOString(), Date.now())) {
+      setStale(true)
+      setMode("manual")
+      setManualLeftMin(0)
+      setManualRightMin(0)
+      toast.error(
+        "計測が 2 時間を超えています。授乳時間を入力して記録してください",
+      )
+      return
+    }
     if (cycle.sidesUnknown) {
       // 旧形式から復元したサイクル: 配分は復元不能ゆえ合計のみで保存（従来形）
       void saveFeeding({
@@ -602,29 +747,75 @@ export function FeedingTimer({
     }
     const sides = resolveBreastSideSeconds(leftTotal, rightTotal, cycle.side)
     const total = sides.leftSec + sides.rightSec
-    // 手動入力の logged_at はサイクル開始時刻 = 記録時刻 − 授乳時間(左+右)
-    void saveFeeding({
-      sides,
-      loggedAt: new Date(Date.now() - total * 1000).toISOString(),
-    })
+    // 手動入力の logged_at はサイクル開始時刻 = 記録時刻 − 授乳時間(左+右)。
+    // 停め忘れの復元では本当の開始時刻（端末保存の startedAt）を保つ — 「今 − 時間」に
+    // すると数時間前の授乳が今の時刻に化け、最終授乳・目安の起点が嘘になる。
+    const loggedAt =
+      stale && startedAt
+        ? startedAt.toISOString()
+        : new Date(Date.now() - total * 1000).toISOString()
+    void saveFeeding({ sides, loggedAt })
   }
 
-  function handleCancel() {
-    localStorage.removeItem(STORAGE_KEY)
+  /**
+   * 「キャンセル（記録しない）」の 1 段目。計測中は確認を挟む（P1-05）— 破棄は
+   * 開始時刻・左右の回数・左右の秒数をすべて失い、復元する手段が無い。
+   * 計測していなければ失うものが無いゆえそのまま閉じる。
+   */
+  function handleCancelRequest() {
+    if (!startedAt) {
+      onOpenChange(false)
+      return
+    }
+    setConfirmingDiscard(true)
+  }
+
+  /** 計測を記録せずに捨てて閉じる（確認済みの破棄と、誤って開いた直後の取り消し）。 */
+  function discardTimer(message: string) {
+    clearPersistedTimer()
+    clientIdRef.current = null
     setStartedAt(null)
+    setStale(false)
+    setConfirmingDiscard(false)
+    toast.success(message)
     onOpenChange(false)
   }
 
+  /** 確認を経た明示の破棄。計測を捨てる唯一の経路（誤って開いた直後の取り消しを除く）。 */
+  function handleConfirmDiscard() {
+    discardTimer("授乳の計測を破棄しました（記録していません）")
+  }
+
+  /**
+   * Base UI からの開閉要求（Esc・暗幕・×・Android の戻る）。
+   *
+   * 計測中に閉じても**計測は捨てぬ**（UX-04a）: 端末保存はそのまま残り、ダッシュボードの
+   * 「授乳を計測中」チップから戻れる。予定を見に行く・別の記録を付ける間も計測は続く。
+   * 破棄は「キャンセル（記録しない）→ 破棄する」の明示の操作だけ（P1-05）。
+   * 例外は、開いて 1 分未満かつ未操作の計測 — 誤って開いた 0 秒の計測がチップに居座らぬ
+   * よう、閉じる操作で取り消す（ACCIDENTAL_OPEN_GRACE_MS。判定は押した時点の時刻）。
+   * 記録成功と確認済みの破棄は親の onOpenChange を直接呼ぶため、この門は通らない。
+   */
   function handleOpenChange(isOpen: boolean) {
     if (!isOpen && startedAt && !isSavingRef.current) {
-      // Sheet dismissed by swipe — treat as cancel
-      localStorage.removeItem(STORAGE_KEY)
-      setStartedAt(null)
+      if (isAccidentalOpen(startedAt, Date.now(), cycle)) {
+        discardTimer("授乳の計測を取り消しました")
+        return
+      }
+      toast.success(
+        stale
+          ? "計測は残っています。「授乳の計測が残っています」から記録か破棄を選べます"
+          : "計測は続いています。「授乳を計測中」から戻れます",
+      )
     }
     onOpenChange(isOpen)
   }
 
   const countsLabel = formatBreastCounts(cycle.leftCount, cycle.rightCount)
+  const staleStartLabel = startedAt ? formatTimeJst(startedAt.toISOString()) : ""
+  const staleElapsedLabel = startedAt
+    ? formatElapsedMinutes(Math.floor(elapsedSeconds / 60))
+    : ""
 
   return (
     <Sheet open={open} onOpenChange={handleOpenChange}>
@@ -635,30 +826,52 @@ export function FeedingTimer({
         <SheetHeader className="pb-2">
           <SheetTitle>授乳を記録</SheetTitle>
           <SheetDescription>
-            {mode === "timer"
-              ? "吸わせる側を替えるたびに左右のボタンを押してください。停止すると1回の授乳として記録されます"
-              : "授乳にかかった時間と左右の回数を選んで記録します"}
+            {stale
+              ? "停め忘れた計測です。授乳にかかった時間と左右の回数を入れて記録するか、破棄してください"
+              : mode === "timer"
+                ? "吸わせる側を替えるたびに左右のボタンを押してください。停止すると1回の授乳として記録されます。閉じても計測は続きます"
+                : "授乳にかかった時間と左右の回数を選んで記録します"}
           </SheetDescription>
         </SheetHeader>
 
-        <div className="flex flex-col items-center gap-6 px-4 py-6">
-          {/* 入力方式の切替（タイマー / 手動） */}
-          <div className="flex w-full gap-1.5">
-            <button
-              type="button"
-              onClick={() => setMode("timer")}
-              className={segmentCn(mode === "timer")}
+        {/* 本文だけを縦スクロールにする（見出しは残す）。小型画面で記録・キャンセル・
+            破棄の確認が下で切れて押せなくならぬよう、記録シート・日記シートと同じ型。 */}
+        <div className="flex flex-col items-center gap-6 overflow-y-auto px-4 py-6">
+          {/* 停め忘れの案内。黙って捨てず、本当の開始時刻を保ったまま記録か破棄を選ばせる */}
+          {stale && startedAt && (
+            <div
+              role="status"
+              className="flex w-full flex-col gap-1 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm"
             >
-              タイマー
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("manual")}
-              className={segmentCn(mode === "manual")}
-            >
-              手動入力
-            </button>
-          </div>
+              <p className="flex items-start gap-2 font-medium text-amber-800 dark:text-amber-200">
+                <TriangleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                {staleStartLabel} に始めた計測が残っています（{staleElapsedLabel}前）
+              </p>
+              <p className="text-xs text-muted-foreground">
+                開始時刻は {staleStartLabel} のまま保存します。経過時間は授乳時間として使いません。
+              </p>
+            </div>
+          )}
+
+          {/* 入力方式の切替（タイマー / 手動）。停め忘れは手動入力のみ */}
+          {!stale && (
+            <div className="flex w-full gap-1.5">
+              <button
+                type="button"
+                onClick={() => setMode("timer")}
+                className={segmentCn(mode === "timer")}
+              >
+                タイマー
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("manual")}
+                className={segmentCn(mode === "manual")}
+              >
+                手動入力
+              </button>
+            </div>
+          )}
 
           {mode === "timer" ? (
             <>
@@ -753,17 +966,17 @@ export function FeedingTimer({
 
               {/* 左右の回数（ステッパー） */}
               <div className="flex w-full gap-3">
-                <CountStepper
+                <BreastCountStepper
                   label="左"
                   value={cycle.leftCount}
                   disabled={isSaving}
-                  onChange={(delta) => handleCountChange("breast_left", delta)}
+                  onStep={(delta) => handleCountChange("breast_left", delta)}
                 />
-                <CountStepper
+                <BreastCountStepper
                   label="右"
                   value={cycle.rightCount}
                   disabled={isSaving}
-                  onChange={(delta) => handleCountChange("breast_right", delta)}
+                  onStep={(delta) => handleCountChange("breast_right", delta)}
                 />
               </div>
 
@@ -812,70 +1025,52 @@ export function FeedingTimer({
             </>
           )}
 
-          <button
-            type="button"
-            onClick={handleCancel}
-            className="text-sm text-muted-foreground transition-colors duration-200 hover:text-foreground"
-          >
-            キャンセル（記録しない）
-          </button>
+          {confirmingDiscard ? (
+            // 2 段階の確認は編集シートの「この記録を削除 → 削除する」と同じ部品・配色で組む
+            <div
+              role="group"
+              aria-label="記録せずに破棄するかの確認"
+              className="flex w-full flex-col gap-2 border-t pt-3"
+            >
+              <p className="text-sm text-destructive">
+                この授乳を記録せずに破棄しますか？開始時刻・左右の回数と時間は元に戻せません。
+              </p>
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setConfirmingDiscard(false)}
+                >
+                  計測を続ける
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleConfirmDiscard}
+                  disabled={isSaving}
+                >
+                  破棄する
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={handleCancelRequest}
+              disabled={isSaving}
+              className="min-h-11 px-4 text-sm text-muted-foreground transition-colors duration-200 hover:text-foreground disabled:opacity-50"
+            >
+              キャンセル（記録しない）
+            </button>
+          )}
         </div>
       </SheetContent>
     </Sheet>
   )
 }
 
-/**
- * 左右それぞれの吸わせ回数を直接増減するステッパー（手動入力モード専用）。
- * タッチターゲットは 44px 以上（min-h-11 / min-w-11）。
- */
-function CountStepper({
-  label,
-  value,
-  disabled,
-  onChange,
-}: {
-  label: string
-  value: number
-  disabled: boolean
-  onChange: (delta: number) => void
-}) {
-  const buttonCn =
-    "flex min-h-11 min-w-11 items-center justify-center rounded-xl border bg-background transition-colors duration-200 hover:bg-muted active:bg-muted disabled:opacity-50"
-  return (
-    <div className="flex flex-1 flex-col items-center gap-1">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          aria-label={`${label}の回数を1減らす`}
-          onClick={() => onChange(-1)}
-          disabled={disabled || value <= 0}
-          className={buttonCn}
-        >
-          <Minus size={18} />
-        </button>
-        {/* output は暗黙で role="status" ゆえ、増減が支援技術へも読み上げられる
-            （編集シートの BreastCountStepper と要素種別まで揃える） */}
-        <output
-          aria-label={`${label}の回数`}
-          className="w-8 text-center text-2xl font-bold tabular-nums"
-        >
-          {value}
-        </output>
-        <button
-          type="button"
-          aria-label={`${label}の回数を1増やす`}
-          onClick={() => onChange(1)}
-          disabled={disabled || value >= MAX_BREAST_COUNT}
-          className={buttonCn}
-        >
-          <Plus size={18} />
-        </button>
-      </div>
-    </div>
-  )
-}
 
 /**
  * 手動入力モードの片側（左 or 右）の分・秒ピッカー。

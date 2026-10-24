@@ -38,6 +38,8 @@ const mockState = vi.hoisted(() => ({
   /** visibilitychange refetch の `.from(baby_diaries)...maybeSingle()` が返す結果。
    *  テスト側が仕込んでから visibilitychange を発火させる。 */
   diaryFetchResult: { data: null as unknown, error: null as unknown },
+  /** auth.getSession() の session。null は「失効 + refresh 失敗」（anon で 0 行が返る状態）。 */
+  session: { access_token: "user-jwt" } as { access_token: string } | null,
 }))
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
@@ -72,20 +74,44 @@ vi.mock("@/lib/supabase/client", async () => {
       }
       // visibilitychange refetch の `.from("baby_diaries").select().eq().eq()
       // .maybeSingle().then()` chain。mockState.diaryFetchResult を resolve する。
-      const makeQuery = (): Record<string, unknown> => {
+      // 同じ visibilitychange で baby_logs の再取得（P1-04）も走るため、その鎖
+      // （gte / lt / order / limit / or / abortSignal）も受け、空の結果で解決する
+      // （本ファイルの検証対象は日記ゆえ logs は「変化なし」で返す）。
+      const makeQuery = (table: string): Record<string, unknown> => {
+        let single = false
         const q: Record<string, unknown> = {
           select: () => q,
           eq: () => q,
-          maybeSingle: () => q,
+          gte: () => q,
+          lt: () => q,
+          order: () => q,
+          limit: () => q,
+          or: () => q,
+          abortSignal: () => q,
+          maybeSingle: () => {
+            single = true
+            return q
+          },
           then: (onF: (v: { data: unknown; error: unknown }) => unknown) =>
-            Promise.resolve(mockState.diaryFetchResult).then(onF),
+            Promise.resolve(
+              table === "baby_diaries"
+                ? mockState.diaryFetchResult
+                : { data: single ? null : [], error: null },
+            ).then(onF),
         }
         return q
       }
       return {
         channel: () => channel,
         removeChannel: mockState.removeChannelMock,
-        from: () => makeQuery(),
+        from: (table: string) => makeQuery(table),
+        // 自動の再取得は session を確かめてから問い合わせる（anon の 0 行を描かない）
+        auth: {
+          getSession: async () => ({
+            data: { session: mockState.session },
+            error: null,
+          }),
+        },
       }
     },
   }
@@ -161,6 +187,7 @@ beforeEach(() => {
   mockState.listenersByTable.clear()
   mockState.removeChannelMock?.mockClear()
   mockState.diaryFetchResult = { data: null, error: null }
+  mockState.session = { access_token: "user-jwt" }
   // jsdom の可視状態を "visible" に固定（visibilitychange ハンドラの guard 用）。
   Object.defineProperty(document, "visibilityState", {
     configurable: true,
@@ -319,9 +346,8 @@ describe("BabyDashboard / 日記の visibilitychange refetch (DELETE 回収・#1
   async function fireVisibilityRefetch() {
     await act(async () => {
       document.dispatchEvent(new Event("visibilitychange"))
-      // .from()...maybeSingle().then(setDiary) の microtask を流し切る
-      await Promise.resolve()
-      await Promise.resolve()
+      // getSession → .from()...maybeSingle() → setDiary の鎖を流し切る（macrotask 1 回）
+      await new Promise((r) => setTimeout(r, 0))
     })
   }
 
@@ -375,5 +401,33 @@ describe("BabyDashboard / 日記の visibilitychange refetch (DELETE 回収・#1
     // date-nav の cross-date fail-to-empty と違い、同一日の取り直し失敗では
     // 現在の本文を消さない。
     expect(screen.getByText("保持される本文")).toBeInTheDocument()
+  })
+
+  it("session が無い（失効 + refresh 失敗）時の anon の 0 行（data: null）で本文を消さない", async () => {
+    // anon キーの問い合わせは RLS で error ではなく 0 行になる。「配偶者が消した」と
+    // 同じ形ゆえ、session を確かめずに反映すると家族の日記が画面から無音で消える。
+    // 対照は上の「タブ復帰で…配偶者の空保存(DELETE)を回収する」（session あり・同じ data: null）。
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      mockState.session = null
+      mockState.diaryFetchResult = { data: null, error: null }
+      render(
+        <BabyDashboard
+          {...defaultProps({
+            initialDiary: makeDiary({ diary_date: TODAY, content: "家族の本文" }),
+          })}
+        />,
+      )
+
+      await fireVisibilityRefetch()
+
+      expect(screen.getByText("家族の本文")).toBeInTheDocument()
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("[baby] diary visibility refetch"),
+        expect.objectContaining({ householdId: "h1", date: TODAY }),
+      )
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

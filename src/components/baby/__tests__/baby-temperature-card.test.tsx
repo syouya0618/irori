@@ -2,9 +2,7 @@
  * BabyTemperatureCard（訴え③「体温を記載できる場所」）のコンポーネントテスト。
  *
  * 固定する契約:
- * - `＋ 記録` ボタンは **isToday のときだけ**出す（過去日は「記録なし」に留める）。
- *   過去日で出すと `baby-log-form-sheet.tsx:222` が新規を**今日固定**で作るため
- *   (a) 今日の行が保存され (b) 過去日の timeline へ混入する（F-03 の境界）
+ * - `＋ 記録` ボタンは今日も過去日も出す（機能 C）。今日は「今日の」接頭辞で区別する
  * - 発熱域は**色だけに依存させぬ** — アイコン + テキストで示す
  * - aria-label は「体温」単独にせぬ（quick-actions の既存「体温」ボタンと割れる）
  * - タッチ領域 44px（min-h-11）
@@ -68,6 +66,28 @@ beforeEach(() => {
   cleanup()
 })
 
+describe("BabyTemperatureCard / 取得状態（P2-10 / レビュー P3-5）", () => {
+  it("loading の間は「未測定」も記録ボタンも出さず、読み込み中を示す", () => {
+    const { onCreate } = renderCard({ status: "loading", isToday: false })
+    expect(screen.getByRole("status", { name: "体温を読み込み中" })).toBeInTheDocument()
+    expect(screen.queryByText("未測定")).toBeNull()
+    expect(screen.queryByRole("button", { name: /体温を記録/ })).toBeNull()
+    expect(onCreate).not.toHaveBeenCalled()
+  })
+
+  it("error なら読み込めなかったと示し、記録ボタンは出さぬ（空の真値と見せぬ）", () => {
+    renderCard({ status: "error", isToday: false, logs: [temp("t", "07:00:00", 36.5)] })
+    expect(screen.getByText("この日の体温を読み込めませんでした")).toBeInTheDocument()
+    expect(screen.queryByText("36.5℃")).toBeNull()
+    expect(screen.queryByRole("button")).toBeNull()
+  })
+
+  it("対照: ready（既定）なら従来どおり記録ボタンを出す", () => {
+    renderCard({ isToday: false })
+    expect(screen.getByRole("button", { name: "朝の体温を記録" })).toBeInTheDocument()
+  })
+})
+
 describe("BabyTemperatureCard / 空状態", () => {
   it("今日で両枠が空なら朝・夜とも「記録」ボタンを出す", () => {
     renderCard()
@@ -98,23 +118,25 @@ describe("BabyTemperatureCard / 空状態", () => {
   })
 })
 
-describe("BabyTemperatureCard / 記録ボタンは今日のみ（対で固定する）", () => {
-  it("今日は朝・夜の「記録」ボタンが 2 つ出る", () => {
+// 旧契約は「記録ボタンは今日のみ（過去日は「記録なし」）」じゃった。新規フォームが今日固定で
+// 作る時代の安全策で、機能 C（過去日の追記: フォームが日付を見える形で持ち、appendLog が
+// 行の日付で窓を判定する）で前提が消えたため、過去日でも記録できる契約へ改めた。
+describe("BabyTemperatureCard / 記録ボタンは今日も過去日も出す（接頭辞で区別する）", () => {
+  it("今日は「今日の朝/夜の体温を記録」が 2 つ出る", () => {
     renderCard({ isToday: true })
     expect(
-      screen.getAllByRole("button", { name: /体温を記録/ }),
+      screen.getAllByRole("button", { name: /今日の.*体温を記録/ }),
     ).toHaveLength(2)
   })
 
-  it("過去日は「記録」ボタンを 1 つも出さず「記録なし」に留める", () => {
-    // 過去日で記録させると今日の行が保存され、過去日の timeline へ混入する
-    // （baby-log-form-sheet は新規を今日固定で作る）。ゆえに出さぬのが契約。
-    renderCard({ isToday: false })
+  it("過去日も朝・夜の「記録」ボタンを出し、名前に「今日の」を付けない", () => {
+    const { onCreate } = renderCard({ isToday: false })
 
-    expect(
-      screen.queryAllByRole("button", { name: /体温を記録/ }),
-    ).toHaveLength(0)
-    expect(screen.getAllByText("記録なし")).toHaveLength(2)
+    expect(screen.getByRole("button", { name: "朝の体温を記録" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "夜の体温を記録" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /今日の/ })).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "夜の体温を記録" }))
+    expect(onCreate).toHaveBeenCalledTimes(1)
   })
 
   it("過去日でも記録済みのスロットは閲覧・編集できる", () => {
@@ -128,8 +150,8 @@ describe("BabyTemperatureCard / 記録ボタンは今日のみ（対で固定す
     fireEvent.click(button)
 
     expect(onEdit).toHaveBeenCalledWith(log)
-    // 夜は空きだが過去日ゆえ記録ボタンではなく「記録なし」
-    expect(screen.getByText("記録なし")).toBeInTheDocument()
+    // 夜は空き → 過去日でも記録ボタン
+    expect(screen.getByRole("button", { name: "夜の体温を記録" })).toBeInTheDocument()
   })
 })
 

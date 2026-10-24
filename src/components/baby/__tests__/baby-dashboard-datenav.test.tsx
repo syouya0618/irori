@@ -111,6 +111,10 @@ vi.mock("@/lib/supabase/client", async () => {
         channel: () => channel,
         removeChannel: mockState.removeChannelMock,
         from: () => makeQuery(),
+        // マウント時の再取得（P1-04）は session を確かめてから問い合わせる。本ファイルは
+        // 日付ナビの検証ゆえ、getSession を解決させずに再取得を保留のまま止め、
+        // pendingFetches に日付ナビ以外の鎖を混ぜない。
+        auth: { getSession: () => new Promise(() => {}) },
       }
     },
   }
@@ -228,8 +232,13 @@ beforeEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("BabyDashboard / 日付ナビ fetch の error 握り潰し (B-08)", () => {
-  it("fetch が error を返すと toast.error を出し、既存 logs は保持される", async () => {
+describe("BabyDashboard / 日付ナビ fetch の error 握り潰し (B-08) と取得状態の表示 (P2-10)", () => {
+  // 旧テストは「error 後も既存 logs（前の日の行）が画面に残る」を固定していた。それは
+  // B-08 の主眼（error を捨てぬ）の副産物で、見出しが「昨日」なのに今日の行が並ぶ
+  // （P2-10: 表示データの日付と見出しが食い違う）を容認していた。新しい受入条件:
+  // error は toast に加えて画面に残る失敗表示と再読み込みの導線で伝え、前の日の行は
+  // 見せぬ。state の logs は捨てぬ（先着した Realtime 行の合流は下のテストが固定する）。
+  it("fetch が error を返すと toast と失敗表示を出し、前の日の行を新しい見出しの下に出さぬ。再読み込みで回復する", async () => {
     const todayRow = makeLog({
       id: "today-1",
       log_type: "feeding",
@@ -258,8 +267,70 @@ describe("BabyDashboard / 日付ナビ fetch の error 握り潰し (B-08)", () 
     })
 
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith("読み込みに失敗しました")
-    // logs 不変: 前状態の行が消えていない
-    expect(screen.getByText("TODAYROW")).toBeInTheDocument()
+    // 見出しは「昨日」。今日の行をその下に出さぬ
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("昨日")
+    expect(screen.queryByText("TODAYROW")).not.toBeInTheDocument()
+    // トーストが消えた後も画面に失敗が残り、再読み込みの導線がある
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "この日の記録を読み込めませんでした",
+    )
+    const retry = screen.getByRole("button", { name: "もう一度読み込む" })
+
+    // 再読み込み → 同じ日を取り直し、その日の行だけが並ぶ
+    act(() => {
+      fireEvent.click(retry)
+    })
+    await resolvePendingFetch({
+      data: [
+        makeLog({
+          id: "yesterday-1",
+          log_type: "diaper",
+          logged_at: `${YESTERDAY}T09:00:00+09:00`,
+          diaper_type: "pee",
+          memo: "YESTERDAYROW",
+        }),
+      ],
+      error: null,
+    })
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
+    expect(screen.getByText("YESTERDAYROW")).toBeInTheDocument()
+    expect(screen.queryByText("TODAYROW")).not.toBeInTheDocument()
+  })
+
+  it("取得中は前の日の行を隠し、読み込み中の骨組みを出す（解決後は空状態へ）", async () => {
+    const todayRow = makeLog({
+      id: "today-1",
+      log_type: "feeding",
+      logged_at: "2026-07-18T08:00:00+09:00",
+      feeding_type: "bottle",
+      memo: "TODAYROW",
+    })
+    render(<BabyDashboard {...defaultProps({ initialLogs: [todayRow] })} />)
+    // 今日のまとめにも今日の行が数えられておる（対照）
+    expect(
+      screen.getByRole("group", { name: "今日のまとめ" }),
+    ).toHaveTextContent("ミルク1")
+
+    act(() => {
+      goPrevDay()
+    })
+
+    // in-flight: 見出しは「昨日」、今日の行もその集計も出さぬ。まとめと体温カードは
+    // 空配列を「0回」「未測定」と偽らず、取得中を示す（レビュー P3-5）
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("昨日")
+    expect(screen.queryByText("TODAYROW")).not.toBeInTheDocument()
+    expect(screen.getByRole("status", { name: "記録を読み込み中" })).toBeInTheDocument()
+    const summary = screen.getByRole("group", { name: "7/17 のまとめ" })
+    expect(summary).toHaveAttribute("aria-busy", "true")
+    expect(summary).not.toHaveTextContent("0回")
+    expect(screen.getByRole("status", { name: "体温を読み込み中" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /体温を記録/ })).toBeNull()
+
+    await resolvePendingFetch({ data: [], error: null })
+    expect(screen.queryByRole("status", { name: "記録を読み込み中" })).not.toBeInTheDocument()
+    expect(screen.getByText("まだ記録がありません")).toBeInTheDocument()
+    expect(screen.getByRole("group", { name: "7/17 のまとめ" })).toHaveTextContent("0回")
+    expect(screen.getByRole("button", { name: "朝の体温を記録" })).toBeInTheDocument()
   })
 
   it("fetch in-flight 中に Realtime で先着した選択日の行が、fetch 解決後も残る", async () => {
@@ -271,6 +342,7 @@ describe("BabyDashboard / 日付ナビ fetch の error 握り潰し (B-08)", () 
     })
 
     // in-flight の間に選択日（昨日）の Realtime INSERT が先着 → logs に前置きされる
+    // （取得中は骨組みを出しておるゆえ、この時点ではまだ画面には出ぬ。P2-10）
     act(() => {
       emit(
         makePayload(
@@ -285,7 +357,7 @@ describe("BabyDashboard / 日付ナビ fetch の error 握り潰し (B-08)", () 
         ),
       )
     })
-    expect(screen.getByText("REALTIMEROW")).toBeInTheDocument()
+    expect(screen.getByRole("status", { name: "記録を読み込み中" })).toBeInTheDocument()
 
     // fetch が REALTIMEROW を含まない結果で解決（クエリ発行はその INSERT より前）
     await resolvePendingFetch({
@@ -337,5 +409,37 @@ describe("BabyDashboard / 日付ナビの育児日記 refetch（W-1: fail-to-emp
     expect(
       screen.getByRole("button", { name: /日記を書く/ }),
     ).toBeInTheDocument()
+  })
+
+  it("日付を切り替えた直後の取得中は前の日の本文を見せず、編集も開けぬ（取得後に空状態へ）", async () => {
+    // 旧実装は取得が済むまで前の日の diary を新しい見出しの下に描いており、その間に編集を
+    // 開いて 2 回保存すると前の日の本文が新しい日の日記として入った（レビュー P2-4）
+    render(
+      <BabyDashboard
+        {...defaultProps({
+          initialDiary: {
+            id: "d1",
+            diary_date: TODAY,
+            content: "今日の日記本文",
+            updated_at: "2026-07-18T00:00:00+09:00",
+          },
+        })}
+      />,
+    )
+    expect(screen.getByText("今日の日記本文")).toBeInTheDocument()
+
+    act(() => {
+      goPrevDay()
+    })
+
+    // in-flight: 本文は出さず、書く/編集の導線も出さぬ
+    expect(screen.queryByText("今日の日記本文")).not.toBeInTheDocument()
+    expect(screen.getByRole("status", { name: "日記を読み込み中" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /日記を書く|日記を編集/ })).toBeNull()
+
+    await resolvePendingFetch({ data: null, error: null })
+    expect(screen.queryByRole("status", { name: "日記を読み込み中" })).toBeNull()
+    expect(screen.getByRole("button", { name: /日記を書く/ })).toBeInTheDocument()
+    expect(screen.queryByText("今日の日記本文")).not.toBeInTheDocument()
   })
 })

@@ -116,6 +116,18 @@ export function isFutureJstDate(ymd: string, now: Date = new Date()): boolean {
 }
 
 /**
+ * JST 暦日 "YYYY-MM-DD" の 0:00 を、オフセット +09:00 を明示した ISO 8601 で返す。
+ *
+ * PostgREST の範囲条件（`gte` / `lt`）へ渡す日境界の組み立て方を 1 つにする
+ * （オフセットを書き落とすと UTC の 0:00 = JST 9:00 で日が切れる罠になる）。
+ * JST の 1 日は半開区間 `[jstDayStartIso(d), jstDayStartIso(shiftYmd(d, 1)))`。
+ * JST は DST が無く常に +09:00 のため安全。
+ */
+export function jstDayStartIso(ymd: string): string {
+  return `${ymd}T00:00:00+09:00`
+}
+
+/**
  * YYYY-MM-DD 文字列を指定日数シフトする。タイムゾーン非依存。
  */
 export function shiftYmd(ymd: string, days: number): string {

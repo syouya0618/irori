@@ -78,6 +78,31 @@ describe("globals.css — prefers-reduced-motion（DESIGN_SYSTEM.md:118 / 167）
   })
 })
 
+/** 行頭の `selector {` で始まる最初の規則の中身を切り出す（入れ子なし前提）。 */
+function topLevelRule(css: string, selector: string): string | null {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const m = new RegExp(`^${escaped}\\s*\\{([^}]*)\\}`, "m").exec(css)
+  return m ? m[1] : null
+}
+
+describe("globals.css — color-scheme をテーマと対で宣言する", () => {
+  /**
+   * UA が描く部品（date/time 入力の時計・カレンダーアイコン等）は light-dark() で
+   * 絵を選ぶ。宣言が無いとダーク時も明色用の暗いアイコンが暗い欄に載り見えぬ。
+   * Chrome for Android 154 からは、fine ポインタを報告する端末でこのアイコンが
+   * ピッカーを開く入口の一つになっておる。
+   */
+  it(":root は light を宣言する", () => {
+    expect(topLevelRule(CSS, ":root")).toMatch(/color-scheme:\s*light\s*;/)
+  })
+
+  it(".dark は dark を宣言する（:root の後に置き、同じ詳細度で上書きする）", () => {
+    const dark = topLevelRule(CSS, ".dark")
+    expect(dark).toMatch(/color-scheme:\s*dark\s*;/)
+    expect(CSS.search(/^\.dark\s*\{/m)).toBeGreaterThan(CSS.search(/^:root\s*\{/m))
+  })
+})
+
 describe("globals.css — 静的アセットの置き場", () => {
   /**
    * `src/app/favicon.ico` は Next の file convention に拾われ、

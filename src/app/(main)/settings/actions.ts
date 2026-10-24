@@ -1,7 +1,8 @@
 "use server"
 
-import { redirect } from "next/navigation"
+import { redirect, unstable_rethrow } from "next/navigation"
 import { revalidatePath } from "next/cache"
+import type { AuthError } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { getAppOrigin } from "@/lib/utils/app-origin"
@@ -85,7 +86,11 @@ export async function approveUser(targetUserId: string) {
   })
 
   if (error) {
-    if (error.message.includes("Only owners")) {
+    logSupabaseError("settings", "approve user failed", error, { targetUserId })
+    // P1-02: 承認は運用者だけ。approve_user は運用者でなければ 42501 を投げる。
+    // 文言の部分一致は旧関数（owner 判定・既定の SQLSTATE）が残る DB への互換じゃ
+    // （アプリが migration より先に出た窓で「権限が無い」を汎用文言に化けさせぬ）。
+    if (error.code === "42501" || error.message.includes("Only owners")) {
       return { error: "承認権限がありません" }
     }
     return { error: "承認に失敗しました" }
@@ -190,9 +195,42 @@ export async function updateBabyProfile(formData: FormData) {
   return { success: true }
 }
 
-export async function signOut() {
-  const supabase = await createClient()
-  await supabase.auth.signOut()
+const SIGN_OUT_ERROR =
+  "ログアウトを完了できませんでした。電波の良い場所でもう一度お試しください"
+
+/**
+ * ログアウト。成功の時だけ `/login` へ redirect し、失敗は `{ error }` で返す。
+ *
+ * `supabase.auth.signOut()` は失敗を throw せず `{ error }` で返す（auth-js の正式な戻り値）。
+ * error を見ずに redirect すると、クライアントは失敗したログアウトを成功として扱い、鍵
+ * （LAST_USER_ID）と端末の計測を消してしまう。通信の例外も同じ失敗結果へ倒す。
+ *
+ * ⚠️ auth-js（2.110 系）は、サーバでの失効（/logout）に失敗した時も端末側のセッション
+ * （cookie）を消してから `{ error }` を返す。ゆえに失敗が返った時点で、この端末は実質
+ * ログアウト済みのことが多い（再試行はセッション無しとして成功する）。クライアントは
+ * それでも失敗として扱い、鍵と計測を残す — 次にログインした利用者の CacheUserGuard が
+ * 持ち主の交代として破棄し直せる側（fail-closed）へ倒すため。
+ *
+ * redirect は try の外に置く（内に置くと、ここで遷移の信号を握り潰す）。
+ */
+export async function signOut(): Promise<{ error: string }> {
+  let failure: AuthError | null = null
+  try {
+    const supabase = await createClient()
+    const { error } = await supabase.auth.signOut()
+    failure = error
+  } catch (err) {
+    unstable_rethrow(err)
+    console.error("[settings] ログアウトで例外", {
+      name: err instanceof Error ? err.name : typeof err,
+      message: err instanceof Error ? err.message : String(err),
+    })
+    return { error: SIGN_OUT_ERROR }
+  }
+  if (failure) {
+    logSupabaseError("settings", "ログアウトに失敗", failure, {})
+    return { error: SIGN_OUT_ERROR }
+  }
   redirect("/login")
 }
 
