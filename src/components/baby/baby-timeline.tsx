@@ -27,22 +27,32 @@ interface BabyTimelineProps {
    * （一人の世帯）。
    */
   recorderLabelFor?: ((loggedBy: string) => string) | null
+  /**
+   * 選択日が今日か。空の時の案内を分ける（今日は上の釦で記録できる、過去日は「この日の
+   * 記録を追加」から）。省略時は今日として扱う。
+   */
+  isToday?: boolean
 }
 
-function TimelineHeading() {
+function TimelineHeading({ count }: { count?: number }) {
   return (
     <div className="flex items-center justify-between px-1">
-      <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+      <h2 className="flex items-baseline gap-2 text-sm font-semibold">
         タイムライン
+        {count !== undefined && count > 0 && (
+          <span className="text-sm font-normal text-muted-foreground tabular-nums">
+            {count}件・新しい順
+          </span>
+        )}
       </h2>
       {/* 全履歴の検索（機能 B）。日記の「すべて」と同じ型の入口 */}
       <Link
         href="/baby/search"
-        className="flex min-h-11 items-center gap-0.5 px-1 text-xs text-muted-foreground transition-colors duration-200 hover:text-foreground"
+        className="flex min-h-11 items-center gap-1 px-1 text-sm text-muted-foreground transition-colors duration-200 hover:text-foreground"
       >
-        <Search size={13} className="shrink-0" />
+        <Search size={16} className="shrink-0" aria-hidden="true" />
         記録を探す
-        <ChevronRight size={13} className="shrink-0" />
+        <ChevronRight size={16} className="shrink-0" aria-hidden="true" />
       </Link>
     </div>
   )
@@ -54,6 +64,7 @@ export function BabyTimeline({
   status = "ready",
   onRetry,
   recorderLabelFor = null,
+  isToday = true,
 }: BabyTimelineProps) {
   // タイムラインは logged_at 降順（新しい順）で描画する（contract）。dashboard 側は
   // Realtime UPDATE を in-place 置換・INSERT/楽観記録を先頭 prepend するため受け取り順は
@@ -69,19 +80,21 @@ export function BabyTimeline({
     return (
       <div className="flex flex-col gap-1">
         <TimelineHeading />
-        {/* 骨組み（DESIGN_SYSTEM: 読み込み中 = Skeleton / animate-pulse）。行の高さは
-            実際のアイテム（p-3 + size-10）に合わせ、取得後のずれを小さくする */}
+        {/* 骨組み（DESIGN_SYSTEM: 読み込み中 = Skeleton / animate-pulse）。行の形は実際の
+            アイテム（時刻の列 w-12 + 印 size-9・min-h-14）に合わせ、取得後のずれを小さくする。
+            色は ui/skeleton と同じ bg-muted-foreground/15（bg-muted はガラスの上・ダークで見えぬ） */}
         <div
           role="status"
           aria-label="記録を読み込み中"
           className="glass flex flex-col divide-y divide-border/30 rounded-2xl shadow-lg shadow-black/[0.04]"
         >
           {[0, 1, 2].map((i) => (
-            <div key={i} className="flex items-center gap-3 p-3" aria-hidden="true">
-              <div className="size-10 shrink-0 animate-pulse rounded-full bg-muted" />
+            <div key={i} className="flex min-h-14 items-center gap-3 px-3 py-2.5" aria-hidden="true">
+              <div className="h-4 w-12 shrink-0 animate-pulse rounded bg-muted-foreground/15" />
+              <div className="size-9 shrink-0 animate-pulse rounded-full bg-muted-foreground/15" />
               <div className="flex flex-1 flex-col gap-1.5">
-                <div className="h-3.5 w-2/5 animate-pulse rounded bg-muted" />
-                <div className="h-3 w-1/5 animate-pulse rounded bg-muted" />
+                <div className="h-3.5 w-2/5 animate-pulse rounded bg-muted-foreground/15" />
+                <div className="h-3 w-1/5 animate-pulse rounded bg-muted-foreground/15" />
               </div>
             </div>
           ))}
@@ -115,10 +128,17 @@ export function BabyTimeline({
     return (
       <div className="flex flex-col gap-1">
         <TimelineHeading />
-        <div className="flex flex-col items-center justify-center gap-3 py-10">
-          <Baby size={48} className="text-muted-foreground/30" />
+        {/* 空（DESIGN_SYSTEM: イラスト + メッセージ + CTA）。CTA は記録の釦そのもの
+            （今日はクイック記録、過去日は「この日の記録を追加」）が上にあるゆえ、場所を示す */}
+        <div className="glass flex flex-col items-center justify-center gap-2 rounded-2xl px-4 py-8 shadow-lg shadow-black/[0.04]">
+          <Baby size={40} className="text-muted-foreground/40" aria-hidden="true" />
           <p className="text-sm text-muted-foreground">
             まだ記録がありません
+          </p>
+          <p className="text-center text-sm text-muted-foreground">
+            {isToday
+              ? "上の「授乳」「おむつ」のボタンから記録できます"
+              : "上の「この日の記録を追加」から追記できます"}
           </p>
         </div>
       </div>
@@ -127,7 +147,7 @@ export function BabyTimeline({
 
   return (
     <div className="flex flex-col gap-1">
-      <TimelineHeading />
+      <TimelineHeading count={sortedLogs.length} />
       <div className="glass rounded-2xl shadow-lg shadow-black/[0.04] divide-y divide-border/30">
         {sortedLogs.map((log) => (
           <BabyTimelineItem

@@ -42,7 +42,7 @@ vi.mock("@/app/(main)/baby/actions", () => ({
   updateLog: vi.fn(),
   upsertBabyDiary: vi.fn(),
 }))
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), dismiss: vi.fn() } }))
 vi.mock("@/components/calendar/upcoming-events-card", () => ({
   UpcomingEventsCard: () => null,
 }))

@@ -408,6 +408,24 @@ describe("BabyLogFormSheet の通信断 reject 握り（B-07）", () => {
     expect(mockedToast.success).not.toHaveBeenCalled()
   })
 
+  it("削除の確認は何を消すか（時刻と要約）を示し、キャンセルで何も消さず戻る", () => {
+    render(
+      <BabyLogFormSheet
+        userId="u1"
+        open={true}
+        onOpenChange={() => {}}
+        log={bottleFeedingLog({ amount_ml: 120 })}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "この記録を削除" }))
+    const confirm = screen.getByRole("group", { name: "削除の確認" })
+    expect(confirm).toHaveTextContent(/ミルク 120ml/)
+    expect(confirm).toHaveTextContent("元に戻せません")
+    fireEvent.click(screen.getByRole("button", { name: "キャンセル" }))
+    expect(screen.queryByRole("group", { name: "削除の確認" })).toBeNull()
+    expect(mockedDeleteLog).not.toHaveBeenCalled()
+  })
+
   it("削除（deleteLog）が reject → 圏外トースト", async () => {
     mockedDeleteLog.mockRejectedValue(new Error("network down"))
     render(

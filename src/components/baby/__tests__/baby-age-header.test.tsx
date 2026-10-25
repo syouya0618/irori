@@ -92,3 +92,28 @@ describe("BabyAgeHeader", () => {
     expect(screen.getByRole("link", { name: /誕生日を登録/ })).toBeInTheDocument()
   })
 })
+
+describe("BabyAgeHeader の 1 行の形（育児画面の日付見出しの下）", () => {
+  it("名前・月齢・通算日数を 1 行に出す（中身はカード形と同じ）", () => {
+    render(
+      <BabyAgeHeader
+        babyName="そうた"
+        babyBirthDate="2026-01-01"
+        referenceDate="2026-04-11"
+        compact
+      />,
+    )
+    expect(screen.getByText("そうた")).toBeInTheDocument()
+    expect(screen.getByText("生後3ヶ月10日")).toBeInTheDocument()
+    expect(screen.getByText("生後100日")).toBeInTheDocument()
+  })
+
+  it("未登録は設定への導線（44px の高さ）を出す", () => {
+    render(
+      <BabyAgeHeader babyName={null} babyBirthDate={null} referenceDate="2026-04-11" compact />,
+    )
+    const link = screen.getByRole("link", { name: /誕生日を登録/ })
+    expect(link).toHaveAttribute("href", "/settings")
+    expect(link.className).toContain("min-h-11")
+  })
+})

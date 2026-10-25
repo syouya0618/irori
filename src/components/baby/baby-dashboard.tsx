@@ -22,8 +22,13 @@ import {
   isTimerStale,
   readPersistedTimer,
 } from "@/lib/domain/feeding-timer-storage"
+import { BarChart3, TrendingUp } from "lucide-react"
 import { BabyWeeklySummary } from "./weekly-summary/baby-weekly-summary"
-import { GrowthChartSection } from "./charts/growth-chart-section"
+import {
+  GrowthChartSection,
+  growthLatestSummary,
+} from "./charts/growth-chart-section"
+import { BabyCollapsibleSection } from "./baby-collapsible-section"
 import { UpcomingEventsCard } from "@/components/calendar/upcoming-events-card"
 import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
 import { useNow } from "@/lib/hooks/use-now"
@@ -349,6 +354,16 @@ export function BabyDashboard({
   // 再取得（P1-04）の in-flight 中に届いた更新は、窓ごとに touched へ控える — 取得結果
   // （更新前の snapshot）で巻き戻さぬため。各 setX の直前で控える規約は購読側と同じ。
   const seenVersionsRef = useRef(new Map<string, string>())
+  // 手元で削除に成功した行の id（取り消し・編集シートの削除・他端末で削除済みの確認）。
+  // 削除の後に同じ行の INSERT / UPDATE 通知が遅れて届くと（Realtime の遅延・#92）、消えた行が
+  // 画面に蘇る — DB には無いのに「おしっこ1」と数え、取り消しの帯まで戻る。ゆえに **Realtime の
+  // 通知だけ**をこの控えで弾く（サーバの応答 = 編集の保存・衝突の最新版は弾かぬ）。
+  //
+  // ⚠️ 同じ id の行が作り直されることはある: 冪等 id は通信断で reject した時に再試行のため
+  // 残る（クイック記録は 2 分・タイマーは計測ごと・記録シートは入力が変わるまで）。応答だけが
+  // 失われて行が出来ており、それを消した後に同じ id で再試行すると、サーバは新しい行として
+  // 作る。ゆえに「行が在る」とサーバが示した時（appendLog の作成応答・再取得の結果）は控えから外す。
+  const removedIdsRef = useRef(new Set<string>())
   const applyUpdatedLog = useCallback((updated: BabyLogData) => {
     const seen = seenVersionsRef.current.get(updated.id)
     if (seen !== undefined && isOlderLogVersion(updated, { updated_at: seen })) return
@@ -427,6 +442,8 @@ export function BabyDashboard({
           const inFlight = resyncInFlightRef.current
           if (payload.eventType === "INSERT") {
             const newLog = payload.new as BabyLogData
+            // 手元で消した行の遅れた通知（removedIdsRef の注記）
+            if (removedIdsRef.current.has(newLog.id)) return
             if (newLog.log_type === "growth") {
               markResyncTouched(inFlight, "growth", newLog.id)
               setGrowthLogs((prev) => {
@@ -453,8 +470,12 @@ export function BabyDashboard({
               return [newLog, ...prev]
             })
           } else if (payload.eventType === "UPDATE") {
+            const updatedLog = payload.new as BabyLogData
+            // 手元で消した行の遅れた通知（removedIdsRef の注記）。サーバの応答は弾かぬゆえ
+            // ここ（Realtime の入口）でだけ見る
+            if (removedIdsRef.current.has(updatedLog.id)) return
             // 版の比較と窓への反映（と in-flight の touched 控え）は applyUpdatedLog に集約
-            applyUpdatedLog(payload.new as BabyLogData)
+            applyUpdatedLog(updatedLog)
           } else if (payload.eventType === "DELETE") {
             // フィルタ付き購読では本番で届かぬ（下の再取得が回収する）。届いた時のための経路。
             const deleted = payload.old as { id: string }
@@ -643,6 +664,20 @@ export function BabyDashboard({
       if (controller.signal.aborted) return
       if (resyncGenerationRef.current !== generation) return
       resyncInFlightRef.current = null
+
+      // DB の真値に行が在る = 削除済みの控えは古い（冪等 id で作り直された行）。ただし取得中に
+      // 手元で触った（消した）行は、取得結果が削除前の snapshot でありうるゆえ控えを残す
+      const releaseRemoved = (
+        rows: BabyLogData[] | null,
+        touched: Set<string>,
+      ) => {
+        for (const row of rows ?? []) {
+          if (!touched.has(row.id)) removedIdsRef.current.delete(row.id)
+        }
+      }
+      if (!dayError) releaseRemoved(dayLogs, inFlight.touched.logs)
+      if (!weeklyError) releaseRemoved(weekly, inFlight.touched.weekly)
+      if (!growthError) releaseRemoved(growth, inFlight.touched.growth)
 
       if (dayError) {
         logSupabaseError("baby", "logs resync (selected day) failed", dayError, logContext)
@@ -975,6 +1010,9 @@ export function BabyDashboard({
   // その授乳は「新しい今日より前の最後の授乳」でもありうるゆえ、フォールバックは日付に
   // 関わらず前へ進める（日跨ぎの一段目はその前に済んでおり拾えぬ）。今日以降の行は無視される。
   const appendLog = useCallback((log: BabyLogData) => {
+    // サーバの作成応答 = その id の行が今は在る（冪等 id の再試行で作り直された行を含む）。
+    // 削除済みの控えから外す（removedIdsRef の注記）
+    removedIdsRef.current.delete(log.id)
     // 再取得の in-flight 中なら控え、取得結果（記録前の snapshot）で消さない（P1-04）
     const inFlight = resyncInFlightRef.current
     const logDate = toJstDateString(log.logged_at)
@@ -1030,7 +1068,20 @@ export function BabyDashboard({
   // Realtime DELETE echo が後追いで来ても filter は冪等ゆえ二重除去にならない。
   // 週窓・成長の配列からも外す — household フィルタ付き購読では DELETE が届かぬため、
   // 残すと週次の数字が古いままになり、日跨ぎで最終授乳の候補に「幽霊」として拾われる。
+  // 授乳タイマー・記録シート（クイック記録以外）で記録が付いた回数。クイック記録の「直前の記録」
+  // の帯は、これが進んだら畳む（後の記録があるのに古い方を「直前」として取り消させぬ）
+  const [externalRecordSeq, setExternalRecordSeq] = useState(0)
+  const appendLogFromOtherPath = useCallback(
+    (log: BabyLogData) => {
+      appendLog(log)
+      setExternalRecordSeq((n) => n + 1)
+    },
+    [appendLog],
+  )
+
   const removeLog = useCallback((id: string) => {
+    // 遅れて届く同じ行の INSERT / UPDATE 通知で蘇らせない（removedIdsRef の注記）
+    removedIdsRef.current.add(id)
     // 取得結果（削除前の snapshot）で蘇らせない（P1-04）
     const inFlight = resyncInFlightRef.current
     markResyncTouched(inFlight, "logs", id)
@@ -1041,21 +1092,74 @@ export function BabyDashboard({
     setGrowthLogs((prev) => prev.filter((l) => l.id !== id))
   }, [])
 
+  // 畳んだ「週間サマリー」の見出しに出す要約。中の数字（「3.0回/日」等）と同じ文字列を
+  // 作らぬ形にする（既存の検証が exact 一致で掴むため、重複一致させぬ）
+  const weeklyHeadline = weeklyAverage
+    ? `1日平均 授乳${weeklyAverage.feedingPerDay.toFixed(1)}回・おむつ${weeklyAverage.diaperPerDay.toFixed(1)}回`
+    : "直近7日のグラフを見る"
+
+  // 並びの方針（片手・夜間・記録の速さ）:
+  // 1. 日付（今日か過去日か）→ 計測中の授乳 → 最終授乳と次の目安 → 記録の釦 → その日の数
+  //    → タイムライン。記録に要る情報と釦を最初の 1 画面に集める
+  // 2. 予定・体温・日記はタイムラインの近くに。週の傾向と成長曲線は畳む（必要な時に開く）
+  // 以前は月齢カード・予定・まとめ 3 枚の後に釦が来て、タイムラインはグラフ 2 枚の下（約 2 画面下）
   return (
     <div className="flex flex-col gap-4 px-4 pt-12 pb-8">
-      <BabyAgeHeader
-        babyName={babyName}
-        babyBirthDate={babyBirthDate}
-        referenceDate={today}
-      />
+      <div className="flex flex-col gap-1">
+        <BabyDateNav
+          selectedDate={selectedDate}
+          today={today}
+          onDateChange={setSelectedDate}
+        />
+        <BabyAgeHeader
+          babyName={babyName}
+          babyBirthDate={babyBirthDate}
+          referenceDate={today}
+          compact
+        />
+      </div>
 
-      {/* 閉じたタイマーへ戻る導線（UX-04a）。シートが開いている間は出さぬ */}
+      {/* 閉じたタイマーへ戻る導線（UX-04a）。シートが開いている間は出さぬ。過去日を見て
+          おる間も出す（計測は日付に関わらず走っておる） */}
       {runningTimer && !timerOpen && (
         <RunningTimerChip
           running={runningTimer}
           onOpen={() => handleStartTimer(runningTimer.side)}
         />
       )}
+
+      <BabySummaryBar
+        lastFeeding={lastFeeding}
+        lastNursing={lastNursing}
+        feedingIntervalMin={feedingIntervalMin}
+        now={now}
+        todayCounts={todayCounts}
+        date={selectedDate}
+        status={dateNavStatus}
+      >
+        {isToday ? (
+          <BabyQuickActions
+            userId={userId}
+            onCreateLog={handleCreateLog}
+            onCreateFeeding={handleCreateFeeding}
+            onStartTimer={handleStartTimer}
+            onLogRecorded={appendLog}
+            onLogRemoved={removeLog}
+            onLogUpdated={applyUpdatedLog}
+            visibleLogs={visibleLogs}
+            now={now}
+            externalRecordSeq={externalRecordSeq}
+          />
+        ) : (
+          // 過去日は「今」のクイック記録を出さず、日付を見える形で確かめるフォーム経由の
+          // 追記だけ（機能 C。F-03 の懸念に対する答え）
+          <BabyPastDayActions
+            date={selectedDate}
+            onCreateLog={handleCreateLog}
+            onCreateFeeding={handleCreateFeeding}
+          />
+        )}
+      </BabySummaryBar>
 
       {/* 今日・明日の予定（CAL-4）。「今日」の概念ゆえ今日を表示している時だけ出す。
           0 件なら null を返し gap ごと消える。復帰時の refetch はカード自身が持つ。 */}
@@ -1072,41 +1176,14 @@ export function BabyDashboard({
         />
       )}
 
-      <BabyDateNav
-        selectedDate={selectedDate}
-        today={today}
-        onDateChange={setSelectedDate}
-      />
-
-      <BabySummaryBar
-        lastFeeding={lastFeeding}
-        lastNursing={lastNursing}
-        feedingIntervalMin={feedingIntervalMin}
-        now={now}
-        todayCounts={todayCounts}
-        date={selectedDate}
+      <BabyTimeline
+        logs={visibleLogs}
         status={dateNavStatus}
+        onRetry={retryDateNav}
+        onEdit={handleEdit}
+        recorderLabelFor={recorderLabel}
+        isToday={isToday}
       />
-
-      {isToday ? (
-        <BabyQuickActions
-          userId={userId}
-          onCreateLog={handleCreateLog}
-          onCreateFeeding={handleCreateFeeding}
-          onStartTimer={handleStartTimer}
-          onLogRecorded={appendLog}
-          onLogRemoved={removeLog}
-          onLogUpdated={applyUpdatedLog}
-        />
-      ) : (
-        // 過去日は「今」のクイック記録を出さず、日付を見える形で確かめるフォーム経由の
-        // 追記だけ（機能 C。F-03 の懸念に対する答え）
-        <BabyPastDayActions
-          date={selectedDate}
-          onCreateLog={handleCreateLog}
-          onCreateFeeding={handleCreateFeeding}
-        />
-      )}
 
       {/* 朝/夜の体温（訴え③）。読む配列は選択日の logs（週窓の weeklyLogs ではない —
           週窓の外の過去日を開いた時に静かに空になるため）。isToday ゲートの**外**に
@@ -1120,23 +1197,7 @@ export function BabyDashboard({
         onCreate={handleCreateTemperature}
       />
 
-      <BabyWeeklySummary
-        days={weeklySummary}
-        diaperBreakdown={weeklyDiaperBreakdown}
-        average={weeklyAverage}
-      />
-
-      <GrowthChartSection series={growthSeries} />
-
-      <BabyTimeline
-        logs={visibleLogs}
-        status={dateNavStatus}
-        onRetry={retryDateNav}
-        onEdit={handleEdit}
-        recorderLabelFor={recorderLabel}
-      />
-
-      {/* その日の育児日記（1日1本・ぴよログ流）。日末に全文を常時表示する。
+      {/* その日の育児日記（1日1本・ぴよログ流）。全文を常時表示する。
           /baby/diary への導線はセクションヘッダの「すべて」に集約（旧 Link カード廃止）。 */}
       <BabyDailyDiary
         diary={visibleDiary}
@@ -1150,6 +1211,29 @@ export function BabyDashboard({
           setDiaryEditOpen(true)
         }}
       />
+
+      {/* 週の傾向と成長曲線は畳む（必要な時に開く）。窓の契約（表示 7 日・取得 8 日・
+          平均は昨日まで）は中身の BabyWeeklySummary が従来どおり持つ */}
+      <BabyCollapsibleSection
+        title="週間サマリー"
+        summary={weeklyHeadline}
+        icon={<BarChart3 size={20} />}
+      >
+        <BabyWeeklySummary
+          days={weeklySummary}
+          diaperBreakdown={weeklyDiaperBreakdown}
+          average={weeklyAverage}
+          embedded
+        />
+      </BabyCollapsibleSection>
+
+      <BabyCollapsibleSection
+        title="成長の記録"
+        summary={growthLatestSummary(growthSeries)}
+        icon={<TrendingUp size={20} />}
+      >
+        <GrowthChartSection series={growthSeries} embedded />
+      </BabyCollapsibleSection>
 
       {/* 再マウント用の key は兄弟（BabyLogFormSheet）と名前空間を分ける。どちらも
           0 から数える数値ゆえ、素の数値だと値が揃った瞬間に重複 key になり、React が
@@ -1176,7 +1260,7 @@ export function BabyDashboard({
         recorderLabel={
           editingLog && recorderLabel ? recorderLabel(editingLog.logged_by) : null
         }
-        onLogRecorded={appendLog}
+        onLogRecorded={appendLogFromOtherPath}
         onLogUpdated={applyUpdatedLog}
         onLogRemoved={removeLog}
         // 保存の衝突の後、最新の行で開き直す（key で作り直し、最新の版から seed。P2-07）
@@ -1192,7 +1276,7 @@ export function BabyDashboard({
         // 深夜跨ぎ（前日行）も同じ appendLog へ: 行の日付で logs・週窓・成長・最終授乳の
         // fallback を振り分ける（かつては前日行だけ別の callback で fallback のみ更新して
         // おり、昨日を表示中に昨日の行が出ず、週グラフも再取得まで古いままじゃった。P3-8）
-        onLogRecorded={appendLog}
+        onLogRecorded={appendLogFromOtherPath}
       />
     </div>
   )

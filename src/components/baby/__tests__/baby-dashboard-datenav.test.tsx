@@ -54,7 +54,15 @@ const mockState = vi.hoisted(() => ({
   }>,
 }))
 
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), dismiss: vi.fn() } }))
+
+// クイック記録・取り消しの Server Action（日付をまたぐ取り消しの帯の検証で使う）
+vi.mock("@/app/(main)/baby/actions", () => ({
+  recordFeeding: vi.fn(),
+  recordDiaper: vi.fn(),
+  deleteLog: vi.fn(),
+  updateLog: vi.fn(),
+}))
 
 vi.mock("@/lib/supabase/client", async () => {
   const { vi: viMod } = await import("vitest")
@@ -124,6 +132,7 @@ vi.mock("@/lib/supabase/client", async () => {
 // Imports after vi.mock
 // ---------------------------------------------------------------------------
 import { BabyDashboard } from "../baby-dashboard"
+import { recordDiaper, deleteLog } from "@/app/(main)/baby/actions"
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -441,5 +450,61 @@ describe("BabyDashboard / 日付ナビの育児日記 refetch（W-1: fail-to-emp
     expect(screen.queryByRole("status", { name: "日記を読み込み中" })).toBeNull()
     expect(screen.getByRole("button", { name: /日記を書く/ })).toBeInTheDocument()
     expect(screen.queryByText("今日の日記本文")).not.toBeInTheDocument()
+  })
+})
+
+describe("BabyDashboard / 日付をまたぐ間の「直前の記録」の取り消し", () => {
+  const VERSION = "2026-07-18T03:00:00.123456+00:00"
+  const INLINE_UNDO = /^直前の記録（\d\d:\d\d）を取り消す$/
+
+  it("過去日へ移ると帯は消え（今の記録の口は過去日に出さぬ）、今日へ戻っても古い帯は戻らぬ。残ったトーストの取り消しは 1 回だけ届いて行を外す", async () => {
+    const mockedToast = vi.mocked(toast)
+    mockedToast.success.mockReset()
+    // 実物の sonner と同じく、出したトーストは自動で閉じる（帯へ引き継ぐ）
+    mockedToast.success.mockImplementation(((
+      _m: unknown,
+      opts?: { onAutoClose?: () => void },
+    ) => {
+      setTimeout(() => act(() => opts?.onAutoClose?.()), 0)
+      return 1
+    }) as never)
+    vi.mocked(recordDiaper).mockReset()
+    vi.mocked(recordDiaper).mockResolvedValue({ error: null, id: "pee-nav", updatedAt: VERSION })
+    vi.mocked(deleteLog).mockReset()
+    vi.mocked(deleteLog).mockResolvedValue({ error: null })
+
+    render(<BabyDashboard {...defaultProps()} />)
+    fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
+    await screen.findByRole("button", { name: INLINE_UNDO })
+    const toastUndo = (mockedToast.success.mock.calls.at(-1)?.[1] as {
+      action?: { onClick: () => void }
+    }).action
+
+    // 過去日へ: クイック記録ごと帯が消える
+    goPrevDay()
+    expect(screen.queryByRole("button", { name: INLINE_UNDO })).toBeNull()
+    expect(screen.queryByRole("button", { name: "おしっこ" })).toBeNull()
+    await resolvePendingFetch({ data: [], error: null })
+
+    // 今日へ戻る: 記録の行は在るが、帯は作り直された部品には残らぬ
+    fireEvent.click(screen.getByRole("button", { name: "今日に戻る" }))
+    await resolvePendingFetch({
+      data: [makeLog({ id: "pee-nav", log_type: "diaper", logged_at: "2026-07-18T11:30:00+09:00", diaper_type: "pee", updated_at: VERSION })],
+      error: null,
+    })
+    expect(screen.getByRole("group", { name: "今日のまとめ" })).toHaveTextContent("おしっこ1")
+    expect(screen.queryByRole("button", { name: INLINE_UNDO })).toBeNull()
+
+    // 移動の前に出ておったトーストの取り消しは、作成時の版で 1 回だけ届き、行を外す
+    await act(async () => {
+      toastUndo?.onClick()
+      await Promise.resolve()
+    })
+    expect(vi.mocked(deleteLog)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(deleteLog)).toHaveBeenCalledWith("pee-nav", VERSION)
+    await vi.waitFor(() =>
+      expect(screen.getByRole("group", { name: "今日のまとめ" })).toHaveTextContent("おしっこ0"),
+    )
+    mockedToast.success.mockReset()
   })
 })

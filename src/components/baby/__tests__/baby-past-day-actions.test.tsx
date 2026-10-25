@@ -13,7 +13,8 @@ describe("BabyPastDayActions（過去日の追記・機能 C）", () => {
     expect(screen.getByText(/2026年7月18日\(土\) の記録として保存します/)).toBeInTheDocument()
     for (const name of ["授乳", "おむつ", "体温", "成長", "メモ"]) {
       const button = screen.getByRole("button", { name })
-      expect(button.className).toContain("min-h-11")
+      // 44px 以上（min-h-11 = 44px / min-h-12 = 48px …）
+      expect(button.className).toMatch(/\bmin-h-(1[1-9]|[2-9]\d)\b/)
     }
   })
 

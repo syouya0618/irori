@@ -4,7 +4,7 @@ import {
   Droplets,
   Moon,
   Milk,
-  ChevronsRight,
+  ChevronRight,
   Thermometer,
   Ruler,
   StickyNote,
@@ -49,12 +49,19 @@ export function BabyTimelineItem({
   const Icon = config.icon
 
   return (
+    // 時刻を左の列に大きく置く（ぴよログ等の記録アプリと同じ読み方: 時刻 → 何を）。夜間に
+    // 「最後はいつ何をしたか」を縦に目で追えるよう、時刻の桁を揃えて左端に固定する
     <button
+      type="button"
       onClick={() => onEdit(log)}
-      className="flex w-full items-center gap-3 rounded-2xl p-3 text-left transition-colors duration-200 hover:bg-muted/50 active:bg-muted/70"
+      className="flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors duration-200 hover:bg-muted/50 active:bg-muted/70 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
     >
+      <span className="w-12 shrink-0 font-mono text-base font-semibold tabular-nums">
+        {formatTimeJst(log.logged_at)}
+      </span>
       <div
-        className={`flex size-10 shrink-0 items-center justify-center rounded-full ${config.bg}`}
+        className={`flex size-9 shrink-0 items-center justify-center rounded-full ${config.bg}`}
+        aria-hidden="true"
       >
         <Icon size={18} className={config.text} />
       </div>
@@ -79,17 +86,12 @@ export function BabyTimelineItem({
         )}
       </div>
 
-      <div className="flex shrink-0 flex-col items-end gap-0.5 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1">
-          <span className="font-mono">{formatTimeJst(log.logged_at)}</span>
-          <ChevronsRight size={12} />
-        </span>
+      <div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
         {/* 記録者（二人以上の世帯でだけ親が渡す）。誰が付けた記録かで引き継ぎが分かる */}
         {recorderLabel && (
-          <span className="max-w-24 truncate text-[10px] leading-tight">
-            {recorderLabel}
-          </span>
+          <span className="max-w-20 truncate leading-tight">{recorderLabel}</span>
         )}
+        <ChevronRight size={16} aria-hidden="true" />
       </div>
     </button>
   )
