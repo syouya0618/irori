@@ -45,7 +45,7 @@ vi.mock("@/app/(main)/baby/actions", () => ({
   updateLog: vi.fn(),
   upsertBabyDiary: vi.fn(),
 }))
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), dismiss: vi.fn() } }))
 vi.mock("@/components/calendar/upcoming-events-card", () => ({
   UpcomingEventsCard: () => null,
 }))
@@ -185,7 +185,10 @@ describe("BabyDashboard / 授乳を計測中のチップ（UX-04a）", () => {
     expect(screen.queryByRole("button", { name: /授乳を計測中/ })).toBeNull()
     expect(localStorage.getItem(FEEDING_TIMER_STORAGE_KEY)).toBeNull()
     // 記録した行はタイムラインへ楽観 append される（左1回・5 分）
-    expect(screen.getByText(/母乳（左から） 左1回5分/)).toBeInTheDocument()
+    // （「今」カードも同じ要約を最終授乳として出すゆえ、タイムラインの行 = button に絞る）
+    expect(
+      screen.getByRole("button", { name: /母乳（左から） 左1回5分/ }),
+    ).toBeInTheDocument()
   })
 
   it("シートを閉じても計測は残り、チップが再び出る", async () => {

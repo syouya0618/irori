@@ -35,8 +35,10 @@ export function RunningTimerChip({ running, onOpen }: RunningTimerChipProps) {
   )
   const sideLabel = running.side === "breast_left" ? "左" : "右"
   const startLabel = formatTimeJst(running.startedAt)
+  // 計測中は画面の最上部で他のカードと見間違えぬよう、ガラスではなく色の付いた面にする
+  // （夜間に「計測が走っておるか」を一瞥で判る。DESIGN_SYSTEM の暖色の範囲）
   const buttonCn =
-    "glass flex min-h-11 w-full items-center gap-2.5 rounded-2xl px-3 py-2 text-left shadow-lg shadow-black/[0.04] transition-colors duration-200 hover:bg-muted/50 active:bg-muted/70"
+    "flex min-h-16 w-full items-center gap-3 rounded-2xl border-2 px-3 py-2.5 text-left shadow-lg shadow-black/[0.04] transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
 
   if (running.stale) {
     return (
@@ -44,18 +46,18 @@ export function RunningTimerChip({ running, onOpen }: RunningTimerChipProps) {
         type="button"
         onClick={onOpen}
         aria-label={`授乳の計測が残っています（${startLabel} 開始）。開いて記録するか破棄する`}
-        className={buttonCn}
+        className={`${buttonCn} border-amber-500/60 bg-amber-50 hover:bg-amber-100 active:bg-amber-200 dark:border-amber-500/50 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 dark:active:bg-amber-900/80`}
       >
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/40">
-          <TriangleAlert size={16} className="text-amber-700 dark:text-amber-300" />
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-amber-700 text-white">
+          <TriangleAlert size={20} aria-hidden="true" />
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="text-sm font-medium">授乳の計測が残っています</span>
-          <span className="text-xs text-muted-foreground">
-            {startLabel} 開始・記録するか破棄してください
+          <span className="text-base font-semibold">授乳の計測が残っています</span>
+          <span className="text-sm text-foreground/90">
+            {startLabel} 開始・タップして記録するか破棄
           </span>
         </span>
-        <ChevronRight size={16} className="shrink-0 text-muted-foreground" />
+        <ChevronRight size={20} className="shrink-0 text-muted-foreground" aria-hidden="true" />
       </button>
     )
   }
@@ -65,19 +67,23 @@ export function RunningTimerChip({ running, onOpen }: RunningTimerChipProps) {
       type="button"
       onClick={onOpen}
       aria-label={`授乳を計測中 ${formatClock(elapsedSec)}（${sideLabel}）。開く`}
-      className={buttonCn}
+      className={`${buttonCn} border-primary/50 bg-primary/10 hover:bg-primary/15 active:bg-primary/20 dark:bg-primary/15 dark:hover:bg-primary/20 dark:active:bg-primary/25`}
     >
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/40">
-        <Timer size={16} className="text-amber-700 dark:text-amber-300" />
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+        <Timer size={20} aria-hidden="true" />
       </span>
-      <span className="flex min-w-0 flex-1 items-baseline gap-2">
-        <span className="text-sm font-medium">授乳を計測中</span>
-        <span className="font-mono text-sm font-semibold tabular-nums">
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="text-sm font-medium text-foreground/90">
+          授乳を計測中・{sideLabel}を吸わせ中
+        </span>
+        <span className="font-mono text-2xl font-bold leading-tight tabular-nums">
           {formatClock(elapsedSec)}
         </span>
-        <span className="text-xs text-muted-foreground">{sideLabel}</span>
       </span>
-      <ChevronRight size={16} className="shrink-0 text-muted-foreground" />
+      <span className="flex shrink-0 items-center gap-0.5 text-sm font-medium text-foreground">
+        開く
+        <ChevronRight size={20} aria-hidden="true" />
+      </span>
     </button>
   )
 }

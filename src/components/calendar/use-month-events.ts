@@ -54,14 +54,33 @@ interface UseMonthEventsArgs {
    * で既に取得済みゆえ、月を黙って動かすと**別範囲の events** を描くことになる。
    */
   initialView: CalendarDateView
+  /**
+   * サーバでの初回取得が失敗したか。true なら最初から「読み込めなかった」を出す
+   * （`[]` を「予定はありません」と描かせぬ）。
+   */
+  initialLoadFailed?: boolean
 }
+
+/**
+ * 表示中の月の取得状態。
+ * - `idle`: 表示は最新（または最後の取得に成功）
+ * - `loading`: 利用者の操作（月送り・今日・再試行）で別の月を取り直し中。
+ *   旧い月の行は新しい範囲を埋めぬゆえ、空欄を「予定はありません」と言わせぬ
+ * - `error`: その月を一度も取れていない（表示は当てにならぬ）
+ * - `stale`: 背景の取り直し（Realtime・復帰）だけが失敗した。表示は直前の成功時点のまま
+ */
+export type MonthLoadState = "idle" | "loading" | "error" | "stale"
 
 export function useMonthEvents({
   initialEvents,
   householdId,
   initialView,
+  initialLoadFailed = false,
 }: UseMonthEventsArgs) {
   const [events, setEvents] = useState<CalendarEventRecord[]>(initialEvents)
+  const [loadState, setLoadState] = useState<MonthLoadState>(
+    initialLoadFailed ? "error" : "idle",
+  )
   const [monthFirst, setMonthFirst] = useState(monthFirstOf(initialView.monthFirst))
   // 不正値は今日へ倒す。サーバ（`resolveCalendarDateView`）が既に締めておるゆえ
   // ここは二重の防御じゃが、`isValidYmd` は同じ 1 実装を呼んでおる（二重実装ではない）。
@@ -90,29 +109,56 @@ export function useMonthEvents({
     [events, selectedDate],
   )
 
+  /**
+   * 月を取り直す。`foreground` は利用者の操作による取得（月送り・今日・再試行）で、
+   * 待つ間は `loading`、失敗は `error` を立てる。背景の取得（Realtime・復帰・同期完了）は
+   * 画面を空にせず、失敗しても表示を残したまま `stale` だけを立てる。
+   */
   const refetch = useCallback(
-    async (targetMonthFirst: string) => {
+    async (targetMonthFirst: string, opts: { foreground?: boolean } = {}) => {
       const generation = ++fetchGenerationRef.current
+      if (opts.foreground) setLoadState("loading")
       const supabase = createClient()
       const { gridStart, gridEnd } = gridRangeOf(targetMonthFirst)
-      const { data, error } = await supabase
-        .from("calendar_events")
-        .select(CALENDAR_EVENT_COLUMNS)
-        .eq("household_id", householdId)
-        .lte("start_date", gridEnd) // 重なり判定: start_date <= gridEnd
-        .gte("end_date", gridStart) //           AND end_date >= gridStart
-        .order("start_date")
+      let data: unknown[] | null = null
+      let failed = false
+      try {
+        const res = await supabase
+          .from("calendar_events")
+          .select(CALENDAR_EVENT_COLUMNS)
+          .eq("household_id", householdId)
+          .lte("start_date", gridEnd) // 重なり判定: start_date <= gridEnd
+          .gte("end_date", gridStart) //           AND end_date >= gridStart
+          .order("start_date")
+        if (res.error) {
+          // 世代が古くとも失敗は記録する（真因を辿れるように）
+          logSupabaseError("calendar", "month lookup failed", res.error, { householdId })
+          failed = true
+        } else {
+          data = res.data as unknown[] | null
+        }
+      } catch (err) {
+        console.error("[calendar] month lookup threw", {
+          householdId,
+          message: err instanceof Error ? err.message : String(err),
+        })
+        failed = true
+      }
 
       // 月送り連打時に古い応答が新しい月を上書きしないよう世代トークンで捨てる
       if (generation !== fetchGenerationRef.current) return
-      if (error) {
-        logSupabaseError("calendar", "month lookup failed", error, { householdId })
+      if (failed) {
+        // 背景の失敗でも、まだ一度も取れていない（loading / error）なら error のまま。
+        setLoadState((prev) =>
+          opts.foreground || prev === "loading" || prev === "error" ? "error" : "stale",
+        )
         return
       }
       if (data) {
         // 楽観 temp 行は真値で置換される(refetch は真値のみで上書き)
         setEvents(data as unknown as CalendarEventRecord[])
       }
+      setLoadState("idle")
     },
     [householdId],
   )
@@ -123,7 +169,23 @@ export function useMonthEvents({
     (next: string) => {
       setMonthFirst(next)
       setSelectedDate(monthFirstOf(next))
-      void refetch(next)
+      void refetch(next, { foreground: true })
+    },
+    [refetch],
+  )
+  /**
+   * 日付へ移る（キーボードの矢印で月を跨いだ時など）。同じ月なら選ぶだけ、
+   * 別の月ならその月を描き直し、選択日は**指定日のまま**にする。
+   */
+  const goToDate = useCallback(
+    (date: string) => {
+      if (!isValidYmd(date)) return
+      const nextMonth = monthFirstOf(date)
+      setSelectedDate(date)
+      if (nextMonth !== monthFirstRef.current) {
+        setMonthFirst(nextMonth)
+        void refetch(nextMonth, { foreground: true })
+      }
     },
     [refetch],
   )
@@ -138,9 +200,11 @@ export function useMonthEvents({
   // 今日へ: goToMonth と違い選択日は「今日」にする(月の 1 日でなく)。
   const goToday = useCallback(() => {
     const m = currentMonthFirstJst()
-    setMonthFirst(m)
     setSelectedDate(todayJstString())
-    void refetch(m)
+    // 既に今月なら取り直さぬ（選択日だけ今日へ戻す）
+    if (m === monthFirstRef.current) return
+    setMonthFirst(m)
+    void refetch(m, { foreground: true })
   }, [refetch])
 
   // ---- 楽観更新ヘルパ ----
@@ -176,6 +240,11 @@ export function useMonthEvents({
    */
   const refetchCurrent = useCallback(
     () => refetch(monthFirstRef.current),
+    [refetch],
+  )
+  /** 「読み込めませんでした」からの再試行（利用者の操作ゆえ foreground）。 */
+  const retry = useCallback(
+    () => refetch(monthFirstRef.current, { foreground: true }),
     [refetch],
   )
 
@@ -225,6 +294,10 @@ export function useMonthEvents({
     goPrevMonth,
     goNextMonth,
     goToday,
+    goToDate,
+    today,
+    loadState,
+    retry,
     refetch,
     refetchCurrent,
     upsertOptimistic,

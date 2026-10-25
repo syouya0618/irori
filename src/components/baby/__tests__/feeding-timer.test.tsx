@@ -840,7 +840,7 @@ describe("FeedingTimer の閉じる操作は計測を捨てず、破棄は明示
       const onOpenChange = vi.fn()
       renderTimer({ onOpenChange })
 
-      fireEvent.click(screen.getByRole("button", { name: "Close" }))
+      fireEvent.click(screen.getByRole("button", { name: "閉じる" }))
 
       expect(onOpenChange).toHaveBeenCalledWith(false)
       expect(savedTimerState()?.startedAt).toBe(STARTED_5MIN_AGO)
@@ -898,7 +898,7 @@ describe("FeedingTimer の閉じる操作は計測を捨てず、破棄は明示
       const onOpenChange = vi.fn()
       renderTimer({ onOpenChange })
 
-      fireEvent.click(screen.getByRole("button", { name: "Close" }))
+      fireEvent.click(screen.getByRole("button", { name: "閉じる" }))
 
       expect(onOpenChange).toHaveBeenCalledWith(false)
       expect(savedTimerState()).toBeNull()
@@ -1001,13 +1001,13 @@ describe("FeedingTimer の閉じる操作は計測を捨てず、破棄は明示
       const onOpenChange = vi.fn()
       renderTimer({ onOpenChange })
       fireEvent.click(screen.getByRole("button", { name: "手動入力" }))
-      expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: "閉じる" })).toBeInTheDocument()
 
       act(() => {
         vi.advanceTimersByTime(61_000)
       })
 
-      const close = screen.getByRole("button", { name: "Close" })
+      const close = screen.getByRole("button", { name: "閉じる" })
       fireEvent.click(close)
       expect(onOpenChange).toHaveBeenCalledWith(false)
       expect(savedTimerState()?.startedAt).toBe(FIXED_NOW_ISO)
@@ -1377,5 +1377,87 @@ describe("FeedingTimer のシート本文はスクロールできる（小型画
     expect(body).toContainElement(
       screen.getByRole("button", { name: "キャンセル（記録しない）" }),
     )
+  })
+})
+
+describe("FeedingTimer の「閉じる」釦（押す前に結果を文言で示す）", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ now: FIXED_NOW, toFake: ["Date"] })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it("開いたばかり（1 分未満・未操作）は「取り消し」と書き、押すと計測を捨てて閉じる", () => {
+    const onOpenChange = vi.fn()
+    renderTimer({ onOpenChange })
+    const close = screen.getByRole("button", { name: /^閉じる（/ })
+    expect(close).toHaveTextContent("閉じる（開いたばかりの計測は取り消し）")
+
+    fireEvent.click(close)
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(savedTimerState()).toBeNull()
+    expect(toast.success).toHaveBeenCalledWith("授乳の計測を取り消しました")
+  })
+
+  it("1 分以上の計測は「計測は続きます」と書き、押しても端末の計測は残る（チップから戻れる）", () => {
+    seedTimerState({
+      startedAt: STARTED_5MIN_AGO,
+      feedingType: "breast_left",
+      leftCount: 1,
+      rightCount: 0,
+      leftSec: 0,
+      rightSec: 0,
+      sideSince: STARTED_5MIN_AGO,
+      startSide: "breast_left",
+      userId: "u1",
+    })
+    const onOpenChange = vi.fn()
+    renderTimer({ onOpenChange })
+    const close = screen.getByRole("button", { name: /^閉じる（/ })
+    expect(close).toHaveTextContent("閉じる（計測は続きます）")
+
+    fireEvent.click(close)
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(savedTimerState()?.startedAt).toBe(STARTED_5MIN_AGO)
+    expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("計測は続いています"))
+    expect(toast.success).not.toHaveBeenCalledWith("授乳の計測を取り消しました")
+    expect(recordFeeding).not.toHaveBeenCalled()
+  })
+
+  it("1 分未満でも左右を切り替えた計測は「続きます」（触った計測は確認なしに捨てぬ）", () => {
+    const onOpenChange = vi.fn()
+    renderTimer({ onOpenChange })
+    fireEvent.click(screen.getByRole("button", { name: "右" }))
+    const close = screen.getByRole("button", { name: /^閉じる（/ })
+    expect(close).toHaveTextContent("閉じる（計測は続きます）")
+    fireEvent.click(close)
+    expect(savedTimerState()).not.toBeNull()
+  })
+
+  it("左右の大きな釦は名前が「左」「右」で、吸わせ中の側を aria-pressed と語の両方で示す", () => {
+    renderTimer({ initialFeedingType: "breast_left" })
+    const left = screen.getByRole("button", { name: "左" })
+    const right = screen.getByRole("button", { name: "右" })
+    expect(left).toHaveAttribute("aria-pressed", "true")
+    expect(right).toHaveAttribute("aria-pressed", "false")
+    expect(left).toHaveTextContent("吸わせ中")
+    expect(right).not.toHaveTextContent("吸わせ中")
+    fireEvent.click(right)
+    expect(left).toHaveAttribute("aria-pressed", "false")
+    expect(right).toHaveAttribute("aria-pressed", "true")
+    expect(right).toHaveTextContent("1回 00:00")
+  })
+
+  it("入力方法（タイマー / 手動入力）は左右とは別の群で、選択中を aria-pressed で示す", () => {
+    renderTimer()
+    const group = screen.getByRole("group", { name: "入力方法" })
+    expect(group).toContainElement(screen.getByRole("button", { name: "タイマー" }))
+    expect(group).not.toContainElement(screen.getByRole("button", { name: "左" }))
+    expect(screen.getByRole("button", { name: "タイマー" })).toHaveAttribute("aria-pressed", "true")
+    fireEvent.click(screen.getByRole("button", { name: "手動入力" }))
+    expect(screen.getByRole("button", { name: "手動入力" })).toHaveAttribute("aria-pressed", "true")
   })
 })

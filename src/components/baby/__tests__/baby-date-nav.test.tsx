@@ -32,9 +32,26 @@ describe("BabyDateNav の日付ジャンプ（機能 B）", () => {
     render(<BabyDateNav selectedDate="2026-10-18" today={TODAY} onDateChange={onDateChange} />)
     fireEvent.click(screen.getByRole("button", { name: "前の日" }))
     expect(onDateChange).toHaveBeenLastCalledWith("2026-10-17")
-    fireEvent.click(screen.getByRole("button", { name: "今日" }))
+    fireEvent.click(screen.getByRole("button", { name: "今日に戻る" }))
     expect(onDateChange).toHaveBeenLastCalledWith(TODAY)
     fireEvent.click(screen.getByRole("button", { name: "次の日" }))
     expect(onDateChange).toHaveBeenLastCalledWith(TODAY)
+  })
+})
+
+describe("BabyDateNav の過去日の帯（今日との見分け）", () => {
+  it("過去日は「過去の日を表示中」の帯と「今日に戻る」を出す", () => {
+    const onDateChange = vi.fn()
+    render(<BabyDateNav selectedDate="2026-10-10" today={TODAY} onDateChange={onDateChange} />)
+    expect(screen.getByText("過去の日を表示中")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "今日に戻る" }))
+    expect(onDateChange).toHaveBeenCalledWith(TODAY)
+  })
+
+  it("対照: 今日は帯も「今日に戻る」も出さず、「次の日」は押せぬ", () => {
+    render(<BabyDateNav selectedDate={TODAY} today={TODAY} onDateChange={vi.fn()} />)
+    expect(screen.queryByText("過去の日を表示中")).toBeNull()
+    expect(screen.queryByRole("button", { name: "今日に戻る" })).toBeNull()
+    expect(screen.getByRole("button", { name: "次の日" })).toBeDisabled()
   })
 })

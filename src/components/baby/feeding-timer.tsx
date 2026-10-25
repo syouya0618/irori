@@ -816,6 +816,11 @@ export function FeedingTimer({
   const staleElapsedLabel = startedAt
     ? formatElapsedMinutes(Math.floor(elapsedSeconds / 60))
     : ""
+  // 「閉じる」を押した時に何が起きるかを、押す前に釦の文言で示す（handleOpenChange と同じ
+  // 判定）。開いて 1 分未満・未操作の計測は誤って開いたものとして取り消され、それ以外は
+  // 端末に残ってチップから戻れる。表示と結果を食い違わせぬため、判定は同じ関数で行う
+  const closeDiscardsTimer =
+    !!startedAt && isAccidentalOpen(startedAt, now.getTime(), cycle)
 
   return (
     <Sheet open={open} onOpenChange={handleOpenChange}>
@@ -829,14 +834,14 @@ export function FeedingTimer({
             {stale
               ? "停め忘れた計測です。授乳にかかった時間と左右の回数を入れて記録するか、破棄してください"
               : mode === "timer"
-                ? "吸わせる側を替えるたびに左右のボタンを押してください。停止すると1回の授乳として記録されます。閉じても計測は続きます"
+                ? "吸わせる側を替えたら、その側を押してください。停止すると1回の授乳として記録します"
                 : "授乳にかかった時間と左右の回数を選んで記録します"}
           </SheetDescription>
         </SheetHeader>
 
         {/* 本文だけを縦スクロールにする（見出しは残す）。小型画面で記録・キャンセル・
             破棄の確認が下で切れて押せなくならぬよう、記録シート・日記シートと同じ型。 */}
-        <div className="flex flex-col items-center gap-6 overflow-y-auto px-4 py-6">
+        <div className="flex flex-col items-center gap-5 overflow-y-auto px-4 pt-2 pb-6">
           {/* 停め忘れの案内。黙って捨てず、本当の開始時刻を保ったまま記録か破棄を選ばせる */}
           {stale && startedAt && (
             <div
@@ -853,64 +858,112 @@ export function FeedingTimer({
             </div>
           )}
 
-          {/* 入力方式の切替（タイマー / 手動）。停め忘れは手動入力のみ */}
+          {/* 入力方式の切替（タイマー / 手動）。停め忘れは手動入力のみ。
+              左右の釦（橙の塗り）と見間違えぬよう、控えめなタブの見た目にする — 以前は同じ
+              セグメントが縦に 2 段並び、活性の橙が 2 つ見えて「どちらが吸わせ中の側か」を
+              夜間に読み違えうった */}
           {!stale && (
-            <div className="flex w-full gap-1.5">
-              <button
-                type="button"
-                onClick={() => setMode("timer")}
-                className={segmentCn(mode === "timer")}
-              >
-                タイマー
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode("manual")}
-                className={segmentCn(mode === "manual")}
-              >
-                手動入力
-              </button>
+            <div
+              role="group"
+              aria-label="入力方法"
+              className="flex w-full gap-1 rounded-xl bg-muted p-1"
+            >
+              {(["timer", "manual"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  aria-pressed={mode === m}
+                  onClick={() => setMode(m)}
+                  className={`min-h-11 flex-1 rounded-lg text-sm font-medium transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${
+                    mode === m
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {m === "timer" ? "タイマー" : "手動入力"}
+                </button>
+              ))}
             </div>
           )}
 
           {mode === "timer" ? (
             <>
-              {/* 現在吸わせている側。反対側をタップすると stint が +1 される */}
-              <div className="flex w-full gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => handleSideTap("breast_left")}
-                  className={segmentCn(cycle.side === "breast_left")}
-                >
-                  左
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSideTap("breast_right")}
-                  className={segmentCn(cycle.side === "breast_right")}
-                >
-                  右
-                </button>
-              </div>
-
-              {/* 経過時間 */}
-              <div className="font-mono text-5xl font-bold tabular-nums tracking-tight">
-                {formatTimer(elapsedSeconds)}
-              </div>
-
-              {/* 吸わせた回数（左右の内訳）。開始側は切替後も確認できるよう常に添える */}
-              <div className="flex flex-col items-center gap-1">
-                <span className="text-xs font-medium text-muted-foreground">
+              {/* 経過時間（合計）。最も大きく出す */}
+              <div className="flex flex-col items-center">
+                <span className="text-sm text-muted-foreground">
                   {cycle.startSide === "breast_left"
-                    ? "左から開始・吸わせた回数"
+                    ? "左から開始・合計"
                     : cycle.startSide === "breast_right"
-                      ? "右から開始・吸わせた回数"
-                      : "吸わせた回数"}
+                      ? "右から開始・合計"
+                      : "合計"}
                 </span>
+                <div className="font-mono text-6xl font-bold tabular-nums tracking-tight">
+                  {formatTimer(elapsedSeconds)}
+                </div>
+              </div>
+
+              {/* 吸わせている側。左右を大きな 2 枚に分け、今の側を塗りと「吸わせ中」の語の
+                  両方で示す（色だけに頼らぬ）。反対側をタップすると stint が +1 される。
+                  名前は「左」「右」（テスト・支援技術が引く名前）で、状態は aria-pressed */}
+              <div className="grid w-full grid-cols-2 gap-3">
+                {(["breast_left", "breast_right"] as const).map((side) => {
+                  const active = cycle.side === side
+                  const label = side === "breast_left" ? "左" : "右"
+                  const count = side === "breast_left" ? cycle.leftCount : cycle.rightCount
+                  const sec = side === "breast_left" ? leftDisplaySec : rightDisplaySec
+                  return (
+                    <button
+                      key={side}
+                      type="button"
+                      aria-label={label}
+                      // 名前は「左」「右」のまま、側ごとの回数・時間は説明として読ませる
+                      aria-describedby={`timer-side-${side}-detail`}
+                      aria-pressed={active}
+                      onClick={() => handleSideTap(side)}
+                      disabled={isSaving}
+                      // 活性は太い橙の枠 + 淡い橙の面 + 「吸わせ中」の語。白文字×橙の塗りは
+                      // 小さな文字で 3.45:1 しか出ず（axe 実測）、夜間に読みにくいゆえ使わぬ
+                      className={`flex min-h-28 flex-col items-center justify-center gap-1 rounded-2xl px-2 py-3 text-foreground transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50 ${
+                        active
+                          ? "border-4 border-primary bg-primary/15 dark:bg-primary/25"
+                          : "border-2 border-border bg-muted/40 hover:bg-muted active:bg-muted"
+                      }`}
+                    >
+                      <span className="text-3xl font-bold leading-none">{label}</span>
+                      <span
+                        className={`flex items-center gap-1 text-sm ${
+                          active ? "font-bold" : "font-medium text-muted-foreground"
+                        }`}
+                      >
+                        {active && (
+                          <span
+                            className="size-2.5 rounded-full bg-primary"
+                            aria-hidden="true"
+                          />
+                        )}
+                        {active ? "吸わせ中" : "押して切り替え"}
+                      </span>
+                      {/* 側ごとの回数と時間（sidesUnknown は配分を持たぬゆえ回数のみ） */}
+                      <span
+                        id={`timer-side-${side}-detail`}
+                        className="font-mono text-base font-semibold tabular-nums"
+                      >
+                        {cycle.sidesUnknown
+                          ? `${count}回`
+                          : `${count}回 ${formatTimer(sec)}`}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* 停止すると記録される内容（左右の回数と時間）。押す前に確かめられるように */}
+              <div className="flex flex-col items-center gap-0.5">
+                <span className="text-sm text-muted-foreground">記録される内容</span>
                 {/* 手動入力で両側 0 にしてから timer へ戻ると空になるため 0回 と出す
                     （反対側をタップすればその側が 1 になり復帰できる）。
                     sidesUnknown（旧形式復元）は配分を持たないため回数のみ。 */}
-                <span className="text-lg font-semibold tabular-nums">
+                <span className="text-base font-semibold tabular-nums">
                   {cycle.sidesUnknown
                     ? countsLabel || "0回"
                     : `左${cycle.leftCount}回 ${formatTimer(leftDisplaySec)}・右${cycle.rightCount}回 ${formatTimer(rightDisplaySec)}`}
@@ -922,7 +975,7 @@ export function FeedingTimer({
                 onClick={handleStop}
                 disabled={isSaving}
                 size="lg"
-                className="min-h-14 w-full rounded-2xl text-lg font-semibold"
+                className="min-h-16 w-full rounded-2xl text-lg font-semibold"
               >
                 {isSaving ? (
                   <>
@@ -1056,14 +1109,32 @@ export function FeedingTimer({
               </div>
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={handleCancelRequest}
-              disabled={isSaving}
-              className="min-h-11 px-4 text-sm text-muted-foreground transition-colors duration-200 hover:text-foreground disabled:opacity-50"
-            >
-              キャンセル（記録しない）
-            </button>
+            // 主操作（停止・記録）から間を空けた副操作の段。閉じる（計測は端末に残る）と
+            // 破棄（確認を経る）を並べ、どちらが計測を消すのかを文言で分ける
+            <div className="flex w-full flex-col items-stretch gap-2 border-t pt-4">
+              {startedAt && (
+                <button
+                  type="button"
+                  onClick={() => handleOpenChange(false)}
+                  disabled={isSaving}
+                  className="min-h-11 rounded-xl border px-4 text-sm font-medium text-foreground transition-colors duration-200 hover:bg-muted active:bg-muted disabled:opacity-50"
+                >
+                  {closeDiscardsTimer
+                    ? "閉じる（開いたばかりの計測は取り消し）"
+                    : stale
+                      ? "閉じる（計測は残ります）"
+                      : "閉じる（計測は続きます）"}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleCancelRequest}
+                disabled={isSaving}
+                className="min-h-11 px-4 text-sm text-muted-foreground transition-colors duration-200 hover:text-foreground disabled:opacity-50"
+              >
+                キャンセル（記録しない）
+              </button>
+            </div>
           )}
         </div>
       </SheetContent>

@@ -106,7 +106,7 @@ vi.mock("@/app/(main)/baby/actions", () => ({
   updateLog: vi.fn(),
   upsertBabyDiary: vi.fn(),
 }))
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), dismiss: vi.fn() } }))
 
 import { BabyDashboard } from "../baby-dashboard"
 
@@ -245,7 +245,8 @@ async function flush() {
 }
 
 function lastFeedingText(): string {
-  const label = screen.getByText("最終授乳")
+  // 今日は「最終授乳（開始から）」、過去日は「最終授乳」（授乳の logged_at は開始時刻）
+  const label = screen.getByText(/^最終授乳/)
   return label.nextElementSibling?.textContent ?? ""
 }
 
@@ -368,7 +369,7 @@ describe("BabyDashboard / 開いたまま日を跨ぐ — 最終授乳のフォ�
     await flush()
 
     await crossMidnight()
-    fireEvent.click(screen.getByRole("button", { name: "今日" }))
+    fireEvent.click(screen.getByRole("button", { name: "今日に戻る" }))
     await flush()
 
     expect(lastFeedingText()).toBe(`${formatElapsedMinutes(91)}前`)
@@ -473,7 +474,7 @@ describe("BabyDashboard / 開いたまま日を跨ぐ — 最終授乳のフォ�
       }),
     )
 
-    fireEvent.click(screen.getByRole("button", { name: "今日" }))
+    fireEvent.click(screen.getByRole("button", { name: "今日に戻る" }))
     await flush()
     // 00:01 - 23:55 = 6分（搾乳も「最終授乳」には含む契約）
     expect(lastFeedingText()).toBe(`${formatElapsedMinutes(6)}前`)
@@ -594,7 +595,7 @@ describe("BabyDashboard / 日跨ぎのフォールバック取り直し — 保�
     })
     await flush()
 
-    fireEvent.click(screen.getByRole("button", { name: "今日" }))
+    fireEvent.click(screen.getByRole("button", { name: "今日に戻る" }))
     await flush()
     // 23:55（6分前）が残る。22:30（1時間31分前）へ巻き戻さぬ
     expect(lastFeedingText()).toBe(`${formatElapsedMinutes(6)}前`)

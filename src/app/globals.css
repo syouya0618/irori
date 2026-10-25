@@ -26,6 +26,7 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
   --color-primary: var(--primary);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
@@ -48,14 +49,35 @@
  * layout.tsx の FOUC 防止 script / use-theme.ts が html へ付けるゆえ、ここだけで足りる。 */
 :root {
   color-scheme: light;
+  /* 画面の殻の寸法。BottomNav の高さ（DESIGN_SYSTEM.md「ボトムナビ高さ 64px + safe-area」）と、
+   * (main) layout が中身の下に空ける余白・トーストの退避量は**この 1 本の値**から導く。
+   * ナビだけ変えて余白を忘れる（最後の 1 行がナビの下に隠れる）事故を構造で防ぐ。 */
+  --bottom-nav-h: 4rem;
+  /* iPhone のホームインジケータ等。standalone PWA では 34px、通常ブラウザでは 0。 */
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* 画面下に浮く操作（予定追加の FAB 等）の高さ。FAB は `above-bottom-nav` で下端をナビの
+   * 上 1rem に置き、トーストはその上まで退避する（下の --toast-clearance）。 */
+  --fab-size: 3.5rem;
+  /* 下端トースト（sonner）の退避量。既定はナビの上 0.75rem。FAB を持つ画面
+   * （useFabClearance() が `<html data-fab>` を立てておる間）は FAB の上まで上げる —
+   * 下の `html[data-fab]` を見よ。値は ui/sonner.tsx が offset / mobileOffset にそのまま渡す。 */
+  --toast-clearance: calc(var(--bottom-nav-h) + var(--safe-bottom) + 0.75rem);
   --background: oklch(0.985 0.005 75);
   --foreground: oklch(0.18 0.02 50);
   --card: oklch(1 0 0 / 60%);
   --card-foreground: oklch(0.18 0.02 50);
   --popover: oklch(1 0 0 / 75%);
   --popover-foreground: oklch(0.18 0.02 50);
-  --primary: oklch(0.65 0.19 50);
+  /* 主色（温かいオレンジ）。L=0.56 は**白文字 4.5:1 の下限から決めた値**じゃ。
+   * 以前の oklch(0.65 0.19 50)（#e56200）は白文字 3.45:1・白地の上の文字 3.31:1 で
+   * WCAG 1.4.3 を満たさず、しかも sRGB の外（青が負）ゆえブラウザごとの丸めで色が揺れた。
+   * 0.56 / 0.145 は sRGB の内側（#b55508）で、白文字 4.92:1、--background の上で 4.72:1、
+   * glass-nav の上で 4.87:1（Playwright 実測。src/app/__tests__/color-contrast-contract.test.ts が
+   * 4.5 以上を固定し、値を明るく戻すと落ちる）。ダークの主色は 0.70 のまま（黒文字 7.1:1）。 */
+  --primary: oklch(0.56 0.145 50);
   --primary-foreground: oklch(1 0 0);
+  /* 主色の hover。**薄めず暗くする**（`bg-primary/80` は白文字 3.5:1 に落ちる）。#9b4805、白文字 6.32:1。 */
+  --primary-hover: oklch(0.50 0.13 50);
   --secondary: oklch(0.96 0.015 75);
   --secondary-foreground: oklch(0.30 0.03 50);
   --muted: oklch(0.96 0.008 75);
@@ -65,8 +87,19 @@
   --destructive: oklch(0.58 0.22 27);
   --border: oklch(0.92 0.01 75 / 60%);
   --input: oklch(0.92 0.01 75);
-  --ring: oklch(0.65 0.19 50 / 40%);
-  --chart-1: oklch(0.65 0.19 50);
+  /* focus リング。ui/ の button・input・select・textarea は `focus-visible:ring-ring`（薄めずに全量）で使う。
+   * 以前は 40% × 部品側の /50 = 実効 20% で白地の上 約 1.3:1 じゃった（WCAG 2.2 1.4.11 の 3:1 に届かぬ）。
+   * Playwright 実測（白地 / 灯りの角 bg-hearth / --muted の上）: 80% = 3.36 / 2.91 / 3.20、90% = 3.98 / 3.38 / 3.74、
+   * 100% = 4.72 / 3.89 / 4.38。殻の角でも 3:1 を割らぬ最小の 90% にする。濃さの最終判断は計画書 D-3 どおり
+   * 実機で人間が決める（候補は pr-body に並べてある）。 */
+  --ring: oklch(0.56 0.145 50 / 90%);
+  /* 囲炉裏の灯り（.bg-hearth の起点色）= primary の 14%。
+   * ⚠️ color-mix(in oklab, var(--primary) 14%, transparent) で書いてはならぬ: Turbopack /
+   * webpack の lightningcss が color-mix を落として `var(--primary) 0` だけを出し、本番では
+   * 全開のオレンジが角に出る（2026-10-24 に build 後 CSS で実測。#169 の backdrop-filter と同族）。
+   * primary を変えたらここも対で変える。 */
+  --hearth-glow: oklch(0.56 0.145 50 / 14%);
+  --chart-1: oklch(0.56 0.145 50);
   --chart-2: oklch(0.70 0.14 140);
   --chart-3: oklch(0.60 0.16 260);
   --chart-4: oklch(0.75 0.12 30);
@@ -84,6 +117,8 @@
   --popover-foreground: oklch(0.93 0.01 75);
   --primary: oklch(0.70 0.17 50);
   --primary-foreground: oklch(0.13 0 0);
+  /* ダークは黒文字ゆえ hover は明るい側へ（#fc8c45、黒文字 8.6:1）。 */
+  --primary-hover: oklch(0.75 0.16 50);
   --secondary: oklch(0.20 0.01 75);
   --secondary-foreground: oklch(0.90 0.01 75);
   --muted: oklch(0.20 0.005 75);
@@ -93,7 +128,10 @@
   --destructive: oklch(0.55 0.20 27);
   --border: oklch(0.25 0.01 75 / 60%);
   --input: oklch(0.25 0.01 75);
-  --ring: oklch(0.70 0.17 50 / 40%);
+  /* ダークの focus リング: 90% で暗い地の上 5.88:1（灯りの角 5.45、--muted の上 5.41） */
+  --ring: oklch(0.70 0.17 50 / 90%);
+  /* ダークの primary の 10%（:root の注記を参照。color-mix は使えぬ） */
+  --hearth-glow: oklch(0.70 0.17 50 / 10%);
   --chart-1: oklch(0.70 0.17 50);
   --chart-2: oklch(0.75 0.12 140);
   --chart-3: oklch(0.65 0.14 260);
@@ -101,15 +139,38 @@
   --chart-5: oklch(0.60 0.13 330);
 }
 
+/* FAB を持つ画面では、下端トーストを FAB の上へ退避させる。
+ * FAB 側の契約（DESIGN_SYSTEM.md「浮く操作（FAB）」）: 根の部品で
+ * `useFabClearance()`（lib/hooks/use-fab-clearance.ts）を呼ぶ（React が
+ * `<html data-fab>` を立て、消える時に外す）。下端は `above-bottom-nav`（ナビ + safe-area + 1rem）、
+ * 高さは `--fab-size`。すると
+ *   トーストの下端 = FAB の上端 + 1rem
+ * となり、本文の長さ・操作ボタンの有無・積み重なりに関わらず操作領域が重ならぬ。
+ *
+ * `body:has([data-fab])` にせぬ理由: Next 16.3 の docs（preserving-ui-state.md「The :has selector」）が
+ * 全体に効く状態は React が持つ data-* 属性で表せと戒め、広い :has() は性能の瓶首になる。
+ * Cache Components / <Activity> で隠された route は DOM に残る（display: none）ゆえ、:has() では
+ * 隠れた予定画面の FAB が他の画面のトーストを上げ続ける。属性なら :has() 非対応の環境でも効く。
+ *
+ * 今の利用者は予定画面の FAB（components/calendar/calendar-add-fab.tsx）だけ。FAB を足す時も
+ * 同じ形（hook + `above-bottom-nav` + `--fab-size`）にすること。要素に `data-fab` を書くだけでは
+ * 効かず、lib/hooks/__tests__/use-fab-clearance.test.tsx の走査が落とす。 */
+html[data-fab] {
+  --toast-clearance: calc(var(--bottom-nav-h) + var(--safe-bottom) + 1rem + var(--fab-size) + 1rem);
+}
+
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    /* outline の既定色も --ring を薄めずに使う（/50 では 3:1 に届かぬ） */
+    @apply border-border outline-ring;
   }
   body {
     @apply bg-background text-foreground;
   }
   html {
     @apply font-sans;
+    /* focus / scrollIntoView で末尾へ寄せるとき、固定ナビの下に潜らぬよう余白を取る */
+    scroll-padding-bottom: calc(var(--bottom-nav-h) + var(--safe-bottom));
   }
 }
 
@@ -147,12 +208,15 @@
     border: 1px solid oklch(1 0 0 / 20%);
   }
 
+  /* 上辺の 1px の線は border ではなく内側の box-shadow で描く。border-top だとナビの箱が
+   * `--bottom-nav-h` + 1px になり、pb-nav・scroll-padding・トースト/FAB の退避（全て同じ変数から
+   * 導く）が 1px ずつ食い違う（Playwright の実測でナビ 65px・隙間 11px/15px じゃった）。 */
   .glass-nav {
     --glass-filter: blur(48px) saturate(2);
     background: oklch(1 0 0 / 70%);
     -webkit-backdrop-filter: var(--glass-filter);
     backdrop-filter: var(--glass-filter);
-    border-top: 1px solid oklch(1 0 0 / 40%);
+    box-shadow: inset 0 1px 0 0 oklch(1 0 0 / 40%);
   }
 
   .dark .glass {
@@ -167,7 +231,7 @@
 
   .dark .glass-nav {
     background: oklch(0.14 0.005 50 / 70%);
-    border-top-color: oklch(0.25 0.01 50 / 40%);
+    box-shadow: inset 0 1px 0 0 oklch(0.25 0.01 50 / 40%);
   }
 
   /* セーフエリア対応 (PWA standalone) */
@@ -175,7 +239,28 @@
     padding-top: env(safe-area-inset-top);
   }
   .safe-bottom {
-    padding-bottom: env(safe-area-inset-bottom);
+    padding-bottom: var(--safe-bottom);
+  }
+
+  /* (main) の中身がボトムナビの下に潜らぬための下余白。ナビの高さ + safe-area。
+   * ナビ側は h-(--bottom-nav-h) + .safe-bottom ゆえ、両者は常に同じ値を見る。 */
+  .pb-nav {
+    padding-bottom: calc(var(--bottom-nav-h) + var(--safe-bottom));
+  }
+
+  /* 画面下に浮く要素（FAB 等）の下端をナビの上に置く。`bottom-24` のような直書きは
+   * ナビの寸法と独立に決まり、iPhone standalone（64px + 34px）では潜る。 */
+  .above-bottom-nav {
+    bottom: calc(var(--bottom-nav-h) + var(--safe-bottom) + 1rem);
+  }
+
+  /* 囲炉裏の灯り: ナビを持たぬ殻（ログイン・世帯作成・404・全体エラー）の背景。
+   * 以前は orange-50 / amber-50 の直書きで、ダーク時に明るいまま残り文字が読めなんだ。
+   * 起点色 --hearth-glow は :root と .dark がそれぞれ持つ（テーマに追従）。
+   * ここで color-mix を使ってはならぬ（:root の --hearth-glow の注記を参照）。 */
+  .bg-hearth {
+    background-color: var(--background);
+    background-image: linear-gradient(160deg, var(--hearth-glow) 0%, transparent 60%);
   }
 
   /* タッチターゲット最小サイズ */
@@ -183,6 +268,81 @@
     min-height: 44px;
     min-width: 44px;
   }
+}
+
+/*
+ * ── @layer の外に置く規則 ──
+ * cascade layer に入れた規則は、層の外の規則に必ず負ける（CSS Cascade 5）。
+ * 下の群は sonner が実行時に差し込む <style> を上書きする必要があるため、意図して
+ * 層の外に置いてある。拡大まわり（touch-action・入力欄 16px 床）は関心事を分けて
+ * `src/app/touch-zoom.css` に在る（layout.tsx が globals.css の次に読み込む）。
+ */
+
+/* トースト（sonner）: 本文 13px → 14px、操作ボタン 24px → 44px。
+ * sonner は `[data-sonner-toast][data-styled=true] [data-button]`（0,3,0）を実行時に
+ * <style> で差し込むため、属性 1 つ分だけ詳細度を上げて（0,4,0）勝たせる。
+ * 片手で押し間違えた直後の「取り消す」が、親指で確実に押せる大きさになる。 */
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] {
+  font-size: 0.875rem;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-button] {
+  min-height: 2.75rem;
+  min-width: 2.75rem;
+  padding-inline: 0.875rem;
+  font-size: 0.875rem;
+  border-radius: var(--radius-md);
+}
+
+/* richColors のライト側の文字色。sonner 2.0.7 の既定（success 27% / info 45% / warning 45% /
+ * error 45%）は淡い地の上で 4.26 / 4.35 / 3.08 / 4.35:1 と、14px の本文に要る 4.5:1 に届かぬ
+ * （Playwright の実測。ダーク側は 9〜12:1 で足りる）。色相は sonner のまま明度だけ下げ、
+ * 5.8〜6.2:1 にする。sonner は `[data-sonner-toaster][data-sonner-theme='light']`（0,2,0）に
+ * 変数を置き、その <style> は実行時に head の末尾へ差し込まれる（このファイルより後）ゆえ、
+ * 同じ詳細度では順序で負ける。`html` を 1 つ足して（0,2,1）で勝たせる。ダークの規則
+ * （`[data-sonner-theme='dark']`）には触れぬ。
+ * 値は src/app/__tests__/color-contrast-contract.test.ts が sonner の地色に対して計算で固定する。 */
+html [data-sonner-toaster][data-sonner-theme="light"] {
+  --success-text: hsl(140, 100%, 22%);
+  --info-text: hsl(210, 92%, 36%);
+  --warning-text: hsl(31, 92%, 30%);
+  --error-text: hsl(360, 100%, 38%);
+}
+
+/* 下端トーストの入退場は「滑り」ではなく「薄れ」にする（前面のトーストは位置を動かさず opacity だけが変わる。
+ * 畳んだ背面のトーストは退場の間に前面の裏の位置へ戻るが、前面より下へは出ぬ）。
+ *
+ * sonner は下端のトーストを自分の高さぶん下（translateY(100%)）から滑り込ませ、退場でも下へ滑らせる。
+ * 下端にはナビ（全画面）と予定の FAB が在り、その上を通過する約 0.2 秒の間、ほぼ透明のトーストが
+ * 指を受ける（pointer-events: auto）。統合 harness の実測（Chromium・rAF ごとの elementFromPoint）では、
+ * 幅 360 / 390px で入場の最初の約 80ms、「取り消す」釦が育児画面の「設定」タブと予定画面の FAB の
+ * 中心に重なった — 記録直後に設定へ移ろうとした指が、見えぬ「取り消す」を押しうる。
+ * 滑りの距離（--y）だけを、トーストを下へ動かす状態でだけ止める:
+ *   1. 入場前（data-mounted が true になる前）
+ *   2. 前面の退場（スワイプ以外）
+ *   3. 背面の退場（畳んだ状態は sonner が translateY(40%) で下へ送る。広げた状態は自分の高さぶん下へ送る）
+ * 積み重ね・広げる・スワイプの規則（mounted / front=false / expanded / swiping）には触れぬ。上端（シート表示中）
+ * のトーストは滑りのまま。sonner の規則は実行時に head の末尾へ差し込まれるゆえ、html を足して詳細度で勝つ。
+ * さらに、退場中（data-removed）の下端トーストが上下へ広げる当たり判定は指を受けぬ。sonner は退場中の
+ * トーストに `::before`（inset: 0・scaleY(2)）を付けて当たり判定を上下へ倍に広げるゆえ、滑りを止めても
+ * 約 0.2 秒、真下のナビと FAB の操作を吸った（実測）。止めるのは `::before` だけ — トースト本体は退場中も
+ * 指を受ける（「取り消す」の二度押しの 2 回目を、静止位置の真下の記録の釦などへ落とさぬため）。
+ * 選択子と値は src/app/__tests__/sonner-motion-contract.test.ts が sonner 本体と照合して固定する
+ * （sonner を上げて属性名が変われば落ちる）。戻すなら、下の規則を消すだけでよい。 */
+html [data-sonner-toast][data-y-position="bottom"]:not([data-mounted="true"]),
+html [data-sonner-toast][data-y-position="bottom"][data-removed="true"][data-front="true"][data-swipe-out="false"],
+html [data-sonner-toast][data-y-position="bottom"][data-removed="true"][data-front="false"][data-swipe-out="false"][data-expanded="false"] {
+  --y: translateY(0);
+}
+html [data-sonner-toast][data-y-position="bottom"][data-removed="true"][data-front="false"][data-swipe-out="false"][data-expanded="true"] {
+  --y: translateY(calc(var(--lift) * var(--offset)));
+}
+html [data-sonner-toast][data-y-position="bottom"][data-removed="true"]::before {
+  pointer-events: none;
+}
+/* スワイプで消した下端トーストは、sonner の keyframe（swipe-out-down 等）で本体ごと 200ms 下へ滑り、ナビと FAB を
+ * 横切る（--y の上書きは swipe-out=false の規則だけゆえ当たらぬ）。指はもう離れておるゆえ、本体ごと指を通す。 */
+html [data-sonner-toast][data-y-position="bottom"][data-swipe-out="true"] {
+  pointer-events: none;
 }
 
 /*

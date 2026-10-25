@@ -106,7 +106,7 @@ function BabyProfileForm({ initialProfile }: { initialProfile: BabyProfile }) {
           name="baby_name"
           defaultValue={initialProfile.name ?? ""}
           placeholder="赤ちゃんの名前"
-          className="h-10"
+          className="h-11"
         />
       </div>
       <div className="flex flex-col gap-2">
@@ -117,7 +117,7 @@ function BabyProfileForm({ initialProfile }: { initialProfile: BabyProfile }) {
           type="date"
           defaultValue={initialProfile.birthDate ?? ""}
           max={todayJstString()}
-          className="h-10"
+          className="h-11"
         />
       </div>
       <div className="flex flex-col gap-2">
@@ -126,7 +126,7 @@ function BabyProfileForm({ initialProfile }: { initialProfile: BabyProfile }) {
           id="feeding_interval_min"
           name="feeding_interval_min"
           defaultValue={String(initialProfile.feedingIntervalMin)}
-          className="h-10 rounded-md border bg-background px-3 text-sm transition-colors duration-200"
+          className="h-11 rounded-md border bg-background px-3 text-sm transition-colors duration-200"
         >
           {FEEDING_INTERVAL_OPTIONS.map((min) => (
             <option key={min} value={min}>

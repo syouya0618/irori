@@ -484,3 +484,31 @@ describe("BabyDashboard / 取得窓 8 日と表示窓 7 日の分離", () => {
     expect(screen.queryByText("0.0回/日")).not.toBeInTheDocument()
   })
 })
+
+describe("BabyDashboard / 週間サマリー・成長グラフは畳んで置く（必要な時に開く）", () => {
+  it("既定は閉じて要約だけを見せ、開くとグラフが見える。閉じた間もグラフは DOM に残る", () => {
+    render(<BabyDashboard {...defaultProps()} />)
+    const weekly = screen.getByRole("button", { name: /週間サマリー/ })
+    const growth = screen.getByRole("button", { name: /成長の記録/ })
+    expect(weekly).toHaveAttribute("aria-expanded", "false")
+    expect(growth).toHaveAttribute("aria-expanded", "false")
+    // 畳んでいる間は支援技術・画面から隠れるが、Realtime 反映の足場（SVG）は残る
+    const chart = screen.getByLabelText("直近7日の授乳回数")
+    expect(chart.closest("[hidden]")).not.toBeNull()
+
+    act(() => {
+      weekly.click()
+    })
+    expect(weekly).toHaveAttribute("aria-expanded", "true")
+    expect(screen.getByLabelText("直近7日の授乳回数").closest("[hidden]")).toBeNull()
+  })
+
+  it("記録とタイムラインは週の傾向・成長グラフより前（上）に並ぶ", () => {
+    render(<BabyDashboard {...defaultProps()} />)
+    const quick = screen.getByRole("button", { name: "おしっこ" })
+    const timelineHeading = screen.getByRole("heading", { name: /タイムライン/ })
+    const weekly = screen.getByRole("button", { name: /週間サマリー/ })
+    expect(quick.compareDocumentPosition(timelineHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(timelineHeading.compareDocumentPosition(weekly) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})

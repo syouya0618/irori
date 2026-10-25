@@ -77,7 +77,7 @@ const mockState = vi.hoisted(() => ({
   session: null as unknown as SessionResult,
 }))
 
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), dismiss: vi.fn() } }))
 vi.mock("@/lib/supabase/log-error", () => ({ logSupabaseError: vi.fn() }))
 // 予定カードは自前の visibility refetch（calendar_events）を持つ。本テストの対象外ゆえ stub。
 vi.mock("@/components/calendar/upcoming-events-card", () => ({

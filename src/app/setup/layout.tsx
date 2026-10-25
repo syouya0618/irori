@@ -3,9 +3,6 @@ export default function SetupLayout({
 }: Readonly<{
   children: React.ReactNode
 }>) {
-  return (
-    <div className="bg-gradient-to-br from-orange-50 via-amber-50/50 to-rose-50/30 min-h-dvh">
-      {children}
-    </div>
-  )
+  // (auth)/layout.tsx と同じ殻。bg-hearth はテーマに追従する（globals.css）
+  return <div className="bg-hearth min-h-dvh">{children}</div>
 }

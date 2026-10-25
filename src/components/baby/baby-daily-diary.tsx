@@ -52,7 +52,7 @@ export function BabyDailyDiary({
             aria-label="日記を読み込み中"
             className="flex min-h-11 items-center p-4"
           >
-            <div className="h-3 w-2/3 animate-pulse rounded bg-muted" />
+            <div className="h-3 w-2/3 animate-pulse rounded bg-muted-foreground/15" />
           </div>
         ) : diary ? (
           <button

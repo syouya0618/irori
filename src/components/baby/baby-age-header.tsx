@@ -8,6 +8,12 @@ interface BabyAgeHeaderProps {
   babyBirthDate: string | null
   /** 基準日 "YYYY-MM-DD"（JST の今日） */
   referenceDate: string
+  /**
+   * 日付見出しの下に添える 1 行の形（育児画面）。カード 1 枚ぶん（約 70px）の縦を
+   * クイック記録へ譲り、最重要の操作を親指の届く高さへ上げる。中身（月齢・通算日数・
+   * 未登録時の導線）は同じ。
+   */
+  compact?: boolean
 }
 
 /**
@@ -25,8 +31,32 @@ export function BabyAgeHeader({
   babyName,
   babyBirthDate,
   referenceDate,
+  compact = false,
 }: BabyAgeHeaderProps) {
   const age = babyBirthDate ? getBabyAge(babyBirthDate, referenceDate) : null
+
+  if (compact) {
+    if (!age) {
+      return (
+        <Link
+          href="/settings"
+          className="flex min-h-11 items-center gap-1.5 self-start px-1 text-sm text-muted-foreground transition-colors duration-200 hover:text-foreground"
+        >
+          <CalendarPlus size={16} className="shrink-0 text-primary" aria-hidden="true" />
+          <span>誕生日を登録すると月齢が表示されます</span>
+        </Link>
+      )
+    }
+    const showDays = age.years >= 1 || age.months >= 1
+    return (
+      <p className="flex flex-wrap items-baseline gap-x-2 px-1 text-sm text-muted-foreground">
+        <Baby size={16} className="shrink-0 self-center text-primary" aria-hidden="true" />
+        {babyName ? <span className="font-medium text-foreground">{babyName}</span> : null}
+        <span className="font-semibold tabular-nums text-foreground">{age.label}</span>
+        {showDays && <span className="tabular-nums">{age.totalDaysLabel}</span>}
+      </p>
+    )
+  }
 
   if (!age) {
     return (

@@ -9,7 +9,7 @@
  * 有無・値は既存テストに倣い document.getElementById で参照する。
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent, cleanup } from "@testing-library/react"
 
 import { CalendarEventFormSheet } from "../calendar-event-form-sheet"
@@ -208,32 +208,270 @@ describe("CalendarEventFormSheet - 繰り返し(作成モードのみ)", () => {
   })
 })
 
-describe("CalendarEventFormSheet - シリーズ一括削除", () => {
-  it("series_id を持つ予定の編集で「すべて削除」ボタンが出て onDeleteSeries を呼ぶ", () => {
+describe("CalendarEventFormSheet - 削除の確認（誤操作の防止）", () => {
+  function renderDeletable(editing: CalendarEventRecord) {
+    const onDelete = vi.fn()
     const onDeleteSeries = vi.fn()
-    renderEditForm(ev({ id: "e1", source: "native", series_id: "ser-9" }), {
-      onDeleteSeries,
-    })
-    const btn = screen.getByRole("button", { name: /すべて削除/ })
-    expect(btn).toBeInTheDocument()
-    fireEvent.click(btn)
+    render(
+      <CalendarEventFormSheet
+        open
+        onOpenChange={() => {}}
+        editing={editing}
+        defaultDate="2026-07-15"
+        saving={false}
+        onSubmit={vi.fn()}
+        onDelete={onDelete}
+        onDeleteSeries={onDeleteSeries}
+      />,
+    )
+    return { onDelete, onDeleteSeries }
+  }
+
+  it("繰り返しの予定: 「削除」1 回では何も消さず、「この回だけ」と「すべての回」を選ばせる", () => {
+    const { onDelete, onDeleteSeries } = renderDeletable(
+      ev({ id: "e1", source: "native", series_id: "ser-9" }),
+    )
+    // 本文に即時の一括削除ボタンは置かぬ（1 タップで全回が消える導線を残さぬ）
+    expect(screen.queryByRole("button", { name: /すべての回を削除/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "削除" }))
+    expect(onDelete).not.toHaveBeenCalled()
+    expect(onDeleteSeries).not.toHaveBeenCalled()
+
+    const dialog = screen.getByRole("group", { name: /削除|破棄|ログアウト/ })
+    expect(dialog).toHaveTextContent("繰り返し予定を削除します")
+    // 誤って押しても確定せぬよう、最初のフォーカスは取り消し側
+    expect(screen.getByRole("button", { name: "キャンセル" })).toHaveFocus()
+
+    fireEvent.click(screen.getByRole("button", { name: "繰り返しのすべての回を削除" }))
     expect(onDeleteSeries).toHaveBeenCalledWith("ser-9")
+    expect(onDelete).not.toHaveBeenCalled()
   })
 
-  it("単発(series_id null)の編集では「すべて削除」ボタンを出さない", () => {
-    renderEditForm(ev({ id: "e1", source: "native", series_id: null }))
-    expect(screen.getByText("予定を編集")).toBeInTheDocument()
-    expect(
-      screen.queryByRole("button", { name: /すべて削除/ }),
-    ).not.toBeInTheDocument()
+  it("繰り返しの予定: 「この回だけ削除」は単発削除だけを呼ぶ", () => {
+    const { onDelete, onDeleteSeries } = renderDeletable(
+      ev({ id: "e1", source: "native", series_id: "ser-9" }),
+    )
+    fireEvent.click(screen.getByRole("button", { name: "削除" }))
+    fireEvent.click(screen.getByRole("button", { name: "この回だけ削除" }))
+    expect(onDelete).toHaveBeenCalledWith("e1")
+    expect(onDeleteSeries).not.toHaveBeenCalled()
   })
 
-  it("Google 予定(閲覧のみ)ではシリーズ削除ボタンを出さない", () => {
-    renderEditForm(ev({ id: "g1", source: "google", series_id: "ser-9" }))
-    expect(screen.getByText("予定（Google）")).toBeInTheDocument()
+  it("単発の予定: 確認に一括削除の選択肢を出さず、「削除する」で 1 件だけ消す", () => {
+    const { onDelete, onDeleteSeries } = renderDeletable(
+      ev({ id: "e1", title: "検診", source: "native", series_id: null }),
+    )
+    fireEvent.click(screen.getByRole("button", { name: "削除" }))
+    expect(screen.getByRole("group", { name: /削除|破棄|ログアウト/ })).toHaveTextContent("「検診」を削除しますか？")
+    expect(screen.queryByRole("button", { name: /すべての回/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "削除する" }))
+    expect(onDelete).toHaveBeenCalledWith("e1")
+    expect(onDeleteSeries).not.toHaveBeenCalled()
+  })
+
+  it("キャンセルで確認を閉じ、何も消さずに編集へ戻る", () => {
+    const { onDelete } = renderDeletable(ev({ id: "e1", source: "native" }))
+    fireEvent.click(screen.getByRole("button", { name: "削除" }))
+    fireEvent.click(screen.getByRole("button", { name: "キャンセル" }))
+    expect(screen.queryByRole("group", { name: /削除|破棄|ログアウト/ })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "更新" })).toBeInTheDocument()
+    expect(onDelete).not.toHaveBeenCalled()
+  })
+
+  it("Google 予定(閲覧のみ)では削除の導線そのものを出さない", () => {
+    renderDeletable(ev({ id: "g1", source: "google", series_id: "ser-9" }))
+    expect(screen.getByText("予定の詳細")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "削除" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /すべての回/ })).not.toBeInTheDocument()
+  })
+
+  it("繰り返しの 1 回を編集する時は「この回だけに適用」と明示する", () => {
+    renderDeletable(ev({ id: "e1", source: "native", series_id: "ser-9" }))
+    expect(screen.getByText(/変更はこの回だけに適用されます/)).toBeInTheDocument()
+  })
+
+  it("単発の編集ではその注記を出さぬ（対照）", () => {
+    renderDeletable(ev({ id: "e1", source: "native", series_id: null }))
+    expect(screen.queryByText(/変更はこの回だけに適用されます/)).not.toBeInTheDocument()
+  })
+})
+
+describe("CalendarEventFormSheet - 入力途中で閉じない", () => {
+  function renderWithOpenChange(editing: CalendarEventRecord | null = null) {
+    const onOpenChange = vi.fn()
+    render(
+      <CalendarEventFormSheet
+        open
+        onOpenChange={onOpenChange}
+        editing={editing}
+        defaultDate="2026-07-15"
+        saving={false}
+        onSubmit={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteSeries={vi.fn()}
+      />,
+    )
+    return onOpenChange
+  }
+  const pressEscape = () =>
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" })
+
+  it("何も打っていなければ Esc でそのまま閉じる", () => {
+    const onOpenChange = renderWithOpenChange()
+    pressEscape()
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it("打ちかけの内容があれば閉じず、破棄の確認を出す", () => {
+    const onOpenChange = renderWithOpenChange()
+    fireEvent.change(titleInput()!, { target: { value: "検診" } })
+    pressEscape()
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    expect(screen.getByRole("group", { name: /削除|破棄|ログアウト/ })).toHaveTextContent("入力中の内容を破棄して閉じますか？")
+    expect(titleInput()!.value).toBe("検診")
+
+    // 「編集を続ける」で戻れば入力はそのまま
+    fireEvent.click(screen.getByRole("button", { name: "編集を続ける" }))
+    expect(titleInput()!.value).toBe("検診")
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+
+    // 明示的に破棄すれば閉じる
+    pressEscape()
+    fireEvent.click(screen.getByRole("button", { name: "破棄して閉じる" }))
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it("既存予定は値を元に戻せば確認なしで閉じる（差分で判定する）", () => {
+    const onOpenChange = renderWithOpenChange(ev({ id: "e1", title: "検診" }))
+    fireEvent.change(titleInput()!, { target: { value: "検診2" } })
+    fireEvent.change(titleInput()!, { target: { value: "検診" } })
+    pressEscape()
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it("確認を出した後に Esc をもう一度押しても、選ぶまで破棄せぬ", () => {
+    const onOpenChange = renderWithOpenChange()
+    fireEvent.change(titleInput()!, { target: { value: "検診" } })
+    pressEscape()
+    pressEscape()
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    expect(titleInput()!.value).toBe("検診")
+  })
+
+  it("親の保存中（別の予定・通知の往復）でも、打ちかけの入力を確認なしで捨てぬ", () => {
+    const onOpenChange = vi.fn()
+    render(
+      <CalendarEventFormSheet
+        open
+        onOpenChange={onOpenChange}
+        editing={null}
+        defaultDate="2026-07-15"
+        saving
+        onSubmit={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteSeries={vi.fn()}
+      />,
+    )
+    fireEvent.change(titleInput()!, { target: { value: "検診" } })
+    pressEscape()
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    expect(screen.getByRole("group", { name: /破棄/ })).toBeInTheDocument()
+  })
+
+  it("復元した入力を確認で破棄したら、親が握る入力も消す（次に開いて蘇らせぬ）", () => {
+    const onOpenChange = vi.fn()
+    const onDiscardDraft = vi.fn()
+    render(
+      <CalendarEventFormSheet
+        open
+        onOpenChange={onOpenChange}
+        editing={null}
+        defaultDate="2026-07-15"
+        saving={false}
+        onSubmit={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteSeries={vi.fn()}
+        initialDraft={{
+          title: "保存できなかった題",
+          memo: null,
+          isAllDay: true,
+          startDate: "2026-07-20",
+          endDate: "2026-07-20",
+          startTime: "09:00",
+          endTime: "",
+          repeat: "none",
+          repeatUntil: "",
+        }}
+        onDiscardDraft={onDiscardDraft}
+      />,
+    )
+    pressEscape()
+    fireEvent.click(screen.getByRole("button", { name: "破棄して閉じる" }))
+    expect(onDiscardDraft).toHaveBeenCalledTimes(1)
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+})
+
+describe("CalendarEventFormSheet - 保存できなかった入力の復元", () => {
+  const draft = {
+    title: "保存できなかった題",
+    memo: "持ち物",
+    isAllDay: true,
+    startDate: "2026-07-20",
+    endDate: "2026-07-20",
+    startTime: "09:00",
+    endTime: "",
+    repeat: "none" as const,
+    repeatUntil: "",
+  }
+
+  it("復元入力で始まり、その旨を出す。「破棄」で元の値へ戻し親へ伝える", () => {
+    const onDiscardDraft = vi.fn()
+    render(
+      <CalendarEventFormSheet
+        open
+        onOpenChange={() => {}}
+        editing={null}
+        defaultDate="2026-07-15"
+        saving={false}
+        onSubmit={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteSeries={vi.fn()}
+        initialDraft={draft}
+        onDiscardDraft={onDiscardDraft}
+      />,
+    )
+    expect(titleInput()!.value).toBe("保存できなかった題")
+    expect(startDateInput()!.value).toBe("2026-07-20")
+    expect(screen.getByText("保存できなかった入力を復元しました。")).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "破棄" }))
+    expect(onDiscardDraft).toHaveBeenCalledTimes(1)
+    expect(titleInput()!.value).toBe("")
+    expect(startDateInput()!.value).toBe("2026-07-15")
+  })
+
+  it("復元入力が無ければ通知も出さぬ（対照）", () => {
+    renderNewForm()
+    expect(screen.queryByText("保存できなかった入力を復元しました。")).not.toBeInTheDocument()
+  })
+})
+
+describe("CalendarEventFormSheet - 日時と繰り返しの予告", () => {
+  it("入力中の日時を曜日つきの 1 行で示し、複数日の終日は日数を添える", () => {
+    renderNewForm()
+    expect(screen.getByText("7月15日（水）・終日")).toBeInTheDocument()
+    fireEvent.change(endDateInput()!, { target: { value: "2026-07-17" } })
     expect(
-      screen.queryByRole("button", { name: /すべて削除/ }),
-    ).not.toBeInTheDocument()
+      screen.getByText("7月15日（水）〜7月17日（金）・終日（3日間）"),
+    ).toBeInTheDocument()
+  })
+
+  it("時刻ありでは開始〜終了の時刻を示す", () => {
+    renderNewForm()
+    fireEvent.click(screen.getByRole("button", { name: "時刻あり" }))
+    fireEvent.change(endTimeInput()!, { target: { value: "10:30" } })
+    expect(screen.getByText("7月15日（水）09:00〜10:30")).toBeInTheDocument()
   })
 })
 
@@ -397,7 +635,7 @@ describe("CalendarEventFormSheet - 通知(B-2)", () => {
       reminder: { status: "ready", choice: "none" },
     })
     // sanity anchor: read-only の詳細シートであること
-    expect(screen.getByText("予定（Google）")).toBeInTheDocument()
+    expect(screen.getByText("予定の詳細")).toBeInTheDocument()
     // 本文は編集させぬ
     expect(document.getElementById("cal-title")).toBeNull()
     // が、通知だけは出ておりかつ有効
@@ -432,20 +670,46 @@ describe("CalendarEventFormSheet - 通知(B-2)", () => {
     expect(screen.getByText(/まだ知らない通知設定/)).toBeInTheDocument()
   })
 
-  it("通知時刻の予告を出す(終日 7/15 の 30 分前 = 7月14日 23:30)", () => {
-    renderSheet({
-      editing: ev({ id: "g1", source: "google", start_date: "2026-07-15" }),
-      reminder: { status: "ready", choice: "m30" },
+  describe("予告（現在時刻を 2026-07-01 に固定）", () => {
+    // 予告は「過ぎた時刻なら届かぬ」と言い分けるゆえ、現在時刻に依存する。Date だけを偽る。
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] })
+      vi.setSystemTime(new Date("2026-07-01T00:00:00Z"))
     })
-    expect(screen.getByText("7月14日 23:30 に通知します")).toBeInTheDocument()
+    afterEach(() => vi.useRealTimers())
+
+    it("通知時刻の予告を出す(終日 7/15 の 30 分前 = 7月14日 23:30)", () => {
+      renderSheet({
+        editing: ev({ id: "g1", source: "google", start_date: "2026-07-15" }),
+        reminder: { status: "ready", choice: "m30" },
+      })
+      expect(screen.getByText("7月14日 23:30 に通知します")).toBeInTheDocument()
+    })
+
+    it("前日20時の予告(7/15 → 7月14日 20:00)", () => {
+      renderSheet({
+        editing: ev({ id: "g1", source: "google", start_date: "2026-07-15" }),
+        reminder: { status: "ready", choice: "prev_day_20" },
+      })
+      expect(screen.getByText("7月14日 20:00 に通知します")).toBeInTheDocument()
+    })
   })
 
-  it("前日20時の予告(7/15 → 7月14日 20:00)", () => {
-    renderSheet({
-      editing: ev({ id: "g1", source: "google", start_date: "2026-07-15" }),
-      reminder: { status: "ready", choice: "prev_day_20" },
-    })
-    expect(screen.getByText("7月14日 20:00 に通知します")).toBeInTheDocument()
+  it("通知時刻が既に過ぎていれば「通知します」と言わず、届かぬことを示す", () => {
+    vi.useFakeTimers({ toFake: ["Date"] })
+    vi.setSystemTime(new Date("2026-07-14T15:00:00Z")) // = 7/15 00:00 JST
+    try {
+      renderSheet({
+        editing: ev({ id: "g1", source: "google", start_date: "2026-07-15" }),
+        reminder: { status: "ready", choice: "m30" },
+      })
+      expect(
+        screen.getByText("7月14日 23:30 はすでに過ぎているため、通知は届きません"),
+      ).toBeInTheDocument()
+      expect(screen.queryByText(/に通知します$/)).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("「なし」のときは予告を出さぬ", () => {

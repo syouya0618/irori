@@ -78,7 +78,7 @@ test("今日の予定を作ると /baby の先頭にカードが出て、そこ�
   await page.getByRole("link", { name: "予定" }).click()
   await expect(page).toHaveURL(/\/calendar/, { timeout: 15_000 })
 
-  await page.getByRole("button", { name: "予定を追加" }).click()
+  await page.getByRole("button", { name: /^\d+月\d+日（.）に予定を追加$/ }).click()
   await expect(
     page.getByRole("heading", { name: "予定を追加" }),
   ).toBeVisible({ timeout: 10_000 })

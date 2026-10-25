@@ -1,7 +1,7 @@
 "use client"
 
-import { useRef, useState, useTransition } from "react"
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react"
+import { useEffect, useRef, useState, useTransition } from "react"
+import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 // 送信値(start_at/end_at)の導出はシートの保存前検証と同じ関数を使い、
@@ -41,6 +41,8 @@ import { CalendarMonthView } from "./calendar-month-view"
 import { CalendarAgenda } from "./calendar-agenda"
 import { CalendarEventFormSheet } from "./calendar-event-form-sheet"
 import { useGoogleSyncPoll } from "./use-google-sync-poll"
+import { formatDayJa } from "./calendar-display"
+import { CalendarAddFab } from "./calendar-add-fab"
 
 interface CalendarViewProps {
   initialEvents: CalendarEventRecord[]
@@ -65,6 +67,11 @@ interface CalendarViewProps {
    * null = 既定は「なし」。
    */
   defaultReminderMinutes?: number | null
+  /**
+   * サーバでの初回の月取得が失敗したか。true なら「予定はありません」ではなく
+   * 「読み込めませんでした」と再試行を出す（`[]` を空の月と偽らぬ）。
+   */
+  initialLoadFailed?: boolean
 }
 
 /** "YYYY-MM" を "YYYY年M月" へ */
@@ -73,13 +80,23 @@ function monthTitle(monthFirst: string): string {
   return `${y}年${Number(m)}月`
 }
 
-/** "YYYY-MM-DD" を "M月D日" へ */
-function dayLabel(ymd: string): string {
-  const [, m, d] = ymd.split("-").map(Number)
-  return `${m}月${d}日`
+let optimisticSeq = 0
+
+/**
+ * 保存に失敗した入力。シートは保存を押した時点で閉じる（楽観更新）ゆえ、失敗の後に
+ * 打ち直しを強いぬよう、ここで握って次に同じ予定を開いた時に戻す。
+ * - `key`: "new"（新規）か予定 id（編集）
+ * - `baseVersion`: 編集の時に送った版。**同じ版の行にしか戻さぬ** —— 家族が先に直した後で
+ *   古い入力を新しい版へ載せると、版ガードを素通りして家族の変更を上書きする
+ */
+interface FailedDraft {
+  key: string
+  baseVersion: string | null
+  value: CalendarEventFormValue
 }
 
-let optimisticSeq = 0
+/** 失敗の toast に「入力に戻る」を付ける時の表示時間（読んで押せる長さ）。 */
+const DRAFT_TOAST_MS = 10_000
 
 export function CalendarView({
   initialEvents,
@@ -88,15 +105,29 @@ export function CalendarView({
   syncScheduled = false,
   initialGoogleSyncedAt = null,
   defaultReminderMinutes = null,
+  initialLoadFailed = false,
 }: CalendarViewProps) {
   const m = useMonthEvents({
     initialEvents,
     householdId,
     initialView,
+    initialLoadFailed,
   })
   const [pending, startTransition] = useTransition()
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editing, setEditing] = useState<CalendarEventRecord | null>(null)
+  // 保存の往復中の予定 id（一覧に「保存中」を出す。作成の楽観行は id の prefix で分かる）
+  const [savingIds, setSavingIds] = useState<ReadonlySet<string>>(() => new Set())
+  const markSaving = (id: string, on: boolean) =>
+    setSavingIds((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  const [failedDraft, setFailedDraft] = useState<FailedDraft | null>(null)
+  // シートへ渡す復元入力（開いた時に決める）
+  const [sheetDraft, setSheetDraft] = useState<CalendarEventFormValue | null>(null)
 
   // ── B-2: 通知設定 ────────────────────────────────────────────
   // 既存予定は**シートを開いた時に 1 件だけ**引く。月ぶんを先読みせぬのは、
@@ -124,6 +155,7 @@ export function CalendarView({
 
   const openNew = () => {
     setEditing(null)
+    setSheetDraft(failedDraft?.key === "new" ? failedDraft.value : null)
     setSheetOpen(true)
     // 新規は個人の既定値から始める(まだ DB に行は無い)。
     reminderSeq.current += 1
@@ -135,6 +167,20 @@ export function CalendarView({
 
   const openEvent = (event: CalendarEventRecord) => {
     setEditing(event)
+    if (failedDraft?.key === event.id) {
+      if (failedDraft.baseVersion === event.updated_at) {
+        setSheetDraft(failedDraft.value)
+      } else {
+        // 家族（または同期）が先に直した。古い入力を新しい版へ載せぬ（上書き事故の門）
+        setSheetDraft(null)
+        setFailedDraft(null)
+        toast.warning(
+          "保存できなかった入力は、この予定が先に更新されたため破棄しました。最新の内容を表示しています。",
+        )
+      }
+    } else {
+      setSheetDraft(null)
+    }
     setSheetOpen(true)
     // 楽観行(まだ確定 id を持たぬ)は問い合わせても見つからぬゆえ「なし」から始める。
     if (event.id.startsWith(OPTIMISTIC_EVENT_ID_PREFIX)) {
@@ -200,16 +246,50 @@ export function CalendarView({
   const applyReminderAfterCreate = async (
     target: ReminderTarget | null,
     choice: ReminderChoice,
-  ) => {
+  ): Promise<boolean> => {
     // 宛先が決まらぬ（作成失敗・id 不明）ときと「なし」のときは何もせぬ。
-    if (target === null || choice === "none") return
+    if (target === null || choice === "none") return true
     try {
       const res = await setEventReminder(target, choice)
-      if (res.error) toast.error("予定は作成しましたが、通知の設定に失敗しました。")
+      if (res.error) {
+        toast.error("予定は作成しましたが、通知の設定に失敗しました。")
+        return false
+      }
+      return true
     } catch (err) {
       toastOfflineError("[calendar-view] setEventReminder(create)", err)
+      return false
     }
   }
+
+  /** 保存に失敗した入力を握り、toast から戻れるようにする。 */
+  const keepFailedDraft = (draft: FailedDraft, message: string) => {
+    setFailedDraft(draft)
+    toast.error(message, {
+      duration: DRAFT_TOAST_MS,
+      action: { label: "入力に戻る", onClick: () => reopenRef.current(draft.key) },
+    })
+  }
+  /** 保存が通ったら、その対象の握っていた入力を捨てる。 */
+  const clearFailedDraft = (key: string) =>
+    setFailedDraft((prev) => (prev?.key === key ? null : prev))
+
+  /**
+   * toast の操作は失敗した時点の closure から呼ばれる。押された時点の一覧・入力を見るよう
+   * ref で最新の「開き直し」を指す（ref の更新は effect で行う。render 中に書かぬ）。
+   */
+  const reopenRef = useRef<(key: string) => void>(() => {})
+  useEffect(() => {
+    reopenRef.current = (key: string) => {
+      if (key === "new") {
+        openNew()
+        return
+      }
+      const row = m.events.find((e) => e.id === key)
+      if (row) openEvent(row)
+      else toast.error("予定が見つかりませんでした。削除された可能性があります。")
+    }
+  })
 
   /**
    * フォーム値を action 入力 + 楽観行へ変換。`meta` は楽観行が持つ id・版・シリーズ
@@ -311,6 +391,8 @@ export function CalendarView({
       })
       m.upsertOptimistic(record)
       setSheetOpen(false)
+      const draftKey = editingSnapshot.id
+      markSaving(draftKey, true)
       startTransition(async () => {
         try {
           const res = await updateCalendarEvent({
@@ -328,9 +410,24 @@ export function CalendarView({
           })
           if (res.error !== null) {
             m.upsertOptimistic(editingSnapshot) // 復元
-            toast.error(res.error)
-            // 画面の予定が古い（先に更新・削除された）。いま表示中の月を取り直して見せる
-            if (res.conflict) void m.refetchCurrent()
+            if (res.conflict) {
+              // 画面の予定が古い（先に更新・削除された）。いま表示中の月を取り直して見せる。
+              // ⚠️ 入力は握らぬ: 新しい版へ載せて送り直せば家族の変更を上書きする（版ガードの趣旨）
+              clearFailedDraft(draftKey)
+              void m.refetchCurrent()
+              toast.warning(res.error, {
+                duration: DRAFT_TOAST_MS,
+                action: {
+                  label: "最新を開く",
+                  onClick: () => reopenRef.current(draftKey),
+                },
+              })
+              return
+            }
+            keepFailedDraft(
+              { key: draftKey, baseVersion: editingSnapshot.updated_at, value: v },
+              res.error,
+            )
             return
           }
           // 新しい版を手元へ。開き直したシートが握る古い版からも辿れるよう対応を残す
@@ -339,10 +436,19 @@ export function CalendarView({
             { id: editingSnapshot.id, updatedAt: res.updatedAt },
           )
           m.upsertOptimistic({ ...record, updated_at: res.updatedAt })
+          clearFailedDraft(draftKey)
+          toast.success("予定を更新しました")
         } catch (err) {
           // reject はサーバー未到達 = 確実に未更新。楽観置換を元へ戻す。
           m.upsertOptimistic(editingSnapshot) // 復元
+          setFailedDraft({
+            key: draftKey,
+            baseVersion: editingSnapshot.updated_at,
+            value: v,
+          })
           toastOfflineError("[calendar-view] updateCalendarEvent", err)
+        } finally {
+          markSaving(draftKey, false)
         }
       })
     } else if (v.repeat !== "none") {
@@ -368,18 +474,28 @@ export function CalendarView({
             repeatUntil: v.repeatUntil,
           })
           if (res.error) {
-            toast.error(res.error)
+            keepFailedDraft({ key: "new", baseVersion: null, value: v }, res.error)
           } else {
+            clearFailedDraft("new")
             void m.refetchCurrent()
             // 宛先の決め方は単発と共通の 1 規則
             // (シリーズは id を運ばず series_id を渡す = 400 件の UUID は URL に載らぬ)。
-            await applyReminderAfterCreate(
+            const reminderOk = await applyReminderAfterCreate(
               reminderTargetFromCreateResult(res),
               reminderChoice,
             )
+            if (reminderOk) {
+              const count = "count" in res && typeof res.count === "number" ? res.count : null
+              toast.success(
+                count !== null
+                  ? `繰り返し予定を${count}件追加しました`
+                  : "繰り返し予定を追加しました",
+              )
+            }
           }
         } catch (err) {
           // この分岐だけは楽観挿入をしていない（上のコメント参照）ため巻き戻し不要。
+          setFailedDraft({ key: "new", baseVersion: null, value: v })
           toastOfflineError("[calendar-view] createCalendarEvent(repeat)", err)
         }
       })
@@ -406,8 +522,12 @@ export function CalendarView({
           })
           if (res.error || !("eventId" in res) || !res.eventId) {
             m.removeOptimistic(tempId)
-            toast.error(res.error ?? "予定の作成に失敗しました。")
+            keepFailedDraft(
+              { key: "new", baseVersion: null, value: v },
+              res.error ?? "予定の作成に失敗しました。",
+            )
           } else {
+            clearFailedDraft("new")
             // 版も受け取る（無いと作成直後の打ち直しが古い画面として断られる）。
             // 応答の前に開いたシートは一時 id を握るゆえ、確定 id と版へ辿れるよう残す
             const createdVersion = "updatedAt" in res ? (res.updatedAt ?? null) : null
@@ -416,15 +536,17 @@ export function CalendarView({
               { id: res.eventId, updatedAt: createdVersion },
             )
             m.replaceOptimisticId(tempId, res.eventId, createdVersion)
-            await applyReminderAfterCreate(
+            const reminderOk = await applyReminderAfterCreate(
               reminderTargetFromCreateResult(res),
               reminderChoice,
             )
+            if (reminderOk) toast.success("予定を追加しました")
           }
         } catch (err) {
           // reject はサーバー未到達 = 予定は作られていない。temp 行を残すと
           // 確定 id を持たない幽霊が居座るため必ず除去する。
           m.removeOptimistic(tempId)
+          setFailedDraft({ key: "new", baseVersion: null, value: v })
           toastOfflineError("[calendar-view] createCalendarEvent", err)
         }
       })
@@ -441,7 +563,12 @@ export function CalendarView({
         if (res.error) {
           if (snapshot) m.upsertOptimistic(snapshot) // 復元
           toast.error(res.error)
+          return
         }
+        clearFailedDraft(id)
+        toast.success(
+          snapshot ? `「${snapshot.title}」を削除しました` : "予定を削除しました",
+        )
       } catch (err) {
         // reject はサーバー未到達 = 予定は残っている。復元しないと
         // 「消えたはずの予定が復帰で蘇る」不整合になる。
@@ -463,7 +590,15 @@ export function CalendarView({
         if (res.error) {
           m.setAllEvents(snapshot) // 復元
           toast.error(res.error)
+          return
         }
+        // 件数はサーバの実削除数（手元の月に読み込んだ分ではない）
+        const count = "count" in res && typeof res.count === "number" ? res.count : null
+        toast.success(
+          count !== null
+            ? `繰り返し予定を${count}件削除しました`
+            : "繰り返し予定を削除しました",
+        )
       } catch (err) {
         // reject はサーバー未到達 = シリーズは残っている。一括除去を巻き戻す。
         m.setAllEvents(snapshot) // 復元
@@ -472,10 +607,15 @@ export function CalendarView({
     })
   }
 
+  const selectedIsToday = m.selectedDate === m.today
+  const isSaving = (e: CalendarEventRecord) =>
+    e.id.startsWith(OPTIMISTIC_EVENT_ID_PREFIX) || savingIds.has(e.id)
+
   return (
-    <div className="flex flex-col gap-4 px-4 pt-12 pb-8">
-      {/* 月ナビ */}
-      <div className="glass flex items-center justify-between rounded-2xl px-2 py-1.5 shadow-lg shadow-black/[0.04]">
+    // pb-24: 一覧の最後の行が FAB（下端から nav + 1rem + 56px）に隠れぬ余白
+    <div className="flex flex-col gap-4 px-4 pt-12 pb-24">
+      {/* 月ナビ。h1 は画面名（予定）ではなく、いま見ている月を言う */}
+      <div className="glass flex items-center justify-between rounded-2xl px-1.5 py-1.5 shadow-lg shadow-black/[0.04]">
         <Button
           variant="ghost"
           onClick={m.goPrevMonth}
@@ -484,28 +624,39 @@ export function CalendarView({
         >
           <ChevronLeft size={20} />
         </Button>
-        <div className="flex items-center gap-3">
-          <span className="text-base font-semibold tabular-nums">
+        <div className="flex min-w-0 items-center gap-2">
+          <h1 className="text-base font-semibold tabular-nums" aria-live="polite">
             {monthTitle(m.monthFirst)}
-          </span>
-          {!m.isCurrentMonth && (
+          </h1>
+          {m.loadState === "loading" && (
+            <Loader2
+              size={16}
+              className="animate-spin text-muted-foreground"
+              aria-label="読み込み中"
+            />
+          )}
+        </div>
+        <div className="flex items-center">
+          {/* 今日以外を見ている間は常に戻れる（同じ月の別の日を選んでいる時も） */}
+          {!selectedIsToday && (
             <button
               type="button"
               onClick={m.goToday}
-              className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary transition-colors duration-200 hover:bg-primary/20 dark:bg-primary/20"
+              aria-label="今日に戻る"
+              className="touch-target cursor-pointer rounded-full px-3 text-sm font-medium text-primary transition-colors duration-200 hover:bg-primary/10 dark:hover:bg-primary/20"
             >
               今日
             </button>
           )}
+          <Button
+            variant="ghost"
+            onClick={m.goNextMonth}
+            aria-label="次の月"
+            className="size-11 cursor-pointer"
+          >
+            <ChevronRight size={20} />
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          onClick={m.goNextMonth}
-          aria-label="次の月"
-          className="size-11 cursor-pointer"
-        >
-          <ChevronRight size={20} />
-        </Button>
       </div>
 
       <CalendarMonthView
@@ -513,23 +664,43 @@ export function CalendarView({
         eventsByDate={m.eventsByDate}
         selectedDate={m.selectedDate}
         onSelectDate={m.setSelectedDate}
+        onNavigateDate={m.goToDate}
+        busy={m.loadState === "loading"}
+        countsUnknown={m.loadState === "loading" || m.loadState === "error"}
       />
 
+      <p className="-mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1.5">
+          <span aria-hidden="true" className="h-1 w-2.5 rounded-full bg-primary" />
+          irori の予定
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span aria-hidden="true" className="h-1 w-2.5 rounded-full bg-muted-foreground/60" />
+          Google の予定（閲覧のみ）
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span aria-hidden="true" className="size-1.5 rounded-full bg-muted-foreground/60" />
+          時刻あり
+        </span>
+      </p>
+
       <CalendarAgenda
-        dateLabel={dayLabel(m.selectedDate)}
+        dateLabel={formatDayJa(m.selectedDate)}
         events={m.selectedEvents}
         selectedDate={m.selectedDate}
         onTapEvent={openEvent}
+        isToday={selectedIsToday}
+        loadState={m.loadState}
+        onRetry={() => void m.retry()}
+        onAdd={openNew}
+        isSaving={isSaving}
       />
 
-      {/* FAB(親指圏) */}
-      <Button
+      {/* FAB(親指圏)。位置（ナビの上・列の右端・下端トーストの回避）は部品が持つ */}
+      <CalendarAddFab
+        label={`${formatDayJa(m.selectedDate)}に予定を追加`}
         onClick={openNew}
-        aria-label="予定を追加"
-        className="fixed right-5 bottom-24 z-10 size-14 rounded-full shadow-lg"
-      >
-        <Plus size={24} />
-      </Button>
+      />
 
       <CalendarEventFormSheet
         open={sheetOpen}
@@ -542,6 +713,13 @@ export function CalendarView({
         onDeleteSeries={handleDeleteSeries}
         reminder={reminder}
         onReminderChange={handleReminderChange}
+        initialDraft={sheetDraft}
+        onDiscardDraft={() => {
+          // 開いておる予定の入力だけを捨てる（裏で別の予定の保存が失敗して握り直した入力は残す）
+          const key = editing?.id ?? "new"
+          setSheetDraft(null)
+          clearFailedDraft(key)
+        }}
       />
     </div>
   )

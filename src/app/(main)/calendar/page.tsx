@@ -102,6 +102,10 @@ export default async function CalendarPage({
       syncScheduled={sync.syncScheduled}
       initialGoogleSyncedAt={sync.lastSyncedAt}
       defaultReminderMinutes={prefs?.event_default_minutes ?? null}
+      // ⚠️ **「読めなかった」を「予定なし」として描かせぬ。** 上の取得が失敗すると
+      // events は null で `[]` に倒れる。旗を渡さねば、通知から開いた日が黙って
+      // 「予定はありません」になる（設定画面の P2-31 と同じ筋）。
+      initialLoadFailed={Boolean(error)}
     />
   )
 }

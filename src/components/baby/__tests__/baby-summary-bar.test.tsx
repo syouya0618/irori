@@ -211,18 +211,16 @@ describe("BabySummaryBar 今日のまとめ", () => {
     expect(within(summary).getByText("2回")).toBeInTheDocument()
   })
 
-  it("おむつ0件のとき、今日のまとめは「おしっこ0・うんち0」、直近カードは「---」", () => {
+  it("おむつ0件のとき、今日のまとめは「おしっこ0・うんち0」", () => {
     render(<BabySummaryBar {...baseProps} />)
     const summary = screen.getByLabelText("今日のまとめ")
     expect(
       within(summary).getByText("おしっこ0・うんち0"),
     ).toBeInTheDocument()
-    // 直近カード側は diaperCount===0 のとき "---" にフォールバックするため、
-    // 内訳文言は画面全体で今日のまとめの1箇所のみに出る
     expect(screen.getAllByText("おしっこ0・うんち0")).toHaveLength(1)
   })
 
-  it("おむつ記録があるとき、今日のまとめ・直近カードの両方に同じ内訳を表示する", () => {
+  it("おむつの内訳は今日のまとめの 1 か所だけに出す（以前の直近カードとの二重表示をやめた）", () => {
     render(
       <BabySummaryBar
         {...baseProps}
@@ -238,7 +236,9 @@ describe("BabySummaryBar 今日のまとめ", () => {
         }}
       />,
     )
-    expect(screen.getAllByText("おしっこ1・うんち2")).toHaveLength(2)
+    const summary = screen.getByRole("group", { name: "今日のまとめ" })
+    expect(within(summary).getByText("おしっこ1・うんち2")).toBeInTheDocument()
+    expect(screen.getAllByText("おしっこ1・うんち2")).toHaveLength(1)
   })
 
   it("role=group で今日のまとめがアクセシブルネームとして公開される", () => {
@@ -364,5 +364,80 @@ describe("BabySummaryBar 次の授乳の目安", () => {
     expect(
       screen.getByText(formatTimeJst("2026-04-11T13:00:00+09:00")),
     ).toBeInTheDocument()
+  })
+})
+
+describe("BabySummaryBar の「今」カード（夜間に一瞥で読む面）", () => {
+  it("今日は「最終授乳（開始から）」の経過を主値に、開始時刻と記録の要約（開始側つき）を添える", () => {
+    render(
+      <BabySummaryBar
+        {...baseProps}
+        lastFeeding={makeFeedingLog({
+          feeding_type: "breast",
+          amount_ml: null,
+          logged_at: "2026-04-11T10:00:00+09:00",
+          breast_left_count: 2,
+          breast_right_count: 1,
+          breast_left_sec: 600,
+          breast_right_sec: 420,
+          duration_sec: 1020,
+          breast_start_side: "left",
+        })}
+      />,
+    )
+    expect(screen.getByText("最終授乳（開始から）")).toBeInTheDocument()
+    expect(screen.getByText("2時間前")).toBeInTheDocument()
+    expect(
+      screen.getByText(/^10:00 開始・母乳（左から） 左2回10分・右1回7分$/),
+    ).toBeInTheDocument()
+  })
+
+  it("記録に開始側が無い行は推測で補わぬ（「次は右から」等の推奨も出さぬ）", () => {
+    render(
+      <BabySummaryBar
+        {...baseProps}
+        lastFeeding={makeFeedingLog({
+          feeding_type: "breast",
+          amount_ml: null,
+          logged_at: "2026-04-11T10:00:00+09:00",
+          breast_left_count: 1,
+          breast_right_count: 1,
+          breast_start_side: null,
+        })}
+      />,
+    )
+    expect(screen.queryByText(/左から|右から/)).toBeNull()
+    expect(screen.queryByText(/次は/)).toBeNull()
+    // 対照: 要約そのもの（開始側なしの形）は出ておる
+    expect(screen.getByText(/^10:00 開始・母乳 左1・右1$/)).toBeInTheDocument()
+  })
+
+  it("取得中は目安も出さぬ（前の日の値を今の目安と偽らぬ）。対照: ready なら出す", () => {
+    const nursing = makeFeedingLog({
+      feeding_type: "breast",
+      amount_ml: null,
+      logged_at: "2026-04-11T10:00:00+09:00",
+    })
+    const view = render(
+      <BabySummaryBar {...baseProps} lastFeeding={nursing} lastNursing={nursing} status="loading" />,
+    )
+    expect(screen.queryByText("次の授乳の目安")).toBeNull()
+    view.rerender(
+      <BabySummaryBar {...baseProps} lastFeeding={nursing} lastNursing={nursing} status="ready" />,
+    )
+    expect(screen.getByText("次の授乳の目安")).toBeInTheDocument()
+  })
+
+  it("差し込んだ面（クイック記録）は「今」カードとまとめの間に描く", () => {
+    render(
+      <BabySummaryBar {...baseProps}>
+        <button type="button">差し込み</button>
+      </BabySummaryBar>,
+    )
+    const now = screen.getByRole("region", { name: "今の授乳の状況" })
+    const slot = screen.getByRole("button", { name: "差し込み" })
+    const summary = screen.getByRole("group", { name: "今日のまとめ" })
+    expect(now.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(slot.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })

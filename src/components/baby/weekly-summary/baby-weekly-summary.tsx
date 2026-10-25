@@ -16,6 +16,11 @@ interface BabyWeeklySummaryProps {
   diaperBreakdown: DiaperBreakdown
   /** 1日あたりの平均（昨日までの 7 日）。記録が 1 日も無ければ null */
   average: BabyWeeklyAverage | null
+  /**
+   * 畳み込み（BabyCollapsibleSection）の中に置く形。見出しとガラスの枠は外側が持つ
+   * ゆえ、ここでは出さぬ（見出しの二重・枠の入れ子を作らぬ）。
+   */
+  embedded?: boolean
 }
 
 /**
@@ -68,7 +73,7 @@ function StatHeader({
         <Icon size={16} />
       </div>
       <div className="min-w-0">
-        <p className="text-[10px] text-muted-foreground">{label}</p>
+        <p className="text-xs text-muted-foreground">{label}</p>
         <p className="truncate font-mono text-sm font-semibold">{value}</p>
       </div>
     </div>
@@ -79,6 +84,7 @@ export function BabyWeeklySummary({
   days,
   diaperBreakdown,
   average,
+  embedded = false,
 }: BabyWeeklySummaryProps) {
   const totals = totalBabyWeeklySummary(days)
   const labels = days.map((day) => shortDate(day.date))
@@ -94,11 +100,17 @@ export function BabyWeeklySummary({
 
   return (
     <section className="flex flex-col gap-2">
-      <h2 className="px-1 text-xs font-semibold text-muted-foreground">
-        週間サマリー
-      </h2>
+      {!embedded && (
+        <h2 className="px-1 text-xs font-semibold text-muted-foreground">
+          週間サマリー
+        </h2>
+      )}
 
-      <div className="glass rounded-2xl p-4 shadow-lg shadow-black/[0.04]">
+      <div
+        className={
+          embedded ? "" : "glass rounded-2xl p-4 shadow-lg shadow-black/[0.04]"
+        }
+      >
         <div className="grid grid-cols-2 gap-3">
           <StatHeader
             icon={Milk}
@@ -113,7 +125,7 @@ export function BabyWeeklySummary({
             toneClassName="bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300"
           />
         </div>
-        <p className="mt-2 text-[10px] text-muted-foreground">
+        <p className="mt-2 text-xs text-muted-foreground">
           {averagePeriodLabel(average)}
         </p>
 

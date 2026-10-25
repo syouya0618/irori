@@ -1163,32 +1163,46 @@ export function BabyLogFormSheet({
           {!isCreateMode && log && (
             <div className="border-t pt-3">
               {showDeleteConfirm ? (
-                <div className="flex items-center gap-2">
-                  <p className="flex-1 text-sm text-destructive">
-                    本当に削除しますか？
+                // 何を消すのかを示してから確かめる（「本当に削除しますか？」だけでは、夜間に
+                // 開いた行を取り違えても気づけぬ）。開いた時点の記録（log）で書く — 入力中の
+                // 値ではない（削除は開いた版の行そのものを消す）
+                <div
+                  role="group"
+                  aria-label="削除の確認"
+                  className="flex flex-col gap-2 rounded-xl border border-destructive/30 bg-destructive/5 p-3"
+                >
+                  <p className="text-sm text-destructive">
+                    {`${formatTimeJst(log.logged_at)}　${
+                      log.log_type === "memo"
+                        ? getLogTypeLabel("memo")
+                        : getLogSummary(log)
+                    }`}
+                    の記録を削除します。元に戻せません。
                   </p>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowDeleteConfirm(false)}
-                    disabled={isPending}
-                  >
-                    キャンセル
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    size="sm"
-                    onClick={handleDelete}
-                    disabled={isPending || conflict !== null}
-                  >
-                    {isPending ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      "削除する"
-                    )}
-                  </Button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setShowDeleteConfirm(false)}
+                      disabled={isPending}
+                      className="min-h-11"
+                    >
+                      キャンセル
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={handleDelete}
+                      disabled={isPending || conflict !== null}
+                      className="min-h-11"
+                    >
+                      {isPending ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        "削除する"
+                      )}
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <Button

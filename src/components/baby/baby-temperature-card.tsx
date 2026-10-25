@@ -94,10 +94,10 @@ function TemperatureSlotCell({
         aria-label={labelParts.join(" ")}
         className="flex min-h-11 flex-col items-start gap-0.5 rounded-xl px-2 py-1.5 text-left transition-colors duration-200 hover:bg-rose-50 active:bg-rose-100 dark:hover:bg-rose-900/30 dark:active:bg-rose-900/50"
       >
-        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+        <span className="flex items-center gap-1 text-xs text-muted-foreground">
           {slotLabel}
           {extra > 0 && (
-            <span className="rounded-full bg-muted px-1.5 py-px font-mono text-[10px] text-muted-foreground">
+            <span className="rounded-full bg-muted px-1.5 py-px font-mono text-xs text-muted-foreground">
               +{extra}
             </span>
           )}
@@ -107,12 +107,12 @@ function TemperatureSlotCell({
         </span>
         {/* 発熱域は色だけに依存させぬ（Lucide アイコン + テキストで併記する） */}
         {fever && (
-          <span className="flex items-center gap-1 text-[10px] font-medium text-rose-700 dark:text-rose-300">
+          <span className="flex items-center gap-1 text-xs font-medium text-rose-700 dark:text-rose-300">
             <TriangleAlert size={12} className="shrink-0" />
             発熱
           </span>
         )}
-        <span className="font-mono text-[10px] text-muted-foreground">
+        <span className="font-mono text-xs text-muted-foreground">
           {time}
         </span>
       </button>
@@ -130,12 +130,12 @@ function TemperatureSlotCell({
       aria-label={`${dayPrefix}${slotLabel}の体温を記録`}
       className="flex min-h-11 flex-col items-start gap-0.5 rounded-xl border border-dashed border-border px-2 py-1.5 text-left transition-colors duration-200 hover:bg-rose-50 active:bg-rose-100 dark:hover:bg-rose-900/30 dark:active:bg-rose-900/50"
     >
-      <span className="text-[10px] text-muted-foreground">{slotLabel}</span>
+      <span className="text-xs text-muted-foreground">{slotLabel}</span>
       <span className="flex items-center gap-1 text-sm font-medium text-rose-800 dark:text-rose-200">
         <Plus size={14} className="shrink-0" />
         記録
       </span>
-      <span className="text-[10px] text-muted-foreground">未測定</span>
+      <span className="text-xs text-muted-foreground">未測定</span>
     </button>
   )
 }
@@ -171,8 +171,8 @@ export function BabyTemperatureCard({
               aria-label="体温を読み込み中"
               className="grid min-h-11 grid-cols-2 gap-3"
             >
-              <div className="h-6 animate-pulse rounded bg-muted" />
-              <div className="h-6 animate-pulse rounded bg-muted" />
+              <div className="h-6 animate-pulse rounded bg-muted-foreground/15" />
+              <div className="h-6 animate-pulse rounded bg-muted-foreground/15" />
             </div>
           ) : (
             <p className="flex min-h-11 items-center text-sm text-muted-foreground">

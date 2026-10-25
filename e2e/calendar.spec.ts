@@ -121,7 +121,7 @@ test("共有カレンダー: 予定を作成 → 反映 → 削除", async ({ pa
 
   // 3. FAB → フォーム → 追加（終日・今日）
   const addSheet = page.getByRole("heading", { name: "予定を追加" })
-  await openOverlay(page.getByRole("button", { name: "予定を追加" }), addSheet)
+  await openOverlay(page.getByRole("button", { name: /^\d+月\d+日（.）に予定を追加$/ }), addSheet)
   await page.getByLabel("タイトル").fill("検診")
   await page.getByRole("button", { name: "追加", exact: true }).click()
 
@@ -135,7 +135,11 @@ test("共有カレンダー: 予定を作成 → 反映 → 削除", async ({ pa
   await expect(page.getByRole("heading", { name: "予定を編集" })).toBeVisible({
     timeout: 5_000,
   })
-  await page.getByRole("button", { name: "削除" }).click()
+  // 削除は確認を 1 段挟む（誤操作防止）。「削除」だけでは消えぬことも確かめる
+  await page.getByRole("button", { name: "削除", exact: true }).click()
+  await expect(page.getByRole("group", { name: /削除|破棄|ログアウト/ })).toContainText("「検診」を削除しますか？")
+  await waitForEventCount(approvedUser.id, "検診", 1)
+  await page.getByRole("button", { name: "削除する", exact: true }).click()
 
   // 6. DB から消えたことを待ち、reload して SSR で消えている
   await waitForEventCount(approvedUser.id, "検診", 0)
@@ -155,7 +159,7 @@ test("繰り返し予定: 毎週×3週を作成 → 3件生成 → シリーズ�
 
   // FAB → フォーム。終日・毎週・終了日 = 今日+14日。
   const addSheet = page.getByRole("heading", { name: "予定を追加" })
-  await openOverlay(page.getByRole("button", { name: "予定を追加" }), addSheet)
+  await openOverlay(page.getByRole("button", { name: /^\d+月\d+日（.）に予定を追加$/ }), addSheet)
   await page.getByLabel("タイトル").fill("毎週予定")
   // 繰り返し select を「毎週」に。
   await page.locator("#cal-repeat").click()
@@ -175,7 +179,10 @@ test("繰り返し予定: 毎週×3週を作成 → 3件生成 → シリーズ�
   await expect(page.getByRole("heading", { name: "予定を編集" })).toBeVisible({
     timeout: 5_000,
   })
-  await page.getByRole("button", { name: /すべて削除/ }).click()
+  // 繰り返しの削除は「この回だけ」と「すべての回」を選ばせる確認を経る
+  await page.getByRole("button", { name: "削除", exact: true }).click()
+  await expect(page.getByRole("group", { name: /削除|破棄|ログアウト/ })).toContainText("繰り返し予定を削除します")
+  await page.getByRole("button", { name: "繰り返しのすべての回を削除", exact: true }).click()
 
   // DB からシリーズ全体(3 行)が消えたことを待ち、reload で SSR でも消えている。
   await waitForEventCount(approvedUser.id, "毎週予定", 0)
@@ -225,7 +232,7 @@ test("時刻付き予定の作成→HH:MM 表示、編集でタイトル変更�
 
   // 時刻付き予定(終日を外す → 14:00)
   const addSheet = page.getByRole("heading", { name: "予定を追加" })
-  await openOverlay(page.getByRole("button", { name: "予定を追加" }), addSheet)
+  await openOverlay(page.getByRole("button", { name: /^\d+月\d+日（.）に予定を追加$/ }), addSheet)
   await page.getByLabel("タイトル").fill("保育園見学")
   await page.getByRole("button", { name: "時刻あり", exact: true }).click() // 終日を外す
   await page.locator("#cal-start-time").fill("14:00")
@@ -258,7 +265,7 @@ test("検証に弾かれてもシートは閉じず、入力が保持される",
   await loginAndOpenCalendar(page, approvedUser.email)
 
   const addSheet = page.getByRole("heading", { name: "予定を追加" })
-  await openOverlay(page.getByRole("button", { name: "予定を追加" }), addSheet)
+  await openOverlay(page.getByRole("button", { name: /^\d+月\d+日（.）に予定を追加$/ }), addSheet)
   await page.locator("#cal-title").fill("入力保持テスト")
   await page.locator("#cal-memo").fill("母子手帳と診察券")
   // 終了日を開始日より前にする(サーバー往復で弾かれていた代表ケース)。
@@ -297,13 +304,13 @@ test("時刻付き予定は終了時刻も表示し、アジェンダは終日�
   const addSheet = page.getByRole("heading", { name: "予定を追加" })
 
   // 終日イベント(今日)
-  await openOverlay(page.getByRole("button", { name: "予定を追加" }), addSheet)
+  await openOverlay(page.getByRole("button", { name: /^\d+月\d+日（.）に予定を追加$/ }), addSheet)
   await page.getByLabel("タイトル").fill("終日イベント")
   await page.getByRole("button", { name: "追加", exact: true }).click()
   await waitForEventCount(approvedUser.id, "終日イベント", 1)
 
   // 時刻付きイベント(今日 14:00〜15:00) — 開始・終了の両時刻を入れる
-  await openOverlay(page.getByRole("button", { name: "予定を追加" }), addSheet)
+  await openOverlay(page.getByRole("button", { name: /^\d+月\d+日（.）に予定を追加$/ }), addSheet)
   await page.getByLabel("タイトル").fill("面談")
   await page.getByRole("button", { name: "時刻あり", exact: true }).click() // 終日を外す
   await page.locator("#cal-start-time").fill("14:00")
@@ -347,7 +354,7 @@ test("既存予定の通知は Select を変えた瞬間に保存される", asy
   await loginAndOpenCalendar(page, approvedUser.email)
 
   const addSheet = page.getByRole("heading", { name: "予定を追加" })
-  await openOverlay(page.getByRole("button", { name: "予定を追加" }), addSheet)
+  await openOverlay(page.getByRole("button", { name: /^\d+月\d+日（.）に予定を追加$/ }), addSheet)
   await page.getByLabel("タイトル").fill("予防接種")
   await page.getByRole("button", { name: "追加", exact: true }).click()
 

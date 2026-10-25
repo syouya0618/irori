@@ -76,7 +76,7 @@ vi.mock("@/app/(main)/baby/actions", () => ({
   recordMemo: vi.fn(),
   updateLog: vi.fn(),
 }))
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), dismiss: vi.fn() } }))
 
 // vi.mock 後 import
 import { BabyDashboard } from "../baby-dashboard"
@@ -745,5 +745,341 @@ describe("BabyDashboard / 編集の衝突（P2-07）", () => {
     expect(mockedToast.success).not.toHaveBeenCalled()
     expect((screen.getByLabelText("メモ") as HTMLTextAreaElement).value).toBe("Bのメモ")
     expect(await saveSettled()).toBeEnabled()
+  })
+})
+
+describe("BabyDashboard / 取り消しと Realtime 通知の競合", () => {
+  const createdVersion = "2026-10-21T03:00:00.123456+00:00"
+
+  // 帯はトーストが閉じた後に出る。実物の sonner と同じく、出したトーストは自動で閉じる
+  beforeEach(() => {
+    mockedToast.success.mockImplementation(((
+      _message: unknown,
+      opts?: { onAutoClose?: () => void },
+    ) => {
+      setTimeout(() => act(() => opts?.onAutoClose?.()), 0)
+      return 1
+    }) as never)
+  })
+  afterEach(() => {
+    mockedToast.success.mockReset()
+  })
+
+  async function recordPeeThenUndoInline(id: string) {
+    mockedRecordDiaper.mockResolvedValue({ error: null, id, updatedAt: createdVersion })
+    mockedDeleteLog.mockResolvedValue({ error: null })
+    render(<BabyDashboard {...defaultProps()} />)
+    fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
+    const undo = await screen.findByRole("button", { name: /^直前の記録（\d\d:\d\d）を取り消す$/ })
+    await waitFor(() => expect(undo).not.toBeDisabled())
+    fireEvent.click(undo)
+    await waitFor(() => expect(mockedDeleteLog).toHaveBeenCalledWith(id, createdVersion))
+    await waitFor(() =>
+      expect(within(summary()).getByText("おしっこ0・うんち0")).toBeInTheDocument(),
+    )
+  }
+
+  it("取り消しに成功した後で同じ行の INSERT 通知が遅れて届いても、行を蘇らせぬ", async () => {
+    await recordPeeThenUndoInline("diaper-late-insert")
+    act(() => {
+      emit(
+        makePayload(
+          "INSERT",
+          makeLog({
+            id: "diaper-late-insert",
+            log_type: "diaper",
+            logged_at: new Date().toISOString(),
+            diaper_type: "pee",
+            updated_at: createdVersion,
+          }),
+        ),
+      )
+    })
+    expect(within(summary()).getByText("おしっこ0・うんち0")).toBeInTheDocument()
+    expect(screen.getByText("まだ記録がありません")).toBeInTheDocument()
+    // 消えた行の取り消しの帯も戻らぬ
+    expect(screen.queryByRole("button", { name: /^直前の記録/ })).toBeNull()
+  })
+
+  it("取り消しに成功した後で同じ行の古い UPDATE 通知が届いても、行を蘇らせぬ", async () => {
+    await recordPeeThenUndoInline("diaper-late-update")
+    act(() => {
+      emit(
+        makePayload(
+          "UPDATE",
+          makeLog({
+            id: "diaper-late-update",
+            log_type: "diaper",
+            logged_at: new Date().toISOString(),
+            diaper_type: "pee",
+            updated_at: createdVersion,
+          }),
+        ),
+      )
+    })
+    expect(within(summary()).getByText("おしっこ0・うんち0")).toBeInTheDocument()
+  })
+
+  it("消した後に同じ id で作り直された行（冪等 id の再試行）は、以後の更新通知を弾かぬ", async () => {
+    await recordPeeThenUndoInline("diaper-recreated")
+    // 同じ冪等 id での再試行がサーバで新しい行として作られた（作成の応答が届く）。作り直された行は
+    // 消した行より新しい版を持つ — insert は updated_at を書かず DB の DEFAULT now() に任せる
+    // （migration 20260410000001 の baby_logs.updated_at、actions.ts の insert は版を select するだけ）。
+    // 消した版と同じ版の応答は「消す前の作成の応答が遅れて着いた」ものとして弾く（下の describe）
+    mockedRecordDiaper.mockResolvedValue({
+      error: null,
+      id: "diaper-recreated",
+      updatedAt: "2026-10-21T03:05:00.000000+00:00",
+    })
+    fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
+    await waitFor(() =>
+      expect(within(summary()).getByText("おしっこ1・うんち0")).toBeInTheDocument(),
+    )
+    // 家族が種類を直した UPDATE 通知は、作り直された行へ届く
+    act(() => {
+      emit(
+        makePayload(
+          "UPDATE",
+          makeLog({
+            id: "diaper-recreated",
+            log_type: "diaper",
+            logged_at: new Date().toISOString(),
+            diaper_type: "poop",
+            updated_at: "2099-01-01T00:00:00.000000+00:00",
+          }),
+        ),
+      )
+    })
+    expect(within(summary()).getByText("おしっこ0・うんち1")).toBeInTheDocument()
+  })
+
+  /**
+   * 作成の応答が失われた行を消し、同じ冪等 id の再試行で作り直された行の応答もまた失われた場合、
+   * 画面に行を出せるのは Realtime の通知だけになる。消した版より新しい版の通知は作り直された行ゆえ
+   * 通す — 弾くと DB に在るのに画面に無く、利用者の押し直しが二重記録になる。
+   */
+  it("消した後に同じ id で作り直された行の INSERT 通知（消した版より新しい版）は通す", async () => {
+    await recordPeeThenUndoInline("diaper-recreated-via-realtime")
+    act(() => {
+      emit(
+        makePayload(
+          "INSERT",
+          makeLog({
+            id: "diaper-recreated-via-realtime",
+            log_type: "diaper",
+            logged_at: new Date().toISOString(),
+            diaper_type: "pee",
+            updated_at: "2026-10-21T03:05:00.000000+00:00",
+          }),
+        ),
+      )
+    })
+    expect(within(summary()).getByText("おしっこ1・うんち0")).toBeInTheDocument()
+  })
+
+  it("対照: 版の無い INSERT 通知は、消した行のものとして従来どおり弾く（判別できぬ）", async () => {
+    await recordPeeThenUndoInline("diaper-noversion-insert")
+    act(() => {
+      emit(
+        makePayload(
+          "INSERT",
+          makeLog({
+            id: "diaper-noversion-insert",
+            log_type: "diaper",
+            logged_at: new Date().toISOString(),
+            diaper_type: "pee",
+            updated_at: undefined as unknown as string,
+          }),
+        ),
+      )
+    })
+    expect(within(summary()).getByText("おしっこ0・うんち0")).toBeInTheDocument()
+  })
+
+  it("対照: 別の id の INSERT 通知は従来どおり入る（消した行だけを弾く）", async () => {
+    await recordPeeThenUndoInline("diaper-removed")
+    act(() => {
+      emit(
+        makePayload(
+          "INSERT",
+          makeLog({
+            id: "diaper-other",
+            log_type: "diaper",
+            logged_at: new Date().toISOString(),
+            diaper_type: "pee",
+          }),
+        ),
+      )
+    })
+    expect(within(summary()).getByText("おしっこ1・うんち0")).toBeInTheDocument()
+  })
+})
+
+/**
+ * 遅い作成の応答と削除の競合（統合で塞いだ P3「削除済み行の一時的な再表示」）。
+ * 通信が遅い時、Realtime の INSERT が作成の応答より先に着き、利用者がその行を編集シートで
+ * 消した後に作成の応答が着く。以前は応答が削除の控えを外し、DB に無い行を画面へ戻した
+ * （次の再取得まで「おしっこ1」と数え、取り消しの帯の候補にもなる）。
+ * これは jsdom での到着順の再現であり、実 Supabase の到着順は確かめておらぬ。
+ */
+describe("BabyDashboard / 遅い作成の応答と編集シートの削除の競合", () => {
+  const V1 = "2026-10-25T03:00:00.123456+00:00"
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((r) => {
+      resolve = r
+    })
+    return { promise, resolve }
+  }
+
+  /** タイムラインの行（時刻と種類を含む釦。クイック記録の「おしっこ」とは別） */
+  function timelineRow(loggedAt: string, text: string): HTMLElement {
+    const time = formatTimeJst(loggedAt)
+    const row = screen
+      .getAllByRole("button")
+      .find((b) => b.textContent?.includes(time) && b.textContent?.includes(text))
+    if (!row) throw new Error(`timeline row not found: ${time} ${text}`)
+    return row
+  }
+
+  type RecordResult = Awaited<ReturnType<typeof recordDiaper>>
+
+  /** おしっこを押す → 応答の前に Realtime INSERT が着く → その行を編集シートで消す */
+  async function insertArrivesThenDeleteInSheet(id: string) {
+    const pending = deferred<RecordResult>()
+    mockedRecordDiaper.mockReturnValue(pending.promise)
+    mockedDeleteLog.mockResolvedValue({ error: null })
+    render(<BabyDashboard {...defaultProps()} />)
+
+    fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
+    await waitFor(() => expect(mockedRecordDiaper).toHaveBeenCalled())
+
+    const loggedAt = new Date().toISOString()
+    act(() => {
+      emit(
+        makePayload(
+          "INSERT",
+          makeLog({ id, log_type: "diaper", logged_at: loggedAt, diaper_type: "pee", updated_at: V1 }),
+        ),
+      )
+    })
+    expect(within(summary()).getByText("おしっこ1・うんち0")).toBeInTheDocument()
+
+    fireEvent.click(timelineRow(loggedAt, "おしっこ"))
+    fireEvent.click(await screen.findByRole("button", { name: "この記録を削除" }))
+    fireEvent.click(screen.getByRole("button", { name: "削除する" }))
+    // 画面が持っておった版（Realtime の行の版）で消す
+    await waitFor(() => expect(mockedDeleteLog).toHaveBeenCalledWith(id, V1))
+    await waitFor(() =>
+      expect(within(summary()).getByText("おしっこ0・うんち0")).toBeInTheDocument(),
+    )
+    return pending
+  }
+
+  /** 作成の応答を解き、クイック記録がそれを処理し終える（記録のトーストを出す）まで待つ */
+  async function resolveCreate(pending: ReturnType<typeof deferred<RecordResult>>, result: RecordResult) {
+    await act(async () => {
+      pending.resolve(result)
+    })
+    await waitFor(() =>
+      expect(mockedToast.success).toHaveBeenCalledWith(
+        "おむつ交換を記録しました（おしっこ）",
+        expect.anything(),
+      ),
+    )
+  }
+
+  it("消した後に、消す前の作成の応答（消した版と同じ版）が遅れて着いても、行を蘇らせぬ", async () => {
+    const pending = await insertArrivesThenDeleteInSheet("diaper-slow")
+    await resolveCreate(pending, { error: null, id: "diaper-slow", updatedAt: V1 })
+
+    expect(within(summary()).getByText("おしっこ0・うんち0")).toBeInTheDocument()
+    expect(screen.getByText("まだ記録がありません")).toBeInTheDocument()
+    // 消えた行の取り消しの帯も出さぬ（行が画面に無い）
+    expect(screen.queryByRole("button", { name: /^直前の記録/ })).toBeNull()
+    // 控えは残る: 同じ行の遅れた UPDATE 通知も弾く
+    act(() => {
+      emit(
+        makePayload(
+          "UPDATE",
+          makeLog({
+            id: "diaper-slow",
+            log_type: "diaper",
+            logged_at: new Date().toISOString(),
+            diaper_type: "pee",
+            updated_at: V1,
+          }),
+        ),
+      )
+    })
+    expect(within(summary()).getByText("おしっこ0・うんち0")).toBeInTheDocument()
+  })
+
+  it("表記が違っても同じ時刻の版なら、消した行の遅れた応答として弾く（Realtime と PostgREST の表記差）", async () => {
+    const pending = await insertArrivesThenDeleteInSheet("diaper-slow-z")
+    await resolveCreate(pending, {
+      error: null,
+      id: "diaper-slow-z",
+      updatedAt: "2026-10-25T03:00:00.123Z",
+    })
+    expect(within(summary()).getByText("おしっこ0・うんち0")).toBeInTheDocument()
+  })
+
+  it("対照: 応答の版が消した版より新しければ（作り直された行）、行を出す", async () => {
+    const pending = await insertArrivesThenDeleteInSheet("diaper-newer")
+    await resolveCreate(pending, {
+      error: null,
+      id: "diaper-newer",
+      updatedAt: "2026-10-25T03:00:07.000000+00:00",
+    })
+    expect(within(summary()).getByText("おしっこ1・うんち0")).toBeInTheDocument()
+  })
+
+  /**
+   * 他端末で消された行の控え（alreadyDeleted）は、画面が持っておった古い版になる。家族が消す直前に直した
+   * 版の UPDATE 通知が遅れて着くと「控えより新しい版」に見えるが、行は DB に無い。UPDATE では控えを外さぬ。
+   */
+  it("他端末で消されていた行（alreadyDeleted）に、消す前の新しい版の UPDATE 通知が遅れて着いても蘇らせぬ", async () => {
+    const OPENED_AT = `${TODAY}T00:30:00+09:00`
+    const V0 = "2026-10-25T02:00:00.000000+00:00"
+    const familyEdited = "2026-10-25T02:10:00.000000+00:00"
+    const row = makeLog({ id: "diaper-gone", log_type: "diaper", logged_at: OPENED_AT, diaper_type: "pee", updated_at: V0 })
+    mockedDeleteLog.mockResolvedValue({ error: "既に削除されています。", alreadyDeleted: true })
+    render(<BabyDashboard {...defaultProps({ initialLogs: [row] })} />)
+    expect(within(summary()).getByText("おしっこ1・うんち0")).toBeInTheDocument()
+
+    fireEvent.click(timelineRow(OPENED_AT, "おしっこ"))
+    fireEvent.click(await screen.findByRole("button", { name: "この記録を削除" }))
+    fireEvent.click(screen.getByRole("button", { name: "削除する" }))
+    await waitFor(() => expect(mockedDeleteLog).toHaveBeenCalledWith("diaper-gone", V0))
+    await waitFor(() =>
+      expect(within(summary()).getByText("おしっこ0・うんち0")).toBeInTheDocument(),
+    )
+
+    // 家族が消す前に直した版（控えの V0 より新しい）の UPDATE 通知が遅れて着く
+    act(() => {
+      emit(
+        makePayload(
+          "UPDATE",
+          makeLog({ id: "diaper-gone", log_type: "diaper", logged_at: OPENED_AT, diaper_type: "poop", updated_at: familyEdited }),
+        ),
+      )
+    })
+    expect(within(summary()).getByText("おしっこ0・うんち0")).toBeInTheDocument()
+  })
+
+  it("対照: 応答に版が無ければ（判別できぬ）、従来どおり行を出す側に倒す（本物の記録を隠さぬ）", async () => {
+    const pending = await insertArrivesThenDeleteInSheet("diaper-noversion")
+    await act(async () => {
+      pending.resolve({ error: null, id: "diaper-noversion" })
+    })
+    await waitFor(() =>
+      expect(mockedToast.success).toHaveBeenCalledWith(
+        "おむつ交換を記録しました（おしっこ）",
+        expect.anything(),
+      ),
+    )
+    expect(within(summary()).getByText("おしっこ1・うんち0")).toBeInTheDocument()
   })
 })
