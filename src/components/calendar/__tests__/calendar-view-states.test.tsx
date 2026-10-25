@@ -97,9 +97,10 @@ const base = {
   initialView: { monthFirst: "2026-07-01", selectedDate: "2026-07-15" },
 }
 
+// 読み上げ名の前置一致は述語で取る（整形済み文字列から RegExp を組んで escape を手書きせぬ）。
 function dayCell(ymd: string): HTMLElement {
   return within(screen.getByRole("group", { name: "日付を選ぶ" })).getByRole("button", {
-    name: new RegExp(`^${formatDayJa(ymd).replace(/[()（）]/g, "\\$&")}、`),
+    name: (accessibleName) => accessibleName.startsWith(`${formatDayJa(ymd)}、`),
   })
 }
 const agenda = () => screen.getByRole("region", { name: /の予定$/ })

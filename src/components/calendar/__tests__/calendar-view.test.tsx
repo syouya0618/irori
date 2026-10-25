@@ -65,10 +65,13 @@ import { CalendarView } from "../calendar-view"
 import type { CalendarEventRecord } from "../use-month-events"
 import { formatDayJa } from "../calendar-display"
 
-/** 日セル。読み上げ名は「7月15日（水）、予定1件」の形（ISO の生値は読ませぬ）。 */
+/**
+ * 日セル。読み上げ名は「7月15日（水）、予定1件」の形（ISO の生値は読ませぬ）。
+ * 前置一致は述語で取る（整形済み文字列から RegExp を組んで escape を手書きせぬ）。
+ */
 function dayCell(ymd: string): HTMLElement {
   return within(screen.getByRole("group", { name: "日付を選ぶ" })).getByRole("button", {
-    name: new RegExp(`^${formatDayJa(ymd).replace(/[()（）]/g, "\\$&")}、`),
+    name: (accessibleName) => accessibleName.startsWith(`${formatDayJa(ymd)}、`),
   })
 }
 /** FAB。名前は「7月15日（水）に予定を追加」（空の日の「この日に予定を追加」とは別）。 */
