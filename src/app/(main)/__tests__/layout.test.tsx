@@ -195,4 +195,17 @@ describe("(main)/layout: 起動時に走る client component が木に在る", (
     await renderLayout()
     expect(screen.getByText("child")).toBeInTheDocument()
   })
+
+  /**
+   * 固定ナビの分だけ main の下に余白を取る。`pb-nav`（globals.css）はナビの高さ
+   * `--bottom-nav-h` と safe-area を足した値で、BottomNav の `h-(--bottom-nav-h)` と
+   * **同じ変数**を見る（bottom-nav.test.tsx が対）。以前の `pb-20` はナビの実高さと
+   * 独立に決まっており、各ページの pb-8 が偶然それを埋めておった。
+   */
+  it("main は pb-nav でナビの高さ分を空ける", async () => {
+    await renderLayout()
+    const main = screen.getByRole("main")
+    expect(main.className).toContain("pb-nav")
+    expect(main.className).not.toMatch(/\bpb-\d+\b/)
+  })
 })

@@ -36,7 +36,7 @@ export function OfflineBanner() {
         role="status"
         className="glass-subtle flex items-center gap-2 rounded-2xl px-4 py-2.5 shadow-lg shadow-black/[0.04]"
       >
-        <WifiOff className="size-4 shrink-0 text-amber-600" aria-hidden="true" />
+        <WifiOff className="size-4 shrink-0 text-primary" aria-hidden="true" />
         <p className="text-xs font-medium text-foreground">
           オフラインです。表示中の内容は最新でない可能性があります
         </p>

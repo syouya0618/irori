@@ -44,7 +44,10 @@ export default async function MainLayout({
           userId は「印を利用者で区切る」ために要る（CacheUserGuard と同じ理由で、
           共用端末の持ち主交代を検知せねば前の利用者宛の通知が届き続ける） */}
       <PushSubscriptionReconciler userId={context.userId} />
-      <main className="mx-auto max-w-lg pb-20">{children}</main>
+      {/* pb-nav = ナビの高さ + safe-area（globals.css の --bottom-nav-h）。以前の pb-20（80px）は
+          ナビの実高さ（55px + iPhone の 34px = 89px）と独立に決まっており、各ページの pb-8 が
+          偶然それを埋めておった。殻の側で契約として確保する */}
+      <main className="mx-auto max-w-lg pb-nav">{children}</main>
       <BottomNav />
       {/* 初回ユーザーに使い方ツアーを表示（既読は localStorage 判定・自己 gating） */}
       <OnboardingTour />
