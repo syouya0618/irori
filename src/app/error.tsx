@@ -1,8 +1,17 @@
 "use client"
 
 import { useEffect } from "react"
-import { AlertTriangle, RotateCcw } from "lucide-react"
+import { AlertTriangle } from "lucide-react"
+import { ErrorView } from "@/components/common/error-view"
 
+/**
+ * ルートの error boundary。(main) の layout が throw した時（lookup-failed 等）はここが受ける。
+ *
+ * 以前は oklch の直書き・`bg-white/55`・`backdrop-blur-[40px]` のリテラルで組んであり、
+ * ダークでも画面全体が白く光った上、Chrome でぼかしが落ちる #169 の書き方を再演しておった。
+ * 他の境界と同じ ErrorView（glass + トークン）で描き、殻は bg-hearth に揃える。
+ * `retry` は Next 16.3 のランタイムが渡す名（`error-boundaries.test.tsx` が本物の境界で検証）。
+ */
 export default function GlobalError({
   error,
   retry,
@@ -15,29 +24,15 @@ export default function GlobalError({
   }, [error])
 
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-gradient-to-b from-orange-50 to-amber-50 px-4">
-      <div className="flex max-w-sm flex-col items-center gap-6 rounded-2xl border border-white/30 bg-white/55 p-8 text-center shadow-lg shadow-black/[0.04] backdrop-blur-[40px]">
-        <div className="flex size-16 items-center justify-center rounded-full bg-amber-100">
-          <AlertTriangle className="size-8 text-amber-600" />
-        </div>
-
-        <div className="space-y-2">
-          <h1 className="text-2xl font-bold text-[oklch(0.18_0.02_50)]">
-            問題が発生しました
-          </h1>
-          <p className="text-sm text-[oklch(0.50_0.02_50)]">
-            申し訳ございません。予期しないエラーが発生しました。
-          </p>
-        </div>
-
-        <button
-          onClick={() => retry()}
-          className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-[oklch(0.65_0.19_50)] px-6 py-3 text-sm font-semibold text-white transition-colors duration-200 hover:bg-[oklch(0.60_0.19_50)]"
-        >
-          <RotateCcw className="size-4" />
-          もう一度試す
-        </button>
-      </div>
+    <div className="bg-hearth min-h-dvh">
+      <ErrorView
+        icon={AlertTriangle}
+        title="問題が発生しました"
+        message="申し訳ございません。予期しないエラーが発生しました。"
+        onRetry={retry}
+        minHeight="100dvh"
+        heading="h1"
+      />
     </div>
   )
 }

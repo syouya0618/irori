@@ -27,7 +27,7 @@ Liquid Glass design system. See `docs/DESIGN_SYSTEM.md` for full details.
 
 Key rules:
 - Glass cards: CSS class `glass` + `rounded-2xl shadow-lg shadow-black/[0.04]`
-- Primary: warm orange `oklch(0.65 0.19 50)`
+- Primary: warm orange `oklch(0.56 0.145 50)`（白文字 4.5:1 の下限から決めた値。明るく戻すと `color-contrast-contract.test.ts` が落ちる。ダークは `oklch(0.70 0.17 50)` + 黒文字）
 - Transitions: `transition-colors duration-200` ONLY (never `transition-all`)
 - Touch targets: min 44px
 - Icons: Lucide React (no emoji)

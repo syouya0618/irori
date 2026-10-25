@@ -99,11 +99,11 @@ export function PendingContent({
   }
 
   return (
-    <div className="flex min-h-dvh items-center justify-center px-4">
+    <div className="bg-hearth flex min-h-dvh items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="glass rounded-2xl p-6 text-center shadow-lg shadow-black/[0.04]">
-          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-amber-500/10">
-            <Clock className="size-6 text-amber-500" />
+          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-primary/10">
+            <Clock className="size-6 text-primary" aria-hidden="true" />
           </div>
 
           {approvalStatus === "pending" ? (

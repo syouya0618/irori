@@ -26,7 +26,7 @@ function InviteError({
             // not-found.tsx と同じ素の <Link>（buttonVariants は transition-all を含む）
             <Link
               href="/baby"
-              className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground transition-colors duration-200 hover:bg-primary/90"
+              className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground transition-colors duration-200 hover:bg-primary-hover"
             >
               <Baby className="size-4" />
               育児ページへ
