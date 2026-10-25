@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
-import { readFileSync } from "node:fs"
-import { join } from "node:path"
+import { readFileSync, readdirSync } from "node:fs"
+import { join, relative } from "node:path"
 
 /**
  * 色トークンのコントラスト契約（WCAG 2.2 SC 1.4.3 / 1.4.11）。
@@ -285,6 +285,62 @@ describe("ui/ の focus リングは --ring を薄めずに使う（薄めると
     expect(CSS_CODE).toMatch(/@apply border-border outline-ring;/)
     expect(CSS_CODE).not.toMatch(/outline-ring\/\d/)
   })
+
+  /**
+   * 共通部品だけでなく、画面側が自前で描く focus 表示（`focus:` / `focus-visible:` / `focus-within:` の
+   * ring・outline の色）も薄めぬ。統合の時点で育児の検索欄と日付ナビに `ring-ring/50`（実効 45%、
+   * 約 2:1）、共通 Button の destructive に `focus-visible:ring-destructive/20`（実測 1.38:1）が残っておった。
+   * 選択状態の枠（`ring-primary/50` 等）は focus ではないゆえ対象外。
+   */
+  const DILUTED_FOCUS = /focus(?:-visible|-within)?:(?:ring|outline)-[a-z]+(?:-[a-z]+)*\/\d/
+  it("src の .tsx（テストを除く）の focus 表示は ring-ring / outline-ring を薄めぬ", () => {
+    const root = join(process.cwd(), "src")
+    const visited: string[] = []
+    const offenders: string[] = []
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          if (entry.name !== "__tests__") walk(path)
+          continue
+        }
+        if (!path.endsWith(".tsx")) continue
+        const rel = relative(process.cwd(), path)
+        visited.push(rel)
+        if (DILUTED_FOCUS.test(readFileSync(path, "utf-8"))) offenders.push(rel)
+      }
+    }
+    walk(root)
+    // 走査そのものの対照: 画面側のファイルを実際に訪れておること
+    expect(visited).toContain(join("src", "components", "baby", "baby-date-nav.tsx"))
+    expect(visited).toContain(join("src", "components", "baby", "baby-search-form.tsx"))
+    expect(offenders).toEqual([])
+  })
+
+  it("対照: 薄めた focus 表示を見つけ、選択の枠や全量の ring-ring は見つけぬ", () => {
+    expect(DILUTED_FOCUS.test("focus-within:ring-3 focus-within:ring-ring/50")).toBe(true)
+    expect(DILUTED_FOCUS.test("dark:focus-visible:ring-ring/40")).toBe(true)
+    expect(DILUTED_FOCUS.test("focus-visible:outline-ring/50")).toBe(true)
+    expect(DILUTED_FOCUS.test("focus-visible:ring-destructive/20")).toBe(true)
+    expect(DILUTED_FOCUS.test("focus-visible:ring-3 focus-visible:ring-ring")).toBe(false)
+    expect(DILUTED_FOCUS.test("focus-visible:aria-invalid:ring-ring")).toBe(false)
+    expect(DILUTED_FOCUS.test("focus-visible:border-destructive/40")).toBe(false)
+    expect(DILUTED_FOCUS.test("bg-primary/12 ring-1 ring-primary/50 ring-inset")).toBe(false)
+  })
+
+  /**
+   * 不正な欄（aria-invalid）は状態の印として淡い赤の輪（ring-destructive/20）を持つ。同じ詳細度の
+   * `focus-visible:ring-ring` より後に出力されるゆえ、focus しても輪は淡い赤のまま（実測 1.38:1）じゃった。
+   * focus 中だけ `focus-visible:aria-invalid:ring-ring`（詳細度が 1 つ高い）で --ring に戻す。赤の枠は残る。
+   */
+  it.each(["button", "input", "select", "textarea"])(
+    "ui/%s.tsx は aria-invalid の輪を持つなら、focus 中は --ring に戻す",
+    (name) => {
+      const src = readFileSync(join(process.cwd(), `src/components/ui/${name}.tsx`), "utf-8")
+      expect(src).toMatch(/aria-invalid:ring-destructive/)
+      expect(src).toMatch(/focus-visible:aria-invalid:ring-ring(?![\w/-])/)
+    },
+  )
 })
 
 describe("主色を使う派生トークンは primary と対で動く", () => {

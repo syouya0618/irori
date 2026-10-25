@@ -247,7 +247,8 @@ function CalendarConnectLink({
         // touch-target = min 44px（globals.css / DESIGN_SYSTEM.md）。
         "touch-target inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors duration-200",
         variant === "default"
-          ? "bg-primary text-primary-foreground hover:bg-primary/80"
+          ? // hover は薄めず暗く（bg-primary/80 は白文字 3.5:1。--primary-hover は 6.3:1。ui/button と同じ）
+            "bg-primary text-primary-foreground hover:bg-primary-hover"
           : "border border-border bg-background hover:bg-muted",
       )}
     >
@@ -505,7 +506,7 @@ function GoogleConnectionRow({
       </div>
 
       {needsAttention ? (
-        // warm orange のバナー（計画書 §D-5）。primary = oklch(0.65 0.19 50)。
+        // warm orange のバナー（計画書 §D-5）。primary の値は globals.css の --primary が正本。
         <div className="flex flex-col gap-2 rounded-xl bg-primary/10 px-3 py-3 ring-1 ring-primary/20">
           <p className="flex items-start gap-2 text-sm font-medium text-primary">
             <TriangleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" />

@@ -152,9 +152,9 @@
  * Cache Components / <Activity> で隠された route は DOM に残る（display: none）ゆえ、:has() では
  * 隠れた予定画面の FAB が他の画面のトーストを上げ続ける。属性なら :has() 非対応の環境でも効く。
  *
- * ⚠️ main に在る予定画面の FAB（calendar-view.tsx の `bottom-24`）はこの契約を知らず、下端トースト
- * （下から 76px〜）に覆われる。C の FAB の差分（useFabClearance + above-bottom-nav）と**同時か、C が先**に
- * 入れること（handoff の統合ノート）。 */
+ * 今の利用者は予定画面の FAB（components/calendar/calendar-add-fab.tsx）だけ。FAB を足す時も
+ * 同じ形（hook + `above-bottom-nav` + `--fab-size`）にすること。要素に `data-fab` を書くだけでは
+ * 効かず、lib/hooks/__tests__/use-fab-clearance.test.tsx の走査が落とす。 */
 html[data-fab] {
   --toast-clearance: calc(var(--bottom-nav-h) + var(--safe-bottom) + 1rem + var(--fab-size) + 1rem);
 }
@@ -306,6 +306,43 @@ html [data-sonner-toaster][data-sonner-theme="light"] {
   --info-text: hsl(210, 92%, 36%);
   --warning-text: hsl(31, 92%, 30%);
   --error-text: hsl(360, 100%, 38%);
+}
+
+/* 下端トーストの入退場は「滑り」ではなく「薄れ」にする（前面のトーストは位置を動かさず opacity だけが変わる。
+ * 畳んだ背面のトーストは退場の間に前面の裏の位置へ戻るが、前面より下へは出ぬ）。
+ *
+ * sonner は下端のトーストを自分の高さぶん下（translateY(100%)）から滑り込ませ、退場でも下へ滑らせる。
+ * 下端にはナビ（全画面）と予定の FAB が在り、その上を通過する約 0.2 秒の間、ほぼ透明のトーストが
+ * 指を受ける（pointer-events: auto）。統合 harness の実測（Chromium・rAF ごとの elementFromPoint）では、
+ * 幅 360 / 390px で入場の最初の約 80ms、「取り消す」釦が育児画面の「設定」タブと予定画面の FAB の
+ * 中心に重なった — 記録直後に設定へ移ろうとした指が、見えぬ「取り消す」を押しうる。
+ * 滑りの距離（--y）だけを、トーストを下へ動かす状態でだけ止める:
+ *   1. 入場前（data-mounted が true になる前）
+ *   2. 前面の退場（スワイプ以外）
+ *   3. 背面の退場（畳んだ状態は sonner が translateY(40%) で下へ送る。広げた状態は自分の高さぶん下へ送る）
+ * 積み重ね・広げる・スワイプの規則（mounted / front=false / expanded / swiping）には触れぬ。上端（シート表示中）
+ * のトーストは滑りのまま。sonner の規則は実行時に head の末尾へ差し込まれるゆえ、html を足して詳細度で勝つ。
+ * さらに、退場中（data-removed）の下端トーストが上下へ広げる当たり判定は指を受けぬ。sonner は退場中の
+ * トーストに `::before`（inset: 0・scaleY(2)）を付けて当たり判定を上下へ倍に広げるゆえ、滑りを止めても
+ * 約 0.2 秒、真下のナビと FAB の操作を吸った（実測）。止めるのは `::before` だけ — トースト本体は退場中も
+ * 指を受ける（「取り消す」の二度押しの 2 回目を、静止位置の真下の記録の釦などへ落とさぬため）。
+ * 選択子と値は src/app/__tests__/sonner-motion-contract.test.ts が sonner 本体と照合して固定する
+ * （sonner を上げて属性名が変われば落ちる）。戻すなら、下の規則を消すだけでよい。 */
+html [data-sonner-toast][data-y-position="bottom"]:not([data-mounted="true"]),
+html [data-sonner-toast][data-y-position="bottom"][data-removed="true"][data-front="true"][data-swipe-out="false"],
+html [data-sonner-toast][data-y-position="bottom"][data-removed="true"][data-front="false"][data-swipe-out="false"][data-expanded="false"] {
+  --y: translateY(0);
+}
+html [data-sonner-toast][data-y-position="bottom"][data-removed="true"][data-front="false"][data-swipe-out="false"][data-expanded="true"] {
+  --y: translateY(calc(var(--lift) * var(--offset)));
+}
+html [data-sonner-toast][data-y-position="bottom"][data-removed="true"]::before {
+  pointer-events: none;
+}
+/* スワイプで消した下端トーストは、sonner の keyframe（swipe-out-down 等）で本体ごと 200ms 下へ滑り、ナビと FAB を
+ * 横切る（--y の上書きは swipe-out=false の規則だけゆえ当たらぬ）。指はもう離れておるゆえ、本体ごと指を通す。 */
+html [data-sonner-toast][data-y-position="bottom"][data-swipe-out="true"] {
+  pointer-events: none;
 }
 
 /*

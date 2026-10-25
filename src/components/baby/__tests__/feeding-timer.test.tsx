@@ -840,7 +840,7 @@ describe("FeedingTimer の閉じる操作は計測を捨てず、破棄は明示
       const onOpenChange = vi.fn()
       renderTimer({ onOpenChange })
 
-      fireEvent.click(screen.getByRole("button", { name: "Close" }))
+      fireEvent.click(screen.getByRole("button", { name: "閉じる" }))
 
       expect(onOpenChange).toHaveBeenCalledWith(false)
       expect(savedTimerState()?.startedAt).toBe(STARTED_5MIN_AGO)
@@ -898,7 +898,7 @@ describe("FeedingTimer の閉じる操作は計測を捨てず、破棄は明示
       const onOpenChange = vi.fn()
       renderTimer({ onOpenChange })
 
-      fireEvent.click(screen.getByRole("button", { name: "Close" }))
+      fireEvent.click(screen.getByRole("button", { name: "閉じる" }))
 
       expect(onOpenChange).toHaveBeenCalledWith(false)
       expect(savedTimerState()).toBeNull()
@@ -1001,13 +1001,13 @@ describe("FeedingTimer の閉じる操作は計測を捨てず、破棄は明示
       const onOpenChange = vi.fn()
       renderTimer({ onOpenChange })
       fireEvent.click(screen.getByRole("button", { name: "手動入力" }))
-      expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: "閉じる" })).toBeInTheDocument()
 
       act(() => {
         vi.advanceTimersByTime(61_000)
       })
 
-      const close = screen.getByRole("button", { name: "Close" })
+      const close = screen.getByRole("button", { name: "閉じる" })
       fireEvent.click(close)
       expect(onOpenChange).toHaveBeenCalledWith(false)
       expect(savedTimerState()?.startedAt).toBe(FIXED_NOW_ISO)

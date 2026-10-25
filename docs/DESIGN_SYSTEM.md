@@ -143,7 +143,7 @@ color-mix を落として全開の primary を出す（2026-10-24 に build 後 
 
 ### 浮く操作（FAB）とトーストの契約
 
-画面下に浮く操作（予定追加の FAB。実装は Agent C の予定画面側）は次を守る。
+画面下に浮く操作（予定追加の FAB = `src/components/calendar/calendar-add-fab.tsx`）は次を守る。
 守れば、下端トーストの本文の長さ・操作ボタンの有無・積み重なりに関わらず**操作領域が重ならぬ**。
 
 1. **根の部品で `useFabClearance()`（`lib/hooks/use-fab-clearance.ts`）を呼ぶ**。React が
@@ -154,8 +154,9 @@ color-mix を落として全開の primary を出す（2026-10-24 に build 後 
    じゃが、ナビの寸法を変えた時に追従せぬ
 3. **高さは `--fab-size`（56px = `h-14`）**。変えるなら変数ごと変える
 4. **横は列の右端**: `right-[max(1rem,calc(50%-16rem+1rem))]`（`max-w-lg` の列に揃える。広い画面で隅へ飛ばさぬ）。
-   例外: 背の低い画面（高さ 500px 以下 = スマホの横向き）は画面の右端 `right-4` へ寄せてよい（C の実装の例外。
-   殻の退避は縦に効くため必須ではないが、横向きでは縦の余裕が無く、横で離せる位置の方が害が少ない）
+   例外: 背の低い画面（高さ 500px 以下 = スマホの横向き）は画面の右端 `right-4` へ寄せる
+   （`[@media(max-height:500px)]:right-4`。列の右端のままだと、横向きで上端トーストを 3 件展開した時に FAB へ掛かった。
+   クラス列を丸ごと差し替えてこの例外を落とさぬこと）
 5. **重なり順は `z-10`〜`z-40`**（ナビ・シートの `z-50` より下。シートの暗幕が FAB を覆う）。トーストは sonner が
    `z-index: 999999999` を持ち、常に最前面
 6. 下シートが開いておる間、トーストは上端へ逃げる（`[data-slot="sheet-content"]` の有無。上の「トースト」節）ゆえ
@@ -165,12 +166,19 @@ color-mix を落として全開の primary を出す（2026-10-24 に build 後 
 トーストは列の右端の FAB と横に重なる（1440px でも）。ゆえに**縦に退避する**のが唯一の手で、
 どの幅でも同じ式を使う。**FAB 側でトーストの矩形を測って自分を持ち上げてはならぬ** — sonner の入場は
 下から 400ms の translateY ゆえ、入場中の矩形が FAB の帯に掛かり FAB が一瞬跳ねて戻る（その方式の
-`computeFabLift` に 390×844 の矩形を与えると、最終位置で 0、入場開始位置で 84px。C は独立レビューで外した）。
+`computeFabLift` に 390×844 の矩形を与えると、最終位置で 0、入場開始位置で 84px。ゆえに採らぬ）。
 
-⚠️ **merge の順序**: この契約を知らぬ FAB（main の `calendar-view.tsx` の `bottom-24`）は下端トースト（下から
-76px〜）に覆われる。殻の退避（A）は C の FAB の差分と**同時か、C が先**に入れること。
-既知の限界: 横向き（844×390）で FAB を避けた位置に 3 件のトーストを展開すると、上端が画面の外へ出る
-（畳んだ状態は問題ない）。
+守りのテスト: hook の契約は `src/lib/hooks/__tests__/use-fab-clearance.test.tsx`（src の .tsx に JSX の
+`data-fab` 属性があれば落ちる走査を含む）、FAB の部品と予定画面の mount / unmount は
+`src/components/calendar/__tests__/calendar-add-fab.test.tsx` と `calendar-view.test.tsx`、退避の式は
+`src/app/__tests__/globals-css-contract.test.ts`。
+
+既知の限界:
+- 横向き（844×390）で FAB を避けた位置に 3 件のトーストを展開すると、上端が画面の外へ出る（畳んだ状態は問題ない）
+- 下シートが開いておる間の上端トーストは、背の低い横向き（568×320 等、幅 600px 以下）でシート右上の × を
+  トーストの表示中だけ覆う（Esc・暗幕・下端の操作では閉じられる。幅 601px 以上の横向きは中央 356px ゆえ覆わぬ）
+
+退避の式は静止位置の契約じゃ。入退場の間の重なりは下の「トースト」節の「入退場は薄れ」で塞ぐ。
 
 ## 角丸
 
@@ -220,6 +228,15 @@ color-mix を落として全開の primary を出す（2026-10-24 に build 後 
   `--toast-clearance` を渡す。layout では `<Toaster />` のみ）。片手で押し間違えた直後の「取り消す」に親指が届く位置
 - FAB を持つ画面（`useFabClearance()` が `<html data-fab>` を立てている間）では FAB の上端 + 16px まで上がる（上の「浮く操作（FAB）とトーストの契約」）
 - 下シート（`SheetContent`）が開いている間だけ上端（top-center）へ逃がす。シートの下帯（削除・メモ欄）を覆わないため
+- **下端の入退場は「滑り」ではなく「薄れ」**（位置は動かさず opacity だけが 400ms で変わる。globals.css の
+  `html [data-sonner-toast][data-y-position="bottom"]…` の規則）。sonner の既定は自分の高さぶん下から滑り込み、
+  下へ滑って消えるため、約 0.2 秒、ほぼ透明のトーストがナビと FAB の上を通って指を受けた（統合時の実測: 幅 360 / 390px で
+  入場の最初の約 80ms、「取り消す」が育児の「設定」タブと予定の FAB の中心に重なった）。sonner が退場中に付ける
+  `::before`（当たり判定を上下へ倍に広げる）は `pointer-events: none` で指を通す。トースト本体は退場中も指を受ける
+  （「取り消す」の二度押しの 2 回目を、静止位置の真下の釦へ落とさぬ）。スワイプで消したトーストは sonner の keyframe で
+  本体ごと 200ms 下へ滑るゆえ、本体ごと指を通す。畳んだ背面のトーストは退場の間に前面の裏へ戻るが、
+  前面より下へは出ぬ。上端（シート表示中）は sonner の既定のまま。属性名・仕組み・詳細度は
+  `src/app/__tests__/sonner-motion-contract.test.ts` が sonner 本体と照合する。戻すなら globals.css の該当規則を消すだけでよい
 - 画面の横向き（844×390 等）でも同じ式。ソフトキーボード表示中の位置は**実機未確認**（iOS Safari は
   fixed 要素をキーボードの下に残すことがある。問題が出れば viewport の `interactiveWidget` を検討）
 - 操作ボタン（`[data-button]`）は 44px、本文 14px（globals.css が sonner の既定 24px / 13px を上書き）
@@ -244,7 +261,9 @@ color-mix を落として全開の primary を出す（2026-10-24 に build 後 
   白地 3.98 / 殻の角（bg-hearth）3.38 / muted 3.74:1、ダーク 5.4〜5.9:1（1.4.11 の 3:1）。以前は 40% × `/50` = 実効 20% で
   約 1.3:1 じゃった。80% は殻の角で 2.91 と割るため 90%。候補（実測）: 80% = 3.36 / 2.91 / 3.20、90% = 3.98 / 3.38 / 3.74、
   100% = 4.72 / 3.89 / 4.38。**濃さの最終判断は計画書 D-3 どおり実機で人間が決める**（ここは全ての地で 3:1 を満たす最小）。
-  `ring-ring/50` のまま残る B の `baby-search-form.tsx:53` / `baby-date-nav.tsx:54` は実効 40% で約 1.8:1（引き継ぎ）。
+  部品側・画面側ともに focus の輪の色を薄めぬ（`ring-ring/50` や `ring-destructive/20` を書かぬ）。destructive の釦も
+  主色の輪を使い、誤りの欄（aria-invalid）は focus 中だけ `focus-visible:aria-invalid:ring-ring` で主色の輪へ戻す
+  （赤い枠は残る）。`color-contrast-contract.test.ts` が src 全体を走査して固定する。
   ナビの `focus-visible:outline-primary` は不透明な主色で 4.7:1 超。入力欄の境界 `--input` は白地の上 約 1.2:1 で、
   1.4.11 が境界に 3:1 を求めるかは他の手掛かり次第（人間判断）
 - FAB を持つ画面のトースト退避は `useFabClearance()`（React が `<html data-fab>` を持つ。`:has()` は使わぬ）

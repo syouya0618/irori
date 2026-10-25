@@ -52,7 +52,7 @@ export function BabyDateNav({
             未来は max で選べぬ（「次の日」が今日で止まるのと同じ契約）。キーボードでは
             input 自体にフォーカスが当たり、Enter / Space でピッカーが開く */}
         <label
-          className="relative flex size-11 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors duration-200 hover:bg-muted hover:text-foreground focus-within:ring-3 focus-within:ring-ring/50"
+          className="relative flex size-11 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors duration-200 hover:bg-muted hover:text-foreground focus-within:ring-3 focus-within:ring-ring"
           title="日付を選んで移動"
         >
           <CalendarDays size={18} aria-hidden="true" />

@@ -131,6 +131,20 @@ describe("CalendarView", () => {
     }
   })
 
+  /**
+   * 予定画面に FAB が在る間だけ、殻の下端トーストを FAB の上へ退避させる（DESIGN_SYSTEM.md
+   * 「浮く操作（FAB）とトーストの契約」）。画面を離れて（unmount して）も属性が残ると、FAB の無い
+   * 育児・設定画面のトーストが FAB の分だけ浮いたままになる。
+   */
+  it("予定画面の mount で <html data-fab> が立ち、画面を離れる（unmount）と外れる", () => {
+    document.documentElement.removeAttribute("data-fab")
+    const view = render(<CalendarView {...base} initialEvents={[]} />)
+    expect(fab()).toBeInTheDocument()
+    expect(document.documentElement.hasAttribute("data-fab")).toBe(true)
+    view.unmount()
+    expect(document.documentElement.hasAttribute("data-fab")).toBe(false)
+  })
+
   it("今日のセルだけが aria-current=date を持つ（選択とは別の印）", () => {
     const today = todayJstString()
     render(
@@ -196,7 +210,10 @@ describe("CalendarView", () => {
     )
     fireEvent.click(dayCell("2026-07-15"))
     fireEvent.click(screen.getByText("会議"))
-    expect(screen.getByRole("button", { name: "閉じる" })).toBeInTheDocument()
+    // 閉じる手段は下端の「閉じる」と、全シート共通の右上の ×（sr-only の名前も「閉じる」）の 2 つだけ
+    const closes = screen.getAllByRole("button", { name: "閉じる" })
+    expect(closes).toHaveLength(2)
+    expect(closes.filter((b) => b.getAttribute("data-slot") === "sheet-close")).toHaveLength(1)
     expect(screen.queryByRole("button", { name: "更新" })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "削除" })).not.toBeInTheDocument()
   })

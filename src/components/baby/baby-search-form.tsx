@@ -52,7 +52,7 @@ export function BabySearchForm({ query, today }: BabySearchFormProps) {
             id="search-kind"
             name="kind"
             defaultValue={query.kind}
-            className="min-h-11 w-full rounded-lg border border-input bg-transparent px-2.5 text-base transition-colors duration-200 outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30"
+            className="min-h-11 w-full rounded-lg border border-input bg-transparent px-2.5 text-base transition-colors duration-200 outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring md:text-sm dark:bg-input/30"
           >
             {SEARCH_KINDS.map((kind) => (
               <option key={kind} value={kind}>
