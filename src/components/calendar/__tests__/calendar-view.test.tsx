@@ -58,11 +58,23 @@ vi.mock("@/app/(main)/calendar/actions", () => ({
 }))
 vi.mock("sonner", async () => {
   const { vi: viMod } = await import("vitest")
-  return { toast: { error: viMod.fn(), success: viMod.fn() } }
+  return { toast: { error: viMod.fn(), success: viMod.fn(), warning: viMod.fn() } }
 })
 
 import { CalendarView } from "../calendar-view"
 import type { CalendarEventRecord } from "../use-month-events"
+import { formatDayJa } from "../calendar-display"
+
+/** 日セル。読み上げ名は「7月15日（水）、予定1件」の形（ISO の生値は読ませぬ）。 */
+function dayCell(ymd: string): HTMLElement {
+  return within(screen.getByRole("group", { name: "日付を選ぶ" })).getByRole("button", {
+    name: new RegExp(`^${formatDayJa(ymd).replace(/[()（）]/g, "\\$&")}、`),
+  })
+}
+/** FAB。名前は「7月15日（水）に予定を追加」（空の日の「この日に予定を追加」とは別）。 */
+function fab(): HTMLElement {
+  return screen.getByRole("button", { name: /^\d+月\d+日（.）に予定を追加$/ })
+}
 import {
   createCalendarEvent,
   fetchEventReminder,
@@ -106,8 +118,56 @@ describe("CalendarView", () => {
     for (const w of ["月", "火", "水", "木", "金", "土", "日"]) {
       expect(screen.getAllByText(w).length).toBeGreaterThan(0)
     }
-    // 日セル(aria-label "…を選択")が 42 個
-    expect(screen.getAllByRole("button", { name: /を選択$/ })).toHaveLength(42)
+    // 日セルが 42 個。読み上げ名は日付と件数を言い、ISO の生値（2026-07-15）を出さぬ
+    const cells = within(screen.getByRole("group", { name: "日付を選ぶ" })).getAllByRole(
+      "button",
+    )
+    expect(cells).toHaveLength(42)
+    for (const c of cells) {
+      expect(c.getAttribute("aria-label")).toMatch(/^\d+月\d+日（.）(、今日)?、(予定なし|予定\d+件)$/)
+    }
+  })
+
+  it("今日のセルだけが aria-current=date を持つ（選択とは別の印）", () => {
+    const today = todayJstString()
+    render(
+      <CalendarView
+        householdId="house-1"
+        initialView={{ monthFirst: `${today.slice(0, 7)}-01`, selectedDate: today }}
+        initialEvents={[]}
+      />,
+    )
+    const group = screen.getByRole("group", { name: "日付を選ぶ" })
+    const current = group.querySelectorAll('[aria-current="date"]')
+    expect(current).toHaveLength(1)
+    expect(current[0]).toBe(dayCell(today))
+  })
+
+  it("日セルの印は Google 由来を灰・irori をオレンジで分け、時刻付き Google を orange にせぬ", () => {
+    render(
+      <CalendarView
+        {...base}
+        initialEvents={[
+          ev({
+            id: "g1",
+            title: "会議",
+            source: "google",
+            is_all_day: false,
+            start_date: "2026-07-15",
+            start_at: jstWallClockToIso("2026-07-15", "14:00"),
+          }),
+          ev({ id: "n1", title: "検診", start_date: "2026-07-15" }),
+        ]}
+      />,
+    )
+    const marks = dayCell("2026-07-15").querySelectorAll("[data-mark]")
+    expect(marks).toHaveLength(2)
+    const google = Array.from(marks).find((el) => el.getAttribute("data-source") === "google")!
+    const native = Array.from(marks).find((el) => el.getAttribute("data-source") === "native")!
+    expect(google.getAttribute("data-mark")).toBe("dot")
+    expect(google.className).not.toMatch(/primary/)
+    expect(native.getAttribute("data-mark")).toBe("band")
+    expect(native.className).toMatch(/bg-primary/)
   })
 
   it("日をタップするとアジェンダがその日に更新される", () => {
@@ -117,8 +177,8 @@ describe("CalendarView", () => {
         initialEvents={[ev({ id: "e1", title: "検診", start_date: "2026-07-15" })]}
       />,
     )
-    fireEvent.click(screen.getByRole("button", { name: "2026-07-15 を選択" }))
-    const agenda = screen.getByText(/7月15日 の予定/).closest("section")!
+    fireEvent.click(dayCell("2026-07-15"))
+    const agenda = screen.getByRole("heading", { name: /^7月15日（.）\s?の予定/ }).closest("section")!
     expect(within(agenda).getByText("検診")).toBeInTheDocument()
   })
 
@@ -131,7 +191,7 @@ describe("CalendarView", () => {
         ]}
       />,
     )
-    fireEvent.click(screen.getByRole("button", { name: "2026-07-15 を選択" }))
+    fireEvent.click(dayCell("2026-07-15"))
     fireEvent.click(screen.getByText("会議"))
     expect(screen.getByRole("button", { name: "閉じる" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "更新" })).not.toBeInTheDocument()
@@ -154,9 +214,11 @@ describe("CalendarView", () => {
         ]}
       />,
     )
-    fireEvent.click(screen.getByRole("button", { name: "2026-07-15 を選択" }))
+    fireEvent.click(dayCell("2026-07-15"))
     fireEvent.click(screen.getByText("会議"))
-    expect(screen.getByText("7月15日・終日")).toBeInTheDocument()
+    expect(screen.getByText("7月15日（水）・終日")).toBeInTheDocument()
+    // 閲覧のみであることを文字で示す（色やアイコンだけに頼らぬ）
+    expect(screen.getByText("Google カレンダー・閲覧のみ")).toBeInTheDocument()
   })
 
   it("google 詳細シートに時刻付きイベントの日時行が出る", () => {
@@ -177,14 +239,14 @@ describe("CalendarView", () => {
         ]}
       />,
     )
-    fireEvent.click(screen.getByRole("button", { name: "2026-07-15 を選択" }))
+    fireEvent.click(dayCell("2026-07-15"))
     fireEvent.click(screen.getByText("会議"))
-    expect(screen.getByText("7月15日 14:00〜15:00")).toBeInTheDocument()
+    expect(screen.getByText("7月15日（水）14:00〜15:00")).toBeInTheDocument()
   })
 
   it("時刻付き予定で開始時刻を空にして保存してもクラッシュせず、シート内で弾く", () => {
     render(<CalendarView {...base} initialEvents={[]} />)
-    fireEvent.click(screen.getByRole("button", { name: "予定を追加" }))
+    fireEvent.click(fab())
     fireEvent.change(screen.getByLabelText("タイトル"), {
       target: { value: "会議" },
     })
@@ -196,7 +258,7 @@ describe("CalendarView", () => {
     // 追加(最初期は jstWallClockToIso の RangeError で無反応・保存も通知もなし。
     // 次に handleSubmit の toast で弾いていたが、シートが閉じて入力が消えた。
     // 現在はシート内の保存前検証で弾き、シートも入力も残す)
-    // testing-library の name 文字列は既定で完全一致のため FAB「予定を追加」とは衝突しない
+    // FAB の名前は「…に予定を追加」ゆえ、完全一致の「追加」はシートの保存ボタンだけ
     fireEvent.click(screen.getByRole("button", { name: "追加" }))
     expect(screen.getByRole("alert")).toHaveTextContent("開始時刻を入力してください")
     expect(createCalendarEvent).not.toHaveBeenCalled()
@@ -210,7 +272,7 @@ describe("CalendarView", () => {
     fireEvent.click(screen.getByRole("button", { name: "次の月" }))
     expect(screen.getByText("2026年8月")).toBeInTheDocument()
     // アジェンダの対象日が 8月1日 に寄る(今日=7月のままにしない)
-    expect(screen.getByText(/8月1日 の予定/)).toBeInTheDocument()
+    expect(screen.getByRole("heading", { name: /^8月1日（.）\s?の予定/ })).toBeInTheDocument()
   })
 })
 
@@ -237,13 +299,13 @@ describe("CalendarView — initialView.selectedDate（B-6）", () => {
       />,
     )
     expect(screen.getByText("2026年9月")).toBeInTheDocument()
-    expect(screen.getByText(/9月1日 の予定/)).toBeInTheDocument()
+    expect(screen.getByRole("heading", { name: /^9月1日（.）\s?の予定/ })).toBeInTheDocument()
     // 色だけでなく aria-pressed でも選択が分かること（設計規約: 色依存の禁止）。
-    expect(screen.getByRole("button", { name: "2026-09-01 を選択" })).toHaveAttribute(
+    expect(dayCell("2026-09-01")).toHaveAttribute(
       "aria-pressed",
       "true",
     )
-    const agenda = screen.getByText(/9月1日 の予定/).closest("section")!
+    const agenda = screen.getByRole("heading", { name: /^9月1日（.）\s?の予定/ }).closest("section")!
     expect(within(agenda).getByText("検診")).toBeInTheDocument()
   })
 
@@ -255,7 +317,7 @@ describe("CalendarView — initialView.selectedDate（B-6）", () => {
         initialEvents={[]}
       />,
     )
-    expect(screen.getByText(/9月20日 の予定/)).toBeInTheDocument()
+    expect(screen.getByRole("heading", { name: /^9月20日（.）\s?の予定/ })).toBeInTheDocument()
   })
 
   it("今日を渡せば今日が選ばれる（既存の振る舞いを変えぬ）", () => {
@@ -267,7 +329,7 @@ describe("CalendarView — initialView.selectedDate（B-6）", () => {
         initialEvents={[]}
       />,
     )
-    expect(screen.getByRole("button", { name: `${today} を選択` })).toHaveAttribute(
+    expect(dayCell(today)).toHaveAttribute(
       "aria-pressed",
       "true",
     )
@@ -284,7 +346,7 @@ describe("CalendarView — initialView.selectedDate（B-6）", () => {
         initialEvents={[]}
       />,
     )
-    expect(screen.getByRole("button", { name: `${today} を選択` })).toHaveAttribute(
+    expect(dayCell(today)).toHaveAttribute(
       "aria-pressed",
       "true",
     )
@@ -316,7 +378,7 @@ describe("CalendarView - 新規作成時の通知の結線(B-2)", () => {
     render(
       <CalendarView {...base} initialEvents={[]} defaultReminderMinutes={30} />,
     )
-    fireEvent.click(screen.getByRole("button", { name: "予定を追加" }))
+    fireEvent.click(fab())
     // 既定値が画面に反映されておること（prefs → UI）
     expect(document.getElementById("cal-reminder")).toHaveTextContent("30分前")
 
@@ -329,7 +391,7 @@ describe("CalendarView - 新規作成時の通知の結線(B-2)", () => {
 
   it("既定が「なし」なら通知は書かず、無駄な往復もせぬ", async () => {
     render(<CalendarView {...base} initialEvents={[]} />)
-    fireEvent.click(screen.getByRole("button", { name: "予定を追加" }))
+    fireEvent.click(fab())
     expect(document.getElementById("cal-reminder")).toHaveTextContent("なし")
 
     fillTitleAndSubmit("検診")
@@ -352,7 +414,7 @@ describe("CalendarView - 新規作成時の通知の結線(B-2)", () => {
     render(
       <CalendarView {...base} initialEvents={[]} defaultReminderMinutes={30} />,
     )
-    fireEvent.click(screen.getByRole("button", { name: "予定を追加" }))
+    fireEvent.click(fab())
     fillTitleAndSubmit("検診")
     await waitFor(() => expect(createCalendarEvent).toHaveBeenCalled())
     expect(setEventReminder).not.toHaveBeenCalled()
@@ -370,7 +432,7 @@ describe("CalendarView - 既存予定の通知の読み取り(B-2)", () => {
 
   const openEvent = (record: CalendarEventRecord) => {
     render(<CalendarView {...base} initialEvents={[record]} />)
-    fireEvent.click(screen.getByRole("button", { name: "2026-07-15 を選択" }))
+    fireEvent.click(dayCell("2026-07-15"))
     fireEvent.click(screen.getByText(record.title))
   }
 
@@ -410,7 +472,7 @@ describe("CalendarView - 既存予定の通知の読み取り(B-2)", () => {
     render(
       <CalendarView {...base} initialEvents={[]} defaultReminderMinutes={60} />,
     )
-    fireEvent.click(screen.getByRole("button", { name: "予定を追加" }))
+    fireEvent.click(fab())
     expect(fetchEventReminder).not.toHaveBeenCalled()
     expect(document.getElementById("cal-reminder")).toHaveTextContent("1時間前")
   })
@@ -430,7 +492,7 @@ describe("CalendarView - 編集の版（楽観的排他）", () => {
   })
 
   const openAndSave = (newTitle: string, currentTitle: string) => {
-    fireEvent.click(screen.getByRole("button", { name: "2026-07-15 を選択" }))
+    fireEvent.click(dayCell("2026-07-15"))
     fireEvent.click(screen.getByText(currentTitle))
     fireEvent.change(screen.getByLabelText("タイトル"), { target: { value: newTitle } })
     fireEvent.click(screen.getByRole("button", { name: "更新" }))
@@ -477,9 +539,17 @@ describe("CalendarView - 編集の版（楽観的排他）", () => {
       />,
     )
     openAndSave("検診（自分の古い画面から）", "検診")
+    // 衝突は「失敗」(error) と別の「警告」として出す。入力を握って送り直させぬゆえ
+    // 「入力に戻る」ではなく「最新を開く」を添える
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/先に更新されていました/)),
+      expect(toast.warning).toHaveBeenCalledWith(
+        expect.stringMatching(/先に更新されていました/),
+        expect.objectContaining({
+          action: expect.objectContaining({ label: "最新を開く" }),
+        }),
+      ),
     )
+    expect(toast.error).not.toHaveBeenCalled()
     // サーバの最新（家族の変更）が出て、古い画面からの自分の変更は残らぬ
     await waitFor(() => expect(screen.getByText("検診（家族が変更）")).toBeInTheDocument())
     expect(screen.queryByText("検診（自分の古い画面から）")).not.toBeInTheDocument()
@@ -538,7 +608,7 @@ describe("CalendarView - 自分の保存で進んだ版を辿る（偽の衝突�
         initialEvents={[ev({ id: "e1", title: "検診", start_date: "2026-07-15", updated_at: V1 })]}
       />,
     )
-    fireEvent.click(screen.getByRole("button", { name: "2026-07-15 を選択" }))
+    fireEvent.click(dayCell("2026-07-15"))
     fireEvent.click(screen.getByText("検診"))
     fireEvent.change(screen.getByLabelText("タイトル"), { target: { value: "検診（1回目）" } })
     fireEvent.click(screen.getByRole("button", { name: "更新" }))
@@ -566,7 +636,7 @@ describe("CalendarView - 自分の保存で進んだ版を辿る（偽の衝突�
         initialEvents={[ev({ id: "e1", title: "検診", start_date: "2026-07-15", updated_at: V1 })]}
       />,
     )
-    fireEvent.click(screen.getByRole("button", { name: "2026-07-15 を選択" }))
+    fireEvent.click(dayCell("2026-07-15"))
     fireEvent.click(screen.getByText("検診"))
     // シートを開いたまま、復帰の取り直しで家族の更新（版 V2）が手元の一覧に入る
     monthRows.rows = [
@@ -591,7 +661,7 @@ describe("CalendarView - 自分の保存で進んだ版を辿る（偽の衝突�
     vi.mocked(createCalendarEvent).mockImplementationOnce(() => created.promise)
     vi.mocked(updateCalendarEvent).mockResolvedValueOnce({ error: null, updatedAt: V2 })
     render(<CalendarView {...base} initialEvents={[]} />)
-    fireEvent.click(screen.getByRole("button", { name: "予定を追加" }))
+    fireEvent.click(fab())
     fireEvent.change(screen.getByLabelText("タイトル"), { target: { value: "予防接種" } })
     fireEvent.click(screen.getByRole("button", { name: "追加" }))
     // 応答の前に楽観行（一時 id・版 null）を開く
@@ -619,7 +689,7 @@ describe("CalendarView - 自分の保存で進んだ版を辿る（偽の衝突�
         initialEvents={[ev({ id: "e1", title: "検診", start_date: "2026-07-15", updated_at: V1 })]}
       />,
     )
-    fireEvent.click(screen.getByRole("button", { name: "2026-07-15 を選択" }))
+    fireEvent.click(dayCell("2026-07-15"))
     fireEvent.click(screen.getByText("検診"))
     fireEvent.change(screen.getByLabelText("タイトル"), { target: { value: "検診（変更）" } })
     fireEvent.click(screen.getByRole("button", { name: "更新" }))
@@ -627,7 +697,7 @@ describe("CalendarView - 自分の保存で進んだ版を辿る（偽の衝突�
     expect(screen.getByText("2026年8月")).toBeInTheDocument()
     const augustEnd = monthRows.gridEnds.at(-1)
     first.resolve({ error: "この予定は別の端末で先に更新されていました。", conflict: true })
-    await waitFor(() => expect(toast.error).toHaveBeenCalled())
+    await waitFor(() => expect(toast.warning).toHaveBeenCalled())
     await waitFor(() => expect(monthRows.gridEnds.length).toBeGreaterThanOrEqual(2))
     // 最後の取り直しは 8 月の範囲（7 月へ巻き戻して 8 月の表示を上書きせぬ）
     expect(monthRows.gridEnds.at(-1)).toBe(augustEnd)

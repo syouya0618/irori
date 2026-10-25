@@ -1,9 +1,10 @@
 "use client"
 
-import { useState, useTransition } from "react"
+import { useState, useTransition, type ReactNode } from "react"
 import { unstable_rethrow } from "next/navigation"
 import { toast } from "sonner"
 import {
+  ChevronRight,
   Home,
   LogOut,
   Loader2,
@@ -85,6 +86,130 @@ interface SettingsContentProps {
   digestTime: string | null
   /** まとめの設定を**読めなかった**（＝「送らない」とは限らぬ）。 */
   digestTimeUnknown: boolean
+  /** Google 接続を**読めなかった**（＝未接続とは限らぬ）。 */
+  googleConnectionsUnknown?: boolean
+  /** 通知の端末一覧を**読めなかった**（＝端末が無いとは限らぬ）。 */
+  pushDevicesUnknown?: boolean
+}
+
+/** 要確認の 1 件（画面の先頭にまとめ、該当のカードへ飛べるようにする）。 */
+interface AttentionItem {
+  key: string
+  text: string
+  href: string
+}
+
+/**
+ * 画面の先頭に出す「要確認」。**実際に手を打つべきもの**だけを拾う —— 平穏な状態や
+ * 単なる未設定まで並べると、本当の警告が埋もれる。判定は各カードと同じ向き:
+ * Google の接続は「active 以外は全て要注意」（denylist・enum drift 防御）。
+ */
+function attentionItems(p: {
+  household: SettingsContentProps["household"]
+  googleConnections: GoogleConnectionView[]
+  googleConnectionsUnknown: boolean
+  pushDevices: PushDeviceView[]
+  pushHealth: NotificationHealthView
+  isAppOperator: boolean
+  pendingUsers: PendingUser[] | null
+}): AttentionItem[] {
+  const items: AttentionItem[] = []
+  if (!p.household) {
+    items.push({ key: "household", text: "世帯の情報を取得できませんでした", href: "#settings-family" })
+  }
+  if (p.googleConnectionsUnknown) {
+    items.push({
+      key: "google-unknown",
+      text: "Google カレンダーの接続状態を確認できませんでした",
+      href: "#settings-google",
+    })
+  } else if (p.googleConnections.some((c) => c.connectionStatus !== "active")) {
+    items.push({
+      key: "google-reauth",
+      text: "Google カレンダーの再接続が必要です",
+      href: "#settings-google",
+    })
+  } else if (p.googleConnections.some((c) => c.lastErrorKind !== null)) {
+    items.push({
+      key: "google-error",
+      text: "Google カレンダーの同期でエラーが出ています",
+      href: "#settings-google",
+    })
+  }
+  if (p.pushHealth.runState === "stale" || p.pushHealth.runState === "failing") {
+    items.push({
+      key: "push-health",
+      text: "通知の配信に問題が起きている可能性があります",
+      href: "#settings-notification",
+    })
+  }
+  if (p.pushDevices.some((d) => d.failureCount > 0)) {
+    items.push({
+      key: "push-device",
+      text: "通知を送れていない端末があります",
+      href: "#settings-notification",
+    })
+  }
+  if (p.isAppOperator) {
+    if (p.pendingUsers === null) {
+      items.push({
+        key: "approval-unknown",
+        text: "承認待ちの一覧を取得できませんでした",
+        href: "#settings-operator",
+      })
+    } else if (p.pendingUsers.length > 0) {
+      items.push({
+        key: "approval",
+        text: `承認待ちが ${p.pendingUsers.length} 人います`,
+        href: "#settings-operator",
+      })
+    }
+  }
+  return items
+}
+
+/** 設定のまとまり。見出し（h2）で区切り、カードの並びを利用目的で揃える。 */
+function SettingsSection({
+  id,
+  title,
+  description,
+  titleHidden = false,
+  children,
+}: {
+  id: string
+  title: string
+  description?: string
+  /**
+   * カードが 1 枚で、その題名が見出しと同じことを言う区画では見出しを画面に出さぬ
+   * （読み上げと見出しの移動には残す）。同じ語を 2 度並べて縦を食わせぬ。
+   */
+  titleHidden?: boolean
+  children: ReactNode
+}) {
+  const headingId = `${id}-heading`
+  return (
+    <section
+      id={id}
+      aria-labelledby={headingId}
+      className="flex scroll-mt-4 flex-col gap-3"
+    >
+      {titleHidden ? (
+        <h2 id={headingId} className="sr-only">
+          {title}
+        </h2>
+      ) : (
+        <div className="flex flex-col gap-0.5 px-1">
+          <h2 id={headingId} className="text-sm font-semibold text-muted-foreground">
+            {title}
+          </h2>
+          {description && (
+            <p className="text-xs text-muted-foreground">{description}</p>
+          )}
+        </div>
+      )}
+      {children}
+    </section>
+  )
 }
 
 const roleLabels: Record<HouseholdRole, string> = {
@@ -138,9 +263,22 @@ export function SettingsContent({
   pushHealth,
   digestTime,
   digestTimeUnknown,
+  googleConnectionsUnknown = false,
+  pushDevicesUnknown = false,
 }: SettingsContentProps) {
   const [, startTransition] = useTransition()
   const [isSigningOut, setIsSigningOut] = useState(false)
+  // ログアウトは押し間違いの代償が大きい（メールで入り直し・この端末の通知が止まる）ゆえ確認を挟む
+  const [confirmSignOut, setConfirmSignOut] = useState(false)
+  const attention = attentionItems({
+    household,
+    googleConnections,
+    googleConnectionsUnknown,
+    pushDevices,
+    pushHealth,
+    isAppOperator,
+    pendingUsers,
+  })
 
   const handleSignOut = () => {
     setIsSigningOut(true)
@@ -213,103 +351,179 @@ export function SettingsContent({
     <div className="flex flex-col gap-6 px-4 pt-12 pb-8">
       <h1 className="text-xl font-bold">設定</h1>
 
-      {/* プロフィール */}
-      <ProfileCard profile={profile} email={email} />
-
-      {/* 世帯情報 */}
-      <Card className="glass">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Home size={18} />
-            世帯
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <div className="flex flex-col gap-0.5">
-              {/* ⚠️ 読めなかった世帯を「世帯名未設定」と描かぬ（P2-31・赤ちゃん情報と同じ筋） */}
-              {household ? (
-                <p className="text-sm font-medium">
-                  {household.name || "世帯名未設定"}
-                </p>
-              ) : (
-                <p
-                  role="alert"
-                  className="flex items-start gap-2 text-sm text-muted-foreground"
+      {/* 要確認（手を打つべきものだけ）。各カードの中にも同じ状態が出ておるが、長い画面の
+          下の方で起きておる問題に気づけるよう先頭へ集める */}
+      {attention.length > 0 && (
+        <section
+          aria-labelledby="settings-attention-heading"
+          className="flex flex-col gap-2 rounded-2xl bg-primary/10 px-4 py-3 ring-1 ring-primary/20"
+        >
+          <h2
+            id="settings-attention-heading"
+            className="flex items-center gap-2 text-sm font-semibold text-primary"
+          >
+            <TriangleAlert size={16} aria-hidden="true" />
+            確認が必要な項目
+          </h2>
+          <ul className="flex flex-col">
+            {attention.map((item) => (
+              <li key={item.key}>
+                <a
+                  href={item.href}
+                  className="touch-target -mx-2 flex items-center justify-between gap-2 rounded-lg px-2 text-sm text-foreground transition-colors duration-200 hover:bg-primary/10"
                 >
-                  <TriangleAlert
-                    size={16}
-                    className="mt-0.5 shrink-0 text-destructive"
-                    aria-hidden="true"
-                  />
-                  世帯の情報を取得できませんでした
-                </p>
-              )}
-              <p className="text-xs text-muted-foreground">
-                あなたの役割: {roleLabels[profile.role]}
+                  {item.text}
+                  <ChevronRight size={16} className="shrink-0 text-primary" aria-hidden="true" />
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <SettingsSection id="settings-you" title="あなたと赤ちゃん">
+        <ProfileCard profile={profile} email={email} />
+        <BabyProfileCard initialProfile={babyProfile} />
+      </SettingsSection>
+
+      <SettingsSection
+        id="settings-family"
+        title="家族・世帯"
+      >
+        <Card className="glass">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Home size={18} aria-hidden="true" />
+              世帯
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-1">
+            {/* ⚠️ 読めなかった世帯を「世帯名未設定」と描かぬ（P2-31・赤ちゃん情報と同じ筋） */}
+            {household ? (
+              <p className="text-sm font-medium">
+                {household.name || "世帯名未設定"}
               </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+            ) : (
+              <p
+                role="alert"
+                className="flex items-start gap-2 text-sm text-muted-foreground"
+              >
+                <TriangleAlert
+                  size={16}
+                  className="mt-0.5 shrink-0 text-destructive"
+                  aria-hidden="true"
+                />
+                世帯の情報を取得できませんでした
+              </p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              あなたの役割: {roleLabels[profile.role]}
+            </p>
+          </CardContent>
+        </Card>
+        <InviteCard />
+      </SettingsSection>
 
-      {/* デフォルトページ */}
-      <DefaultPageCard defaultPage={profile.defaultPage} />
+      <SettingsSection id="settings-google" title="Google カレンダー連携" titleHidden>
+        <GoogleCalendarCard
+          connections={googleConnections}
+          notice={googleNotice}
+          connectionsUnknown={googleConnectionsUnknown}
+        />
+      </SettingsSection>
 
-      {/* 赤ちゃん情報 */}
-      <BabyProfileCard initialProfile={babyProfile} />
+      <SettingsSection id="settings-notification" title="通知と端末" titleHidden>
+        <NotificationCard
+          devices={pushDevices}
+          health={pushHealth}
+          digestTime={digestTime}
+          digestTimeUnknown={digestTimeUnknown}
+          devicesUnknown={pushDevicesUnknown}
+        />
+      </SettingsSection>
 
-      {/* Google カレンダー連携 */}
-      <GoogleCalendarCard
-        connections={googleConnections}
-        notice={googleNotice}
-      />
+      <SettingsSection id="settings-data" title="データの書き出し" titleHidden>
+        <ExportCard />
+      </SettingsSection>
 
-      {/* 通知（Web Push） */}
-      <NotificationCard
-        devices={pushDevices}
-        health={pushHealth}
-        digestTime={digestTime}
-        digestTimeUnknown={digestTimeUnknown}
-      />
-
-      {/* 記録エクスポート */}
-      <ExportCard />
-
-      {/* テーマ */}
-      <ThemeCard />
-
-      {/* 使い方ツアー再表示 */}
-      <HelpCard />
-
-      {/* 招待 */}
-      <InviteCard />
+      <SettingsSection id="settings-display" title="表示">
+        <ThemeCard />
+        <DefaultPageCard defaultPage={profile.defaultPage} />
+      </SettingsSection>
 
       {/* 承認管理（インスタンスの運用者のみ・P1-02）。世帯の owner であることは根拠にせぬ
           —— 相互に信頼せぬ他世帯の新規登録者を見せることになる。読めなかった時（null）は
           「読めなかった」を描き、0 件の時は従来どおり出さぬ */}
       {isAppOperator && (pendingUsers === null || pendingUsers.length > 0) && (
-        <ApprovalCard pendingUsers={pendingUsers} />
+        <SettingsSection
+          id="settings-operator"
+          title="運用者の管理"
+        >
+          <ApprovalCard pendingUsers={pendingUsers} />
+        </SettingsSection>
       )}
 
-      {/* ログアウト */}
-      <Separator />
+      <SettingsSection id="settings-help" title="ヘルプとアカウント">
+        <HelpCard />
 
-      <Button
-        type="button"
-        variant="ghost"
-        size="lg"
-        onClick={handleSignOut}
-        disabled={isSigningOut}
-        className="cursor-pointer text-destructive hover:text-destructive"
-      >
-        {isSigningOut ? (
-          <Loader2 size={16} className="animate-spin" />
+        <Separator />
+
+        {/* ログアウトの確認。handleSignOut（破棄 → signOut の順序・鍵の扱い）は一切変えず、
+            押す前に 1 段だけ挟む */}
+        {confirmSignOut || isSigningOut ? (
+          <div
+            role="group"
+            aria-labelledby="sign-out-confirm-title"
+            aria-describedby="sign-out-confirm-desc"
+            className="glass flex flex-col gap-3 rounded-2xl p-4 shadow-lg shadow-black/[0.04]"
+          >
+            <p id="sign-out-confirm-title" className="text-sm font-medium">
+              この端末からログアウトしますか？
+            </p>
+            <p id="sign-out-confirm-desc" className="text-xs text-muted-foreground">
+              この端末への通知は届かなくなり、端末に保存した表示用のデータも消えます。
+              もう一度使うときはログインし直してください。
+            </p>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setConfirmSignOut(false)}
+                disabled={isSigningOut}
+                autoFocus
+                className="flex-1 cursor-pointer"
+              >
+                キャンセル
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={handleSignOut}
+                disabled={isSigningOut}
+                className="flex-1 cursor-pointer"
+              >
+                {isSigningOut ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <LogOut size={16} />
+                )}
+                {isSigningOut ? "ログアウト中…" : "ログアウトする"}
+              </Button>
+            </div>
+          </div>
         ) : (
-          <LogOut size={16} />
+          <Button
+            type="button"
+            variant="ghost"
+            size="lg"
+            onClick={() => setConfirmSignOut(true)}
+            className="cursor-pointer text-destructive hover:text-destructive"
+          >
+            <LogOut size={16} />
+            ログアウト
+          </Button>
         )}
-        ログアウト
-      </Button>
+      </SettingsSection>
     </div>
   )
 }
