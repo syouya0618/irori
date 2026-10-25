@@ -26,6 +26,11 @@ vi.mock("sonner", () => ({
   },
 }))
 
+const routerRefresh = vi.fn()
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: routerRefresh, push: vi.fn() }),
+}))
+
 const updateGoogleCalendarSelection = vi.fn()
 vi.mock("@/app/(main)/settings/actions", () => ({
   updateGoogleCalendarSelection: (...a: unknown[]) =>
@@ -485,6 +490,181 @@ describe("今すぐ同期", () => {
       expect(toastError).toHaveBeenCalledWith("同期に失敗しました")
     })
     expect(button).not.toBeDisabled()
+    vi.unstubAllGlobals()
+  })
+})
+
+describe("Agent C: 状態の言い分け", () => {
+  it("接続を読めなかった時は「未接続」と偽らず、接続ボタンも出さぬ", () => {
+    render(<GoogleCalendarCard connections={[]} notice={null} connectionsUnknown />)
+    expect(screen.getByRole("alert")).toHaveTextContent("未接続とは限りません")
+    expect(screen.queryByRole("link", { name: "Google カレンダーを接続" })).toBeNull()
+    expect(screen.queryByText("未接続")).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "再読み込み" }))
+    expect(routerRefresh).toHaveBeenCalled()
+  })
+
+  it("本当に未接続なら「未接続」の札と接続ボタンを出す（対照）", () => {
+    render(<GoogleCalendarCard connections={[]} notice={null} />)
+    expect(screen.getByText("未接続")).toBeInTheDocument()
+    expect(screen.queryByRole("alert")).toBeNull()
+  })
+
+  it("カレンダー一覧を読めなかった時は再接続へ誘わぬ", () => {
+    render(
+      <GoogleCalendarCard
+        connections={[connection({ calendars: [], calendarsUnknown: true })]}
+        notice={null}
+      />,
+    )
+    expect(screen.getByText(/接続し直す必要はありません/)).toBeInTheDocument()
+    expect(screen.queryByText(/もう一度接続してください/)).toBeNull()
+  })
+
+  it("接続の札: 健全なら「接続済み」、needs_reauth なら「再接続が必要」、直近の失敗なら「同期エラー」", () => {
+    const { unmount } = render(
+      <GoogleCalendarCard connections={[connection()]} notice={null} />,
+    )
+    expect(screen.getByText("接続済み")).toBeInTheDocument()
+    unmount()
+    render(
+      <GoogleCalendarCard
+        connections={[connection({ connectionStatus: "needs_reauth" })]}
+        notice={null}
+      />,
+    )
+    expect(screen.getByText("再接続が必要")).toBeInTheDocument()
+    cleanup()
+    render(
+      <GoogleCalendarCard
+        connections={[connection({ lastErrorKind: "network" })]}
+        notice={null}
+      />,
+    )
+    expect(screen.getByText("同期エラー")).toBeInTheDocument()
+  })
+
+  it("再接続待ちの接続には同期ボタンを出さず、再接続だけを道にする（同期対象外ゆえ）", () => {
+    render(
+      <GoogleCalendarCard
+        connections={[connection({ connectionStatus: "needs_reauth" })]}
+        notice={null}
+      />,
+    )
+    expect(screen.queryByRole("button", { name: /今すぐ同期/ })).toBeNull()
+    expect(screen.getByRole("link", { name: "再接続" })).toBeInTheDocument()
+  })
+
+  it("未知の connection_status は同期対象のまま（denylist）ゆえボタンを残す", () => {
+    render(
+      <GoogleCalendarCard
+        connections={[connection({ connectionStatus: "revoked_future" })]}
+        notice={null}
+      />,
+    )
+    expect(screen.getByRole("button", { name: /今すぐ同期/ })).toBeInTheDocument()
+  })
+
+  it("選んでいる件数を見出しに出す", () => {
+    render(<GoogleCalendarCard connections={[connection()]} notice={null} />)
+    expect(screen.getByText("同期するカレンダー（2件中1件）")).toBeInTheDocument()
+  })
+
+  it("切り替えると件数の見出しもすぐ追随し、失敗で巻き戻れば件数も戻る", async () => {
+    updateGoogleCalendarSelection.mockResolvedValueOnce({ success: true })
+    render(<GoogleCalendarCard connections={[connection()]} notice={null} />)
+    fireEvent.click(screen.getByRole("switch", { name: /shared@example.test/ }))
+    expect(screen.getByText("同期するカレンダー（2件中2件）")).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /shared@example.test/ })).toBeEnabled(),
+    )
+
+    updateGoogleCalendarSelection.mockResolvedValueOnce({ error: "カレンダーの設定に失敗しました" })
+    fireEvent.click(screen.getByRole("switch", { name: /メイン/ }))
+    expect(screen.getByText("同期するカレンダー（2件中1件）")).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByText("同期するカレンダー（2件中2件）")).toBeInTheDocument(),
+    )
+  })
+
+  it("最後の 1 つを外して同期し内訳が空なら、失敗ではなく「選ばれていない」と言う", async () => {
+    updateGoogleCalendarSelection.mockResolvedValueOnce({ success: true })
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          ok: true,
+          summary: {
+            householdId: "h",
+            connections: [{ connectionId: "connection-1", needsReauth: false, subscriptions: [] }],
+          },
+        }),
+      ),
+    )
+    render(<GoogleCalendarCard connections={[connection()]} notice={null} />)
+    fireEvent.click(screen.getByRole("switch", { name: /メイン/ }))
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /メイン/ })).toHaveAttribute("aria-checked", "false"),
+    )
+    fireEvent.click(screen.getByRole("button", { name: /今すぐ同期/ }))
+    await waitFor(() => expect(screen.getByText(/選ばれていない/)).toBeInTheDocument())
+    vi.unstubAllGlobals()
+  })
+
+  it("OAuth の失敗通知には、その場の再接続導線を添える（接続済みの時）", () => {
+    render(<GoogleCalendarCard connections={[connection()]} notice="invalid_grant" />)
+    expect(screen.getByRole("link", { name: "もう一度接続する" })).toHaveAttribute(
+      "href",
+      "/api/google/oauth/start",
+    )
+  })
+
+  it("設定不備（not_configured）には再接続導線を出さぬ（押しても直らぬ）", () => {
+    render(<GoogleCalendarCard connections={[connection()]} notice="not_configured" />)
+    expect(screen.queryByRole("link", { name: "もう一度接続する" })).toBeNull()
+  })
+
+  it("同期の内訳に失敗があれば「完了」と言わず警告し、結果をカードに残す", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          ok: true,
+          summary: {
+            householdId: "h",
+            connections: [
+              {
+                connectionId: "connection-1",
+                needsReauth: false,
+                subscriptions: [
+                  { status: "synced", upserted: 1, deleted: 0 },
+                  { status: "failed", upserted: 0, deleted: 0 },
+                ],
+              },
+            ],
+          },
+        }),
+      ),
+    )
+    render(<GoogleCalendarCard connections={[connection()]} notice={null} />)
+    fireEvent.click(screen.getByRole("button", { name: /今すぐ同期/ }))
+    await waitFor(() =>
+      expect(screen.getByText(/2件中1件のカレンダーを同期できませんでした/)).toBeInTheDocument(),
+    )
+    expect(toastSuccess).not.toHaveBeenCalled()
+    // 最終同期時刻と状態はサーバの行から取り直す
+    expect(routerRefresh).toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it("同期中はボタンの文言で示す", async () => {
+    let resolve!: (r: Response) => void
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((r) => (resolve = r))))
+    render(<GoogleCalendarCard connections={[connection()]} notice={null} />)
+    fireEvent.click(screen.getByRole("button", { name: /今すぐ同期/ }))
+    expect(screen.getByRole("button", { name: /同期中…/ })).toBeDisabled()
+    resolve(Response.json({ ok: true }))
+    await waitFor(() => expect(screen.getByRole("button", { name: /今すぐ同期/ })).toBeEnabled())
     vi.unstubAllGlobals()
   })
 })

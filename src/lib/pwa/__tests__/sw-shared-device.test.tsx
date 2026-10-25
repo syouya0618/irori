@@ -381,7 +381,9 @@ async function logoutViaSettings(
     throw REDIRECT
   })
   renderSettings(userId)
+  // 設定画面のログアウトは確認を 1 段挟む（押し間違い防止）。経路は確認の「ログアウトする」から
   fireEvent.click(screen.getByRole("button", { name: "ログアウト" }))
+  fireEvent.click(screen.getByRole("button", { name: "ログアウトする" }))
   if (outcome === "success") {
     await waitFor(() => expect(caughtByBoundary).toBe(REDIRECT))
   } else {

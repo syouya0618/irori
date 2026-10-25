@@ -236,3 +236,46 @@ describe("世帯を読めなかった時（P2-31）", () => {
     expect(props.household).toEqual({ id: "h1", name: "我が家" })
   })
 })
+
+describe("読めなかった接続・端末を「無い」と描かせぬ（Agent C）", () => {
+  const CONNECTION = {
+    id: "c1",
+    google_email: "a@example.com",
+    connection_status: "active",
+    sync_status: "idle",
+    last_error_kind: null,
+    last_synced_at: null,
+  }
+
+  it("Google 接続の取得に失敗したら googleConnectionsUnknown を立てる", async () => {
+    tableResults.google_connections = { data: null, error: DB_ERROR }
+    const props = await renderProps()
+    expect(props.googleConnectionsUnknown).toBe(true)
+    expect(props.googleConnections).toEqual([])
+  })
+
+  it("通知端末の取得に失敗したら pushDevicesUnknown を立てる", async () => {
+    tableResults.push_subscriptions = { data: null, error: DB_ERROR }
+    const props = await renderProps()
+    expect(props.pushDevicesUnknown).toBe(true)
+  })
+
+  it("購読一覧の取得に失敗したら接続ごとに calendarsUnknown を立てる（再接続へ誘わぬ）", async () => {
+    tableResults.google_connections = { data: [CONNECTION], error: null }
+    tableResults.google_calendar_subscriptions = { data: null, error: DB_ERROR }
+    const props = await renderProps()
+    const views = props.googleConnections as Array<Record<string, unknown>>
+    expect(views[0].calendarsUnknown).toBe(true)
+    expect(views[0].calendars).toEqual([])
+  })
+
+  it("対照: 読めた時はどの旗も立てぬ", async () => {
+    tableResults.google_connections = { data: [CONNECTION], error: null }
+    tableResults.google_calendar_subscriptions = { data: [], error: null }
+    const props = await renderProps()
+    expect(props.googleConnectionsUnknown).toBe(false)
+    expect(props.pushDevicesUnknown).toBe(false)
+    const views = props.googleConnections as Array<Record<string, unknown>>
+    expect(views[0].calendarsUnknown).toBe(false)
+  })
+})

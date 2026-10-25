@@ -158,8 +158,52 @@ function renderSettings() {
     />
     </SignalBoundary>,
   )
-  return screen.getByRole("button", { name: "ログアウト" })
+  // ログアウトは確認を 1 段挟む（Agent C）。検証対象の経路は確認の「ログアウトする」から始まる
+  fireEvent.click(screen.getByRole("button", { name: "ログアウト" }))
+  return screen.getByRole("button", { name: "ログアウトする" })
 }
+
+describe("ログアウトの確認（押し間違いで止めぬ）", () => {
+  it("最初の「ログアウト」では何も始めず、確認を出す。キャンセルで戻る", () => {
+    render(
+      <SettingsContent
+        profile={{
+          id: "user-a",
+          displayName: "A",
+          avatarUrl: null,
+          role: "owner",
+          defaultPage: "baby",
+        }}
+        household={{ id: "h", name: "家" }}
+        email="a@example.test"
+        isAppOperator={false}
+        pendingUsers={[]}
+        babyProfile={null}
+        googleConnections={[]}
+        googleNotice={null}
+        pushDevices={[]}
+        pushHealth={{
+          runState: "healthy",
+          ranAtLabel: "3分前",
+          failedCount: 0,
+          deliveryState: "sent",
+          lastSentLabel: "1時間前",
+        }}
+        digestTime={null}
+        digestTimeUnknown={false}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "ログアウト" }))
+    expect(signOut).not.toHaveBeenCalled()
+    expect(purgeHouseholdCaches).not.toHaveBeenCalled()
+    expect(screen.getByRole("group", { name: /削除|破棄|ログアウト/ })).toHaveTextContent("この端末からログアウトしますか？")
+    expect(screen.getByRole("button", { name: "キャンセル" })).toHaveFocus()
+    fireEvent.click(screen.getByRole("button", { name: "キャンセル" }))
+    expect(screen.queryByRole("group", { name: /削除|破棄|ログアウト/ })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "ログアウト" })).toBeInTheDocument()
+    expect(signOut).not.toHaveBeenCalled()
+  })
+})
 
 describe("SettingsContent の通信断 reject 握り（I-02）", () => {
   it("signOut が reject → ログアウトできなかったと伝え、ボタンが再び押せる", async () => {

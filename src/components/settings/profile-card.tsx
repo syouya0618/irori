@@ -86,7 +86,7 @@ export function ProfileCard({ profile, email }: ProfileCardProps) {
               defaultValue={profile.displayName}
               placeholder="表示名を入力"
               required
-              className="h-10"
+              className="h-11"
             />
           </div>
 

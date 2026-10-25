@@ -238,6 +238,9 @@ export default async function SettingsPage({
         is_selected: boolean
       }[]
     | null = null
+  // 購読一覧を読めなかったか。読めぬまま `[]` を渡すと、カードは「一覧を取得できていません。
+  // もう一度接続してください」と**要らぬ再接続**へ誘う（接続そのものは健全かもしれぬ）。
+  let googleSubscriptionsFailed = false
   if (connectionIds.length > 0) {
     const { data: subscriptions, error: subscriptionsError } = await supabase
       .from("google_calendar_subscriptions")
@@ -254,6 +257,7 @@ export default async function SettingsPage({
       )
     }
     googleSubscriptions = subscriptions
+    googleSubscriptionsFailed = Boolean(subscriptionsError)
   }
 
   const googleConnectionViews = (googleConnections ?? []).map((connection) => ({
@@ -263,6 +267,7 @@ export default async function SettingsPage({
     syncStatus: connection.sync_status,
     lastErrorKind: connection.last_error_kind,
     lastSyncedAt: connection.last_synced_at,
+    calendarsUnknown: googleSubscriptionsFailed,
     calendars: (googleSubscriptions ?? [])
       .filter((s) => s.connection_id === connection.id)
       .map((s) => ({
@@ -339,6 +344,10 @@ export default async function SettingsPage({
       // 「送らない」と表示すれば、実際には毎朝届く設定が画面の上では切れて見える
       // （B-4 の診断が「読めなかった」を never と偽らぬのと同じ筋じゃ）。
       digestTimeUnknown={Boolean(notificationPrefsError)}
+      // ⚠️ 同じ筋で、読めなかった接続・端末一覧を「未接続」「端末なし」と描かせぬ。
+      // 未接続と偽れば接続ボタンを押させ、端末なしと偽れば「届きません」と嘘を言う。
+      googleConnectionsUnknown={Boolean(googleConnectionsError)}
+      pushDevicesUnknown={Boolean(pushDevicesError)}
       pushHealth={summarizeNotificationHealth({
         ranAt: heartbeat?.ran_at ?? null,
         failedCount: heartbeat?.failed_count ?? null,

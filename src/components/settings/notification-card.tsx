@@ -27,6 +27,7 @@ import {
   Activity,
   Bell,
   BellOff,
+  BellRing,
   Loader2,
   Send,
   Smartphone,
@@ -64,6 +65,7 @@ import {
   writePushOptOut,
 } from "@/lib/pwa/push-reconcile"
 import { toastOfflineError } from "@/lib/utils/offline-error"
+import { cn } from "@/lib/utils"
 import type { NotificationHealthView } from "@/lib/domain/notification-health"
 
 export interface PushDeviceView {
@@ -97,6 +99,94 @@ interface NotificationCardProps {
    * 前者は「分からぬ」、後者は「送らないと決まっておる」じゃ。
    */
   digestTimeUnknown: boolean
+  /**
+   * 端末一覧を**読めなかった**。`devices.length === 0` と混ぜてはならぬ —— 前者は
+   * 「分からぬ」、後者は「受け取れる端末が無いと決まっておる」じゃ。
+   */
+  devicesUnknown?: boolean
+}
+
+/**
+ * **この端末**の通知の状態。ブラウザの権限（許可）と購読（登録）は別物ゆえ分けて言う。
+ * 実際に届いたか（配信）は端末一覧の「最終受信」が担う。
+ */
+type ThisDeviceState =
+  | "checking" // 確認中
+  | "check-failed" // 確認が期限内に終わらなんだ（SW の準備が解決せぬ等）
+  | "unconfigured" // 管理者の設定（VAPID）が無い
+  | "unsupported" // この開き方では使えぬ（iOS の Safari タブ等）
+  | "denied" // 権限が拒否されておる
+  | "not-asked" // まだ許可しておらぬ
+  | "granted-unsubscribed" // 許可はあるが、このアプリへの登録が無い
+  | "subscribed" // 登録済み
+
+function thisDeviceStateOf(p: {
+  vapid: boolean
+  supported: boolean | null
+  denied: boolean
+  permission: NotificationPermission | null
+  subscribedHere: boolean
+  checkTimedOut: boolean
+}): ThisDeviceState {
+  if (!p.vapid) return "unconfigured"
+  if (p.supported === false) return "unsupported"
+  if (p.supported === null) return p.checkTimedOut ? "check-failed" : "checking"
+  if (p.denied || p.permission === "denied") return "denied"
+  if (p.subscribedHere) return "subscribed"
+  if (p.permission === "granted") return "granted-unsubscribed"
+  return "not-asked"
+}
+
+const THIS_DEVICE_TEXT: Record<ThisDeviceState, { title: string; body: string }> = {
+  checking: { title: "確認しています", body: "この端末の通知の状態を確認しています。" },
+  "check-failed": {
+    title: "この端末の状態を確認できませんでした",
+    body: "画面を再読み込みしてください。下のボタンからそのまま試すこともできます。",
+  },
+  unconfigured: {
+    title: "通知の設定が未完了です",
+    body: "管理者に連絡してください。",
+  },
+  unsupported: {
+    title: "この開き方では通知を受け取れません",
+    body: "iPhone の場合はホーム画面に追加してから開き直すと有効にできます。",
+  },
+  denied: {
+    title: "通知が拒否されています",
+    body: "ブラウザ（または端末）の設定から許可し直してください。このページからは戻せません。",
+  },
+  "not-asked": {
+    title: "この端末ではまだ受け取っていません",
+    body: "下のボタンで通知を許可すると、テスト通知が届きます。",
+  },
+  "granted-unsubscribed": {
+    title: "許可済みですが、まだ登録されていません",
+    body: "下のボタンでこの端末を登録すると、テスト通知が届きます。",
+  },
+  subscribed: {
+    title: "この端末で受け取れます",
+    body: "届いているかは、下の端末一覧の「最終受信」で確かめられます。",
+  },
+}
+
+/** この端末の確認（SW の準備待ち）の期限。過ぎたら「確認できなかった」へ倒す。 */
+const DEVICE_CHECK_TIMEOUT_MS = 10_000
+
+/** `navigator.serviceWorker.ready` を期限つきで待つ。期限切れは null（呼び出し側が文言を出す）。 */
+function readyWithin(ms: number): Promise<ServiceWorkerRegistration | null> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(null), ms)
+    navigator.serviceWorker.ready.then(
+      (registration) => {
+        clearTimeout(timer)
+        resolve(registration)
+      },
+      (err: unknown) => {
+        clearTimeout(timer)
+        reject(err)
+      },
+    )
+  })
 }
 
 /** base64url の VAPID 公開鍵を `applicationServerKey` 用の Uint8Array へ変換する。 */
@@ -166,6 +256,13 @@ function deviceStatusOf(device: PushDeviceView): string {
   return "まだ届いていません"
 }
 
+/** 端末ごとの札（文字で状態を言う。色は補助）。 */
+function deviceBadgeOf(device: PushDeviceView): { label: string; warn: boolean } {
+  if (device.failureCount > 0) return { label: "送信エラー", warn: true }
+  if (device.lastSuccessLabel) return { label: "受信できています", warn: false }
+  return { label: "未受信", warn: false }
+}
+
 /**
  * Select に出す選択肢。
  *
@@ -198,6 +295,7 @@ export function NotificationCard({
   health,
   digestTime,
   digestTimeUnknown,
+  devicesUnknown = false,
 }: NotificationCardProps) {
   // 公開鍵はビルド時に埋まる（`NEXT_PUBLIC_` ゆえレンダー中に読んで安全）。
   // 未設定のまま subscribe すると、環境によっては購読が成立して「有効」に見えるのに
@@ -240,6 +338,18 @@ export function NotificationCard({
    * 古い値）に「届かぬ」と偽らぬためじゃ。
    */
   const digestReachable = devices.length > 0 || subscribedHere
+  // 一覧を読めなかった時は「届かぬ」とも言えぬ（分からぬ）。警告は出さず、文言も中立にする。
+  const digestReachabilityKnown = !devicesUnknown || subscribedHere
+  const [permission, setPermission] = useState<NotificationPermission | null>(null)
+  const [checkTimedOut, setCheckTimedOut] = useState(false)
+  const thisDevice = thisDeviceStateOf({
+    vapid: Boolean(vapidPublicKey),
+    supported,
+    denied,
+    permission,
+    subscribedHere,
+    checkTimedOut,
+  })
 
   // ⚠️ setState は **promise のコールバック内**で呼ぶ（effect 本体で同期的に呼ぶと
   // React Compiler の「effect 内の同期 setState」規則に触れる）。
@@ -249,19 +359,28 @@ export function NotificationCard({
       return
     }
     let cancelled = false
+    // SW の登録に失敗した環境では `ready` が永久に解決せぬ。「確認しています」で固めず、
+    // 期限が来たら「確認できなかった」と言ってボタンを押せるように戻す。
+    const checkTimer = setTimeout(() => {
+      if (!cancelled) setCheckTimedOut(true)
+    }, DEVICE_CHECK_TIMEOUT_MS)
     navigator.serviceWorker.ready
       .then((registration) => registration.pushManager.getSubscription())
       .then((subscription) => {
         if (cancelled) return
+        clearTimeout(checkTimer)
         setSupported(true)
         setSubscribedHere(Boolean(subscription))
         setDenied(Notification.permission === "denied")
+        setPermission(Notification.permission)
       })
       .catch(() => {
+        clearTimeout(checkTimer)
         if (!cancelled) setSupported(false)
       })
     return () => {
       cancelled = true
+      clearTimeout(checkTimer)
     }
   }, [])
 
@@ -270,14 +389,26 @@ export function NotificationCard({
     setWorking(true)
     try {
       // 権限要求はユーザー操作のハンドラ内から即座に（Apple 公式要件）。
-      const permission = await Notification.requestPermission()
-      if (permission !== "granted") {
-        setDenied(permission === "denied")
+      const asked = await Notification.requestPermission()
+      setPermission(asked)
+      if (asked !== "granted") {
+        setDenied(asked === "denied")
         toast.error("通知が許可されませんでした。")
         return
       }
 
-      const registration = await navigator.serviceWorker.ready
+      // `ready` は SW の登録が壊れた環境で永久に解決せぬ。確認と同じ期限で打ち切り、
+      // 「設定中…」のまま固めぬ（期限切れの表示が「試せる」と誘うゆえ、行き止まりにせぬ）。
+      const registration = await readyWithin(DEVICE_CHECK_TIMEOUT_MS)
+      if (registration === null) {
+        console.error("[notification-card] serviceWorker.ready が期限内に解決せず", {
+          timeoutMs: DEVICE_CHECK_TIMEOUT_MS,
+        })
+        toast.error(
+          "この端末で通知の準備が整いませんでした。画面を再読み込みしてから、もう一度お試しください。",
+        )
+        return
+      }
       const existing = await registration.pushManager.getSubscription()
       const subscription =
         existing ??
@@ -338,9 +469,11 @@ export function NotificationCard({
         toast.success(
           next === DIGEST_TIME_NONE
             ? "毎朝のまとめを止めました。"
-            : digestReachable
-              ? `毎朝 ${next} にまとめをお届けします。`
-              : `毎朝 ${next} に設定しました。通知を受け取る端末がないため、まだ届きません。`,
+            : !digestReachabilityKnown
+              ? `毎朝 ${next} に設定しました。`
+              : digestReachable
+                ? `毎朝 ${next} にまとめをお届けします。`
+                : `毎朝 ${next} に設定しました。通知を受け取る端末がないため、まだ届きません。`,
         )
       } catch (error) {
         // reject は「サーバーへ届いてすらおらぬ」＝ result.error より確実に未反映。
@@ -350,7 +483,7 @@ export function NotificationCard({
         setDigestSaving(false)
       }
     },
-    [digestChoice, digestReachable],
+    [digestChoice, digestReachable, digestReachabilityKnown],
   )
 
   /**
@@ -432,66 +565,98 @@ export function NotificationCard({
           通知
         </CardTitle>
       </CardHeader>
-      <CardContent className="flex flex-col gap-3">
+      <CardContent className="flex flex-col gap-4">
         <p className="text-sm text-muted-foreground">
-          予定の時刻に、この端末へ通知を送れるようにします。
+          予定と毎朝のまとめを、登録した端末へ通知します。
         </p>
 
-        {!vapidPublicKey && (
-          <p className="flex items-start gap-2 text-sm text-muted-foreground">
-            <TriangleAlert size={16} className="mt-0.5 shrink-0" />
-            通知の設定が未完了です（管理者に連絡してください）。
-          </p>
-        )}
-
-        {supported === false && (
-          <p className="flex items-start gap-2 text-sm text-muted-foreground">
-            <BellOff size={16} className="mt-0.5 shrink-0" />
-            この端末では通知を受け取れません。iPhone の場合は
-            <strong>ホーム画面に追加してから</strong>
-            開き直すと有効にできます。
-          </p>
-        )}
-
-        {denied && (
-          <p className="flex items-start gap-2 text-sm text-muted-foreground">
-            <BellOff size={16} className="mt-0.5 shrink-0" />
-            通知が拒否されています。ブラウザの設定から許可し直してください
-            （このページからは戻せません）。
-          </p>
-        )}
-
-        {vapidPublicKey && supported !== false && (
-          <Button
-            type="button"
-            onClick={handleEnable}
-            disabled={working}
-            variant={subscribedHere ? "outline" : "default"}
-            className="min-h-11 self-start"
-          >
-            {working ? (
-              <>
-                <Loader2 size={16} className="animate-spin" />
-                設定中…
-              </>
+        {/* ── この端末（権限と登録）────────────────────────────
+            「許可した（ブラウザの権限）」「登録した（購読）」「届いた（配信）」は別物じゃ。
+            ここは前の 2 つだけを言い、届いたかは下の端末一覧が言う。
+            正常（登録済み）の時は 1 行に畳む。手を打つべき状態の時だけ理由の文を添える。 */}
+        <div
+          role="status"
+          aria-live="polite"
+          className={cn(
+            "flex rounded-xl px-3",
+            thisDevice === "subscribed"
+              ? "flex-row flex-wrap items-center justify-between gap-x-3 gap-y-1 bg-muted/40 py-1"
+              : "flex-col gap-2 bg-primary/10 py-3",
+          )}
+        >
+          {thisDevice !== "subscribed" && (
+            <p className="text-xs font-medium text-muted-foreground">この端末</p>
+          )}
+          <p className="flex items-start gap-2 text-sm font-medium">
+            {thisDevice === "subscribed" ? (
+              <BellRing size={16} className="mt-0.5 shrink-0 text-primary" aria-hidden="true" />
+            ) : thisDevice === "checking" ? (
+              <Loader2 size={16} className="mt-0.5 shrink-0 animate-spin" aria-hidden="true" />
+            ) : thisDevice === "unconfigured" ? (
+              <TriangleAlert size={16} className="mt-0.5 shrink-0 text-primary" aria-hidden="true" />
             ) : (
-              <>
-                <Bell size={16} />
-                {subscribedHere
-                  ? "この端末へテスト通知を送る"
-                  : "この端末で通知を受け取る"}
-              </>
+              <BellOff size={16} className="mt-0.5 shrink-0 text-primary" aria-hidden="true" />
             )}
-          </Button>
-        )}
+            {THIS_DEVICE_TEXT[thisDevice].title}
+          </p>
+          {thisDevice !== "subscribed" && (
+            <p className="text-xs text-muted-foreground">{THIS_DEVICE_TEXT[thisDevice].body}</p>
+          )}
 
-        {devices.length > 0 && (
-          <div className="flex flex-col gap-2">
-            <p className="text-xs font-medium text-muted-foreground">
-              通知を受け取る端末
+          {vapidPublicKey && supported !== false && (
+            <Button
+              type="button"
+              onClick={handleEnable}
+              disabled={working || (supported === null && !checkTimedOut)}
+              variant={subscribedHere ? "ghost" : "default"}
+              // 見た目を「テスト通知」に縮めた時だけ、何をするかを読み上げ名で補う
+              aria-label={subscribedHere && !working ? "この端末へテスト通知を送る" : undefined}
+              className={cn("min-h-11", subscribedHere ? "-mr-2 text-primary" : "self-start")}
+            >
+              {working ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  設定中…
+                </>
+              ) : (
+                <>
+                  <Bell size={16} />
+                  {subscribedHere ? "テスト通知" : "この端末で通知を受け取る"}
+                </>
+              )}
+            </Button>
+          )}
+        </div>
+
+        {/* ── 受け取る端末（家族のではなく、あなたの端末）────────────── */}
+        <div className="flex flex-col gap-2">
+          <p className="text-xs font-medium text-muted-foreground">
+            {/* 台数は一覧が読めて、かつ上段（この端末で受け取れます）と食い違わぬ時だけ出す。
+                登録直後は devices が再描画までサーバの古い値（0 台）ゆえ数えぬ */}
+            通知を受け取る端末
+            {!devicesUnknown && !(devices.length === 0 && subscribedHere) && `（${devices.length}台）`}
+          </p>
+          {devicesUnknown ? (
+            <p role="alert" className="flex items-start gap-2 text-sm text-muted-foreground">
+              <TriangleAlert size={16} className="mt-0.5 shrink-0 text-destructive" aria-hidden="true" />
+              端末の一覧を取得できませんでした。通知が止まっているとは限りません。
             </p>
+          ) : devices.length === 0 && !subscribedHere ? (
+            // 登録直後（devices は再描画までサーバの古い値）に「届きません」と上段の
+            // 「この端末で受け取れます」が食い違わぬよう、digestReachable と同じ条件で出す
+            <p className="flex items-start gap-2 rounded-xl bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+              <BellOff size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+              通知を受け取れる端末がまだありません。予定の通知も毎朝のまとめも、端末を登録するまで届きません。
+            </p>
+          ) : null}
+        </div>
+
+        {!devicesUnknown && devices.length > 0 && (
+          <div className="-mt-2 flex flex-col gap-2">
             <ul className="flex flex-col gap-1">
-              {devices.map((device) => (
+              {devices.map((device) => {
+                const badge = deviceBadgeOf(device)
+                return (
                 <li
                   key={device.id}
                   className="flex items-center justify-between gap-2 rounded-xl bg-muted/40 px-3 py-2"
@@ -506,10 +671,23 @@ export function NotificationCard({
                         {formatDate(device.createdAt)}
                       </span>
                     </span>
-                    {/* B-1 で列は在ったが誰も読んでおらなんだ failure_count を出す。
+                    {/* 札（状態の分類）と内訳を 1 行に並べる。
+                        B-1 で列は在ったが誰も読んでおらなんだ failure_count を出す。
                         端末ごとの失敗は「1 台だけ死んでおる」を切り分ける唯一の手がかりじゃ。 */}
-                    <span className="text-xs text-muted-foreground">
-                      {deviceStatusOf(device)}
+                    <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                      <span
+                        className={cn(
+                          "w-fit rounded-full px-2 py-0.5 text-[11px] font-medium",
+                          badge.warn
+                            ? "bg-destructive/10 text-destructive"
+                            : "bg-muted text-muted-foreground",
+                        )}
+                      >
+                        {badge.label}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {deviceStatusOf(device)}
+                      </span>
                     </span>
                   </span>
                   <Button
@@ -528,8 +706,13 @@ export function NotificationCard({
                     一覧から外す
                   </Button>
                 </li>
-              ))}
+                )
+              })}
             </ul>
+            {/* 「一覧から外す」は解除ではない（他端末のブラウザには手が届かぬ）ことを常に書く */}
+            <p className="text-xs text-muted-foreground">
+              ほかの端末は一覧から外しても、その端末でアプリを開くと再び登録されます。
+            </p>
           </div>
         )}
 
@@ -582,7 +765,7 @@ export function NotificationCard({
               故障を疑って追えぬ道へ入る。**Select は塞がぬ** —— 時刻は利用者ごとの
               設定ゆえ、受け取る端末を後から足す順序（ノートで選び、iPhone で受ける）を
               妨げてはならぬ。 */}
-          {digestChoice !== DIGEST_TIME_NONE && !digestReachable && (
+          {digestChoice !== DIGEST_TIME_NONE && digestReachabilityKnown && !digestReachable && (
             <p className="flex items-start gap-2 text-xs text-muted-foreground">
               <TriangleAlert size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
               通知を受け取る端末がないため、この時刻に設定してもまだ届きません。

@@ -75,12 +75,14 @@ export function InviteCard() {
               <Input
                 value={inviteUrl}
                 readOnly
-                className="h-10 flex-1 text-xs"
+                aria-label="招待リンク"
+                onFocus={(e) => e.currentTarget.select()}
+                className="h-11 flex-1 text-xs"
               />
               <Button
                 type="button"
                 variant="outline"
-                size="icon-lg"
+                size="lg"
                 onClick={handleCopy}
                 className="shrink-0 cursor-pointer"
                 aria-label="招待リンクをコピー"
@@ -90,8 +92,18 @@ export function InviteCard() {
                 ) : (
                   <ClipboardCopy size={16} />
                 )}
+                {copied ? "コピー済み" : "コピー"}
               </Button>
             </div>
+            {/* generateInvite は新しい行を足すだけで、前のリンクを失効させぬ（実装を確認済み）。
+                「作り直せば前のは使えぬ」と誤解させぬよう事実を書く */}
+            {/* accept_invitation は承認と所属を同時に立てる（20261002100001 の注記）ゆえ
+                運用者の承認は要らぬ。既に別の世帯に入っておる人は参加できぬ。
+                受諾で status='accepted' になり 2 人目は弾かれる（20260408000002）＝ 1 リンク 1 人 */}
+            <p className="text-xs text-muted-foreground">
+              1 つのリンクで参加できるのは 1 人です（運用者の承認は不要、別の世帯に入っている人は不可）。
+              新しいリンクを作っても、前のリンクは期限まで使えます。
+            </p>
             <Button
               type="button"
               variant="ghost"
@@ -100,6 +112,7 @@ export function InviteCard() {
               disabled={isGenerating}
               className="cursor-pointer self-start"
             >
+              {isGenerating && <Loader2 size={14} className="animate-spin" />}
               新しいリンクを生成
             </Button>
           </div>

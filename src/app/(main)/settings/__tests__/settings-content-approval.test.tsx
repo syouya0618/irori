@@ -145,7 +145,11 @@ describe("世帯を読めなかった時（P2-31）", () => {
 
     expect(screen.getByTestId("baby-profile-card")).toHaveTextContent("unknown")
     expect(screen.queryByText("世帯名未設定")).toBeNull()
-    expect(screen.getByText(/世帯の情報を取得できませんでした/)).toBeInTheDocument()
+    // 世帯カードの中（role=alert）と、先頭の「確認が必要な項目」の両方に出す
+    expect(screen.getByRole("alert")).toHaveTextContent(/世帯の情報を取得できませんでした/)
+    expect(
+      screen.getByRole("link", { name: /世帯の情報を取得できませんでした/ }),
+    ).toHaveAttribute("href", "#settings-family")
   })
 
   it("読めた時は世帯名を出す（対照）", () => {
