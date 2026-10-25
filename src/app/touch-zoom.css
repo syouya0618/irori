@@ -1,0 +1,40 @@
+/*
+ * ピンチ拡大を禁じぬ代わりの守り（WCAG 2.2 SC 1.4.4）。
+ *
+ * `src/app/layout.tsx` の viewport から `maximumScale: 1` / `userScalable: false` を外した。
+ * あの封印の目的は 2 つ — iPhone Safari が 16px 未満の入力欄にフォーカスした時の勝手な
+ * 拡大と、ダブルタップ拡大の誤爆 — じゃったが、代償として夜中に小さな数字を読めぬ人が
+ * 拡大できなんだ（Android は user-scalable=no を尊重する）。ここで**原因の側**を消す。
+ *
+ * ⚠️ このファイルは意図して @layer の外に在る。cascade layer に入れた規則は層の外の
+ * 規則に必ず負ける（CSS Cascade 5）ため、Tailwind の utilities（@layer utilities）が
+ * 付けた text-sm / text-xs に勝つには層の外に置くしかない。globals.css の @layer へ
+ * 移してはならぬ（移すと床が効かなくなり、tsc も lint も黙る）。
+ *
+ * 一式（viewport の解除・本ファイル・zoom-policy-contract.test.ts）は 1 つの関心事じゃ。
+ * iOS 実機での確認（縦・横で入力欄にフォーカスしても拡大せぬ／ピンチ拡大できる／下シート内の
+ * ダブルタップ）はまだ行っておらぬ。実機で問題が出たら、この一式をまとめて戻す。
+ */
+
+/* ダブルタップ拡大を切り、タップの反応を即時にする（パン・ピンチ拡大は残る）。
+ * manipulation は要素とその子孫の touch に効くゆえ、html に置けば全画面に及ぶ。 */
+html {
+  touch-action: manipulation;
+}
+
+/* 指で触る端末では、入力欄の文字を 16px 未満にせぬ。
+ * iPhone Safari は 16px 未満の input / select / textarea にフォーカスすると画面ごと拡大し、
+ * 戻らない。この挙動は primary pointer が coarse の端末（iPhone）だけで起きるため
+ * `(pointer: coarse)` で絞る。iPad・Android は拡大せぬが、16px になっても害は無い。
+ *
+ * 除外は「18px 以上を明示した欄」だけ（text-lg 以上）。`text-base` は除外せぬ —
+ * ui/input.tsx・ui/textarea.tsx は `text-base md:text-sm` を持ち、横持ちの iPhone
+ * （幅 844〜932px）では md: が効いて 14px に戻るゆえ、床で打ち消す必要がある
+ * （独立レビューで見つかった穴）。
+ * 任意値（text-[20px]）や text-4xl 超の欄は現状 0 件で、増やす時は除外に足すこと
+ * （zoom-policy-contract.test.ts が src を走査して固定する）。 */
+@media (pointer: coarse) {
+  :is(input, select, textarea):not(.text-lg, .text-xl, .text-2xl, .text-3xl, .text-4xl) {
+    font-size: 1rem;
+  }
+}
