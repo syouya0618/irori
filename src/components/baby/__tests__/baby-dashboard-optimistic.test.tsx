@@ -76,7 +76,7 @@ vi.mock("@/app/(main)/baby/actions", () => ({
   recordMemo: vi.fn(),
   updateLog: vi.fn(),
 }))
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), dismiss: vi.fn() } }))
 
 // vi.mock 後 import
 import { BabyDashboard } from "../baby-dashboard"
@@ -745,5 +745,121 @@ describe("BabyDashboard / 編集の衝突（P2-07）", () => {
     expect(mockedToast.success).not.toHaveBeenCalled()
     expect((screen.getByLabelText("メモ") as HTMLTextAreaElement).value).toBe("Bのメモ")
     expect(await saveSettled()).toBeEnabled()
+  })
+})
+
+describe("BabyDashboard / 取り消しと Realtime 通知の競合", () => {
+  const createdVersion = "2026-10-21T03:00:00.123456+00:00"
+
+  // 帯はトーストが閉じた後に出る。実物の sonner と同じく、出したトーストは自動で閉じる
+  beforeEach(() => {
+    mockedToast.success.mockImplementation(((
+      _message: unknown,
+      opts?: { onAutoClose?: () => void },
+    ) => {
+      setTimeout(() => act(() => opts?.onAutoClose?.()), 0)
+      return 1
+    }) as never)
+  })
+  afterEach(() => {
+    mockedToast.success.mockReset()
+  })
+
+  async function recordPeeThenUndoInline(id: string) {
+    mockedRecordDiaper.mockResolvedValue({ error: null, id, updatedAt: createdVersion })
+    mockedDeleteLog.mockResolvedValue({ error: null })
+    render(<BabyDashboard {...defaultProps()} />)
+    fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
+    const undo = await screen.findByRole("button", { name: /^直前の記録（\d\d:\d\d）を取り消す$/ })
+    await waitFor(() => expect(undo).not.toBeDisabled())
+    fireEvent.click(undo)
+    await waitFor(() => expect(mockedDeleteLog).toHaveBeenCalledWith(id, createdVersion))
+    await waitFor(() =>
+      expect(within(summary()).getByText("おしっこ0・うんち0")).toBeInTheDocument(),
+    )
+  }
+
+  it("取り消しに成功した後で同じ行の INSERT 通知が遅れて届いても、行を蘇らせぬ", async () => {
+    await recordPeeThenUndoInline("diaper-late-insert")
+    act(() => {
+      emit(
+        makePayload(
+          "INSERT",
+          makeLog({
+            id: "diaper-late-insert",
+            log_type: "diaper",
+            logged_at: new Date().toISOString(),
+            diaper_type: "pee",
+            updated_at: createdVersion,
+          }),
+        ),
+      )
+    })
+    expect(within(summary()).getByText("おしっこ0・うんち0")).toBeInTheDocument()
+    expect(screen.getByText("まだ記録がありません")).toBeInTheDocument()
+    // 消えた行の取り消しの帯も戻らぬ
+    expect(screen.queryByRole("button", { name: /^直前の記録/ })).toBeNull()
+  })
+
+  it("取り消しに成功した後で同じ行の古い UPDATE 通知が届いても、行を蘇らせぬ", async () => {
+    await recordPeeThenUndoInline("diaper-late-update")
+    act(() => {
+      emit(
+        makePayload(
+          "UPDATE",
+          makeLog({
+            id: "diaper-late-update",
+            log_type: "diaper",
+            logged_at: new Date().toISOString(),
+            diaper_type: "pee",
+            updated_at: createdVersion,
+          }),
+        ),
+      )
+    })
+    expect(within(summary()).getByText("おしっこ0・うんち0")).toBeInTheDocument()
+  })
+
+  it("消した後に同じ id で作り直された行（冪等 id の再試行）は、以後の更新通知を弾かぬ", async () => {
+    await recordPeeThenUndoInline("diaper-recreated")
+    // 同じ冪等 id での再試行がサーバで新しい行として作られた（作成の応答が届く）
+    fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
+    await waitFor(() =>
+      expect(within(summary()).getByText("おしっこ1・うんち0")).toBeInTheDocument(),
+    )
+    // 家族が種類を直した UPDATE 通知は、作り直された行へ届く
+    act(() => {
+      emit(
+        makePayload(
+          "UPDATE",
+          makeLog({
+            id: "diaper-recreated",
+            log_type: "diaper",
+            logged_at: new Date().toISOString(),
+            diaper_type: "poop",
+            updated_at: "2099-01-01T00:00:00.000000+00:00",
+          }),
+        ),
+      )
+    })
+    expect(within(summary()).getByText("おしっこ0・うんち1")).toBeInTheDocument()
+  })
+
+  it("対照: 別の id の INSERT 通知は従来どおり入る（消した行だけを弾く）", async () => {
+    await recordPeeThenUndoInline("diaper-removed")
+    act(() => {
+      emit(
+        makePayload(
+          "INSERT",
+          makeLog({
+            id: "diaper-other",
+            log_type: "diaper",
+            logged_at: new Date().toISOString(),
+            diaper_type: "pee",
+          }),
+        ),
+      )
+    })
+    expect(within(summary()).getByText("おしっこ1・うんち0")).toBeInTheDocument()
   })
 })

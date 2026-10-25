@@ -140,7 +140,7 @@ export function BabySearchResults({
                       )}
                     </span>
                     {recorderLabelFor && (
-                      <span className="max-w-24 shrink-0 truncate text-[10px] text-muted-foreground">
+                      <span className="max-w-24 shrink-0 truncate text-xs text-muted-foreground">
                         {recorderLabelFor(log.logged_by)}
                       </span>
                     )}

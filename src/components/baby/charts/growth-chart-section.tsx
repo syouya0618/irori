@@ -5,6 +5,8 @@ import type { GrowthSeries, GrowthPoint } from "@/lib/domain/baby-log-aggregatio
 
 interface GrowthChartSectionProps {
   series: GrowthSeries
+  /** 畳み込みの中に置く形（見出しとガラスの枠は外側が持つ） */
+  embedded?: boolean
 }
 
 /** 数値一覧に出す直近の測定数。グラフの補助ゆえ短く、全件は PDF / エクスポートが担う */
@@ -80,18 +82,43 @@ function RecentMeasurements({
   )
 }
 
-export function GrowthChartSection({ series }: GrowthChartSectionProps) {
+/**
+ * 畳んだ見出しに出す最新値の要約（「最新 5.15kg・57cm」）。記録が無ければ案内文。
+ * 形式は下のグラフの見出しと同じ formatKg / formatCm に揃える。
+ */
+export function growthLatestSummary(series: GrowthSeries): string {
+  const w = series.weight.at(-1)?.value ?? null
+  const h = series.height.at(-1)?.value ?? null
+  const parts = [
+    w !== null ? formatKg(w) : null,
+    h !== null ? formatCm(h) : null,
+  ].filter(Boolean)
+  return parts.length > 0 ? `最新 ${parts.join("・")}` : "体重・身長の測定はまだありません"
+}
+
+export function GrowthChartSection({
+  series,
+  embedded = false,
+}: GrowthChartSectionProps) {
   const hasData = series.weight.length > 0 || series.height.length > 0
 
   const latestWeight = series.weight.at(-1)?.value ?? null
   const latestHeight = series.height.at(-1)?.value ?? null
 
   return (
-    <section className="glass flex flex-col gap-3 rounded-2xl p-4 shadow-lg shadow-black/[0.04]">
-      <div className="flex items-center gap-2">
-        <TrendingUp size={16} className="text-primary" />
-        <h2 className="text-sm font-semibold">成長の記録</h2>
-      </div>
+    <section
+      className={
+        embedded
+          ? "flex flex-col gap-3"
+          : "glass flex flex-col gap-3 rounded-2xl p-4 shadow-lg shadow-black/[0.04]"
+      }
+    >
+      {!embedded && (
+        <div className="flex items-center gap-2">
+          <TrendingUp size={16} className="text-primary" />
+          <h2 className="text-sm font-semibold">成長の記録</h2>
+        </div>
+      )}
 
       {!hasData ? (
         <p className="py-4 text-center text-xs text-muted-foreground">
@@ -102,7 +129,7 @@ export function GrowthChartSection({ series }: GrowthChartSectionProps) {
           <div className="flex flex-col gap-1">
             <div className="flex items-baseline justify-between">
               <span className="text-xs text-muted-foreground">体重</span>
-              <span className="text-sm font-semibold tabular-nums text-primary">
+              <span className="text-sm font-semibold tabular-nums text-amber-700 dark:text-amber-300">
                 {latestWeight !== null ? formatKg(latestWeight) : "---"}
               </span>
             </div>
@@ -118,7 +145,7 @@ export function GrowthChartSection({ series }: GrowthChartSectionProps) {
           <div className="flex flex-col gap-1">
             <div className="flex items-baseline justify-between">
               <span className="text-xs text-muted-foreground">身長</span>
-              <span className="text-sm font-semibold tabular-nums text-sky-600 dark:text-sky-400">
+              <span className="text-sm font-semibold tabular-nums text-sky-700 dark:text-sky-300">
                 {latestHeight !== null ? formatCm(latestHeight) : "---"}
               </span>
             </div>

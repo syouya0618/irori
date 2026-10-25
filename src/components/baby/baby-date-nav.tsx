@@ -1,6 +1,6 @@
 "use client"
 
-import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react"
+import { CalendarDays, ChevronLeft, ChevronRight, History } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { daysBetweenYmd, isValidYmd, shiftYmd } from "@/lib/utils/date-jst"
 import { openNativePickerOnTap } from "@/lib/utils/native-picker"
@@ -35,8 +35,9 @@ export function BabyDateNav({
   const isToday = selectedDate === today
 
   return (
+    <div className="flex flex-col gap-2">
     <div className="flex items-center justify-between">
-      <h1 className="text-xl font-bold">{formatDateLabel(selectedDate, today)}</h1>
+      <h1 className="text-2xl font-bold">{formatDateLabel(selectedDate, today)}</h1>
       <div className="flex items-center gap-1">
         <Button
           variant="ghost"
@@ -70,16 +71,6 @@ export function BabyDateNav({
             className="absolute inset-0 size-full cursor-pointer opacity-0"
           />
         </label>
-        {!isToday && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onDateChange(today)}
-            className="text-xs"
-          >
-            今日
-          </Button>
-        )}
         <Button
           variant="ghost"
           size="icon-sm"
@@ -91,6 +82,29 @@ export function BabyDateNav({
           <ChevronRight size={18} />
         </Button>
       </div>
+    </div>
+      {/* 過去日の帯。見出しの語（「昨日」等）だけでは今日と見分けにくく、過去日に居ると
+          気づかぬまま「今の記録」を探して迷う。色の付いた帯と大きな「今日に戻る」で示す
+          （過去日はクイック記録を出さぬ契約 — 機能 C / F-03 — ゆえ、戻る導線が要る） */}
+      {!isToday && (
+        <div className="flex items-center gap-3 rounded-xl border border-amber-500/40 bg-amber-50 py-1.5 pr-1.5 pl-3 dark:border-amber-500/30 dark:bg-amber-950/40">
+          <History
+            size={18}
+            className="shrink-0 text-amber-800 dark:text-amber-200"
+            aria-hidden="true"
+          />
+          <span className="min-w-0 flex-1 text-sm font-medium text-amber-900 dark:text-amber-100">
+            過去の日を表示中
+          </span>
+          <Button
+            variant="outline"
+            onClick={() => onDateChange(today)}
+            className="min-h-11 shrink-0 rounded-lg px-4 text-sm font-semibold"
+          >
+            今日に戻る
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

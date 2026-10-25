@@ -96,3 +96,30 @@ describe("BabyTimeline の時系列降順ソート（タスクB: 時刻編集の
     expect(renderedAmounts()).toEqual([11, 22, 33])
   })
 })
+
+describe("BabyTimeline の空・件数・時刻の列", () => {
+  it("空の今日は「まだ記録がありません」と、記録の釦の場所を示す", () => {
+    render(<BabyTimeline logs={[]} onEdit={vi.fn()} isToday />)
+    expect(screen.getByText("まだ記録がありません")).toBeInTheDocument()
+    expect(screen.getByText(/「授乳」「おむつ」のボタンから記録できます/)).toBeInTheDocument()
+  })
+
+  it("空の過去日は「この日の記録を追加」を示す（今の記録の釦は過去日に無い）", () => {
+    render(<BabyTimeline logs={[]} onEdit={vi.fn()} isToday={false} />)
+    expect(screen.getByText(/「この日の記録を追加」から追記できます/)).toBeInTheDocument()
+    expect(screen.queryByText(/ボタンから記録できます/)).toBeNull()
+  })
+
+  it("見出しに件数を出し、各行は時刻を先頭（左の列）に置く", () => {
+    const logs = [
+      feedingLog({ id: "a", amount_ml: 11, logged_at: "2026-07-18T01:05:00.000Z" }),
+      feedingLog({ id: "b", amount_ml: 22, logged_at: "2026-07-18T03:00:00.000Z" }),
+    ]
+    render(<BabyTimeline logs={logs} onEdit={vi.fn()} />)
+    expect(screen.getByText("2件・新しい順")).toBeInTheDocument()
+    const rows = screen.getAllByRole("button")
+    // JST 12:00 が先（新しい順）。行の文字の先頭が時刻
+    expect(rows[0].textContent?.startsWith("12:00")).toBe(true)
+    expect(rows[1].textContent?.startsWith("10:05")).toBe(true)
+  })
+})

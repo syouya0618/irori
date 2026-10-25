@@ -11,8 +11,10 @@ interface BabyPastDayActionsProps {
   onCreateFeeding: (type: FeedingType) => void
 }
 
+// 5 釦を 1 列に詰めると 1 釦 60px 幅・間隔 6px になり片手で押し分けにくい。3 列 2 段・
+// 間隔 8px にする（今日のクイック記録と同じ間隔）
 const buttonCn =
-  "flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl text-sm font-medium transition-colors duration-200 disabled:opacity-50"
+  "flex min-h-12 items-center justify-center gap-1.5 rounded-xl text-sm font-medium transition-colors duration-200 disabled:opacity-50"
 
 /**
  * 過去日の「この日の記録を追加」（機能 C）。
@@ -34,10 +36,10 @@ export function BabyPastDayActions({
         <Plus size={14} aria-hidden="true" />
         この日の記録を追加
       </h2>
-      <p className="px-1 text-[11px] text-muted-foreground">
+      <p className="px-1 text-xs text-muted-foreground">
         {dateLabel} の記録として保存します。日付と時刻は記録画面で確かめられます
       </p>
-      <div className="flex gap-1.5">
+      <div className="grid grid-cols-3 gap-2">
         <button
           type="button"
           onClick={() => onCreateFeeding("bottle")}

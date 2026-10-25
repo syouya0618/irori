@@ -43,8 +43,10 @@ export function BabySearchForm({ query, today }: BabySearchFormProps) {
           className="min-h-11 rounded-lg"
         />
       </div>
-      <div className="grid grid-cols-3 gap-3">
-        <div className="space-y-1.5">
+      {/* 種類を 1 段、期間（2 つの日付）を 2 列。3 列に詰めると 360px 幅で日付入力が
+          約 100px になり、選んだ日付が欠けて読めぬ */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="col-span-2 space-y-1.5">
           <Label htmlFor="search-kind">種類</Label>
           <select
             id="search-kind"
