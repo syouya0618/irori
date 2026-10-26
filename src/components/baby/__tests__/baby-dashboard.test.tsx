@@ -131,6 +131,7 @@ function defaultProps(
     babyName: null,
     babyBirthDate: null,
     feedingIntervalMin: 180,
+    initialBottleDefault: { status: "set" as const, amountMl: 120 },
     ...overrides,
   }
 }
@@ -510,5 +511,22 @@ describe("BabyDashboard / 週間サマリー・成長グラフは畳んで置く
     const weekly = screen.getByRole("button", { name: /週間サマリー/ })
     expect(quick.compareDocumentPosition(timelineHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(timelineHeading.compareDocumentPosition(weekly) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})
+
+describe("BabyDashboard / いつものミルク量の配線", () => {
+  it("サーバが読んだ量をクイック記録のミルクへ渡す（決まっている・未設定・取得失敗を区別して見せる）", () => {
+    render(
+      <BabyDashboard
+        {...defaultProps({ initialBottleDefault: { status: "set", amountMl: 140 } })}
+      />,
+    )
+    expect(screen.getByTestId("bottle-default-amount")).toHaveTextContent("140ml")
+    cleanup()
+    render(<BabyDashboard {...defaultProps({ initialBottleDefault: { status: "unset" } })} />)
+    expect(screen.getByTestId("bottle-default-amount")).toHaveTextContent("量を設定")
+    cleanup()
+    render(<BabyDashboard {...defaultProps({ initialBottleDefault: { status: "error" } })} />)
+    expect(screen.getByTestId("bottle-default-amount")).toHaveTextContent("量を再読込")
   })
 })
