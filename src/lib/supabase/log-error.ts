@@ -31,3 +31,26 @@ export function logSupabaseError(
     status: asRecord.status,
   })
 }
+
+/**
+ * `details` / `hint` を**出さぬ**版。
+ *
+ * Postgres の CHECK 違反（23514）などは `details` に「Failing row contains (...)」として
+ * **行の中身**を載せる。利用者の自由記述（要望の本文など）を書く経路でそれをログへ流すと、
+ * 家庭の話がそのまま Vercel のログに残る。そうした経路ではこちらを使い、識別に足る
+ * `code` / `message` / `status` だけを残す（message は制約名や RPC の固定文言で、行の値を含まぬ）。
+ */
+export function logSupabaseErrorRedacted(
+  scope: string,
+  summary: string,
+  error: PostgrestError | AuthError,
+  context?: Record<string, unknown>,
+): void {
+  const asRecord = error as Partial<PostgrestError> & Partial<AuthError>
+  console.error(`[${scope}] ${summary}`, {
+    ...context,
+    message: error.message,
+    code: asRecord.code,
+    status: asRecord.status,
+  })
+}

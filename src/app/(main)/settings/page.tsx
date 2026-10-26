@@ -9,6 +9,7 @@ import {
   summarizeNotificationHealth,
 } from "@/lib/domain/notification-health"
 import { parseDigestTimeHm } from "@/lib/domain/notification-digest"
+import { countMyUnseenFeedback, countUnreadInbox } from "@/lib/supabase/feedback-badges"
 import { SettingsContent } from "./settings-content"
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>
@@ -127,6 +128,7 @@ export default async function SettingsPage({
     { data: heartbeat, error: heartbeatError },
     { data: lastDelivery, error: lastDeliveryError },
     { data: notificationPrefs, error: notificationPrefsError },
+    feedbackUnseenUpdates,
   ] = await Promise.all([
     supabase
       .from("households")
@@ -183,7 +185,14 @@ export default async function SettingsPage({
       .select("digest_time")
       .eq("user_id", userId)
       .maybeSingle(),
+    // 要望・改善提案: 自分の要望への未読の更新（ヘルプのカードの件数）。
+    // 読めなかった時は null（「0 件」と偽らぬ。関数がログを残す）。
+    countMyUnseenFeedback(supabase, userId),
   ])
+
+  // 受信箱の未読は運用者だと分かった後にだけ数える（運用者でなければ RLS が自分の行だけを
+  // 見せ、件数の意味が変わる）。
+  const feedbackInboxUnread = isAppOperator ? await countUnreadInbox(supabase) : null
 
   if (pushDevicesError) {
     logSupabaseError("settings", "push subscriptions lookup failed", pushDevicesError, {
@@ -348,6 +357,11 @@ export default async function SettingsPage({
       // 未接続と偽れば接続ボタンを押させ、端末なしと偽れば「届きません」と嘘を言う。
       googleConnectionsUnknown={Boolean(googleConnectionsError)}
       pushDevicesUnknown={Boolean(pushDevicesError)}
+      feedback={{
+        unseenUpdates: feedbackUnseenUpdates,
+        isAppOperator,
+        inboxUnread: feedbackInboxUnread,
+      }}
       pushHealth={summarizeNotificationHealth({
         ranAt: heartbeat?.ran_at ?? null,
         failedCount: heartbeat?.failed_count ?? null,
