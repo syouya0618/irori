@@ -205,6 +205,11 @@ select max(sent_at) from notification_deliveries;
 | `gone` | 端末の購読が失効した（410/404）。購読は削除済み |
 | `rescheduled` | 指しておった通知設定・予定が消えたか、日を跨いで動いた |
 
+要望・改善提案の知らせ（`feedback_notifications`）も**同じ実行の別フェーズ**で送る
+（予定の通知の後。独立した try で包み、予定の通知を巻き込まぬ）。そのフェーズの失敗も
+同じ心拍の `failed_count` に数えるゆえ、上の 3 通りの読み分けはそのまま使える。
+内訳の見方は `docs/runbooks/feedback.md` §4。
+
 ---
 
 ## 購読の失効と自己修復（B-4）
@@ -290,6 +295,7 @@ select cron.unschedule('notify-deliveries');
 
 - ハンドラ: `src/app/api/cron/notify/route.ts`
 - 配信本体: `src/lib/notifications/deliver.ts`
+- 要望の知らせ（別フェーズ）: `src/lib/notifications/deliver-feedback.ts` / `docs/runbooks/feedback.md`
 - テーブル: `supabase/migrations/20260808100003_notification_deliveries.sql`
 - 再登録の endpoint: `src/app/api/push/resubscribe/route.ts`（SW と起動時の突き合わせが叩く）
 - 起動時の突き合わせ: `src/components/common/push-subscription-reconciler.tsx`

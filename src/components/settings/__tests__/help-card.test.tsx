@@ -33,3 +33,38 @@ describe("HelpCard", () => {
     expect(screen.getByText(/ようこそ/)).toBeInTheDocument()
   })
 })
+
+describe("HelpCard — 要望・改善提案への導線", () => {
+  it("誰にでも要望を送る導線を出し、未読の更新を文字で添える", () => {
+    render(
+      <HelpCard feedback={{ unseenUpdates: 2, isAppOperator: false, inboxUnread: null }} />,
+    )
+    const link = screen.getByRole("link", { name: /要望・改善提案を送る/ })
+    expect(link).toHaveAttribute("href", "/feedback")
+    expect(link).toHaveTextContent("更新 2")
+  })
+
+  it("運用者でなければ受信箱の導線を出さぬ（世帯 owner であっても）", () => {
+    render(
+      <HelpCard feedback={{ unseenUpdates: 0, isAppOperator: false, inboxUnread: 5 }} />,
+    )
+    expect(screen.queryByRole("link", { name: /受信箱/ })).toBeNull()
+  })
+
+  it("運用者には受信箱の導線と未読の件数を出す", () => {
+    render(
+      <HelpCard feedback={{ unseenUpdates: null, isAppOperator: true, inboxUnread: 3 }} />,
+    )
+    const link = screen.getByRole("link", { name: /要望の受信箱/ })
+    expect(link).toHaveAttribute("href", "/feedback/inbox")
+    expect(link).toHaveTextContent("未読 3")
+  })
+
+  it("件数を読めなかった（null）・0 件の時は件数を出さぬ（0 と偽らぬ）", () => {
+    render(
+      <HelpCard feedback={{ unseenUpdates: null, isAppOperator: true, inboxUnread: 0 }} />,
+    )
+    expect(screen.getByRole("link", { name: /要望・改善提案を送る/ })).not.toHaveTextContent("更新")
+    expect(screen.getByRole("link", { name: /要望の受信箱/ })).not.toHaveTextContent("未読")
+  })
+})

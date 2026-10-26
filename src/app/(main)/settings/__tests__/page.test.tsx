@@ -42,7 +42,7 @@ function chain(table: string) {
   const result = () =>
     Promise.resolve(tableResults[table] ?? { data: null, error: null })
   const c: Record<string, unknown> = {}
-  for (const method of ["select", "eq", "not", "order", "limit", "in"]) {
+  for (const method of ["select", "eq", "not", "order", "limit", "in", "is"]) {
     c[method] = () => c
   }
   c.single = result
@@ -277,5 +277,34 @@ describe("読めなかった接続・端末を「無い」と描かせぬ（Agen
     expect(props.pushDevicesUnknown).toBe(false)
     const views = props.googleConnections as Array<Record<string, unknown>>
     expect(views[0].calendarsUnknown).toBe(false)
+  })
+})
+
+describe("要望・改善提案の件数（ヘルプのカード）", () => {
+  it("運用者でなければ受信箱を数えず、導線も出させぬ", async () => {
+    tableResults.feedback_items = { data: null, error: null, count: 2 } as Result
+    const props = await renderProps()
+    expect(props.feedback).toEqual({ unseenUpdates: 2, isAppOperator: false, inboxUnread: null })
+  })
+
+  it("運用者には受信箱の未読を数えて渡す（判定は is_app_operator・owner ではない）", async () => {
+    tableResults.profiles = profileRow("member")
+    rpcResults.is_app_operator = { data: true, error: null }
+    tableResults.feedback_items = { data: null, error: null, count: 3 } as Result
+    const props = await renderProps()
+    expect(props.feedback).toEqual({ unseenUpdates: 3, isAppOperator: true, inboxUnread: 3 })
+  })
+
+  it("数えられなかった時は「0 件」と偽らず null（ログに残す）", async () => {
+    rpcResults.is_app_operator = { data: true, error: null }
+    tableResults.feedback_items = { data: null, error: DB_ERROR }
+    const props = await renderProps()
+    expect(props.feedback).toEqual({ unseenUpdates: null, isAppOperator: true, inboxUnread: null })
+    expect(logSupabaseError).toHaveBeenCalledWith(
+      "feedback",
+      "unseen feedback count failed",
+      DB_ERROR,
+      expect.objectContaining({ userId: "u1" }),
+    )
   })
 })

@@ -47,7 +47,7 @@ import {
   type GoogleConnectionView,
 } from "@/components/settings/google-calendar-card"
 import { ThemeCard } from "@/components/settings/theme-card"
-import { HelpCard } from "@/components/settings/help-card"
+import { HelpCard, type HelpCardFeedback } from "@/components/settings/help-card"
 import type { HouseholdRole } from "@/lib/types/database"
 import type { NotificationHealthView } from "@/lib/domain/notification-health"
 
@@ -90,6 +90,8 @@ interface SettingsContentProps {
   googleConnectionsUnknown?: boolean
   /** 通知の端末一覧を**読めなかった**（＝端末が無いとは限らぬ）。 */
   pushDevicesUnknown?: boolean
+  /** 要望・改善提案の件数（ヘルプのカードに添える）。読めなかった件数は null */
+  feedback?: HelpCardFeedback
 }
 
 /** 要確認の 1 件（画面の先頭にまとめ、該当のカードへ飛べるようにする）。 */
@@ -112,8 +114,19 @@ function attentionItems(p: {
   pushHealth: NotificationHealthView
   isAppOperator: boolean
   pendingUsers: PendingUser[] | null
+  feedback?: HelpCardFeedback
 }): AttentionItem[] {
   const items: AttentionItem[] = []
+  // 要望への返信・状態の更新（投稿者が見ておらぬもの）。アプリ内が正本ゆえ、Push が
+  // 届かなかった端末でもここで気付ける。
+  const unseen = p.feedback?.unseenUpdates ?? null
+  if (unseen !== null && unseen > 0) {
+    items.push({
+      key: "feedback-updates",
+      text: `送った要望に更新が ${unseen} 件あります`,
+      href: "#settings-help",
+    })
+  }
   if (!p.household) {
     items.push({ key: "household", text: "世帯の情報を取得できませんでした", href: "#settings-family" })
   }
@@ -162,6 +175,14 @@ function attentionItems(p: {
         key: "approval",
         text: `承認待ちが ${p.pendingUsers.length} 人います`,
         href: "#settings-operator",
+      })
+    }
+    const inboxUnread = p.feedback?.inboxUnread ?? null
+    if (inboxUnread !== null && inboxUnread > 0) {
+      items.push({
+        key: "feedback-inbox",
+        text: `要望の受信箱に未読が ${inboxUnread} 件あります`,
+        href: "#settings-help",
       })
     }
   }
@@ -265,6 +286,7 @@ export function SettingsContent({
   digestTimeUnknown,
   googleConnectionsUnknown = false,
   pushDevicesUnknown = false,
+  feedback,
 }: SettingsContentProps) {
   const [, startTransition] = useTransition()
   const [isSigningOut, setIsSigningOut] = useState(false)
@@ -278,6 +300,7 @@ export function SettingsContent({
     pushHealth,
     isAppOperator,
     pendingUsers,
+    feedback,
   })
 
   const handleSignOut = () => {
@@ -464,7 +487,7 @@ export function SettingsContent({
       )}
 
       <SettingsSection id="settings-help" title="ヘルプとアカウント">
-        <HelpCard />
+        <HelpCard feedback={feedback} />
 
         <Separator />
 

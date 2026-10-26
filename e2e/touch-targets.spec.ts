@@ -28,6 +28,7 @@ const SCREENS = [
   ["育児", "/baby"],
   ["予定", "/calendar"],
   ["設定", "/settings"],
+  ["要望", "/feedback"],
 ] as const
 
 test("押下対象はどの画面でも 44x44px 以上ある（実ブラウザ実測）", async ({
