@@ -224,6 +224,7 @@ function defaultProps(
     babyName: null,
     babyBirthDate: null,
     feedingIntervalMin: 180,
+    initialBottleDefault: { status: "set" as const, amountMl: 120 },
     ...overrides,
   }
 }
@@ -763,6 +764,7 @@ describe("BabyDashboard / baby_logs の復帰時再取得（P1-04）", () => {
       error: null,
       id: "undo-1",
       updatedAt: "2026-07-18T02:59:00.123456+00:00",
+      loggedAt: "2026-07-18T02:59:00.123456+00:00",
     })
     vi.mocked(deleteLog).mockResolvedValue({ error: null })
     await renderDashboard()

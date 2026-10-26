@@ -1,5 +1,10 @@
 import { defineConfig, devices } from "@playwright/test"
-import { loadE2eEnv } from "./e2e/fixtures/env"
+import {
+  loadE2eEnv,
+  PREVIEW_BASE_URL,
+  PREVIEW_COMMIT_SHA,
+  PREVIEW_PORT,
+} from "./e2e/fixtures/env"
 
 const isCI = !!process.env.CI
 
@@ -48,11 +53,26 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
-  webServer: {
-    command: "pnpm exec next start -H 127.0.0.1 -p 3000",
-    url: "http://127.0.0.1:3000/login",
-    reuseExistingServer: !isCI,
-    timeout: 60_000,
-    env: buildWebServerEnv(),
-  },
+  webServer: [
+    {
+      command: "pnpm exec next start -H 127.0.0.1 -p 3000",
+      url: "http://127.0.0.1:3000/login",
+      reuseExistingServer: !isCI,
+      timeout: 60_000,
+      env: buildWebServerEnv(),
+    },
+    {
+      // 同じ build を「本番でないデプロイ」として起動する（e2e/feedback-preview-gate.spec.ts）。
+      // preview の値は .env.e2e（VERCEL_ENV="" を持つ）を重ねた**後**に上書きする — 先に置くと消える
+      command: `pnpm exec next start -H 127.0.0.1 -p ${PREVIEW_PORT}`,
+      url: `${PREVIEW_BASE_URL}/login`,
+      reuseExistingServer: !isCI,
+      timeout: 60_000,
+      env: {
+        ...buildWebServerEnv(),
+        VERCEL_ENV: "preview",
+        VERCEL_GIT_COMMIT_SHA: PREVIEW_COMMIT_SHA,
+      },
+    },
+  ],
 })

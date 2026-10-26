@@ -28,6 +28,11 @@ export interface FakeNotifyDb {
   notification_preferences: Row[]
   notification_deliveries: Row[]
   notification_heartbeat: Row[]
+  /** 要望の知らせ（受信者 × 端末の専用キュー）と、送る直前に引き直す材料。 */
+  feedback_notifications: Row[]
+  feedback_events: Row[]
+  feedback_items: Row[]
+  app_operators: Row[]
 }
 
 export function emptyNotifyDb(): FakeNotifyDb {
@@ -39,6 +44,10 @@ export function emptyNotifyDb(): FakeNotifyDb {
     notification_preferences: [],
     notification_deliveries: [],
     notification_heartbeat: [],
+    feedback_notifications: [],
+    feedback_events: [],
+    feedback_items: [],
+    app_operators: [],
   }
 }
 
@@ -57,6 +66,8 @@ export interface QueryRecord {
   filters: Filter[]
   returning: boolean
   order: string | null
+  /** `.limit(n)`（要望の知らせの 1 周の上限）。null = 無制限。 */
+  limit: number | null
 }
 
 /** ISO 文字列同士は epoch で比べる（表記揺れに引きずられぬため）。 */
@@ -171,6 +182,7 @@ export function createFakeNotifySupabase(
         const key = record.order
         hits = [...hits].sort((a, b) => compare(a[key], b[key]))
       }
+      if (record.limit !== null) hits = hits.slice(0, record.limit)
       return { data: hits.map((row) => ({ ...row })), error: null }
     }
 
@@ -194,7 +206,10 @@ export function createFakeNotifySupabase(
       // 契約をテストで確かめられぬ。
       if (record.table === "push_subscriptions") {
         for (const removedRow of removed) {
-          for (const delivery of db.notification_deliveries) {
+          for (const delivery of [
+            ...db.notification_deliveries,
+            ...db.feedback_notifications,
+          ]) {
             if (delivery.subscription_id === removedRow.id) {
               delivery.subscription_id = null
             }
@@ -244,6 +259,7 @@ export function createFakeNotifySupabase(
       filters: [],
       returning: false,
       order: null,
+      limit: null,
     }
     records.push(record)
 
@@ -323,6 +339,17 @@ export function createFakeNotifySupabase(
       order(column: string) {
         record.order = column
         return builder
+      },
+      limit(count: number) {
+        record.limit = count
+        return builder
+      },
+      // 要望の知らせが送る直前に状態を 1 行だけ読み直すのに使う（0 行は data: null）。
+      maybeSingle() {
+        return settle().then((result) => ({
+          data: Array.isArray(result.data) ? (result.data[0] ?? null) : result.data,
+          error: result.error,
+        }))
       },
       then<TResult1, TResult2>(
         onOk?: (value: { data: unknown; error: unknown }) => TResult1,

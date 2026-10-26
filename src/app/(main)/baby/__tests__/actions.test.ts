@@ -560,13 +560,26 @@ describe("updateLog の版ガード（P2-07: 開いた時点の版でしか書�
 describe("record* は作成した行の版も返す（P2-07: 作成直後の編集に版が要る）", () => {
   it("insert は id と updated_at を取り直し、updatedAt として返す", async () => {
     const { client, insertSelect } = makeSupabase({
-      data: { id: "log-5", updated_at: V0 },
+      data: { id: "log-5", updated_at: V0, logged_at: V0 },
       error: null,
     })
     setContext(client)
     const result = await recordDiaper({ diaperType: "pee" })
-    expect(insertSelect).toHaveBeenCalledWith("id, updated_at")
-    expect(result).toEqual({ error: null, id: "log-5", updatedAt: V0 })
+    expect(insertSelect).toHaveBeenCalledWith("id, updated_at, logged_at")
+    expect(result).toEqual({ error: null, id: "log-5", updatedAt: V0, loggedAt: V0 })
+  })
+
+  it("loggedAt を送らぬクイック記録でも、DB が now() で書いた記録時刻をそのまま返す（楽観行の時刻の源）", async () => {
+    const dbNow = "2026-10-25T05:20:59.400123+00:00"
+    const { client, insert } = makeSupabase({
+      data: { id: "log-6", updated_at: dbNow, logged_at: dbNow },
+      error: null,
+    })
+    setContext(client)
+    const result = await recordFeeding({ feedingType: "bottle" })
+    // 送らぬ（DB 既定の now() に委ねる従来挙動は変えぬ）
+    expect((insert.mock.calls[0] as unknown[])[0]).not.toHaveProperty("logged_at")
+    expect(result).toMatchObject({ error: null, id: "log-6", loggedAt: dbNow })
   })
 })
 

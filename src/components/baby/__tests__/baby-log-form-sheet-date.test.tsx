@@ -202,6 +202,40 @@ describe("BabyLogFormSheet / 編集で日付を直す（深夜を跨いだ授乳
     )
   })
 
+  it("日付だけを前日に変えると、時刻は秒・ミリ秒まで元のまま前日へ動かす（HH:mm 丸めで秒を落とさぬ）", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    // JST 7/19 00:10:31.123（DB の表記のまま）
+    const log = feedingLog({ logged_at: "2026-07-18T15:10:31.123456+00:00" })
+    render(<BabyLogFormSheet open onOpenChange={vi.fn()} log={log} userId="u1" />)
+
+    fireEvent.change(screen.getByLabelText("日付"), { target: { value: YESTERDAY } })
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalledTimes(1))
+    expect(mockedUpdateLog.mock.calls[0][1].loggedAt).toBe("2026-07-17T15:10:31.123Z")
+  })
+
+  it("日付を変えて時刻も変えたら、打った時刻（秒は 0）で送る（対照）", async () => {
+    mockedUpdateLog.mockResolvedValue({ error: null })
+    const log = feedingLog({ logged_at: "2026-07-18T15:10:31.123456+00:00" })
+    render(<BabyLogFormSheet open onOpenChange={vi.fn()} log={log} userId="u1" />)
+
+    fireEvent.change(screen.getByLabelText("日付"), { target: { value: YESTERDAY } })
+    fireEvent.change(screen.getByLabelText("開始時刻"), { target: { value: "00:11" } })
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+
+    await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalledTimes(1))
+    expect(mockedUpdateLog.mock.calls[0][1].loggedAt).toBe("2026-07-17T15:11:00.000Z")
+  })
+
+  it("日付だけを未来の日へ変えると updateLog を呼ばずに拒む", async () => {
+    render(<BabyLogFormSheet open onOpenChange={vi.fn()} log={feedingLog()} userId="u1" />)
+    fireEvent.change(screen.getByLabelText("日付"), { target: { value: "2026-07-20" } })
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(FUTURE_LOG_TIME_ERROR))
+    expect(mockedUpdateLog).not.toHaveBeenCalled()
+  })
+
   it("日付も時刻も触らねば loggedAt は送らない（秒の無言喪失を防ぐ既存契約）", async () => {
     mockedUpdateLog.mockResolvedValue({ error: null })
     render(

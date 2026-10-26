@@ -71,6 +71,8 @@ export interface Database {
           baby_name: string | null
           baby_birth_date: string | null
           feeding_interval_min: number
+          /** いつものミルク量（ml・1〜999）。NULL は未設定（migration 20261025100001） */
+          bottle_default_ml: number | null
           created_at: string
         }
         Insert: {
@@ -79,6 +81,7 @@ export interface Database {
           baby_name?: string | null
           baby_birth_date?: string | null
           feeding_interval_min?: number
+          bottle_default_ml?: number | null
           created_at?: string
         }
         Update: {
@@ -87,6 +90,7 @@ export interface Database {
           baby_name?: string | null
           baby_birth_date?: string | null
           feeding_interval_min?: number
+          bottle_default_ml?: number | null
           created_at?: string
         }
         Relationships: []
@@ -478,6 +482,121 @@ export interface Database {
         Relationships: []
       }
       /**
+       * 要望・改善提案（20261025200001）。読めるのは**投稿者本人と運用者**だけ
+       * （同じ世帯の家族にも開かぬ）。
+       *
+       * ⚠️ **書込は RPC のみ**（submit_feedback / operator_update_feedback /
+       * operator_release_feedback / mark_feedback_seen）。authenticated には INSERT /
+       * UPDATE / DELETE の GRANT もポリシーも無く、直接撃てば 42501 で落ちる。
+       * ゆえに `Insert` / `Update` は空にしてある（push_subscriptions と同じ型）。
+       *
+       * ⚠️ `status = 'released'` は `released_commit_sha` と `released_verified_at` を
+       * **必ず**伴う（DB の双方向 CHECK）。画面で「反映済み」と描くかは `releaseOf()` で決める。
+       */
+      feedback_items: {
+        Row: {
+          id: string
+          submitter_id: string
+          /** 投稿時に RPC が profiles から写した表示名（別世帯の運用者にも読める） */
+          submitter_name: string
+          client_request_id: string
+          title: string
+          body: string
+          /** DB の CHECK が縛る 5 値。読むときは `parseFeedbackStatus` で未知値を退化させる */
+          status: string
+          version: number
+          released_commit_sha: string | null
+          released_note: string | null
+          released_observed_deploy: string | null
+          released_verified_at: string | null
+          created_at: string
+          updated_at: string
+          last_operator_activity_at: string | null
+          submitter_seen_at: string
+          operator_seen_at: string | null
+          /** 生成列: 投稿者に未読の更新があるか */
+          submitter_has_unseen: boolean
+        }
+        Insert: Record<string, never>
+        Update: Record<string, never>
+        Relationships: []
+      }
+      /**
+       * 要望の履歴（追記のみ）。
+       *
+       * ⚠️ **`actor_id` / `client_request_id` は Row に載せておらぬ。** 列 GRANT で
+       * authenticated から隠してあり（投稿者に運用者の利用者 id を見せぬ）、
+       * `select("*")` は 42501 で落ちる（pgTAP feedback_rls.sql の (11)）。列は必ず明示する。
+       */
+      feedback_events: {
+        Row: {
+          id: string
+          feedback_id: string
+          kind: string
+          actor_role: string
+          from_status: string | null
+          to_status: string | null
+          comment: string | null
+          /** 「取り込み済み」の任意の記録。**本番反映ではない** */
+          merge_ref: string | null
+          release_commit_sha: string | null
+          release_note: string | null
+          release_observed_deploy: string | null
+          release_verified_at: string | null
+          created_at: string
+        }
+        Insert: Record<string, never>
+        Update: Record<string, never>
+        Relationships: []
+      }
+      /**
+       * 要望の Push 配信キュー（受信者 × 端末）。
+       *
+       * ⚠️ **API ロールには deny-all**（RLS 有効・ポリシー 0 本・GRANT 無し）。読み書きは
+       * 配信ジョブ（service role）だけ。運用者の画面は `get_feedback_push_summary` で数だけ見る。
+       * `sent_at` は claim の印であって配達の証ではない。2xx の受理は `accepted_at`。
+       */
+      feedback_notifications: {
+        Row: {
+          id: string
+          event_id: string
+          recipient_id: string
+          audience: string
+          subscription_id: string | null
+          subscription_key: string
+          scheduled_at: string
+          sent_at: string | null
+          accepted_at: string | null
+          skipped_at: string | null
+          skip_reason: string | null
+          created_at: string
+        }
+        Insert: Record<string, never>
+        Update: {
+          sent_at?: string | null
+          accepted_at?: string | null
+          skipped_at?: string | null
+          skip_reason?: string | null
+        }
+        Relationships: []
+      }
+      /**
+       * インスタンス運用者の名簿（20261002100002）。
+       *
+       * ⚠️ **service role だけが読める**（RLS 有効・ポリシー 0 本・anon / authenticated の
+       * 権限を剥がしてある）。authenticated の経路は `is_app_operator()` RPC で真偽だけを得る。
+       * ここに型を置くのは配信ジョブ（service role）が要望の知らせの宛先を確かめるためじゃ。
+       */
+      app_operators: {
+        Row: {
+          user_id: string
+          created_at: string
+        }
+        Insert: Record<string, never>
+        Update: Record<string, never>
+        Relationships: []
+      }
+      /**
        * Google カレンダー接続（ユーザー単位・非機密）。
        * authenticated は SELECT と「本人の行の DELETE」だけができる。
        * **INSERT / UPDATE は RLS ポリシーも GRANT も無い = service role 専用**
@@ -712,6 +831,58 @@ export interface Database {
       create_household: {
         Args: { p_name: string }
         Returns: string
+      }
+      /**
+       * 要望の投稿（冪等）。`created=false` は同じ鍵の要望が既に在った（再送）。
+       * 同じ鍵で別の内容なら IRF01、24 時間で 21 件目は IRF02。
+       */
+      submit_feedback: {
+        Args: { p_client_request_id: string; p_title: string; p_body: string }
+        Returns: { feedback_id: string; created: boolean }[]
+      }
+      /** 運用者の状態変更・返信（released 以外）。版が合わねば IRF03。 */
+      operator_update_feedback: {
+        Args: {
+          p_feedback_id: string
+          p_client_request_id: string
+          p_expected_version: number
+          p_status: string | null
+          p_comment: string | null
+          p_merge_ref: string | null
+        }
+        Returns: { version: number; created: boolean }[]
+      }
+      /** 「本番で反映を確かめた」の確定。`p_production_verified` が true でなければ拒む。 */
+      operator_release_feedback: {
+        Args: {
+          p_feedback_id: string
+          p_client_request_id: string
+          p_expected_version: number
+          p_commit_sha: string
+          p_release_note: string | null
+          p_observed_deploy: string | null
+          p_production_verified: boolean
+          p_comment: string | null
+        }
+        Returns: { version: number; created: boolean }[]
+      }
+      mark_feedback_seen: {
+        Args: { p_feedback_id: string }
+        Returns: void
+      }
+      /** 運用者だけ。知らせの配信状況を「数だけ」返す（端末の識別子は返さぬ）。 */
+      get_feedback_push_summary: {
+        Args: { p_feedback_id: string }
+        Returns: {
+          event_id: string
+          queued: number
+          accepted: number
+          unconfirmed: number
+          gone: number
+          expired: number
+          revoked: number
+          superseded: number
+        }[]
       }
     }
     Enums: {

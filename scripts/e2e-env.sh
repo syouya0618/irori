@@ -44,6 +44,13 @@ echo 'CRON_SECRET="e2e-cron-secret-do-not-use-in-production"' >> "$ENV_FILE"
 # **2 つが違う値であることがテストの前提**じゃ（同じ値にすると分離の検査が死ぬ）。
 echo 'NOTIFY_CRON_SECRET="e2e-notify-secret-do-not-use-in-production"' >> "$ENV_FILE"
 
+# デプロイの段（要望の「反映済み」の確定は本番のデプロイからだけ。src/lib/domain/feedback.ts の
+# isNonProductionDeploy）。**空で明示する** — `vercel env pull` した .env.local には
+# VERCEL_ENV="development" が入りうる。@next/env は起動時の env に**定義済み**のキーを .env.* で
+# 上書きせぬゆえ、空を渡しておけば手元の e2e でも「判別できぬ環境」として確定の段が止まらぬ（CI と同じ）。
+echo 'VERCEL_ENV=""' >> "$ENV_FILE"
+echo 'VERCEL_GIT_COMMIT_SHA=""' >> "$ENV_FILE"
+
 # 検証: 6 キーが揃っているか
 for key in NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY NEXT_PUBLIC_APP_URL CRON_SECRET NOTIFY_CRON_SECRET; do
   if ! grep -q "^${key}=" "$ENV_FILE"; then

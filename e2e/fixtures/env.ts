@@ -39,3 +39,14 @@ export function loadE2eEnv(): Record<string, string> {
 
   return env
 }
+
+/**
+ * 「本番でないデプロイ」を模す 2 つ目のサーバ（playwright.config.ts の webServer の 2 本目）。
+ * 同じ build を `VERCEL_ENV=preview` で起動し、要望の「反映済み」を preview から確定できぬことを
+ * 実ブラウザで確かめる（e2e/feedback-preview-gate.spec.ts）。cookie はポートで分かれぬゆえ、
+ * 3000 番でログインした session がそのまま使える。
+ */
+export const PREVIEW_PORT = 3100
+export const PREVIEW_BASE_URL = `http://127.0.0.1:${PREVIEW_PORT}`
+/** preview のサーバが観測するデプロイの SHA（`OBSERVED_DEPLOY_RE` の形に合う 40 桁） */
+export const PREVIEW_COMMIT_SHA = "e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0"

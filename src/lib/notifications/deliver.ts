@@ -66,6 +66,7 @@ import {
   type PushTarget,
   type VapidConfig,
 } from "./send-push"
+import { deliverFeedbackNotifications } from "./deliver-feedback"
 
 export interface DeliveryRunResult {
   ranAt: string
@@ -134,6 +135,9 @@ interface PushSubscriptionDiagnostics {
  * 「送信で必要になるのは配信ジョブ（B-3・service role）だけ」と名指ししておる。
  * ゆえに**型を緩めるのではなく、この 1 ファイルの 2 関数へ迂回を封じ込める**。
  * grep するならこのコメントが目印じゃ。
+ *
+ * 要望の知らせ（`deliver-feedback.ts`）も同じ 2 関数を使うが、import させず
+ * `deliverDueNotifications` から**関数として注入**する（迂回の定義はこのファイルから出さぬ）。
  */
 async function loadSubscriptionRows(
   supabase: Client,
@@ -217,7 +221,18 @@ export async function deliverDueNotifications(
       throw new Error("[cron-notify] VAPID env が未設定です")
     }
 
-    const householdIds = await collectHouseholdIds(supabase, now)
+    // 世帯の列挙が落ちても要望の知らせのフェーズは回す（あちらは世帯を辿らぬ別のキュー）。
+    // 列挙の失敗そのものは握り潰さず、要望のフェーズの後に投げ直す ——
+    // 実行は完走せぬ扱い（finally が failed >= 1 を残し、route は 500）のまま変えぬ。
+    let householdIds: string[] = []
+    let enumerationFailed = false
+    let enumerationFailure: unknown
+    try {
+      householdIds = await collectHouseholdIds(supabase, now)
+    } catch (err) {
+      enumerationFailed = true
+      enumerationFailure = err
+    }
     for (const householdId of householdIds) {
       try {
         await runHousehold(supabase, householdId, now, vapid, deps, counters)
@@ -230,6 +245,30 @@ export async function deliverDueNotifications(
         })
       }
     }
+
+    // ── 要望の知らせ（別フェーズ・受信者ごとの専用キュー）──────────────
+    // 予定通知の**後**に回す（時刻に縛られるのは予定通知の側）。独立した try で包み、
+    // ここの失敗で予定通知の結果を巻き込まぬ。失敗は数えて心拍に残す。
+    try {
+      await deliverFeedbackNotifications(
+        supabase,
+        {
+          now,
+          vapid,
+          sendPush: deps.sendPush,
+          loadSubscriptions: loadSubscriptionRows,
+          settleSubscription: settleSubscriptionAfterSend,
+        },
+        counters,
+      )
+    } catch (err) {
+      counters.failed += 1
+      console.error("[cron-notify] 要望の知らせの配信に失敗（予定の通知とは独立）", {
+        message: err instanceof Error ? err.message : String(err),
+      })
+    }
+
+    if (enumerationFailed) throw enumerationFailure
 
     const result: DeliveryRunResult = {
       ranAt: now.toISOString(),
@@ -1061,15 +1100,9 @@ async function claimAndSend(
 
   if (result.ok) {
     counters.sent += 1
-    const { error } = await updateSubscriptionDiagnostics(supabase, target.id, {
-      last_success_at: nowIso,
-      failure_count: 0,
+    await settleSubscriptionAfterSend(supabase, target, result, nowIso, {
+      householdId,
     })
-    if (error) {
-      logSupabaseError("cron-notify", "購読の成功記録に失敗", error, {
-        householdId,
-      })
-    }
     return
   }
 
@@ -1089,16 +1122,10 @@ async function claimAndSend(
         deliveryId: delivery.id,
       })
     }
-    const { error: deleteError } = await supabase
-      .from("push_subscriptions")
-      .delete()
-      .eq("id", target.id)
-      .select("id")
-    if (deleteError) {
-      logSupabaseError("cron-notify", "失効した購読の削除に失敗", deleteError, {
-        householdId,
-      })
-    }
+    // 購読の削除は後始末の共通部（要望の知らせと同じ実装）へ。
+    await settleSubscriptionAfterSend(supabase, target, result, nowIso, {
+      householdId,
+    })
     counters.skipped += 1
     return
   }
@@ -1134,6 +1161,52 @@ async function claimAndSend(
     },
   )
 
+  await settleSubscriptionAfterSend(supabase, target, result, nowIso, {
+    householdId,
+  })
+}
+
+/**
+ * 送信の結果を**購読の側**へ書き戻す（予定通知・ダイジェスト・要望の知らせで共有）。
+ *
+ *   * 成功 → 診断列を健康へ（last_success_at・failure_count = 0）
+ *   * 404 / 410（gone）→ 購読を消す。**消してよいのはこの枝だけ**（「破棄は狭く」）
+ *   * それ以外の失敗 → 診断列に失敗を積む（購読は消さぬ。401/403 の一斉失敗で全滅させぬ）
+ *
+ * キュー行の状態（claim の解放・gone の記録）は呼び手の表ごとに違うゆえ、ここでは触らぬ。
+ * gone の時は呼び手が**行を先に終端させてから**ここを呼ぶこと（FK の SET NULL より前に
+ * どの端末が失効したかを行へ残すため）。
+ */
+async function settleSubscriptionAfterSend(
+  supabase: Client,
+  target: SubscriptionRow,
+  result: PushSendResult,
+  nowIso: string,
+  logContext: Record<string, unknown>,
+): Promise<void> {
+  if (result.ok) {
+    const { error } = await updateSubscriptionDiagnostics(supabase, target.id, {
+      last_success_at: nowIso,
+      failure_count: 0,
+    })
+    if (error) {
+      logSupabaseError("cron-notify", "購読の成功記録に失敗", error, logContext)
+    }
+    return
+  }
+
+  if (result.gone) {
+    const { error: deleteError } = await supabase
+      .from("push_subscriptions")
+      .delete()
+      .eq("id", target.id)
+      .select("id")
+    if (deleteError) {
+      logSupabaseError("cron-notify", "失効した購読の削除に失敗", deleteError, logContext)
+    }
+    return
+  }
+
   // PostgREST に原子的な increment は無い。読んだ値からの +1 ゆえ、実行が重なれば
   // 数え落としうる（診断用の目安であって、破棄などの判断には一切使わぬ）。
   const { error: failureError } = await updateSubscriptionDiagnostics(
@@ -1145,9 +1218,7 @@ async function claimAndSend(
     },
   )
   if (failureError) {
-    logSupabaseError("cron-notify", "購読の失敗記録に失敗", failureError, {
-      householdId,
-    })
+    logSupabaseError("cron-notify", "購読の失敗記録に失敗", failureError, logContext)
   }
 }
 

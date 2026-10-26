@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState, useTransition } from "react"
+import { useEffect, useId, useRef, useState, useTransition } from "react"
 import {
   Thermometer,
   Ruler,
@@ -10,9 +10,17 @@ import {
   Loader2,
   Undo2,
   CircleCheck,
+  Pencil,
 } from "lucide-react"
 import { toast } from "sonner"
 import { formatTimeJst } from "@/lib/utils/date-jst"
+import { getLogSummary } from "@/lib/domain/baby-log-summary"
+import { formatBottleAmount, type BottleDefaultState } from "@/lib/domain/bottle-default"
+import type { BottleDefaultController } from "@/lib/hooks/use-bottle-default"
+import {
+  BottleDefaultSheet,
+  type BottleDefaultSheetIntent,
+} from "./bottle-default-sheet"
 import {
   recordFeeding,
   recordDiaper,
@@ -38,8 +46,8 @@ import type {
 import type { BabyLogData } from "@/lib/types/baby"
 
 /**
- * 授乳の 1 段目。母乳（左/右）はタイマーを開く、搾乳は量のシートを開く、ミルク・離乳食は
- * その場で記録する。挙動が違う釦を同じ見た目で横一列に並べると、夜間に「左」のつもりで
+ * 授乳の 1 段目。母乳（左/右）はタイマーを開く、搾乳は量のシートを開く、ミルクはいつもの量で・
+ * 離乳食はそのまま、その場で記録する。挙動が違う釦を同じ見た目で横一列に並べると、夜間に「左」のつもりで
  * 「ミルク」を押して無言で記録される — ゆえに母乳だけを大きな 2 釦の段に分け、タイマーの
  * 印を添える。釦の名前（左 / 右 / ミルク …）は e2e・単体テストが exact で掴む契約ゆえ
  * 文字は足さぬ（印は aria-hidden のアイコンだけ）。
@@ -73,6 +81,12 @@ interface LastRecorded {
   summary: string
   /** 記録した時刻（epoch ms。event handler で読む） */
   at: number
+  /**
+   * 記録時刻（DB が書いた logged_at）。画面に行が無い時の帯の時刻（行が在ればその行の時刻を
+   * 出す — 記録の後に編集で直した時刻も帯へ映す）。端末時計で組むと、分を跨いだ時に行と帯の
+   * 時刻が食い違う。取り消しの期限は端末時計どうしの at で測る
+   */
+  loggedAt: string
   /**
    * 記録した時点での「他の経路（タイマー・記録シート）の記録」の通し番号。親の番号が進んだら
    * この記録はもう「直前」ではないゆえ帯を畳む（externalRecordSeq の注記）
@@ -173,8 +187,10 @@ interface BabyQuickActionsProps {
    * 記録成功時に楽観 append する行を親へ渡す（B-03）。Realtime 単一経路を脱し、
    * #92 不達下でも timeline/回数を即時更新する。既存 echo は id 重複で吸収。
    *
-   * 前提: quick actions は isToday ゲート下でのみ描画されるため、ここで作る行の
-   * logged_at（client now）は常に選択日（当日）= timeline 窓と一致する（安全前提）。
+   * 行の logged_at は DB が書いた記録時刻（応答の loggedAt）。端末時計で組むと、分を跨いだ
+   * 時に画面と DB の HH:mm が食い違い、編集の保存後に表示が飛ぶ（echo は同じ id を捨てるゆえ
+   * 自然には直らぬ）。quick actions は isToday ゲート下でのみ描画されるため、ふつうは選択日
+   * （当日）の行になる。日付の振り分けは親の appendLog が行の日付で行う。
    */
   onLogRecorded?: (log: BabyLogData) => void
   /** Undo 成功時にローカル state から除去する行の id を親へ渡す（B-03） */
@@ -202,6 +218,11 @@ interface BabyQuickActionsProps {
    * 古い方を消す誤操作にならぬよう畳む。省略時は確かめぬ。
    */
   externalRecordSeq?: number
+  /**
+   * いつものミルク量（親の useBottleDefault）。「ミルク」の 1 タップはこの量で記録する。
+   * 未設定なら量を決めるシートを開き、読めなかった時は量の分からぬまま記録せぬ。
+   */
+  bottleDefault: BottleDefaultController
 }
 
 export function BabyQuickActions({
@@ -215,8 +236,42 @@ export function BabyQuickActions({
   visibleLogs,
   now,
   externalRecordSeq,
+  bottleDefault,
 }: BabyQuickActionsProps) {
   const [isPending, startTransition] = useTransition()
+  /**
+   * いつものミルク量のシート。開くたびに key を進めて作り直す（入力・保存中・エラーの
+   * state を前回から持ち越さぬ）。intent は開いた導線（未設定のミルク = 保存して記録 /
+   * 量を変更 = 保存のみ）。
+   */
+  const [bottleSheet, setBottleSheet] = useState<{
+    intent: BottleDefaultSheetIntent
+    initialAmountMl: number | null
+    key: number
+  } | null>(null)
+  const [bottleSheetOpen, setBottleSheetOpen] = useState(false)
+  const bottleSheetKeyRef = useRef(0)
+  /**
+   * 利用者が閉じた（× / 背景 / Esc）シートのうち最も新しい key。保存は閉じた後も走り続けうる
+   * （詰まった保存の間に閉じ込めぬよう、保存中でも閉じられる）。閉じた後に通った保存は量だけ
+   * 反映し、記録はせぬ。key は単調に増えるゆえ「key <= この値」で閉じたシートと分かる。
+   * 開いておるかを ref で読む形にせぬのは、閉じて開き直すと true に戻り、古いシートの保存が
+   * 新しいシートを閉じたり記録したりするため。
+   */
+  const dismissedBottleSheetKeyRef = useRef(0)
+  /**
+   * 最後にいつもの量へ反映したシートの key。閉じたシートの保存の応答が、後で開いたシートの
+   * 保存より遅れて届いた時に、新しい量を古い量で上書きせぬ（同じシートの衝突 → 保存し直しは同じ key ゆえ通す）
+   */
+  const lastAppliedBottleSheetKeyRef = useRef(0)
+  /** 反映したら true。後で開いたシートが既に反映しておれば何もせず false */
+  function applyFromSheet(sheetKey: number, next: BottleDefaultState): boolean {
+    if (sheetKey < lastAppliedBottleSheetKeyRef.current) return false
+    lastAppliedBottleSheetKeyRef.current = sheetKey
+    bottleDefault.apply(next)
+    return true
+  }
+  const bottleDescriptionId = useId()
   /** いま処理中の釦（押した釦だけにスピナーを出す。全釦の disabled は二重記録防止で維持） */
   const [busyKey, setBusyKey] = useState<string | null>(null)
   /**
@@ -282,6 +337,8 @@ export function BabyQuickActions({
     recordedAt: number,
     /** 記録した時点の他経路の通し番号（LastRecorded.seq）。帯を戻す時もこの値のまま */
     seq: number,
+    /** 記録時刻（LastRecorded.loggedAt）。帯を戻す時もこの値のまま */
+    loggedAt: string,
   ) {
     // トーストとインラインのどちらから来ても 1 回だけ送る
     if (undoneIdsRef.current.has(logId)) return
@@ -296,7 +353,15 @@ export function BabyQuickActions({
     const restore = () => {
       undoneIdsRef.current.delete(logId)
       setLastRecorded((prev) =>
-        prev ?? { logId, version: createdVersion, label, summary, at: recordedAt, seq },
+        prev ?? {
+          logId,
+          version: createdVersion,
+          label,
+          summary,
+          at: recordedAt,
+          loggedAt,
+          seq,
+        },
       )
     }
     setBusyKey("undo")
@@ -340,12 +405,23 @@ export function BabyQuickActions({
     logId: string | null,
     createdVersion: string | null | undefined,
     summary: string,
+    /** サーバが返した記録時刻（DB の logged_at）。無い応答では端末時計へ倒す */
+    loggedAt: string | undefined,
   ) {
     if (logId && createdVersion) {
       const at = recordedAtNow()
+      const shownAt = loggedAt ?? new Date(at).toISOString()
       // 応答が届いた時点の番号（externalSeqRef の注記）
       const seq = externalSeqRef.current
-      setLastRecorded({ logId, version: createdVersion, label, summary, at, seq })
+      setLastRecorded({
+        logId,
+        version: createdVersion,
+        label,
+        summary,
+        at,
+        loggedAt: shownAt,
+        seq,
+      })
       setToastOpenFor(logId)
       // トーストが消えたら帯へ引き継ぐ（toastOpenFor の注記）。別の記録のトーストへ
       // 替わった後に古い方が消えても、新しい方の伏せを解かぬよう id で比べる
@@ -363,7 +439,7 @@ export function BabyQuickActions({
               toast.error(UNDO_EXPIRED_MESSAGE)
               return
             }
-            undoLog(logId, createdVersion, label, summary, at, seq)
+            undoLog(logId, createdVersion, label, summary, at, seq, shownAt)
           },
         },
         onAutoClose: handOver,
@@ -383,23 +459,136 @@ export function BabyQuickActions({
   }
 
   // 授乳ボタンの振り分け: 母乳（左/右）はタイマー、搾乳は量入力のため create シート、
-  // ミルク/離乳食は即時記録（従来どおり）。
+  // ミルクはいつもの量で即時記録、離乳食は即時記録（従来どおり）。
   function handleFeedingOption(value: FeedingType) {
     if (value === "breast_left" || value === "breast_right") {
       onStartTimer(value)
     } else if (value === "pumped") {
       onCreateFeeding(value)
+    } else if (value === "bottle") {
+      handleBottle()
     } else {
       handleFeeding(value)
     }
   }
 
-  function handleFeeding(feedingType: FeedingType) {
-    const clientId = clientIdFor(`feeding:${feedingType}`)
-    setBusyKey(`feeding:${feedingType}`)
+  function openBottleSheet(intent: BottleDefaultSheetIntent, initialAmountMl: number | null) {
+    bottleSheetKeyRef.current += 1
+    setBottleSheet({ intent, initialAmountMl, key: bottleSheetKeyRef.current })
+    setBottleSheetOpen(true)
+  }
+
+  /**
+   * 「ミルク」: いつもの量が決まっておれば、その量で 1 タップ記録。量は**押した瞬間の表示**を
+   * 捕まえて送る（押した後に別の端末の変更が届いても、見た量と記録が食い違わぬ）。
+   * 未設定なら量を決めるシートへ（勝手な既定量で記録せぬ）。読めていない時は量の分からぬまま
+   * 記録せず、取り直す。取り直せなければ量を手で入れる記録シートを開く。
+   */
+  function handleBottle() {
+    const current = bottleDefault.state
+    if (current.status === "set") {
+      handleFeeding("bottle", current.amountMl)
+      return
+    }
+    if (current.status === "unset") {
+      openBottleSheet("record", null)
+      return
+    }
+    setBusyKey("feeding:bottle")
     startTransition(async () => {
       try {
-        const result = await recordFeeding({ feedingType, clientId })
+        const next = await bottleDefault.refetch()
+        if (next === null || next.status === "error") {
+          toast.error(
+            "いつものミルク量を読み込めませんでした。量を入力して記録してください",
+          )
+          onCreateFeeding("bottle")
+          return
+        }
+        if (next.status === "unset") {
+          openBottleSheet("record", null)
+          return
+        }
+        if (next.status === "set") {
+          // 読めた量はまだ見せておらぬ。見ぬまま記録せず、表示してから押してもらう
+          toast.info(
+            `いつものミルク量（${formatBottleAmount(next.amountMl)}）を読み込みました。もう一度押すと記録します`,
+          )
+        }
+      } catch (err) {
+        console.error("[baby-quick-actions] bottle default refetch threw", {
+          message: err instanceof Error ? err.message : String(err),
+        })
+        toast.error("いつものミルク量を読み込めませんでした。量を入力して記録してください")
+        onCreateFeeding("bottle")
+      }
+    })
+  }
+
+  function handleBottleSaved(
+    sheetKey: number,
+    amountMl: number,
+    intent: BottleDefaultSheetIntent,
+  ) {
+    // 量はこのシートの保存で DB に書けた値。後で開いたシートが既に反映しておれば上書きせぬ
+    const applied = applyFromSheet(sheetKey, { status: "set", amountMl })
+    const stale =
+      sheetKey !== bottleSheetKeyRef.current ||
+      sheetKey <= dismissedBottleSheetKeyRef.current
+    if (stale) {
+      // 後で開いたシートの保存が先に反映済み = この応答は追い越された古い結果。黙って捨てる
+      if (!applied) return
+      // 保存の通信中に閉じられた（または別のシートを開き直した）。閉じた・開き直した後の
+      // シートには触れず、記録もせぬ — 取り消したつもりで 1 件記録される食い違いを作らぬ
+      toast.success(
+        intent === "record"
+          ? `いつものミルク量を${formatBottleAmount(amountMl)}にしました。今回のミルクは記録していません`
+          : `いつものミルク量を${formatBottleAmount(amountMl)}にしました。次の記録から使います`,
+      )
+      return
+    }
+    setBottleSheetOpen(false)
+    if (intent === "record") {
+      // 保存が通ってから記録する（保存が失敗・衝突なら何も記録しておらぬ）。記録が通信で
+      // 落ちても量は保存済みゆえ、次のミルクの 1 タップが同じ冪等 id での再試行になる。
+      // 確かめのトーストは記録の側（「授乳を記録しました（ミルク 120ml）」）の 1 枚に任せる
+      handleFeeding("bottle", amountMl)
+      return
+    }
+    toast.success(
+      `いつものミルク量を${formatBottleAmount(amountMl)}にしました。次の記録から使います`,
+    )
+  }
+
+  function handleBottleConflict(sheetKey: number, currentMl: number | null) {
+    applyFromSheet(
+      sheetKey,
+      currentMl === null ? { status: "unset" } : { status: "set", amountMl: currentMl },
+    )
+  }
+
+  /**
+   * 授乳をその場で記録する。`amountMl` は押した時点で捕まえた量で、送信値・楽観行・
+   * トースト・帯の四つに同じ値を使う（await の後に state を読み直さぬ）。
+   *
+   * 冪等 key は量を含めず `feeding:<種別>` のまま。量はタップの意図ではない — 応答だけ
+   * 失われた 120ml の保存の後に、いつもの量を 160ml へ変えて押し直すと、同じ id・別の内容
+   * としてサーバが REPLAY_MISMATCH で止める（行は 1 件のまま。量を key に入れると二重記録に化ける）。
+   */
+  function handleFeeding(feedingType: FeedingType, amountMl: number | null = null) {
+    const clientId = clientIdFor(`feeding:${feedingType}`)
+    setBusyKey(`feeding:${feedingType}`)
+    const summary =
+      amountMl === null
+        ? getFeedingTypeLabel(feedingType)
+        : `${getFeedingTypeLabel(feedingType)} ${formatBottleAmount(amountMl)}`
+    startTransition(async () => {
+      try {
+        const result = await recordFeeding({
+          feedingType,
+          clientId,
+          ...(amountMl !== null && { amountMl }),
+        })
         // 応答が届いた（成功でも拒否でも）ゆえ、この意図の id は役目を終えた
         settleClientId()
         if (result.error) {
@@ -415,24 +604,30 @@ export function BabyQuickActions({
           toast.success("授乳は既に記録されています（二重には記録していません）")
           return
         }
-        // B-03: 返却 id で楽観 append（Realtime を待たず timeline/回数を即時更新）
+        // B-03: 返却 id で楽観 append（Realtime を待たず timeline/回数を即時更新）。
+        // 記録時刻は DB が書いた値で組む — 応答が届いた時の端末時計で組むと、分を跨いだ時に
+        // 画面の時刻が DB と食い違い、編集の保存後に表示が飛ぶ（actions.ts の InsertOutcome）
         if (result.id) {
           onLogRecorded?.(
             buildOptimisticLog({
               id: result.id,
               updatedAt: result.updatedAt ?? null,
+              loggedAt: result.loggedAt,
               logType: "feeding",
               loggedBy: userId,
               feedingType,
+              amountMl,
             }),
           )
         }
         successWithUndo(
-          "授乳を記録しました",
+          // 量を記録した時は何 ml で記録したかをトーストで確かめられるようにする
+          amountMl === null ? "授乳を記録しました" : `授乳を記録しました（${summary}）`,
           "授乳",
           result.id,
           result.updatedAt,
-          getFeedingTypeLabel(feedingType),
+          summary,
+          result.loggedAt,
         )
       } catch (err) {
         // 通信断: 記録がサーバで成立したか分からぬ。成立しておれば帯の記録は「直前」でない
@@ -480,6 +675,8 @@ export function BabyQuickActions({
             buildOptimisticLog({
               id: result.id,
               updatedAt: result.updatedAt ?? null,
+              // 記録時刻は DB が書いた値（授乳と同じ理由）
+              loggedAt: result.loggedAt,
               logType: "diaper",
               loggedBy: userId,
               diaperType,
@@ -494,6 +691,7 @@ export function BabyQuickActions({
           result.id,
           result.updatedAt,
           formatDiaperSummary(diaperType, poopAmount),
+          result.loggedAt,
         )
       } catch (err) {
         // 通信断: 記録がサーバで成立したか分からぬ。成立しておれば帯の記録は「直前」でない
@@ -524,6 +722,34 @@ export function BabyQuickActions({
       visibleLogs.some((l) => l.id === lastRecorded.logId)) &&
     // 後からタイマー・記録シートで付いた記録があれば、もう「直前」ではない
     (externalRecordSeq === undefined || lastRecorded.seq === externalRecordSeq)
+  // 帯の時刻と要約は、画面に行が在ればその行から出す（記録の後に編集で時刻や量を直したら、帯も
+  // 直した値を指す。行と帯で同じ記録の時刻・量が食い違わぬよう）。行が無ければ記録時の値
+  const inlineUndoRow = lastRecorded
+    ? visibleLogs?.find((l) => l.id === lastRecorded.logId)
+    : undefined
+  const inlineUndoTime = lastRecorded
+    ? formatTimeJst(inlineUndoRow?.logged_at ?? lastRecorded.loggedAt)
+    : ""
+  const inlineUndoSummary = lastRecorded
+    ? inlineUndoRow
+      ? getLogSummary(inlineUndoRow)
+      : lastRecorded.summary
+    : ""
+
+  // ミルク釦の量の表示（見える文字）と、同じ内容の読み上げ（aria-describedby）
+  const bottleState = bottleDefault.state
+  const bottleAmountLabel =
+    bottleState.status === "set"
+      ? formatBottleAmount(bottleState.amountMl)
+      : bottleState.status === "unset"
+        ? "量を設定"
+        : "量を再読込"
+  const bottleDescription =
+    bottleState.status === "set"
+      ? `押すと${formatBottleAmount(bottleState.amountMl)}で記録します`
+      : bottleState.status === "unset"
+        ? "いつもの量が未設定です。押すと量を決めて記録します"
+        : "いつもの量を読み込めていません。押すと読み込み直します"
 
   return (
     <section aria-label="すぐに記録" className="flex flex-col gap-4">
@@ -552,19 +778,70 @@ export function BabyQuickActions({
           ))}
         </div>
         <div className="grid grid-cols-3 gap-2">
-          {OTHER_FEEDING_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => handleFeedingOption(opt.value)}
-              disabled={isPending}
-              className={`${QUICK_BASE} ${FEEDING_TONE} min-h-12 text-base`}
-            >
-              {spinner(`feeding:${opt.value}`)}
-              {opt.label}
-            </button>
-          ))}
+          {OTHER_FEEDING_OPTIONS.map((opt) =>
+            opt.value === "bottle" ? (
+              // ミルクは押せば記録される量を釦そのものに出す（見た量 = 記録する量）。量の文字は
+              // aria-hidden にして釦の名前を「ミルク」のまま保ち（e2e・単体テストの exact 契約）、
+              // 読み上げには aria-describedby で同じ内容を渡す
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => handleFeedingOption(opt.value)}
+                disabled={isPending}
+                aria-describedby={bottleDescriptionId}
+                className={`${QUICK_BASE} ${FEEDING_TONE} min-h-12 flex-col gap-0 py-1 text-base`}
+              >
+                <span className="flex items-center gap-1.5">
+                  {spinner(`feeding:${opt.value}`)}
+                  {opt.label}
+                </span>
+                <span
+                  aria-hidden="true"
+                  data-testid="bottle-default-amount"
+                  className="text-xs font-semibold tabular-nums"
+                >
+                  {bottleAmountLabel}
+                </span>
+              </button>
+            ) : (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => handleFeedingOption(opt.value)}
+                disabled={isPending}
+                className={`${QUICK_BASE} ${FEEDING_TONE} min-h-12 text-base`}
+              >
+                {spinner(`feeding:${opt.value}`)}
+                {opt.label}
+              </button>
+            ),
+          )}
         </div>
+        {/* 読み上げ専用の説明（aria-describedby の参照先）。hidden でも説明には使われ、
+            読み上げの順路では二度読まれぬ */}
+        <span id={bottleDescriptionId} hidden>
+          {bottleDescription}
+        </span>
+        {/* 量の設定・変更（保存だけ。記録はせぬ）。未設定ならミルク自身も「量を決めて記録」へ
+            進むが、記録せずに先に量だけ決めたい時の口をここに置く。読めていない時は出さぬ
+            （決めてある量を知らぬまま上書きさせぬ）。保存しても過去の記録は変わらず、次のミルクから効く */}
+        {bottleState.status !== "error" && (
+          <div className="flex">
+            <button
+              type="button"
+              onClick={() => {
+                const current = bottleDefault.state
+                if (current.status === "error") return
+                openBottleSheet("save", current.status === "set" ? current.amountMl : null)
+              }}
+              disabled={isPending}
+              className="flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-muted-foreground transition-colors duration-200 hover:bg-muted hover:text-foreground active:bg-muted disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            >
+              <Pencil size={16} aria-hidden="true" />
+              {bottleState.status === "set" ? "ミルクの量を変更" : "ミルクの量を設定"}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Diaper: 1 段目は種別、うんちを含む種別を選ぶと同じ行が量の選択へ入れ替わる */}
@@ -663,12 +940,11 @@ export function BabyQuickActions({
             aria-hidden="true"
           />
           <span className="min-w-0 flex-1 truncate text-sm">
-            {formatTimeJst(new Date(lastRecorded.at).toISOString())}{" "}
-            {lastRecorded.summary}を記録しました
+            {inlineUndoTime} {inlineUndoSummary}を記録しました
           </span>
           <button
             type="button"
-            aria-label={`直前の記録（${formatTimeJst(new Date(lastRecorded.at).toISOString())}）を取り消す`}
+            aria-label={`直前の記録（${inlineUndoTime}）を取り消す`}
             onClick={() => {
               // 親の時計は分刻みで、端末が眠っていた間は止まる。押した瞬間の実時計で期限を
               // 確かめ、期限切れの記録は取り消さぬ（版ガードで安全ではあるが 5 分の約束を守る）
@@ -684,6 +960,7 @@ export function BabyQuickActions({
                 lastRecorded.summary,
                 lastRecorded.at,
                 lastRecorded.seq,
+                lastRecorded.loggedAt,
               )
             }}
             disabled={isPending}
@@ -697,6 +974,28 @@ export function BabyQuickActions({
             取り消す
           </button>
         </div>
+      )}
+
+      {bottleSheet && (
+        <BottleDefaultSheet
+          key={bottleSheet.key}
+          open={bottleSheetOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              dismissedBottleSheetKeyRef.current = Math.max(
+                dismissedBottleSheetKeyRef.current,
+                bottleSheet.key,
+              )
+            }
+            setBottleSheetOpen(open)
+          }}
+          intent={bottleSheet.intent}
+          initialAmountMl={bottleSheet.initialAmountMl}
+          // 保存の結果は開いた時のシート（key）に結び付ける。閉じた・開き直した後に届いた古い
+          // 保存が、新しいシートを閉じたり記録したりせぬように
+          onSaved={(amountMl, intent) => handleBottleSaved(bottleSheet.key, amountMl, intent)}
+          onConflict={(currentMl) => handleBottleConflict(bottleSheet.key, currentMl)}
+        />
       )}
     </section>
   )

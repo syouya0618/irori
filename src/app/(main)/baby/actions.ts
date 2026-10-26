@@ -13,6 +13,12 @@ import {
 } from "@/lib/domain/feeding"
 import { validateLogTime } from "@/lib/domain/baby-log-time"
 import type { UpsertBabyDiaryResult } from "@/lib/domain/baby-diary"
+import {
+  BOTTLE_DEFAULT_RANGE_ERROR,
+  decodeBottleDefault,
+  isBottleDefaultMl,
+  type UpdateBottleDefaultResult,
+} from "@/lib/domain/bottle-default"
 import { BABY_LOG_COLUMNS } from "@/lib/domain/baby-log-columns"
 import { todayJstString } from "@/lib/utils/date-jst"
 import {
@@ -101,11 +107,22 @@ const LOG_DELETED_ERROR = "この記録は他の端末で削除されていま�
  *
  * 新しく書けた時は行の版（`updatedAt`）も返す。楽観 append の行はこの版を持つ —
  * 持たねば Realtime の echo / 再取得が届くまで、作成直後の編集が版を送れぬ（P2-07）。
+ *
+ * 記録時刻（`loggedAt`）も DB が書いた値のまま返す。loggedAt を送らぬクイック記録は DB の
+ * now() で書かれ、応答が届いた時の端末時計とは数秒（時計がずれておればそれ以上）食い違う。
+ * 楽観行をその端末時計で組むと、分を跨いだ時に画面の HH:mm が DB と違い、編集シートが
+ * 違う時刻で seed され、保存の後に表示が DB の時刻へ飛ぶ（2026-10-25 のミルクの報告）。
  */
 type InsertOutcome =
-  | { error: string | null; id: string | null; updatedAt?: undefined; replayed?: undefined }
-  | { error: null; id: string; updatedAt: string; replayed?: undefined }
-  | { error: null; id: string; updatedAt?: undefined; replayed: true }
+  | {
+      error: string | null
+      id: string | null
+      updatedAt?: undefined
+      loggedAt?: undefined
+      replayed?: undefined
+    }
+  | { error: null; id: string; updatedAt: string; loggedAt: string; replayed?: undefined }
+  | { error: null; id: string; updatedAt?: undefined; loggedAt?: undefined; replayed: true }
 
 const REPLAY_MISMATCH_ERROR =
   "この操作は少し前に別の内容で記録済みです。画面を更新して記録を確かめてください。"
@@ -169,7 +186,7 @@ async function insertBabyLog(
       logged_by: userId,
       ...body,
     })
-    .select("id, updated_at")
+    .select("id, updated_at, logged_at")
     .single()
 
   if (error) {
@@ -215,7 +232,12 @@ async function insertBabyLog(
   }
 
   revalidatePath("/baby")
-  return { error: null, id: data.id, updatedAt: data.updated_at }
+  return {
+    error: null,
+    id: data.id,
+    updatedAt: data.updated_at,
+    loggedAt: data.logged_at,
+  }
 }
 
 // 母乳サイクル行（feeding_type: 'breast'）の左右吸わせ回数を検証する。
@@ -1172,4 +1194,98 @@ export async function upsertBabyDiary(
 
   revalidatePath("/baby")
   return { error: null, diary: saved }
+}
+
+const BOTTLE_DEFAULT_SAVE_ERROR =
+  "いつものミルク量を保存できませんでした。もう一度お試しください。"
+const BOTTLE_DEFAULT_CONFLICT_ERROR =
+  "いつものミルク量は、家族またはご自身の別の端末で先に変更されていました。"
+
+/**
+ * いつものミルク量（households.bottle_default_ml）を変える。世帯の誰でも変えられ（RLS の
+ * households_update が自世帯の行だけに絞る）、次のクイック記録から効く。過去の記録には触れぬ。
+ *
+ * 楽観的排他は**値**で取る: 画面が見ていた量（`expectedMl`。未設定なら null）のままの時だけ
+ * 書く。古い画面のまま保存して、家族が先に決めた量を黙って上書きせぬため（育児ログ・日記の
+ * 版ガードと同じ考え）。量は 1 つの数ゆえ、途中で 120 → 160 → 120 と戻っていても「今 120」
+ * なら画面と DB は一致しておる（版でなく値で足りる）。
+ *
+ * 0 行の時は読み直して分ける:
+ * - 今の量が送った量と同じ → 応答だけ失った保存の再試行（または偶然の同値）ゆえ成功
+ * - 違う量 → 衝突。今の量を返し、上書きはせぬ
+ * - 行が読めぬ → 失敗（世帯の行は必ず在る。見えぬのは判定不能）
+ *
+ * 世帯は引数で受けず、getAuthContext の利用者の世帯だけを書く。
+ */
+export async function updateBottleDefault(input: {
+  amountMl: number
+  expectedMl: number | null
+}): Promise<UpdateBottleDefaultResult> {
+  // Server Action は直接 POST でも呼べる外部入力。型・範囲・null を DB に届く前に確かめる
+  if (typeof input !== "object" || input === null) {
+    return { ok: false, error: BOTTLE_DEFAULT_RANGE_ERROR }
+  }
+  const { amountMl, expectedMl } = input
+  if (!isBottleDefaultMl(amountMl)) {
+    return { ok: false, error: BOTTLE_DEFAULT_RANGE_ERROR }
+  }
+  // 見ていた量を送らぬ・形の合わぬ保存（古いバンドル等）は、無条件の上書きへ倒さず止める
+  if (expectedMl !== null && !isBottleDefaultMl(expectedMl)) {
+    return { ok: false, error: STALE_SCREEN_SAVE_ERROR }
+  }
+
+  const auth = await getAuthContext()
+  if (auth.error !== null) return { ok: false, error: auth.error }
+  const { supabase, userId, householdId } = auth.context
+  const logContext = { userId, householdId }
+
+  const update = supabase
+    .from("households")
+    .update({ bottle_default_ml: amountMl })
+    .eq("id", householdId)
+  // 未設定（NULL）との比較は `.is(null)`。`.eq(col, null)` は `= NULL` となり決して一致せぬ
+  const guarded =
+    expectedMl === null
+      ? update.is("bottle_default_ml", null)
+      : update.eq("bottle_default_ml", expectedMl)
+  const { data, error } = await guarded.select("bottle_default_ml")
+
+  if (error) {
+    logSupabaseError("baby", "bottle default update failed", error, logContext)
+    // 23514 = CHECK 違反（chk_bottle_default_ml）。上の検証と同じ範囲ゆえ通常は届かぬ
+    if (error.code === "23514") return { ok: false, error: BOTTLE_DEFAULT_RANGE_ERROR }
+    return { ok: false, error: BOTTLE_DEFAULT_SAVE_ERROR }
+  }
+  if (data && data.length > 0) {
+    // 訪問済みの /baby の RSC payload を捨てさせる。捨てぬと「戻る」で古い量（initialBottleDefault）が
+    // 取り直しの届くまで釦に出て、その間のタップが自分で変えたばかりの量と違う量で記録される
+    revalidatePath("/baby")
+    return { ok: true, amountMl }
+  }
+
+  const { data: row, error: readError } = await supabase
+    .from("households")
+    .select("bottle_default_ml")
+    .eq("id", householdId)
+    .maybeSingle()
+  if (readError) {
+    logSupabaseError("baby", "bottle default re-read failed", readError, logContext)
+    return { ok: false, error: BOTTLE_DEFAULT_SAVE_ERROR }
+  }
+  const current = decodeBottleDefault({ data: row, error: null })
+  if (current.status === "error") {
+    console.error("[baby] bottle default re-read: 世帯の行が読めぬ", logContext)
+    return { ok: false, error: BOTTLE_DEFAULT_SAVE_ERROR }
+  }
+  const currentMl = current.status === "set" ? current.amountMl : null
+  if (currentMl === amountMl) {
+    console.info("[baby] bottle default: 既に同じ量（再試行を成功として受理）", logContext)
+    revalidatePath("/baby")
+    return { ok: true, amountMl }
+  }
+  return {
+    ok: false,
+    error: BOTTLE_DEFAULT_CONFLICT_ERROR,
+    conflict: { currentMl },
+  }
 }
