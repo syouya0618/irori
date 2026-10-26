@@ -39,6 +39,7 @@ import {
 } from "@/lib/utils/date-jst"
 import {
   jstDateTimeToIso,
+  moveLogTimeToJstDate,
   validateLogTime,
 } from "@/lib/domain/baby-log-time"
 import { segmentCn } from "@/lib/utils/segment-cn"
@@ -183,8 +184,9 @@ interface BabyLogFormSheetProps {
    */
   recorderLabel?: string | null
   /**
-   * 作成成功時に楽観 append する行を親へ渡す（B-03）。作成導線は quick actions
-   * （isToday ゲート下）からのみ開くため、logged_at（client now）は選択日と一致する。
+   * 作成成功時に楽観 append する行を親へ渡す（B-03）。行の logged_at は record* へ送った
+   * loggedAt（画面の日付・時刻から組んだ値）そのもの — DB に書かれる値と同じゆえ、開き直した
+   * 編集シートの seed も DB と一致する。どの日の行として出すかは親の appendLog が日付で決める。
    * 編集（update）は既存行の書き換えで append 対象外 — 反映は下の onLogUpdated が担う。
    */
   onLogRecorded?: (log: BabyLogData) => void
@@ -568,12 +570,20 @@ export function BabyLogFormSheet({
         // 秒が HH:mm 丸めで無言に失われるのを防ぐ（updateLog は未指定なら logged_at を
         // 変更しない）。seed と同値（変更→元に戻した場合含む）なら送らず、時刻検証も
         // スキップしてよい — 既存記録の時刻はそのまま妥当。
+        // ⚠️ この判定は「画面の行の logged_at = DB の logged_at」を前提にする。楽観行を
+        // 端末時計で組むと seed が DB とずれ、量だけの保存でも表示が DB の時刻へ飛ぶ
+        // （楽観行の logged_at は DB が書いた値で組むこと）
         if (timeHm !== seedTimeHm || logDate !== seedDateYmd) {
           if (!isValidYmd(logDate)) {
             toast.error("日付を入力してください")
             return
           }
-          const loggedAt = jstDateTimeToIso(logDate, timeHm)
+          // 日付だけを変えた時は、元の記録時刻を秒まで保ったままその日へ動かす（HH:mm から
+          // 組み直すと秒が落ちる）。時刻を変えた時だけ、打った HH:mm で組む
+          const loggedAt =
+            timeHm === seedTimeHm
+              ? moveLogTimeToJstDate(log.logged_at, logDate)
+              : jstDateTimeToIso(logDate, timeHm)
           if (!loggedAt) {
             toast.error("時刻を入力してください")
             return
