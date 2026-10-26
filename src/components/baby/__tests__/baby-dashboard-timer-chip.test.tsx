@@ -72,6 +72,7 @@ function defaultProps(): Parameters<typeof BabyDashboard>[0] {
     babyName: null,
     babyBirthDate: null,
     feedingIntervalMin: 180,
+    initialBottleDefault: { status: "set" as const, amountMl: 120 },
   }
 }
 

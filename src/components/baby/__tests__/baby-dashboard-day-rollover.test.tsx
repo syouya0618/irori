@@ -222,6 +222,7 @@ function defaultProps(
     babyName: null,
     babyBirthDate: null,
     feedingIntervalMin: 180,
+    initialBottleDefault: { status: "set" as const, amountMl: 120 },
     ...overrides,
   }
 }
