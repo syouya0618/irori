@@ -154,6 +154,18 @@ describe("releaseFeedback — 本番確認の宣言とコミット SHA が無け
     expect(result).toEqual({ status: "ok", version: 4, duplicate: false })
   })
 
+  it("⚠️ 本番でないデプロイ（preview）のサーバからは確定させず、RPC を呼ばぬ", async () => {
+    vi.stubEnv("VERCEL_ENV", "preview")
+    vi.stubEnv("VERCEL_GIT_COMMIT_SHA", "ABCDEF1234567")
+    const rpc = setRpc({ data: [{ version: 4, created: true }], error: null })
+    const result = await releaseFeedback({ ...release, productionVerified: true })
+    expect(result).toEqual({
+      status: "error",
+      error: expect.stringContaining("本番の irori で確定してください"),
+    })
+    expect(rpc).not.toHaveBeenCalled()
+  })
+
   it("稼働中のデプロイが読めぬ環境では observed_deploy を null で送る（偽の観測を作らぬ）", async () => {
     vi.stubEnv("VERCEL_ENV", "")
     vi.stubEnv("VERCEL_GIT_COMMIT_SHA", "")

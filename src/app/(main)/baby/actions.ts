@@ -107,11 +107,22 @@ const LOG_DELETED_ERROR = "この記録は他の端末で削除されていま�
  *
  * 新しく書けた時は行の版（`updatedAt`）も返す。楽観 append の行はこの版を持つ —
  * 持たねば Realtime の echo / 再取得が届くまで、作成直後の編集が版を送れぬ（P2-07）。
+ *
+ * 記録時刻（`loggedAt`）も DB が書いた値のまま返す。loggedAt を送らぬクイック記録は DB の
+ * now() で書かれ、応答が届いた時の端末時計とは数秒（時計がずれておればそれ以上）食い違う。
+ * 楽観行をその端末時計で組むと、分を跨いだ時に画面の HH:mm が DB と違い、編集シートが
+ * 違う時刻で seed され、保存の後に表示が DB の時刻へ飛ぶ（2026-10-25 のミルクの報告）。
  */
 type InsertOutcome =
-  | { error: string | null; id: string | null; updatedAt?: undefined; replayed?: undefined }
-  | { error: null; id: string; updatedAt: string; replayed?: undefined }
-  | { error: null; id: string; updatedAt?: undefined; replayed: true }
+  | {
+      error: string | null
+      id: string | null
+      updatedAt?: undefined
+      loggedAt?: undefined
+      replayed?: undefined
+    }
+  | { error: null; id: string; updatedAt: string; loggedAt: string; replayed?: undefined }
+  | { error: null; id: string; updatedAt?: undefined; loggedAt?: undefined; replayed: true }
 
 const REPLAY_MISMATCH_ERROR =
   "この操作は少し前に別の内容で記録済みです。画面を更新して記録を確かめてください。"
@@ -175,7 +186,7 @@ async function insertBabyLog(
       logged_by: userId,
       ...body,
     })
-    .select("id, updated_at")
+    .select("id, updated_at, logged_at")
     .single()
 
   if (error) {
@@ -221,7 +232,12 @@ async function insertBabyLog(
   }
 
   revalidatePath("/baby")
-  return { error: null, id: data.id, updatedAt: data.updated_at }
+  return {
+    error: null,
+    id: data.id,
+    updatedAt: data.updated_at,
+    loggedAt: data.logged_at,
+  }
 }
 
 // 母乳サイクル行（feeding_type: 'breast'）の左右吸わせ回数を検証する。

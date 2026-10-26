@@ -5,11 +5,19 @@ import { usePathname } from "next/navigation"
 import { Baby, CalendarDays, Settings } from "lucide-react"
 import { cn } from "@/lib/utils"
 
+/**
+ * `also` はそのタブの下位として扱う別の path。要望（/feedback）は設定の「使い方と要望」から
+ * 入る画面ゆえ、開いている間も「設定」を現在地として示す（どのタブも現在地でない画面を作らぬ）。
+ */
 const tabs = [
-  { href: "/baby", label: "育児", icon: Baby },
-  { href: "/calendar", label: "予定", icon: CalendarDays },
-  { href: "/settings", label: "設定", icon: Settings },
+  { href: "/baby", label: "育児", icon: Baby, also: [] },
+  { href: "/calendar", label: "予定", icon: CalendarDays, also: [] },
+  { href: "/settings", label: "設定", icon: Settings, also: ["/feedback"] },
 ] as const
+
+function isUnder(pathname: string, base: string): boolean {
+  return pathname === base || pathname.startsWith(`${base}/`)
+}
 
 /**
  * ボトムナビ（3 タブ）。
@@ -33,9 +41,9 @@ export function BottomNav() {
       aria-label="メインナビゲーション"
     >
       <div className="mx-auto flex h-(--bottom-nav-h) max-w-lg items-stretch justify-around">
-        {tabs.map(({ href, label, icon: Icon }) => {
+        {tabs.map(({ href, label, icon: Icon, also }) => {
           const isActive =
-            pathname === href || pathname.startsWith(`${href}/`)
+            isUnder(pathname, href) || also.some((base) => isUnder(pathname, base))
 
           return (
             <Link

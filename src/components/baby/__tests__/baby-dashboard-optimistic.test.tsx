@@ -13,7 +13,8 @@
  * 3. 同 id の Realtime INSERT echo が来ても二重 append されない（1 件のまま）
  *
  * 時刻は実タイマー + todayJstString() の実時刻から組む
- * （記録の logged_at は client now = 当日ゆえ選択日窓に入る）。
+ * （記録の応答が返す loggedAt = DB の記録時刻は mock を組んだ瞬間の now = 当日ゆえ、
+ * 楽観行は選択日窓に入る）。
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
@@ -199,6 +200,7 @@ describe("BabyDashboard / 記録の楽観 append (B-03)", () => {
       error: null,
       id: "diaper-opt-2",
       updatedAt: createdVersion,
+      loggedAt: new Date().toISOString(),
     })
     mockedDeleteLog.mockResolvedValue({ error: null })
     render(<BabyDashboard {...defaultProps()} />)
@@ -767,7 +769,12 @@ describe("BabyDashboard / 取り消しと Realtime 通知の競合", () => {
   })
 
   async function recordPeeThenUndoInline(id: string) {
-    mockedRecordDiaper.mockResolvedValue({ error: null, id, updatedAt: createdVersion })
+    mockedRecordDiaper.mockResolvedValue({
+      error: null,
+      id,
+      updatedAt: createdVersion,
+      loggedAt: new Date().toISOString(),
+    })
     mockedDeleteLog.mockResolvedValue({ error: null })
     render(<BabyDashboard {...defaultProps()} />)
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
@@ -831,6 +838,7 @@ describe("BabyDashboard / 取り消しと Realtime 通知の競合", () => {
       error: null,
       id: "diaper-recreated",
       updatedAt: "2026-10-21T03:05:00.000000+00:00",
+      loggedAt: new Date().toISOString(),
     })
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
     await waitFor(() =>
@@ -993,7 +1001,12 @@ describe("BabyDashboard / 遅い作成の応答と編集シートの削除の競
 
   it("消した後に、消す前の作成の応答（消した版と同じ版）が遅れて着いても、行を蘇らせぬ", async () => {
     const pending = await insertArrivesThenDeleteInSheet("diaper-slow")
-    await resolveCreate(pending, { error: null, id: "diaper-slow", updatedAt: V1 })
+    await resolveCreate(pending, {
+      error: null,
+      id: "diaper-slow",
+      updatedAt: V1,
+      loggedAt: new Date().toISOString(),
+    })
 
     expect(within(summary()).getByText("おしっこ0・うんち0")).toBeInTheDocument()
     expect(screen.getByText("まだ記録がありません")).toBeInTheDocument()
@@ -1023,6 +1036,7 @@ describe("BabyDashboard / 遅い作成の応答と編集シートの削除の競
       error: null,
       id: "diaper-slow-z",
       updatedAt: "2026-10-25T03:00:00.123Z",
+      loggedAt: new Date().toISOString(),
     })
     expect(within(summary()).getByText("おしっこ0・うんち0")).toBeInTheDocument()
   })
@@ -1033,6 +1047,7 @@ describe("BabyDashboard / 遅い作成の応答と編集シートの削除の競
       error: null,
       id: "diaper-newer",
       updatedAt: "2026-10-25T03:00:07.000000+00:00",
+      loggedAt: new Date().toISOString(),
     })
     expect(within(summary()).getByText("おしっこ1・うんち0")).toBeInTheDocument()
   })

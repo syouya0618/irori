@@ -470,7 +470,12 @@ describe("BabyDashboard / 日付をまたぐ間の「直前の記録」の取り
       return 1
     }) as never)
     vi.mocked(recordDiaper).mockReset()
-    vi.mocked(recordDiaper).mockResolvedValue({ error: null, id: "pee-nav", updatedAt: VERSION })
+    vi.mocked(recordDiaper).mockResolvedValue({
+      error: null,
+      id: "pee-nav",
+      updatedAt: VERSION,
+      loggedAt: new Date().toISOString(),
+    })
     vi.mocked(deleteLog).mockReset()
     vi.mocked(deleteLog).mockResolvedValue({ error: null })
 

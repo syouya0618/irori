@@ -17,15 +17,15 @@ import type {
  * 即時更新し、feeding/diaper の再タップ二重記録を止血するため、Server Action が返す
  * DB の実 id でこの行を作り setLogs へ前置きする（既存 Realtime echo は id 重複スキップで吸収）。
  *
- * ⚠️ この楽観 append が正しいのは、記録導線（quick actions / それが開く form-sheet /
- * feeding-timer）が全て isToday ゲート（baby-dashboard.tsx の `isToday && <BabyQuickActions>`）
- * 下にあり、`loggedAt` の既定が client now = 当日ゆえ選択日窓と一致するからこそ。
- * F-03（過去日クイック記録の解禁）採択時は、日付不一致行が timeline に混入するため
- * 本設計の再検討が必須（計画書 §3 B-03 の安全前提）。
+ * ⚠️ `loggedAt` は DB に書かれた値と**同じ値**を渡すこと。記録シート・タイマーは送った
+ * loggedAt を、loggedAt を送らぬクイック記録はサーバが返す記録時刻（DB の now()）を渡す。
+ * 端末時計で補うと、分を跨いだ時に画面と DB の HH:mm が食い違い、編集シートが違う時刻で
+ * seed され、保存の後に表示が DB の時刻へ飛ぶ（2026-10-25 のミルクの報告）。Realtime の
+ * INSERT echo と appendLog は同じ id の行を捨てるゆえ、食い違いは再取得まで直らぬ。
+ * どの日の窓へ入れるかは親（appendLog）が行の日付で決める。
  *
  * 注: `household_id` は `BabyLogData` に含まれない（RLS でサーバ側が担保）。
- * `logged_at` / `created_at` は DB now() と数秒ズレうるが、Realtime echo または
- * リロード時のサーバ値で上書きされ収束する。
+ * `created_at` は呼び出し時刻で埋める（表示にも編集にも使わぬ）。
  */
 export interface BuildOptimisticLogParams {
   id: string
@@ -39,7 +39,10 @@ export interface BuildOptimisticLogParams {
   updatedAt: string | null
   logType: BabyLogType
   loggedBy: string
-  /** 既定は呼び出し時刻（当日）。編集シート等で明示したい場合のみ渡す。 */
+  /**
+   * DB に書かれた記録時刻（上の ⚠️）。省略時は呼び出し時刻で補うが、それは古いサーバの応答に
+   * 記録時刻が無い時の退避に限る。
+   */
   loggedAt?: string
   feedingType?: FeedingType | null
   amountMl?: number | null

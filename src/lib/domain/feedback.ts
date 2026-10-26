@@ -188,6 +188,23 @@ export function observedDeployFromEnv(
 }
 
 /**
+ * このサーバが**本番でない**デプロイ（preview 等）か。`VERCEL_ENV` が在り、かつ `production` で
+ * ない時だけ true。値が無い（ローカル・e2e）時は判別できぬゆえ false（そこでの確定は止めぬ）。
+ *
+ * 本番でないデプロイから「反映済み」を確定させぬために使う: preview で確かめただけの変更が、
+ * 同じ DB を通じて投稿者に「反映済み」と出るのを防ぐ（画面の宣言だけに頼らぬ）。
+ */
+export function isNonProductionDeploy(env: Record<string, string | undefined>): boolean {
+  const stage = env.VERCEL_ENV?.trim()
+  return Boolean(stage) && stage !== "production"
+}
+
+/** 観測したデプロイ（`observedDeployFromEnv` の `stage:sha`）が本番のものか */
+export function isProductionObservedDeploy(observed: string | null): boolean {
+  return observed !== null && observed.startsWith("production:")
+}
+
+/**
  * 入力した SHA と稼働中のデプロイの SHA が同じコミットを指すか（短縮形どうしの前方一致）。
  * 一致しなくても「反映されておらぬ」とは言えぬ（稼働中のデプロイは入力したコミットを
  * 祖先に含みうる）。画面の手掛かりにだけ使う。
@@ -290,6 +307,15 @@ export interface FeedbackPushSummary {
 }
 
 /**
+ * 知らせの行が 1 つも無い時の文。「端末が無い」と言い切らぬ — 行が 0 になるのは
+ * (1) 通知を許可した端末が無い (2) 仕様で送る相手が居らぬ（運用者が自分の要望を操作した・
+ * 投稿者のほかに運用者が居らぬ）(3) 積み込みの失敗（RPC が WARNING に落として要望だけを残した）
+ * のどれでも同じで、画面からは見分けられぬゆえ、三つとも含めて書く。
+ */
+export const FEEDBACK_PUSH_NONE =
+  "Push は積まれていません（通知を許可した端末が無い・送る相手が居らぬ・積み込めなかった、のいずれか。アプリ内の表示だけで知らせます）"
+
+/**
  * 運用者の画面に出す「知らせの状況」の文。
  *
  * ⚠️ **「届いた」と書くな。** 分かるのは push サービスが受け取ったか（accepted）までで、
@@ -298,7 +324,7 @@ export interface FeedbackPushSummary {
  */
 export function describeFeedbackPush(summary: FeedbackPushSummary | null): string {
   if (!summary) {
-    return "Push の宛先なし（アプリ内の表示だけで知らせます）"
+    return FEEDBACK_PUSH_NONE
   }
   const parts: string[] = []
   if (summary.accepted > 0) {
@@ -314,7 +340,7 @@ export function describeFeedbackPush(summary: FeedbackPushSummary | null): strin
   }
   return parts.length > 0
     ? parts.join("・")
-    : "Push の宛先なし（アプリ内の表示だけで知らせます）"
+    : FEEDBACK_PUSH_NONE
 }
 
 const JST_DATETIME_FORMATTER = new Intl.DateTimeFormat("ja-JP", {

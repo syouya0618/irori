@@ -15,6 +15,7 @@ import {
   isOperatorSettableStatus,
   normalizeCommitSha,
   normalizeFeedbackText,
+  isNonProductionDeploy,
   observedDeployFromEnv,
   type OperatorFeedbackResult,
 } from "@/lib/domain/feedback"
@@ -191,6 +192,14 @@ export async function releaseFeedback(input: {
     return {
       status: "error",
       error: "本番環境で反映を確かめたことにチェックを入れてください",
+    }
+  }
+  // 本番でないデプロイ（preview 等）のサーバからは確定させぬ。preview で確かめただけの変更が、
+  // 同じ DB を通じて投稿者に「反映済み」と出るのを防ぐ（判別できぬローカル・e2e は通す）
+  if (isNonProductionDeploy(process.env)) {
+    return {
+      status: "error",
+      error: "この画面は本番のデプロイではありません。本番の irori で確定してください",
     }
   }
   if (typeof input.commitSha !== "string") {

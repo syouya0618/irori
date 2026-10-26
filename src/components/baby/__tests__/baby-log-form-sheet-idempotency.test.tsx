@@ -31,6 +31,9 @@ const mockedToast = vi.mocked(toast)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // clearAllMocks は Once の待ち行列を消さぬ。落ちたテストの未消費の応答が次のテストへ漏れて
+  // 連鎖して赤になるゆえ、記録の mock は実装ごと戻す
+  mockedRecordMemo.mockReset()
   cleanup()
 })
 afterEach(cleanup)
@@ -59,8 +62,13 @@ function typeMemo(value: string) {
   fireEvent.change(screen.getByLabelText("メモ"), { target: { value } })
 }
 
-function pressRecord() {
-  fireEvent.click(screen.getByRole("button", { name: "記録する" }))
+/**
+ * 「記録する」を押す。送信中は釦の名前が「記録中...」に変わるゆえ、送信中でない名前が戻るまで待ってから押す。
+ * React 19 では await の後の setState（toast の呼び出し等）が isPending=false より先に commit されうる。
+ * 負荷の下では、toast を見た直後でも釦はまだ送信中のことがある（全件の実行でだけ落ちる揺れの原因）
+ */
+async function pressRecord() {
+  fireEvent.click(await screen.findByRole("button", { name: "記録する" }))
 }
 
 describe("BabyLogFormSheet の冪等 id（P2-08）", () => {
@@ -71,9 +79,9 @@ describe("BabyLogFormSheet の冪等 id（P2-08）", () => {
     renderMemoSheet()
 
     typeMemo("ミルク多め")
-    pressRecord()
+    await pressRecord()
     await waitFor(() => expect(mockedToast.error).toHaveBeenCalled())
-    pressRecord()
+    await pressRecord()
     await waitFor(() => expect(mockedRecordMemo).toHaveBeenCalledTimes(2))
 
     expect(clientIdOf(0)).toMatch(/^[0-9a-f-]{36}$/)
@@ -87,10 +95,10 @@ describe("BabyLogFormSheet の冪等 id（P2-08）", () => {
     renderMemoSheet()
 
     typeMemo("ミルク多め")
-    pressRecord()
+    await pressRecord()
     await waitFor(() => expect(mockedToast.error).toHaveBeenCalled())
     typeMemo("ミルク多め・ぐずり")
-    pressRecord()
+    await pressRecord()
     await waitFor(() => expect(mockedRecordMemo).toHaveBeenCalledTimes(2))
 
     expect(clientIdOf(1)).toMatch(/^[0-9a-f-]{36}$/)
@@ -103,7 +111,7 @@ describe("BabyLogFormSheet の冪等 id（P2-08）", () => {
     renderMemoSheet()
     typeMemo("a")
     typeMemo("ab")
-    pressRecord()
+    await pressRecord()
     await waitFor(() => expect(mockedRecordMemo).toHaveBeenCalledTimes(1))
     expect(clientIdOf(0)).toMatch(/^[0-9a-f-]{36}$/)
   })
@@ -115,7 +123,7 @@ describe("BabyLogFormSheet の冪等 id（P2-08）", () => {
     renderMemoSheet({ onOpenChange, onLogRecorded })
 
     typeMemo("ミルク多め")
-    pressRecord()
+    await pressRecord()
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
 
     expect(mockedToast.success).toHaveBeenCalledWith(
@@ -132,7 +140,7 @@ describe("BabyLogFormSheet の冪等 id（P2-08）", () => {
     const onOpenChange = vi.fn()
     renderMemoSheet({ onOpenChange })
     typeMemo("ミルク多め")
-    pressRecord()
+    await pressRecord()
     await waitFor(() => expect(mockedToast.error).toHaveBeenCalled())
     expect(mockedToast.error).toHaveBeenCalledWith(expect.stringContaining("別の内容で記録済み"))
     expect(onOpenChange).not.toHaveBeenCalledWith(false)

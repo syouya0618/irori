@@ -87,6 +87,25 @@ async function countFeedback(submitterId: string, title: string): Promise<number
   return count ?? -1
 }
 
+/**
+ * 要望の詳細（受信箱・投稿者のどちらも）を開き、ハイドレーションが済むまで待つ。同期点は、マウント後の
+ * effect でしか飛ばぬ既読の Server Action（FeedbackSeenMarker → markFeedbackSeen）の POST。
+ * 掴むのは「開いた頁へ向けた、この要望の既読」だけ（前の文書の別の POST を取り違えぬ）。
+ */
+async function gotoHydrated(page: Page, absoluteUrl: string): Promise<void> {
+  const feedbackId = new URL(absoluteUrl).pathname.split("/").at(-1) ?? ""
+  const seen = page.waitForRequest(
+    (r) =>
+      r.method() === "POST" &&
+      Boolean(r.headers()["next-action"]) &&
+      r.url() === absoluteUrl &&
+      (r.postData() ?? "").includes(feedbackId),
+    { timeout: 20_000 },
+  )
+  await page.goto(absoluteUrl)
+  await seen
+}
+
 /** 送るボタン（ハイドレーション前の押下は無反応になりうるゆえ、結果が出るまで押し直す）。 */
 async function fillFeedback(page: Page, title: string, body: string): Promise<void> {
   await page.getByLabel("要望（ひとことで）").fill(title)
@@ -189,7 +208,8 @@ test("要望を送り、運用者が受け取り、本番で確かめてから�
     })
 
     await test.step("運用者: マージを記録しても、妻には「反映済み」と出ぬ", async () => {
-      await operatorPage.goto(detailUrl)
+      // フルロードの直後に radio を押すと、ハイドレーション前で state に届かず「取り込み済み」の欄が出ぬことがある
+      await gotoHydrated(operatorPage, detailUrl)
       await operatorPage.getByRole("radio", { name: "対応中" }).check({ force: true })
       await operatorPage.getByLabel("取り込み済みの変更（任意）").fill("PR #241")
       await operatorPage.getByRole("button", { name: "保存する" }).click()
@@ -201,7 +221,9 @@ test("要望を送り、運用者が受け取り、本番で確かめてから�
     })
 
     await test.step("運用者: 本番確認のチェックと SHA が揃うまで「反映済み」は押せぬ", async () => {
-      await operatorPage.goto(detailUrl)
+      // ハイドレーションが済むまで待つ（マウント後の effect でしか飛ばぬ既読の Server Action が同期点）。
+      // 待たずに入力すると state が付いてこず、「押せる」の assert が CI でだけ落ちうる
+      await gotoHydrated(operatorPage, detailUrl)
       const releaseButton = operatorPage.getByRole("button", { name: "反映済みにする" })
       await expect(releaseButton).toBeDisabled()
       await operatorPage.getByLabel("確かめたコミット（SHA・7〜40 桁）").fill("abcdef1")

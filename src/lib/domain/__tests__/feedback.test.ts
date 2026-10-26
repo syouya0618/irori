@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest"
 import {
   COMMIT_SHA_RE,
+  FEEDBACK_PUSH_NONE,
   FEEDBACK_STATUSES,
   FEEDBACK_STATUS_DESCRIPTIONS,
   OPERATOR_SETTABLE_STATUSES,
@@ -14,6 +15,8 @@ import {
   normalizeCommitSha,
   normalizeFeedbackText,
   observedDeployFromEnv,
+  isNonProductionDeploy,
+  isProductionObservedDeploy,
   parseFeedbackStatus,
   releaseOf,
 } from "../feedback"
@@ -139,6 +142,18 @@ describe("コミット SHA と稼働中のデプロイ", () => {
     expect(observedDeployFromEnv({ VERCEL_ENV: "staging", VERCEL_GIT_COMMIT_SHA: "abcdef1" })).toBeNull()
     expect(observedDeployFromEnv({ VERCEL_ENV: "preview", VERCEL_GIT_COMMIT_SHA: "zzz" })).toBeNull()
   })
+  it("⚠️ 本番でないデプロイ（preview・development）を名指しする。本番と判別できぬ環境は止めぬ", () => {
+    expect(isNonProductionDeploy({ VERCEL_ENV: "preview" })).toBe(true)
+    expect(isNonProductionDeploy({ VERCEL_ENV: "development" })).toBe(true)
+    // 対照: 本番と、判別できぬ環境（ローカル・e2e）は止めぬ
+    expect(isNonProductionDeploy({ VERCEL_ENV: "production" })).toBe(false)
+    expect(isNonProductionDeploy({ VERCEL_ENV: " production\n" })).toBe(false)
+    expect(isNonProductionDeploy({})).toBe(false)
+    expect(isNonProductionDeploy({ VERCEL_ENV: "" })).toBe(false)
+    expect(isProductionObservedDeploy("production:abcdef1")).toBe(true)
+    expect(isProductionObservedDeploy("preview:abcdef1")).toBe(false)
+    expect(isProductionObservedDeploy(null)).toBe(false)
+  })
   it("短縮形どうしの前方一致で同じコミットかを見る", () => {
     expect(commitShaMatches("abcdef1", "abcdef1234")).toBe(true)
     expect(commitShaMatches("abcdef1234", "abcdef1")).toBe(true)
@@ -149,9 +164,17 @@ describe("コミット SHA と稼働中のデプロイ", () => {
 
 describe("describeFeedbackPush — 「届いた」と断定せぬ", () => {
   const zero = { queued: 0, accepted: 0, unconfirmed: 0, gone: 0, expired: 0, revoked: 0, superseded: 0 }
-  it("行が無ければ「宛先なし（アプリ内だけ）」", () => {
-    expect(describeFeedbackPush(null)).toMatch(/宛先なし/)
-    expect(describeFeedbackPush(zero)).toMatch(/宛先なし/)
+  it("行が無ければ「積まれていない（端末なし・送る相手なし・積み込み失敗のどれも含む）」", () => {
+    expect(describeFeedbackPush(null)).toBe(FEEDBACK_PUSH_NONE)
+    expect(describeFeedbackPush(zero)).toBe(FEEDBACK_PUSH_NONE)
+  })
+  it("⚠️ 行が無いことを「宛先なし」と言い切らぬ（積み込みの失敗も行 0 になり、見分けられぬ）", () => {
+    // 定数どうしの比較だけでは文言を戻しても緑のまま — 中身を見る
+    expect(FEEDBACK_PUSH_NONE).toContain("積み込めなかった")
+    expect(FEEDBACK_PUSH_NONE).toContain("端末が無い")
+    expect(FEEDBACK_PUSH_NONE).toContain("送る相手が居らぬ")
+    expect(FEEDBACK_PUSH_NONE).not.toMatch(/宛先なし/)
+    expect(FEEDBACK_PUSH_NONE).not.toMatch(/届/)
   })
   it("受理でも端末での表示は確認できぬと添える", () => {
     const text = describeFeedbackPush({ ...zero, accepted: 2 })
@@ -167,10 +190,10 @@ describe("describeFeedbackPush — 「届いた」と断定せぬ", () => {
       expect(describeFeedbackPush(summary)).not.toMatch(/届きました|届いた/)
     }
   })
-  it("状態が変わって送らなんだ行を「宛先なし」と偽らず数える", () => {
+  it("状態が変わって送らなんだ行を「積まれていない」と偽らず数える", () => {
     const text = describeFeedbackPush({ ...zero, superseded: 2 })
     expect(text).toContain("状態が変わったため未送信 2 台")
-    expect(text).not.toMatch(/宛先なし/)
+    expect(text).not.toBe(FEEDBACK_PUSH_NONE)
   })
   it("結果の分からぬ送信は「結果不明」として出す", () => {
     expect(describeFeedbackPush({ ...zero, unconfirmed: 1 })).toContain("結果不明 1 台")

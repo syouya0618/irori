@@ -8,6 +8,7 @@ import { render, screen, cleanup } from "@testing-library/react"
 import { FeedbackStatusBadge } from "../feedback-status-badge"
 import { FeedbackTimeline } from "../feedback-timeline"
 import type { FeedbackTimelineEntry } from "@/lib/domain/feedback-view"
+import { FEEDBACK_PUSH_NONE } from "@/lib/domain/feedback"
 
 afterEach(cleanup)
 
@@ -88,7 +89,7 @@ describe("FeedbackTimeline", () => {
   it("知らせの状況は渡された時だけ出す（投稿者の画面には出さぬ）", () => {
     const { rerender } = render(<FeedbackTimeline entries={[entry({})]} />)
     expect(screen.queryByText(/Push/)).toBeNull()
-    rerender(<FeedbackTimeline entries={[entry({ pushLabel: "Push の宛先なし（アプリ内の表示だけで知らせます）" })]} />)
-    expect(screen.getByText(/Push の宛先なし/)).toBeInTheDocument()
+    rerender(<FeedbackTimeline entries={[entry({ pushLabel: FEEDBACK_PUSH_NONE })]} />)
+    expect(screen.getByText(FEEDBACK_PUSH_NONE)).toBeInTheDocument()
   })
 })

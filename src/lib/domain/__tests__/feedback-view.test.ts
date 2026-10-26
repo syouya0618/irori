@@ -8,6 +8,7 @@ import {
   type FeedbackEventRow,
   type FeedbackListRow,
 } from "../feedback-view"
+import { FEEDBACK_PUSH_NONE } from "../feedback"
 
 const listRow = (over: Partial<FeedbackListRow> = {}): FeedbackListRow => ({
   id: "fb1",
@@ -130,14 +131,14 @@ describe("履歴", () => {
     })
     expect(without.release).toBeNull()
   })
-  it("運用者の画面だけ知らせの状況を添える（無ければ宛先なし）", () => {
+  it("運用者の画面だけ知らせの状況を添える（無ければ「積まれていない」）", () => {
     const summaries = new Map([
       ["ev1", { queued: 0, accepted: 1, unconfirmed: 0, gone: 0, expired: 0, revoked: 0, superseded: 0 }],
     ])
     const [withPush] = toTimelineEntries([event()], summaries)
     expect(withPush.pushLabel).toContain("受理 1 台")
     const [none] = toTimelineEntries([event({ id: "other" })], summaries)
-    expect(none.pushLabel).toMatch(/宛先なし/)
+    expect(none.pushLabel).toBe(FEEDBACK_PUSH_NONE)
     const [submitterView] = toTimelineEntries([event()])
     expect(submitterView.pushLabel).toBeUndefined()
   })

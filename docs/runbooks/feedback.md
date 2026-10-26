@@ -29,12 +29,25 @@
 ```sh
 # 人間の端末で（Claude は実行せぬ）
 pnpm supabase migration list --linked     # 20261025200001 が未適用であることを確かめる
+pnpm supabase db push --dry-run           # 流れる版を印字するだけ（下の ⚠️ を読んでから進む）
 pnpm supabase db push --linked            # 適用
 ```
 
+⚠️ **`db push` は未適用の版をまとめて流す。** 2026-10 の統合（A/B/C）では、同じ deploy に
+`20261025100001_household_bottle_default_ml.sql`（いつものミルク量。nullable 列と CHECK の追加だけ）も入る。
+`--dry-run` が流すと言う版がこの 2 本**だけ**であることを確かめてから進む。
+
+- `20261002100001`〜`20261002100003` が混じれば止める。この migration は `20261002100002` の
+  `public.is_app_operator()` / `app_operators` を前提にする（未適用のまま流すとポリシーの作成で落ちる）。
+  **順序**: ① `docs/runbooks/approvals.md` §2.1〜2.3 を、この 3 本だけが未適用になる checkout
+  （`c18eb2a` = PR #240 の merge）で済ませる（このツリーで流すと未適用が 5 本になり、approvals の「3 本だけ」の
+  確認が通らぬ）→ ② このツリーで本節（2 本）→ ③ merge と deploy（approvals §2.4 の deploy はこの ③ で兼ねる。
+  ① の直後に、この 2 本を欠いたまま要望の画面を deploy せぬ）
+- `20260909100002` / `20260909100003` が混じれば止める（不可逆な DROP を含む）
+
 ⚠️ **deploy を migration より先にしてはならぬ。** 表が無いと:
 
-- `/api/cron/notify` の要望フェーズが毎回 `42P01` で落ち、心拍の `failed_count` が 1 以上になる
+- `/api/cron/notify` の要望フェーズが毎回落ち（表が無い。PostgREST の版により `42P01` か `PGRST205`）、心拍の `failed_count` が 1 以上になる
   （設定画面の通知カードが「問題が起きている可能性」を出す。予定の通知そのものは送られる）
 - `/feedback` は error boundary（「問題が発生しました」）になる
 - 設定画面は件数を出さぬだけで動く（`unseen feedback count failed` がログに出る）
@@ -142,11 +155,30 @@ Push が届かぬ時の復旧:
 - GitHub の公開 Issue などへ要望を**自動では送らぬ**（家族の要望・個人情報を公開の場へ出さぬ）
 - 投稿は 1 人 24 時間で 20 件まで（他世帯の承認済み利用者も送れるゆえ、受信箱と Push の連打を止める）
 - 同じ世帯の家族にも要望は見えぬ（投稿者と運用者のやり取り）
+- 「反映済み」の確定は本番のデプロイのサーバからだけ（`VERCEL_ENV` が `production` でなければ Action が拒み、
+  画面も「同じコミットです」と言わず確定を押せぬ）。`VERCEL_ENV` の無いローカル・e2e では判別できぬゆえ止めぬ。
+  ⚠️ この門は、Vercel のプロジェクト設定で System Environment Variables をデプロイへ公開する設定
+  （Project Settings → Environment Variables。画面上の名称は Vercel の版で変わりうる）が有効で、実行時に
+  `VERCEL_ENV` が見えることを前提にする。無効なら preview でも判別できず確定できてしまう。
+  受信箱の詳細に「このサーバの稼働中デプロイ: production:…」と出ておれば有効と分かる（出ぬことは無効の証では
+  ない — git 連携でないデプロイには `VERCEL_GIT_COMMIT_SHA` が付かぬ）
+
+### 既知の制約（直しておらぬもの）
+
+- **運用者が 2 人以上いる時**: 受信箱の既読（`feedback_items.operator_seen_at`）は**運用者全員で 1 列を共有**
+  しておる。ある運用者が開けば、他の運用者の受信箱でも既読になる。さらに `mark_feedback_seen` は、運用者が
+  自分で送った要望を投稿者として開いた時にもこの列を立てるゆえ、他の運用者にはその要望が一度も「未読」として出ぬ。
+  運用者が 1 人なら影響は無い。2 人目を登録する前に、**運用者ごとの既読を持つ表**（`feedback_id × operator_id`）を
+  足し、受信箱の未読の数え方（`src/lib/supabase/feedback-badges.ts` の `countUnreadInbox`）をそれへ替えること
+  （RPC の引数で画面を分けるだけでは運用者ごとの未読にはならぬ）
 
 ## 6. 戻し方（migration）
 
 ⚠️ 要望・履歴・知らせは**全て消える**。戻す前に要るものを書き出すこと。
 アプリを先に戻す（新しい画面と cron のフェーズが表を引かぬように）してから流す。
+2026-10 の統合（A/B/C）の deploy を戻すと、いつものミルク量とミルクの記録時刻の修正も一緒に戻る
+（戻した後のアプリは `households.bottle_default_ml` を読まぬだけで、列は残しておいて害は無い）。
+DB まで戻すのは要る時だけにし、コードだけを戻して表を残す方が安全じゃ。
 
 ```sql
 begin;
@@ -160,6 +192,9 @@ drop table if exists public.feedback_notifications;
 drop table if exists public.feedback_events;
 drop table if exists public.feedback_items;
 drop function if exists public.feedback_text_ok(text, integer, boolean);
+-- feedback_text_ok が使う文字集合の 2 関数（text_ok の後でなければ消せぬ）
+drop function if exists public.feedback_forbidden_class(boolean);
+drop function if exists public.feedback_trim_chars();
 commit;
 ```
 

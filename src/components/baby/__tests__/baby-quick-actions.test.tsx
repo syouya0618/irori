@@ -126,7 +126,7 @@ describe("BabyQuickActions の通信断 reject 握り（B-07）", () => {
 
   it("記録取り消し（undoLog）の deleteLog が reject → 圏外トースト", async () => {
     // まず記録成功で「取り消す」アクション付きトーストを得る
-    mockedRecordDiaper.mockResolvedValue({ error: null, id: "log-9", updatedAt: CREATED_VERSION })
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "log-9", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     mockedDeleteLog.mockRejectedValue(new Error("network down"))
     render(
       <BabyQuickActions
@@ -152,7 +152,7 @@ describe("BabyQuickActions の通信断 reject 握り（B-07）", () => {
 
 describe("BabyQuickActions の押し間違い取り消し", () => {
   it("授乳記録後のトーストの「取り消す」が、作成時にサーバが返した版で deleteLog を呼ぶ", async () => {
-    mockedRecordFeeding.mockResolvedValue({ error: null, id: "log-1", updatedAt: CREATED_VERSION })
+    mockedRecordFeeding.mockResolvedValue({ error: null, id: "log-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     mockedDeleteLog.mockResolvedValue({ error: null })
     render(
       <BabyQuickActions
@@ -178,7 +178,7 @@ describe("BabyQuickActions の押し間違い取り消し", () => {
   })
 
   it("おむつ記録後も id と版付きで「取り消す」を提示する", async () => {
-    mockedRecordDiaper.mockResolvedValue({ error: null, id: "log-2", updatedAt: CREATED_VERSION })
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "log-2", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     render(
       <BabyQuickActions
         bottleDefault={bottleSet()}
@@ -276,6 +276,7 @@ describe("BabyQuickActions の取り消しの版ガード", () => {
       error: null,
       id: "diaper-55",
       updatedAt: CREATED_VERSION,
+      loggedAt: new Date().toISOString(),
     })
     mockedDeleteLog.mockResolvedValue({
       error: "この記録は別の端末で先に更新されていたため、削除しませんでした（家族またはご自身）。",
@@ -317,6 +318,7 @@ describe("BabyQuickActions の取り消しの版ガード", () => {
       error: null,
       id: "diaper-56",
       updatedAt: CREATED_VERSION,
+      loggedAt: new Date().toISOString(),
     })
     mockedDeleteLog.mockResolvedValue({
       error: "記録を削除できませんでした（最新の状態を確かめられませんでした）。画面を更新して記録を確かめてください。",
@@ -373,7 +375,7 @@ describe("BabyQuickActions の楽観 append (B-03)", () => {
   })
 
   it("Undo 成功で onLogRemoved(id) を渡す", async () => {
-    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-77", updatedAt: CREATED_VERSION })
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-77", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     mockedDeleteLog.mockResolvedValue({ error: null })
     const onLogRemoved = vi.fn<(id: string) => void>()
     render(
@@ -394,7 +396,7 @@ describe("BabyQuickActions の楽観 append (B-03)", () => {
   })
 
   it("取り消し対象が他端末で既に削除済み（alreadyDeleted）でも onLogRemoved で画面から外す", async () => {
-    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-88", updatedAt: CREATED_VERSION })
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-88", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     mockedDeleteLog.mockResolvedValue({
       error: "既に削除されています。",
       alreadyDeleted: true,
@@ -695,7 +697,7 @@ describe("BabyQuickActions の搾乳導線", () => {
 
 describe("BabyQuickActions の直前の記録（トーストが出ておる間は帯を伏せる）", () => {
   it("トーストが見えておる間は帯を出さず、自動で閉じた（onAutoClose）後に帯が引き継ぐ", async () => {
-    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-hand", updatedAt: CREATED_VERSION })
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-hand", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     render(
       <BabyQuickActions userId="u1" onCreateLog={() => {}} onStartTimer={() => {}} onCreateFeeding={() => {}} bottleDefault={bottleSet()} />,
     )
@@ -714,8 +716,8 @@ describe("BabyQuickActions の直前の記録（トーストが出ておる間�
 
   it("閉じられた（onDismiss・スワイプ等）後も帯が引き継ぐ。古い記録のトーストが後から閉じても新しい方の伏せは解かぬ", async () => {
     mockedRecordDiaper
-      .mockResolvedValueOnce({ error: null, id: "diaper-old", updatedAt: CREATED_VERSION })
-      .mockResolvedValueOnce({ error: null, id: "diaper-new", updatedAt: CREATED_VERSION })
+      .mockResolvedValueOnce({ error: null, id: "diaper-old", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
+      .mockResolvedValueOnce({ error: null, id: "diaper-new", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     render(
       <BabyQuickActions userId="u1" onCreateLog={() => {}} onStartTimer={() => {}} onCreateFeeding={() => {}} bottleDefault={bottleSet()} />,
     )
@@ -789,7 +791,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
   }
 
   it("記録に成功すると、釦群の下に「直前の記録」と取り消しが残る（トーストが消えた後の口）", async () => {
-    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION })
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     render(actions())
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
     await screen.findByRole("button", { name: INLINE_UNDO })
@@ -800,7 +802,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
   })
 
   it("インラインで取り消すと deleteLog は 1 回だけ。トーストを閉じ、後からトーストの取り消しを押しても二度は送らぬ", async () => {
-    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION })
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     mockedDeleteLog.mockResolvedValue({ error: null })
     const onLogRemoved = vi.fn<(id: string) => void>()
     render(actions({ onLogRemoved }))
@@ -819,7 +821,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
   })
 
   it("トーストから取り消してもインラインの帯は消える（同じ 1 件を指す）", async () => {
-    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION })
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     mockedDeleteLog.mockResolvedValue({ error: null })
     render(actions())
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
@@ -832,7 +834,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
   })
 
   it("対象の行が画面から消えたら（編集シートで削除・再取得）帯を畳む。対照: 行が在る間は出す", async () => {
-    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION })
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     const view = render(actions({ visibleLogs: [] }))
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
     await waitFor(() => expect(mockedToast.success).toHaveBeenCalled())
@@ -845,7 +847,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
   })
 
   it("期限（5 分）を過ぎた親の時計では帯を畳む。対照: 期限内は出す", async () => {
-    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION })
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     const view = render(actions({ now: new Date() }))
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
     await screen.findByRole("button", { name: INLINE_UNDO })
@@ -856,7 +858,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
   })
 
   it("後からタイマー・記録シートで記録が付いたら（親の通し番号が進む）帯を畳む。対照: 進まぬ間は出す", async () => {
-    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION })
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     const view = render(actions({ externalRecordSeq: 3 }))
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
     await screen.findByRole("button", { name: INLINE_UNDO })
@@ -877,14 +879,14 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
     // 通信中にタイマーの記録が付いた
     view.rerender(actions({ externalRecordSeq: 4 }))
-    resolve({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION })
+    resolve({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     // クイック記録の方が後に確定した = こちらが「直前」
     expect(await screen.findByRole("button", { name: INLINE_UNDO })).toBeInTheDocument()
   })
 
   it("応答を失った再試行が「既に記録済み」で返ったら、前の記録の帯は畳む（取り消しの誤指し防止）", async () => {
     mockedRecordDiaper
-      .mockResolvedValueOnce({ error: null, id: "diaper-a", updatedAt: CREATED_VERSION })
+      .mockResolvedValueOnce({ error: null, id: "diaper-a", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
       .mockResolvedValueOnce({ error: null, id: "diaper-b", replayed: true })
     render(actions())
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
@@ -899,7 +901,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
   })
 
   it("帯の「取り消す」を連打しても deleteLog は 1 回だけ（同じ描画のうちに 2 回押されても）", async () => {
-    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION })
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     let resolveDelete!: (v: Awaited<ReturnType<typeof deleteLog>>) => void
     mockedDeleteLog.mockReturnValue(
       new Promise((r) => {
@@ -922,7 +924,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
   })
 
   it("帯から取り消す前に家族が直していたら（版の衝突）、消さず・帯も戻さず・最新版へ揃える", async () => {
-    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION })
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     const current: BabyLogData = {
       ...RECORDED,
       memo: "家族が足したメモ",
@@ -949,7 +951,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
   })
 
   it("サーバの一時エラー（衝突でも削除済みでもない）は帯を戻して押し直せる。削除済みは戻さず画面から外す", async () => {
-    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION })
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     mockedDeleteLog
       .mockResolvedValueOnce({ error: "削除に失敗しました" })
       .mockResolvedValueOnce({ error: "既に削除されています。", alreadyDeleted: true })
@@ -966,7 +968,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
   })
 
   it("通信断で取り消せなかった時は帯を戻し、押し直せる（二度目も送る）", async () => {
-    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION })
+    mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     mockedDeleteLog
       .mockRejectedValueOnce(new TypeError("Failed to fetch"))
       .mockResolvedValueOnce({ error: null })
@@ -994,7 +996,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
     })
 
     it("通信断で戻した帯は記録した時刻（12:00）のまま。失敗した時刻（12:03）で作り直さぬ", async () => {
-      mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION })
+      mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
       mockedDeleteLog.mockRejectedValueOnce(new TypeError("Failed to fetch"))
       render(actions())
       fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
@@ -1007,8 +1009,27 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
       expect(screen.getByTestId("inline-undo")).toHaveTextContent("12:00 おしっこを記録しました")
     })
 
+    it("戻した帯の期限も記録した時刻（12:00）から測る。失敗した時刻（12:03）から 5 分へ延ばさぬ", async () => {
+      mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
+      mockedDeleteLog.mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      // 親の時計（now）は記録の時刻で止めておく（期限の判定を押した瞬間の実時計だけに絞る）
+      render(actions({ now: new Date(T0) }))
+      fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
+      await screen.findByRole("button", { name: INLINE_UNDO })
+      vi.setSystemTime(new Date(T0.getTime() + 3 * 60_000))
+      await clickWhenEnabled(INLINE_UNDO)
+      await waitFor(() => expect(mockedToast.error).toHaveBeenCalledWith(OFFLINE_MESSAGE))
+      await screen.findByRole("button", { name: INLINE_UNDO })
+
+      // 記録から 5 分 1 秒（失敗からは 2 分 1 秒）。記録の時刻で測れば期限切れ
+      vi.setSystemTime(new Date(T0.getTime() + INLINE_UNDO_MS + 1_000))
+      await clickWhenEnabled(INLINE_UNDO)
+      expect(mockedDeleteLog).toHaveBeenCalledTimes(1)
+      expect(mockedToast.error).toHaveBeenCalledWith(expect.stringContaining("期限（5分）を過ぎました"))
+    })
+
     it("親の時計が止まっていても（端末の休止）、押した瞬間に期限切れなら取り消さず畳む。対照: 期限内は送る", async () => {
-      mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION })
+      mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
       mockedDeleteLog.mockResolvedValue({ error: null })
       // 親の時計（now）は記録の時刻で止まったまま
       render(actions({ now: new Date(T0) }))
@@ -1023,7 +1044,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
     })
 
     it("端末の休止で止まっていたトーストの「取り消す」も、5 分を過ぎていれば送らぬ（帯と同じ期限）", async () => {
-      mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION })
+      mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
       mockedDeleteLog.mockResolvedValue({ error: null })
       render(actions())
       fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
@@ -1038,7 +1059,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
     })
 
     it("対照: 期限内（4 分後）に押せば deleteLog を送る", async () => {
-      mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION })
+      mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
       mockedDeleteLog.mockResolvedValue({ error: null })
       render(actions({ now: new Date(T0) }))
       fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
@@ -1064,7 +1085,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
     const milk = screen.getByRole("button", { name: "ミルク" })
     expect(milk).toBeDisabled()
     expect(milk.querySelector(".animate-spin")).toBeNull()
-    resolve({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION })
+    resolve({ error: null, id: "diaper-in-1", updatedAt: CREATED_VERSION, loggedAt: new Date().toISOString() })
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "おしっこ" })).not.toBeDisabled(),
     )

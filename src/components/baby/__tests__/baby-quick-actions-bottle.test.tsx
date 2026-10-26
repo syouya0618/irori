@@ -130,7 +130,7 @@ describe("いつもの量が決まっている時のミルク（1 タップ）",
   })
 
   it("1 タップで 120ml を送り、楽観行・トーストも同じ 120ml（送信値と画面を一致させる）", async () => {
-    mockedRecordFeeding.mockResolvedValue({ error: null, id: "log-1", updatedAt: CREATED_VERSION })
+    mockedRecordFeeding.mockResolvedValue({ error: null, id: "log-1", updatedAt: CREATED_VERSION, loggedAt: CREATED_VERSION })
     const onLogRecorded = vi.fn<(log: BabyLogData) => void>()
     render(<Harness initial={{ status: "set", amountMl: 120 }} onLogRecorded={onLogRecorded} />)
 
@@ -146,6 +146,8 @@ describe("いつもの量が決まっている時のミルク（1 タップ）",
       feeding_type: "bottle",
       amount_ml: 120,
       updated_at: CREATED_VERSION,
+      // 量（A）と記録時刻（B）の両方が DB に書かれた値と一致する（統合の契約）
+      logged_at: CREATED_VERSION,
     })
     expect(mockedToast.success.mock.calls.at(-1)?.[0]).toBe("授乳を記録しました（ミルク 120ml）")
     // シートは開かぬ（1 タップ）
@@ -172,13 +174,13 @@ describe("いつもの量が決まっている時のミルク（1 タップ）",
     fireEvent.click(milkButton())
     await waitFor(() => expect(milkButton()).toBeDisabled())
     fireEvent.click(milkButton())
-    resolve({ error: null, id: "log-1", updatedAt: CREATED_VERSION })
+    resolve({ error: null, id: "log-1", updatedAt: CREATED_VERSION, loggedAt: CREATED_VERSION })
     await waitFor(() => expect(milkButton()).not.toBeDisabled())
     expect(mockedRecordFeeding).toHaveBeenCalledTimes(1)
   })
 
   it("取り消しは作成時の版で消す（ミルクの記録でも従来どおり）", async () => {
-    mockedRecordFeeding.mockResolvedValue({ error: null, id: "log-u", updatedAt: CREATED_VERSION })
+    mockedRecordFeeding.mockResolvedValue({ error: null, id: "log-u", updatedAt: CREATED_VERSION, loggedAt: CREATED_VERSION })
     mockedDeleteLog.mockResolvedValue({ error: null })
     const onLogRemoved = vi.fn<(id: string) => void>()
     render(<Harness initial={{ status: "set", amountMl: 120 }} onLogRemoved={onLogRemoved} />)
@@ -196,8 +198,8 @@ describe("いつもの量が決まっている時のミルク（1 タップ）",
 describe("量の変更（120 → 160 は次の記録から。過去の記録は変わらぬ）", () => {
   it("「ミルクの量を変更」で 160 を保存すると釦が 160ml になり、次のタップは 160 を送る。先の行は 120 のまま", async () => {
     mockedRecordFeeding
-      .mockResolvedValueOnce({ error: null, id: "log-120", updatedAt: CREATED_VERSION })
-      .mockResolvedValueOnce({ error: null, id: "log-160", updatedAt: CREATED_VERSION })
+      .mockResolvedValueOnce({ error: null, id: "log-120", updatedAt: CREATED_VERSION, loggedAt: CREATED_VERSION })
+      .mockResolvedValueOnce({ error: null, id: "log-160", updatedAt: CREATED_VERSION, loggedAt: CREATED_VERSION })
     mockedUpdate.mockResolvedValue({ ok: true, amountMl: 160 })
     const recorded: BabyLogData[] = []
     render(
@@ -316,7 +318,7 @@ describe("いつもの量が未設定の時のミルク（初回設定）", () =
     })
     mockedRecordFeeding.mockImplementation(async () => {
       order.push("record")
-      return { error: null, id: `log-${order.length}`, updatedAt: CREATED_VERSION }
+      return { error: null, id: `log-${order.length}`, updatedAt: CREATED_VERSION, loggedAt: CREATED_VERSION }
     })
     const onLogRecorded = vi.fn<(log: BabyLogData) => void>()
     render(<Harness initial={{ status: "unset" }} onLogRecorded={onLogRecorded} />)
@@ -463,7 +465,7 @@ describe("いつもの量が未設定の時のミルク（初回設定）", () =
     mockedUpdate.mockResolvedValue({ ok: true, amountMl: 120 })
     mockedRecordFeeding
       .mockRejectedValueOnce(new Error("network down"))
-      .mockResolvedValueOnce({ error: null, id: "log-ok", updatedAt: CREATED_VERSION })
+      .mockResolvedValueOnce({ error: null, id: "log-ok", updatedAt: CREATED_VERSION, loggedAt: CREATED_VERSION })
     render(<Harness initial={{ status: "unset" }} />)
     fireEvent.click(milkButton())
     fireEvent.change(await screen.findByLabelText("1回の量（ml）"), { target: { value: "120" } })

@@ -14,6 +14,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { formatTimeJst } from "@/lib/utils/date-jst"
+import { getLogSummary } from "@/lib/domain/baby-log-summary"
 import { formatBottleAmount, type BottleDefaultState } from "@/lib/domain/bottle-default"
 import type { BottleDefaultController } from "@/lib/hooks/use-bottle-default"
 import {
@@ -80,6 +81,12 @@ interface LastRecorded {
   summary: string
   /** 記録した時刻（epoch ms。event handler で読む） */
   at: number
+  /**
+   * 記録時刻（DB が書いた logged_at）。画面に行が無い時の帯の時刻（行が在ればその行の時刻を
+   * 出す — 記録の後に編集で直した時刻も帯へ映す）。端末時計で組むと、分を跨いだ時に行と帯の
+   * 時刻が食い違う。取り消しの期限は端末時計どうしの at で測る
+   */
+  loggedAt: string
   /**
    * 記録した時点での「他の経路（タイマー・記録シート）の記録」の通し番号。親の番号が進んだら
    * この記録はもう「直前」ではないゆえ帯を畳む（externalRecordSeq の注記）
@@ -180,8 +187,10 @@ interface BabyQuickActionsProps {
    * 記録成功時に楽観 append する行を親へ渡す（B-03）。Realtime 単一経路を脱し、
    * #92 不達下でも timeline/回数を即時更新する。既存 echo は id 重複で吸収。
    *
-   * 前提: quick actions は isToday ゲート下でのみ描画されるため、ここで作る行の
-   * logged_at（client now）は常に選択日（当日）= timeline 窓と一致する（安全前提）。
+   * 行の logged_at は DB が書いた記録時刻（応答の loggedAt）。端末時計で組むと、分を跨いだ
+   * 時に画面と DB の HH:mm が食い違い、編集の保存後に表示が飛ぶ（echo は同じ id を捨てるゆえ
+   * 自然には直らぬ）。quick actions は isToday ゲート下でのみ描画されるため、ふつうは選択日
+   * （当日）の行になる。日付の振り分けは親の appendLog が行の日付で行う。
    */
   onLogRecorded?: (log: BabyLogData) => void
   /** Undo 成功時にローカル state から除去する行の id を親へ渡す（B-03） */
@@ -328,6 +337,8 @@ export function BabyQuickActions({
     recordedAt: number,
     /** 記録した時点の他経路の通し番号（LastRecorded.seq）。帯を戻す時もこの値のまま */
     seq: number,
+    /** 記録時刻（LastRecorded.loggedAt）。帯を戻す時もこの値のまま */
+    loggedAt: string,
   ) {
     // トーストとインラインのどちらから来ても 1 回だけ送る
     if (undoneIdsRef.current.has(logId)) return
@@ -342,7 +353,15 @@ export function BabyQuickActions({
     const restore = () => {
       undoneIdsRef.current.delete(logId)
       setLastRecorded((prev) =>
-        prev ?? { logId, version: createdVersion, label, summary, at: recordedAt, seq },
+        prev ?? {
+          logId,
+          version: createdVersion,
+          label,
+          summary,
+          at: recordedAt,
+          loggedAt,
+          seq,
+        },
       )
     }
     setBusyKey("undo")
@@ -386,12 +405,23 @@ export function BabyQuickActions({
     logId: string | null,
     createdVersion: string | null | undefined,
     summary: string,
+    /** サーバが返した記録時刻（DB の logged_at）。無い応答では端末時計へ倒す */
+    loggedAt: string | undefined,
   ) {
     if (logId && createdVersion) {
       const at = recordedAtNow()
+      const shownAt = loggedAt ?? new Date(at).toISOString()
       // 応答が届いた時点の番号（externalSeqRef の注記）
       const seq = externalSeqRef.current
-      setLastRecorded({ logId, version: createdVersion, label, summary, at, seq })
+      setLastRecorded({
+        logId,
+        version: createdVersion,
+        label,
+        summary,
+        at,
+        loggedAt: shownAt,
+        seq,
+      })
       setToastOpenFor(logId)
       // トーストが消えたら帯へ引き継ぐ（toastOpenFor の注記）。別の記録のトーストへ
       // 替わった後に古い方が消えても、新しい方の伏せを解かぬよう id で比べる
@@ -409,7 +439,7 @@ export function BabyQuickActions({
               toast.error(UNDO_EXPIRED_MESSAGE)
               return
             }
-            undoLog(logId, createdVersion, label, summary, at, seq)
+            undoLog(logId, createdVersion, label, summary, at, seq, shownAt)
           },
         },
         onAutoClose: handOver,
@@ -574,12 +604,15 @@ export function BabyQuickActions({
           toast.success("授乳は既に記録されています（二重には記録していません）")
           return
         }
-        // B-03: 返却 id で楽観 append（Realtime を待たず timeline/回数を即時更新）
+        // B-03: 返却 id で楽観 append（Realtime を待たず timeline/回数を即時更新）。
+        // 記録時刻は DB が書いた値で組む — 応答が届いた時の端末時計で組むと、分を跨いだ時に
+        // 画面の時刻が DB と食い違い、編集の保存後に表示が飛ぶ（actions.ts の InsertOutcome）
         if (result.id) {
           onLogRecorded?.(
             buildOptimisticLog({
               id: result.id,
               updatedAt: result.updatedAt ?? null,
+              loggedAt: result.loggedAt,
               logType: "feeding",
               loggedBy: userId,
               feedingType,
@@ -594,6 +627,7 @@ export function BabyQuickActions({
           result.id,
           result.updatedAt,
           summary,
+          result.loggedAt,
         )
       } catch (err) {
         // 通信断: 記録がサーバで成立したか分からぬ。成立しておれば帯の記録は「直前」でない
@@ -641,6 +675,8 @@ export function BabyQuickActions({
             buildOptimisticLog({
               id: result.id,
               updatedAt: result.updatedAt ?? null,
+              // 記録時刻は DB が書いた値（授乳と同じ理由）
+              loggedAt: result.loggedAt,
               logType: "diaper",
               loggedBy: userId,
               diaperType,
@@ -655,6 +691,7 @@ export function BabyQuickActions({
           result.id,
           result.updatedAt,
           formatDiaperSummary(diaperType, poopAmount),
+          result.loggedAt,
         )
       } catch (err) {
         // 通信断: 記録がサーバで成立したか分からぬ。成立しておれば帯の記録は「直前」でない
@@ -685,6 +722,19 @@ export function BabyQuickActions({
       visibleLogs.some((l) => l.id === lastRecorded.logId)) &&
     // 後からタイマー・記録シートで付いた記録があれば、もう「直前」ではない
     (externalRecordSeq === undefined || lastRecorded.seq === externalRecordSeq)
+  // 帯の時刻と要約は、画面に行が在ればその行から出す（記録の後に編集で時刻や量を直したら、帯も
+  // 直した値を指す。行と帯で同じ記録の時刻・量が食い違わぬよう）。行が無ければ記録時の値
+  const inlineUndoRow = lastRecorded
+    ? visibleLogs?.find((l) => l.id === lastRecorded.logId)
+    : undefined
+  const inlineUndoTime = lastRecorded
+    ? formatTimeJst(inlineUndoRow?.logged_at ?? lastRecorded.loggedAt)
+    : ""
+  const inlineUndoSummary = lastRecorded
+    ? inlineUndoRow
+      ? getLogSummary(inlineUndoRow)
+      : lastRecorded.summary
+    : ""
 
   // ミルク釦の量の表示（見える文字）と、同じ内容の読み上げ（aria-describedby）
   const bottleState = bottleDefault.state
@@ -890,12 +940,11 @@ export function BabyQuickActions({
             aria-hidden="true"
           />
           <span className="min-w-0 flex-1 truncate text-sm">
-            {formatTimeJst(new Date(lastRecorded.at).toISOString())}{" "}
-            {lastRecorded.summary}を記録しました
+            {inlineUndoTime} {inlineUndoSummary}を記録しました
           </span>
           <button
             type="button"
-            aria-label={`直前の記録（${formatTimeJst(new Date(lastRecorded.at).toISOString())}）を取り消す`}
+            aria-label={`直前の記録（${inlineUndoTime}）を取り消す`}
             onClick={() => {
               // 親の時計は分刻みで、端末が眠っていた間は止まる。押した瞬間の実時計で期限を
               // 確かめ、期限切れの記録は取り消さぬ（版ガードで安全ではあるが 5 分の約束を守る）
@@ -911,6 +960,7 @@ export function BabyQuickActions({
                 lastRecorded.summary,
                 lastRecorded.at,
                 lastRecorded.seq,
+                lastRecorded.loggedAt,
               )
             }}
             disabled={isPending}

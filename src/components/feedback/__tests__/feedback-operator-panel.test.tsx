@@ -35,6 +35,7 @@ function renderPanel(over: Partial<Parameters<typeof FeedbackOperatorPanel>[0]> 
       status="in_progress"
       released={false}
       runningDeploy="production:abcdef1234567"
+      nonProductionDeploy={false}
       {...over}
     />,
   )
@@ -75,6 +76,25 @@ describe("本番反映の確定フォーム", () => {
     fireEvent.click(screen.getByRole("button", { name: "この SHA を入れる" }))
     expect(shaInput().value).toBe("abcdef1234567")
     expect(screen.getByText("稼働中のデプロイと同じコミットです。")).toBeInTheDocument()
+  })
+
+  it("⚠️ 本番でないデプロイ（preview）の画面では「同じコミット」と安心させず、確定も押せぬ", () => {
+    renderPanel({ runningDeploy: "preview:abcdef1234567", nonProductionDeploy: true })
+    expect(screen.queryByRole("button", { name: "この SHA を入れる" })).toBeNull()
+    expect(screen.getByRole("alert")).toHaveTextContent(/本番のデプロイではありません/)
+    fireEvent.change(shaInput(), { target: { value: "abcdef1234567" } })
+    fireEvent.click(verifiedBox())
+    expect(screen.queryByText("稼働中のデプロイと同じコミットです。")).toBeNull()
+    expect(releaseButton()).toBeDisabled()
+  })
+
+  it("⚠️ 本番でないデプロイで SHA が読めぬ時も（git 情報の無い preview）、サーバと同じく確定を押せぬ", () => {
+    renderPanel({ runningDeploy: null, nonProductionDeploy: true })
+    expect(screen.getByRole("alert")).toHaveTextContent(/本番のデプロイではありません/)
+    expect(screen.queryByText(/稼働中のデプロイを読み取れませんでした/)).toBeNull()
+    fireEvent.change(shaInput(), { target: { value: "abcdef1234567" } })
+    fireEvent.click(verifiedBox())
+    expect(releaseButton()).toBeDisabled()
   })
 
   it("稼働中のデプロイが読めぬ時は、読めなかったと書く（推測で埋めぬ）", () => {
@@ -167,6 +187,44 @@ describe("状態の変更・返信フォーム", () => {
       comment: "確認しました",
       expectedVersion: 3,
     })
+  })
+
+  it("返信が要る操作を返信なしで保存しようとしたら、送らずに何が足りぬかを言う（汎用の「確認して」で済ませぬ）", async () => {
+    // 反映済みからの差し戻し（DB も理由なしを拒む）
+    renderPanel({ status: "released", released: true })
+    fireEvent.click(screen.getByRole("radio", { name: "対応中" }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /保存する/ }))
+    })
+    expect(updateFeedbackStatus).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("戻す理由"))
+    cleanup()
+
+    // 見送り
+    renderPanel()
+    fireEvent.click(screen.getByRole("radio", { name: "見送り" }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /保存する/ }))
+    })
+    expect(updateFeedbackStatus).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenLastCalledWith(expect.stringContaining("見送る理由"))
+
+    // 対照: 空白だけも返信なしとして扱い、書けば送る
+    fireEvent.change(screen.getByLabelText(/返信（投稿者に表示されます）/), {
+      target: { value: "  " },
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /保存する/ }))
+    })
+    expect(updateFeedbackStatus).not.toHaveBeenCalled()
+    updateFeedbackStatus.mockResolvedValue({ status: "ok", version: 4, duplicate: false })
+    fireEvent.change(screen.getByLabelText(/返信（投稿者に表示されます）/), {
+      target: { value: "今回は見送ります" },
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /保存する/ }))
+    })
+    await waitFor(() => expect(updateFeedbackStatus).toHaveBeenCalledTimes(1))
   })
 
   it("対応中へ変える時だけ「取り込み済み」の欄を出し、本番反映ではないと書く", () => {

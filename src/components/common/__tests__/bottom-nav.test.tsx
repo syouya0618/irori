@@ -66,6 +66,21 @@ describe("BottomNav: 現在地", () => {
     expect(activeLinks()).toEqual(["予定"])
   })
 
+  it("要望（/feedback とその下位）は設定から入る画面ゆえ 設定 が現在地", () => {
+    for (const path of ["/feedback", "/feedback/abc", "/feedback/inbox", "/feedback/inbox/abc"]) {
+      pathname = path
+      render(<BottomNav />)
+      expect(activeLinks(), path).toEqual(["設定"])
+      cleanup()
+    }
+  })
+
+  it("対照: 接頭辞が似ているだけの path（/feedbackx）はどのタブも現在地にせぬ", () => {
+    pathname = "/feedbackx"
+    render(<BottomNav />)
+    expect(activeLinks()).toEqual([])
+  })
+
   it("現在地は帯と太さでも示す（色だけに頼らぬ）。非現在地には帯が無い", () => {
     pathname = "/calendar"
     render(<BottomNav />)

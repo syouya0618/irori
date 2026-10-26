@@ -20,7 +20,9 @@ import {
   FEEDBACK_STATUS_LABELS,
   OPERATOR_SETTABLE_STATUSES,
   commitShaMatches,
+  isProductionObservedDeploy,
   normalizeCommitSha,
+  normalizeFeedbackText,
   type FeedbackStatus,
   type OperatorFeedbackResult,
   type OperatorSettableStatus,
@@ -98,6 +100,7 @@ export function FeedbackOperatorPanel({
   status,
   released,
   runningDeploy,
+  nonProductionDeploy,
 }: {
   feedbackId: string
   version: number
@@ -106,6 +109,11 @@ export function FeedbackOperatorPanel({
   released: boolean
   /** このサーバが観測した稼働中のデプロイ（"production:<sha>"）。取れねば null */
   runningDeploy: string | null
+  /**
+   * このサーバが本番でないデプロイか（page が `isNonProductionDeploy(process.env)` で決める —
+   * 確定の Action と同じ述語）。SHA が読めぬ preview でも、画面とサーバの判定を食い違わせぬ
+   */
+  nonProductionDeploy: boolean
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -116,7 +124,12 @@ export function FeedbackOperatorPanel({
           反映済みとして確定しています。差し戻す場合は、上で状態を選び、理由を返信に書いてください。
         </p>
       ) : (
-        <ReleaseForm feedbackId={feedbackId} version={version} runningDeploy={runningDeploy} />
+        <ReleaseForm
+          feedbackId={feedbackId}
+          version={version}
+          runningDeploy={runningDeploy}
+          nonProductionDeploy={nonProductionDeploy}
+        />
       )}
     </div>
   )
@@ -153,11 +166,24 @@ function StatusForm({
 
   async function handleSubmit(formData: FormData) {
     if (inFlightRef.current) return
+    const comment = formData.get("comment")
+    // 返信が要る操作を返信なしで送らぬ。DB も同じ規則で拒むが、そこまで行くと「入力内容を
+    // 確認してください」としか返せず、何が足りぬか分からぬ。空かどうかは DB の btrim と同じ集合で見る
+    if (commentRequired && normalizeFeedbackText(typeof comment === "string" ? comment : "") === "") {
+      toast.error(
+        choice === "declined"
+          ? "見送る理由を返信に書いてください（投稿者に表示されます）"
+          : choice !== COMMENT_ONLY && status === "released"
+            ? "反映済みから戻す理由を返信に書いてください（投稿者に表示されます）"
+            : "返信を入力してください",
+      )
+      commentRef.current?.focus()
+      return
+    }
     inFlightRef.current = true
     try {
       requestIdRef.current ??= newClientId()
       const requestId = requestIdRef.current
-      const comment = formData.get("comment")
       const merge = formData.get("merge_ref")
       const result = await updateFeedbackStatus({
         feedbackId,
@@ -293,10 +319,12 @@ function ReleaseForm({
   feedbackId,
   version,
   runningDeploy,
+  nonProductionDeploy,
 }: {
   feedbackId: string
   version: number
   runningDeploy: string | null
+  nonProductionDeploy: boolean
 }) {
   const handleResult = useResultHandler()
   const requestIdRef = useRef<string | null>(null)
@@ -309,7 +337,14 @@ function ReleaseForm({
     requestIdRef.current = null
   }
 
-  const runningSha = runningDeploy ? runningDeploy.split(":")[1] ?? null : null
+  // 稼働中のデプロイの SHA を手掛かりに出すのは本番のデプロイの時だけ。preview の画面で
+  // 「同じコミットです」と出すと、本番で確かめておらぬ確定を後押ししてしまう
+  const runningIsProduction = isProductionObservedDeploy(runningDeploy)
+  // サーバ（Action）と同じ述語を主に見る。観測したデプロイが本番でない場合も念のため重ねる
+  const nonProduction =
+    nonProductionDeploy || (runningDeploy !== null && !runningIsProduction)
+  const runningSha =
+    runningDeploy && runningIsProduction ? runningDeploy.split(":")[1] ?? null : null
   const normalizedSha = normalizeCommitSha(sha)
   const shaValid = COMMIT_SHA_RE.test(normalizedSha)
   const matchesRunning = runningSha !== null && shaValid && commitShaMatches(normalizedSha, runningSha)
@@ -394,9 +429,24 @@ function ReleaseForm({
                   この SHA を入れる
                 </Button>
               </div>
+            ) : nonProduction ? (
+              // 赤はアイコンだけ（文字を destructive で塗るとダークの card で 3.6:1 に落ちる。
+              // 設定の通知カード等と同じ型）
+              <p role="alert" className="flex items-start gap-2 text-sm text-foreground">
+                <TriangleAlert size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-destructive" />
+                <span>
+                  この画面は本番のデプロイではありません
+                  {runningDeploy && (
+                    <>
+                      （<span className="font-mono">{runningDeploy}</span>）
+                    </>
+                  )}
+                  。本番の irori で確かめてから、本番の画面で確定してください。
+                </span>
+              </p>
             ) : (
               <p className="text-sm text-muted-foreground">
-                稼働中のデプロイを読み取れませんでした（本番以外の環境など）。
+                稼働中のデプロイを読み取れませんでした（git 連携でないデプロイやローカルの環境など）。
               </p>
             )}
             {matchesRunning && (
@@ -443,7 +493,7 @@ function ReleaseForm({
             label="反映済みにする"
             pendingLabel="確定中…"
             icon={CircleCheck}
-            disabled={!verified || !shaValid}
+            disabled={!verified || !shaValid || nonProduction}
           />
         </form>
       </CardContent>

@@ -143,6 +143,8 @@ select has_function_privilege('authenticated','public.create_household(text)','E
 
 運用者には既存の承認済みの owner を選ぶ。2.4 の deploy までは旧アプリが動いており、旧アプリは承認待ちの一覧を owner にしか出さぬ。
 
+⚠️ **運用者を 2 人以上にする前に** `docs/runbooks/feedback.md` §5「既知の制約」を読め。要望の受信箱の既読（`operator_seen_at`）は運用者全員で 1 列を共有しており、ある運用者が開くと他の運用者の未読も消える。
+
 ```sql
 -- 確かめる（読み取り）
 select u.id, u.email, p.is_approved, p.household_id

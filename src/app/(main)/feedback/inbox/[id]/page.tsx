@@ -6,6 +6,7 @@ import { logSupabaseError } from "@/lib/supabase/log-error"
 import { isClientId } from "@/lib/utils/client-id"
 import {
   formatFeedbackDateTime,
+  isNonProductionDeploy,
   observedDeployFromEnv,
   parseFeedbackStatus,
   releaseOf,
@@ -25,7 +26,7 @@ import { FeedbackOperatorPanel } from "@/components/feedback/feedback-operator-p
  * 受信箱の詳細（運用者）。運用者への Push の着地先（`/feedback/inbox/<id>`）でもある。
  *
  * 知らせの状況は `get_feedback_push_summary` の**数だけ**を見る（端末の識別子は返らぬ）。
- * 読めなかった時は「宛先なし」と偽らず、読めなかったと書く。
+ * 読めなかった時は「積まれていない」と偽らず、読めなかったと書く。
  */
 export default async function FeedbackInboxDetailPage({
   params,
@@ -113,6 +114,7 @@ export default async function FeedbackInboxDetailPage({
         status={status}
         released={release !== null}
         runningDeploy={observedDeployFromEnv(process.env)}
+        nonProductionDeploy={isNonProductionDeploy(process.env)}
       />
 
       <section aria-labelledby="inbox-history-heading" className="flex flex-col gap-3">
