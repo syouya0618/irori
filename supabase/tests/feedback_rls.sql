@@ -16,6 +16,21 @@
 -- ## 偽緑を潰す
 --   * 拒否（W・M・X・P・anon）と受理（O・本人）を同じファイルで撃つ
 --   * 「0 件見える」は、行が**在ること**を superuser で先に固定してから見る
+--
+-- ## EXECUTE の無い関数を anon / authenticated で**呼ばぬ**（(5)(20)）
+-- 影響する Supabase Postgres の image（CI の 17.6.1.106 を含む）では、anon / authenticated が EXECUTE の無い関数を呼ぶと backend が
+-- 落ち、DB ごと recovery に入る（supabase/postgres#2112・#2124。CI が pin する CLI 2.101.0 の既定は
+-- 17.6.1.106 で、2026-10-26 の E2E run 40274212697 が (5) でこの形に落ちた）。上流 maintainer は「supautils
+-- 3.2.0/3.2.1 = image 17.6.1.099〜.112」と言うが、範囲の外で落ちたという報告も在る。1 本でも
+-- 撃てば `supabase test db` の後続ファイルまで道連れになる。ゆえに関数の EXECUTE 拒否は
+-- throws_ok で呼ばず、その role に切り替えた session の has_function_privilege(関数, 'EXECUTE')
+-- で固定する — 2 引数形は current_user に対し、executor が呼出し時に引くのと同じ
+-- object_aclcheck(ACL_EXECUTE) を引く（PUBLIC・継承を含む実効権限）。値は (55)(56) の catalog
+-- 検査と同じで、(5)(20) の役目は「その role の session の内側で引くこと」と位置・件数を保つこと。
+-- executor の実際の拒否（permission denied for function）は、このファイルでは撃たぬ。
+-- throws_ok へ戻すのは、版の番号ではなく CI の image で落ちぬと実測してからにせよ。
+-- 表の拒否・RLS・関数の中の認可（RAISE の 42501）は、同じ image の main の CI で落ちずに
+-- 通っておる形（approval_functions.sql 等）ゆえ、従来どおり実行して撃つ。
 BEGIN;
 SELECT plan(59);
 
@@ -63,10 +78,14 @@ SELECT throws_ok($$ SELECT id FROM feedback_events $$,
   '42501', 'permission denied for table feedback_events', 'anon: feedback_events を読めぬ');
 SELECT throws_ok($$ SELECT id FROM feedback_notifications $$,
   '42501', 'permission denied for table feedback_notifications', 'anon: 配信キューを読めぬ');
--- (5) 投稿できぬ（関数の EXECUTE ごと無い）
-SELECT throws_ok(
-  $$ SELECT * FROM submit_feedback('a0000000-0000-4000-8000-000000000001', '匿名の要望', '') $$,
-  '42501', 'permission denied for function submit_feedback', 'anon: submit_feedback を実行できぬ');
+-- (5) 投稿できぬ（関数の EXECUTE ごと無い）。呼ばずに、この session の実効権限で撃つ（冒頭の
+--     「EXECUTE の無い関数を…呼ばぬ」— throws_ok に戻すと CI の image で backend が落ちる）。
+--     PUBLIC に開いた組込み関数は実行できることを対照に置き、常に偽を返す形の偽緑を潰す
+SELECT ok(
+  current_user = 'anon'
+    AND has_function_privilege('pg_catalog.now()', 'EXECUTE')
+    AND NOT has_function_privilege('public.submit_feedback(uuid,text,text)', 'EXECUTE'),
+  'anon: submit_feedback を実行できぬ（anon の session の実効権限・PUBLIC の関数は実行できる対照つき）');
 -- (6) 直接 INSERT もできぬ
 SELECT throws_ok(
   $$ INSERT INTO feedback_items (submitter_id, submitter_name, client_request_id, title)
@@ -128,10 +147,14 @@ SELECT throws_ok(
 SELECT throws_ok(
   $$ SELECT * FROM get_feedback_push_summary((SELECT id FROM feedback_items LIMIT 1)) $$,
   '42501', 'only app operators can read delivery status', 'W: 配信状況は読めぬ');
--- (20)(21) 内部用の関数・配信キューには触れぬ
-SELECT throws_ok(
-  $$ SELECT enqueue_feedback_push(gen_random_uuid(), 'f2222222-2222-2222-2222-222222222222', 'submitter') $$,
-  '42501', 'permission denied for function enqueue_feedback_push', 'W: 積み込み関数を直接呼べぬ');
+-- (20)(21) 内部用の関数・配信キューには触れぬ。(20) は (5) と同じ理由で呼ばずに撃つ。
+--      同じ session で RPC は実行できる（(7) で実際に通した）ことを対照に置き、
+--      has_function_privilege が常に偽を返す形の偽緑を潰す
+SELECT ok(
+  current_user = 'authenticated'
+    AND has_function_privilege('public.submit_feedback(uuid,text,text)', 'EXECUTE')
+    AND NOT has_function_privilege('public.enqueue_feedback_push(uuid,uuid,text)', 'EXECUTE'),
+  'W: 積み込み関数を直接呼べぬ（authenticated の session の実効権限・RPC は実行できる対照つき）');
 SELECT throws_ok($$ SELECT id FROM feedback_notifications $$,
   '42501', 'permission denied for table feedback_notifications', 'W: 配信キューを読めぬ');
 -- (22) 自分の要望は既読にできる
