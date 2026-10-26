@@ -33,6 +33,8 @@ import { UpcomingEventsCard } from "@/components/calendar/upcoming-events-card"
 import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
 import { useNow } from "@/lib/hooks/use-now"
 import { useVisibilityRefetch } from "@/lib/hooks/use-visibility-refetch"
+import { useBottleDefault } from "@/lib/hooks/use-bottle-default"
+import type { BottleDefaultState } from "@/lib/domain/bottle-default"
 import {
   jstDayStartIso,
   todayJstString,
@@ -202,6 +204,11 @@ interface BabyDashboardProps {
   /** 授乳間隔（分）。次の授乳の目安の算出に使う（設定で変更可能） */
   feedingIntervalMin: number
   /**
+   * いつものミルク量（サーバの初回描画が読んだ値）。クイック記録の「ミルク」の量。
+   * 一度だけ seed し、以後は useBottleDefault が取り直す（未設定と取得失敗は区別する）。
+   */
+  initialBottleDefault: BottleDefaultState
+  /**
    * 今日・明日に重なる予定（CAL-4「今日・明日の予定」カード）。起動時のページが
    * /baby になったため、旧 /meals から移設した。サーバ（baby/page.tsx）が
    * `calendar_events` を引いて渡す。省略時は空（カードは 0 件で何も描かない）。
@@ -227,9 +234,13 @@ export function BabyDashboard({
   babyName,
   babyBirthDate,
   feedingIntervalMin,
+  initialBottleDefault,
   initialUpcomingEvents = [],
   members = [],
 }: BabyDashboardProps) {
+  // いつものミルク量。日付を選び直しても（過去日はクイック記録を出さぬ）持ち続けるよう、
+  // クイック記録ではなく常に居るダッシュボードが持つ
+  const bottleDefault = useBottleDefault(householdId, initialBottleDefault)
   // 記録者の表示（機能 A）。一人の世帯では null（出さぬ）。退出済みの id は「家族」。
   const recorderLabel = useMemo(() => {
     if (!shouldShowRecorder(members)) return null
@@ -1231,6 +1242,7 @@ export function BabyDashboard({
             visibleLogs={visibleLogs}
             now={now}
             externalRecordSeq={externalRecordSeq}
+            bottleDefault={bottleDefault}
           />
         ) : (
           // 過去日は「今」のクイック記録を出さず、日付を見える形で確かめるフォーム経由の

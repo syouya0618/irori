@@ -17,18 +17,34 @@ import {
 import { toast } from "sonner"
 import type { BabyLogData } from "@/lib/types/baby"
 import type { FeedingType } from "@/lib/types/database"
+import type { BottleDefaultController } from "@/lib/hooks/use-bottle-default"
 
 vi.mock("@/app/(main)/baby/actions", () => ({
   recordFeeding: vi.fn(),
   recordDiaper: vi.fn(),
   deleteLog: vi.fn(),
+  updateBottleDefault: vi.fn(),
 }))
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), dismiss: vi.fn() } }))
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), dismiss: vi.fn() },
+}))
 
 const mockedRecordFeeding = vi.mocked(recordFeeding)
 const mockedRecordDiaper = vi.mocked(recordDiaper)
 const mockedDeleteLog = vi.mocked(deleteLog)
 const mockedToast = vi.mocked(toast)
+
+/**
+ * いつものミルク量が決まっている世帯（120ml）。既存の「ミルクは 1 タップで記録」の前提を
+ * 保つ既定。未設定・取得失敗・変更の筋は bottle-default 系の群が個別に組む。
+ */
+function bottleSet(amountMl = 120): BottleDefaultController {
+  return {
+    state: { status: "set", amountMl },
+    refetch: vi.fn(async () => null),
+    apply: vi.fn(),
+  }
+}
 
 /** 作成に成功した時にサーバが返す行の版（DB の updated_at。取り消しはこの版でしか消せぬ） */
 const CREATED_VERSION = "2026-10-21T03:00:00.123456+00:00"
@@ -76,6 +92,7 @@ describe("BabyQuickActions の通信断 reject 握り（B-07）", () => {
     mockedRecordFeeding.mockRejectedValue(new Error("network down"))
     render(
       <BabyQuickActions
+        bottleDefault={bottleSet()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -93,6 +110,7 @@ describe("BabyQuickActions の通信断 reject 握り（B-07）", () => {
     mockedRecordDiaper.mockRejectedValue(new Error("network down"))
     render(
       <BabyQuickActions
+        bottleDefault={bottleSet()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -112,6 +130,7 @@ describe("BabyQuickActions の通信断 reject 握り（B-07）", () => {
     mockedDeleteLog.mockRejectedValue(new Error("network down"))
     render(
       <BabyQuickActions
+        bottleDefault={bottleSet()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -137,6 +156,7 @@ describe("BabyQuickActions の押し間違い取り消し", () => {
     mockedDeleteLog.mockResolvedValue({ error: null })
     render(
       <BabyQuickActions
+        bottleDefault={bottleSet()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -161,6 +181,7 @@ describe("BabyQuickActions の押し間違い取り消し", () => {
     mockedRecordDiaper.mockResolvedValue({ error: null, id: "log-2", updatedAt: CREATED_VERSION })
     render(
       <BabyQuickActions
+        bottleDefault={bottleSet()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -182,6 +203,7 @@ describe("BabyQuickActions の押し間違い取り消し", () => {
     } as unknown as Awaited<ReturnType<typeof recordFeeding>>)
     render(
       <BabyQuickActions
+        bottleDefault={bottleSet()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -200,6 +222,7 @@ describe("BabyQuickActions の押し間違い取り消し", () => {
     const onLogRecorded = vi.fn<(log: BabyLogData) => void>()
     render(
       <BabyQuickActions
+        bottleDefault={bottleSet()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -262,6 +285,7 @@ describe("BabyQuickActions の取り消しの版ガード", () => {
     const onLogUpdated = vi.fn<(log: BabyLogData) => void>()
     render(
       <BabyQuickActions
+        bottleDefault={bottleSet()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -300,6 +324,7 @@ describe("BabyQuickActions の取り消しの版ガード", () => {
     const onLogRemoved = vi.fn<(id: string) => void>()
     render(
       <BabyQuickActions
+        bottleDefault={bottleSet()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -325,6 +350,7 @@ describe("BabyQuickActions の楽観 append (B-03)", () => {
     const onLogRecorded = vi.fn<(log: BabyLogData) => void>()
     render(
       <BabyQuickActions
+        bottleDefault={bottleSet()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -352,6 +378,7 @@ describe("BabyQuickActions の楽観 append (B-03)", () => {
     const onLogRemoved = vi.fn<(id: string) => void>()
     render(
       <BabyQuickActions
+        bottleDefault={bottleSet()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -375,6 +402,7 @@ describe("BabyQuickActions の楽観 append (B-03)", () => {
     const onLogRemoved = vi.fn<(id: string) => void>()
     render(
       <BabyQuickActions
+        bottleDefault={bottleSet()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -395,6 +423,7 @@ describe("BabyQuickActions の冪等 id（P2-08: 通信断の再タップで二�
   function renderActions() {
     render(
       <BabyQuickActions
+        bottleDefault={bottleSet()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -509,6 +538,7 @@ describe("BabyQuickActions の冪等 id（P2-08: 通信断の再タップで二�
     const onLogRecorded = vi.fn()
     render(
       <BabyQuickActions
+        bottleDefault={bottleSet()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -531,6 +561,7 @@ describe("BabyQuickActions のうんちの量（2 段目）", () => {
   function renderActions(onLogRecorded?: (log: BabyLogData) => void) {
     render(
       <BabyQuickActions
+        bottleDefault={bottleSet()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -647,6 +678,7 @@ describe("BabyQuickActions の搾乳導線", () => {
     const onCreateFeeding = vi.fn<(type: FeedingType) => void>()
     render(
       <BabyQuickActions
+        bottleDefault={bottleSet()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}
@@ -665,7 +697,7 @@ describe("BabyQuickActions の直前の記録（トーストが出ておる間�
   it("トーストが見えておる間は帯を出さず、自動で閉じた（onAutoClose）後に帯が引き継ぐ", async () => {
     mockedRecordDiaper.mockResolvedValue({ error: null, id: "diaper-hand", updatedAt: CREATED_VERSION })
     render(
-      <BabyQuickActions userId="u1" onCreateLog={() => {}} onStartTimer={() => {}} onCreateFeeding={() => {}} />,
+      <BabyQuickActions userId="u1" onCreateLog={() => {}} onStartTimer={() => {}} onCreateFeeding={() => {}} bottleDefault={bottleSet()} />,
     )
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
     await waitFor(() => expect(mockedToast.success).toHaveBeenCalled())
@@ -685,7 +717,7 @@ describe("BabyQuickActions の直前の記録（トーストが出ておる間�
       .mockResolvedValueOnce({ error: null, id: "diaper-old", updatedAt: CREATED_VERSION })
       .mockResolvedValueOnce({ error: null, id: "diaper-new", updatedAt: CREATED_VERSION })
     render(
-      <BabyQuickActions userId="u1" onCreateLog={() => {}} onStartTimer={() => {}} onCreateFeeding={() => {}} />,
+      <BabyQuickActions userId="u1" onCreateLog={() => {}} onStartTimer={() => {}} onCreateFeeding={() => {}} bottleDefault={bottleSet()} />,
     )
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
     await waitFor(() => expect(mockedToast.success).toHaveBeenCalledTimes(1))
@@ -746,6 +778,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
   function actions(props: Partial<Parameters<typeof BabyQuickActions>[0]> = {}) {
     return (
       <BabyQuickActions
+        bottleDefault={bottleSet()}
         userId="u1"
         onCreateLog={() => {}}
         onStartTimer={() => {}}

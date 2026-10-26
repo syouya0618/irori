@@ -71,6 +71,8 @@ export interface Database {
           baby_name: string | null
           baby_birth_date: string | null
           feeding_interval_min: number
+          /** いつものミルク量（ml・1〜999）。NULL は未設定（migration 20261025100001） */
+          bottle_default_ml: number | null
           created_at: string
         }
         Insert: {
@@ -79,6 +81,7 @@ export interface Database {
           baby_name?: string | null
           baby_birth_date?: string | null
           feeding_interval_min?: number
+          bottle_default_ml?: number | null
           created_at?: string
         }
         Update: {
@@ -87,6 +90,7 @@ export interface Database {
           baby_name?: string | null
           baby_birth_date?: string | null
           feeding_interval_min?: number
+          bottle_default_ml?: number | null
           created_at?: string
         }
         Relationships: []
