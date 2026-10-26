@@ -1,4 +1,9 @@
-import { isFutureIso } from "@/lib/utils/date-jst"
+import {
+  daysBetweenYmd,
+  isFutureIso,
+  isValidYmd,
+  toJstDateString,
+} from "@/lib/utils/date-jst"
 
 /**
  * baby ログの記録時刻（logged_at）の検証・変換を担う純関数群。
@@ -25,6 +30,25 @@ export function jstDateTimeToIso(
   if (!HHMM_RE.test(timeHm)) return null
   const d = new Date(`${dateYmd}T${timeHm}:00+09:00`)
   return Number.isNaN(d.getTime()) ? null : d.toISOString()
+}
+
+/**
+ * 既存の記録時刻(ISO)を、JST の時・分・秒・ミリ秒を保ったまま別の JST 暦日へ動かす。
+ * 編集で**日付だけ**を変えた時に使う — jstDateTimeToIso で組み直すと HH:mm 丸めで秒が
+ * 無言に落ち、同じ分の記録の並びも崩れる（時刻を触らぬ編集で秒を保つ既存契約の日付版）。
+ * JST は DST が無く 1 日が常に 24h ゆえ、暦日の差 × 24h の加算で壁時計が保たれる。
+ * 記録時刻・日付が不正なら null（呼び出し側でエラー表示。黙って今の時刻へ倒さぬ）。
+ * マイクロ秒は Date の精度（ミリ秒）までになる。
+ */
+export function moveLogTimeToJstDate(
+  iso: string,
+  dateYmd: string,
+): string | null {
+  const ms = new Date(iso).getTime()
+  if (Number.isNaN(ms) || !isValidYmd(dateYmd)) return null
+  const days = daysBetweenYmd(toJstDateString(iso), dateYmd)
+  if (days === null) return null
+  return new Date(ms + days * 86_400_000).toISOString()
 }
 
 /**

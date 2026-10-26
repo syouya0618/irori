@@ -1,10 +1,57 @@
 import { describe, it, expect } from "vitest"
 import {
   jstDateTimeToIso,
+  moveLogTimeToJstDate,
   validateLogTime,
   FUTURE_LOG_TIME_ERROR,
   INVALID_LOG_TIME_ERROR,
 } from "../baby-log-time"
+
+describe("moveLogTimeToJstDate（編集で日付だけを変えた時の記録時刻）", () => {
+  it("JST の時・分・秒・ミリ秒を保ったまま前日へ動かす", () => {
+    // JST 7/19 00:10:31.123 → JST 7/18 00:10:31.123
+    expect(moveLogTimeToJstDate("2026-07-18T15:10:31.123Z", "2026-07-18")).toBe(
+      "2026-07-17T15:10:31.123Z",
+    )
+  })
+
+  it("JST 23:59:59.500 も秒を落とさず前日の 23:59:59.500 になる", () => {
+    expect(moveLogTimeToJstDate("2026-07-19T14:59:59.500Z", "2026-07-18")).toBe(
+      "2026-07-18T14:59:59.500Z",
+    )
+  })
+
+  it("後の日へも動かせる（日数の差は符号つき・複数日）", () => {
+    // JST 7/18 00:10:31.123 → JST 7/20 00:10:31.123
+    expect(moveLogTimeToJstDate("2026-07-17T15:10:31.123Z", "2026-07-20")).toBe(
+      "2026-07-19T15:10:31.123Z",
+    )
+  })
+
+  it("月を跨ぐ（JST 3/1 00:00:30 → 2/28 00:00:30）", () => {
+    expect(moveLogTimeToJstDate("2026-02-28T15:00:30.000Z", "2026-02-28")).toBe(
+      "2026-02-27T15:00:30.000Z",
+    )
+  })
+
+  it("PostgREST の表記（マイクロ秒・+00:00）を受け、ミリ秒までを保つ", () => {
+    expect(
+      moveLogTimeToJstDate("2026-07-18T15:10:31.123456+00:00", "2026-07-18"),
+    ).toBe("2026-07-17T15:10:31.123Z")
+  })
+
+  it("同じ日なら同じ瞬間（表記だけ ISO に揃う）", () => {
+    expect(moveLogTimeToJstDate("2026-07-18T15:10:31.123Z", "2026-07-19")).toBe(
+      "2026-07-18T15:10:31.123Z",
+    )
+  })
+
+  it("不正な記録時刻・実在しない日付は null（黙って今の時刻へ倒さぬ）", () => {
+    expect(moveLogTimeToJstDate("not-a-date", "2026-07-18")).toBeNull()
+    expect(moveLogTimeToJstDate("2026-07-18T15:10:31.123Z", "2026-02-30")).toBeNull()
+    expect(moveLogTimeToJstDate("2026-07-18T15:10:31.123Z", "")).toBeNull()
+  })
+})
 
 describe("jstDateTimeToIso", () => {
   it("JST 日付 + HH:mm を UTC ISO へ（+09:00 明示・UTC 罠回避）", () => {
