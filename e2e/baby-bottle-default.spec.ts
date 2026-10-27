@@ -52,6 +52,21 @@ function openSheetOf(page: Page): Locator {
   return page.locator('[data-slot="sheet-content"][data-open]')
 }
 
+/**
+ * 既存の NumberField 値を利用者のキー操作で置き換える。
+ * E2E の単発 fill("180") では、旧値 160 が残って「160,180」となる実測があった。
+ * 置換できたことを保存前に確認し、入力の不具合を DB の失敗に見せかけない。
+ */
+async function replaceBottleAmount(sheet: Locator, amountMl: number): Promise<void> {
+  const input = sheet.getByLabel("1回の量（ml）")
+  await input.click()
+  await input.press("ControlOrMeta+A")
+  await input.press("Backspace")
+  await expect(input).toHaveValue("")
+  await input.pressSequentially(String(amountMl))
+  await expect(input).toHaveValue(String(amountMl))
+}
+
 /** approvedUser の世帯 ID を DB 断面で待つ（世帯作成 server action の完了同期点）。 */
 async function waitForHouseholdId(userId: string): Promise<string> {
   const admin = adminClient()
@@ -257,12 +272,12 @@ test("いつものミルク量: 未設定から初回設定 → 1 タップ → 
       page.getByRole("heading", { name: "いつものミルク量" })
     )
     const sheetA2 = openSheetOf(page)
-    await sheetA2.getByLabel("1回の量（ml）").fill("180")
+    await replaceBottleAmount(sheetA2, 180)
     await sheetA2.getByRole("button", { name: "保存する" }).click()
     await waitForBottleDefault(householdId, 180)
 
     // B は 160 を見て 200 を保存 → 上書きせず衝突。入力は残り、DB は A の 180 のまま
-    await sheetB.getByLabel("1回の量（ml）").fill("200")
+    await replaceBottleAmount(sheetB, 200)
     await sheetB.getByRole("button", { name: "保存する" }).click()
     await expect(sheetB.getByRole("alert")).toContainText("先に180mlへ変更されていました", {
       timeout: 15_000,
