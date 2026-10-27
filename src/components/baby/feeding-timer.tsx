@@ -555,7 +555,7 @@ export function FeedingTimer({
   // disabled を防ぐ（recordFeeding は redirect しないため finally で isSaving を戻せる）。
   //
   // loggedAt はサイクルの**開始時刻**（終了時刻ではない）。タイマーは開始時刻、
-  // 手動入力は「記録時刻 − 授乳時間」を渡す。過去行も backfill migration
+  // 手動入力は「記録する」を押した時刻を渡す。過去行も backfill migration
   // （20260726100003_baby_feeding_backfill_start_time）で開始基準へ揃えてある。
   //
   // 冪等 id（clientId）は計測ごとに固定ゆえ、応答を失った停止の再タップは同じ id で
@@ -746,14 +746,13 @@ export function FeedingTimer({
       return
     }
     const sides = resolveBreastSideSeconds(leftTotal, rightTotal, cycle.side)
-    const total = sides.leftSec + sides.rightSec
-    // 手動入力の logged_at はサイクル開始時刻 = 記録時刻 − 授乳時間(左+右)。
-    // 停め忘れの復元では本当の開始時刻（端末保存の startedAt）を保つ — 「今 − 時間」に
-    // すると数時間前の授乳が今の時刻に化け、最終授乳・目安の起点が嘘になる。
+    // 手動入力の logged_at（サイクル開始時刻）は「記録する」を押した時刻そのもの。
+    // 授乳時間ぶん遡らせない（押した時刻がそのまま開始時刻として残る、という利用者の要望）。
+    // シートを開いた時刻（startedAt）でもない — 入力に手間取るほど押下時刻からずれる。
+    // 停め忘れの復元では本当の開始時刻（端末保存の startedAt）を保つ — 押下時刻にすると
+    // 数時間前の授乳が今の時刻に化け、最終授乳・目安の起点が嘘になる。
     const loggedAt =
-      stale && startedAt
-        ? startedAt.toISOString()
-        : new Date(Date.now() - total * 1000).toISOString()
+      stale && startedAt ? startedAt.toISOString() : new Date().toISOString()
     void saveFeeding({ sides, loggedAt })
   }
 
@@ -835,7 +834,7 @@ export function FeedingTimer({
               ? "停め忘れた計測です。授乳にかかった時間と左右の回数を入れて記録するか、破棄してください"
               : mode === "timer"
                 ? "吸わせる側を替えたら、その側を押してください。停止すると1回の授乳として記録します"
-                : "授乳にかかった時間と左右の回数を選んで記録します"}
+                : "左右の授乳時間と回数を選び、記録ボタンを押した時刻を開始時刻として保存します"}
           </SheetDescription>
         </SheetHeader>
 
