@@ -255,7 +255,7 @@ describe("FeedingTimer の localStorage 復元", () => {
       expect.objectContaining({ startedAt: STARTED_3H30_AGO, stale: true }),
     )
 
-    // 授乳時間を入れて記録 → logged_at は本当の開始時刻（「今 − 時間」ではない）
+    // 授乳時間を入れて記録 → logged_at は本当の開始時刻（通常の手動入力の「押した時刻」ではない）
     fireEvent.change(screen.getByLabelText("右の分"), { target: { value: "10" } })
     fireEvent.click(screen.getByRole("button", { name: /記録する/ }))
     await waitFor(() => expect(recordFeeding).toHaveBeenCalled())
@@ -549,6 +549,10 @@ describe("FeedingTimer 手動入力モード（分・秒 + 左右回数）", () 
     expect(screen.getByLabelText("右の分")).toBeInTheDocument()
     expect(screen.getByLabelText("右の秒")).toBeInTheDocument()
     expect(recordButton()).toBeInTheDocument()
+    // 押した時刻が開始時刻になることを、押す前に説明文で示す
+    expect(
+      screen.getByText("左右の授乳時間と回数を選び、記録ボタンを押した時刻を開始時刻として保存します"),
+    ).toBeInTheDocument()
     // タイマーの停止ボタンは手動入力中は出ない
     expect(
       screen.queryByRole("button", { name: /停止して記録/ }),
@@ -607,6 +611,10 @@ describe("FeedingTimer 手動入力モード（分・秒 + 左右回数）", () 
     fireEvent.change(screen.getByLabelText("右の秒"), { target: { value: "40" } })
     fireEvent.change(screen.getByLabelText("左の分"), { target: { value: "1" } })
     fireEvent.change(screen.getByLabelText("左の秒"), { target: { value: "0" } })
+    // 開いた時刻（startedAt）と押した時刻を分ける — 同じ時計のままだと、開いた時刻を
+    // 送る誤りも緑で通ってしまう
+    const pressedAt = new Date(FIXED_NOW.getTime() + 90_000)
+    vi.setSystemTime(pressedAt)
     fireEvent.click(recordButton())
 
     await waitFor(() => expect(recordFeeding).toHaveBeenCalled())
@@ -618,10 +626,39 @@ describe("FeedingTimer 手動入力モード（分・秒 + 左右回数）", () 
       breastStartSide: "right",
       breastLeftSec: 60,
       breastRightSec: 160,
-      // logged_at は「記録時刻 − 授乳時間(左+右)」= サイクル開始時刻
-      loggedAt: new Date(FIXED_NOW.getTime() - 220_000).toISOString(),
+      // logged_at（サイクル開始時刻）は「記録する」を押した時刻。左右合計（220 秒）ぶん
+      // 遡らせない
+      loggedAt: pressedAt.toISOString(),
       ...ANY_CLIENT_ID,
     })
+  })
+
+  it("既定の 5 分のまま記録すると、開始時刻は押した時刻そのもの（5 分前でも開いた時刻でもない）", async () => {
+    recordFeeding.mockResolvedValueOnce({ error: null, id: "m-5" })
+    const onLogRecorded = vi.fn()
+    renderTimer({ initialFeedingType: "breast_left", onLogRecorded })
+    fireEvent.click(screen.getByRole("button", { name: "手動入力" }))
+    // 既定（開始側 5:00）のまま、開いてから 90 秒後に押す
+    const pressedAt = new Date(FIXED_NOW.getTime() + 90_000)
+    vi.setSystemTime(pressedAt)
+    fireEvent.click(recordButton())
+
+    await waitFor(() => expect(recordFeeding).toHaveBeenCalled())
+    const sent = recordFeeding.mock.calls[0][0] as {
+      loggedAt: string
+      breastLeftSec: number
+      breastRightSec: number
+    }
+    expect(sent.breastLeftSec).toBe(300)
+    expect(sent.breastRightSec).toBe(0)
+    expect(sent.loggedAt).toBe(pressedAt.toISOString())
+    // 旧式（押した時刻 − 5 分）と、開いた時刻（startedAt）の取り違えをどちらも落とす
+    expect(sent.loggedAt).not.toBe(new Date(pressedAt.getTime() - 300_000).toISOString())
+    expect(sent.loggedAt).not.toBe(FIXED_NOW_ISO)
+    // 楽観 append の行も同じ開始時刻で出る（記録直後の表示と DB が食い違わぬ）
+    await waitFor(() => expect(onLogRecorded).toHaveBeenCalledTimes(1))
+    const log = onLogRecorded.mock.calls[0][0] as { logged_at: string }
+    expect(log.logged_at).toBe(pressedAt.toISOString())
   })
 
   it("既定は開始側 5:00・反対側 0:00", () => {
@@ -723,6 +760,19 @@ describe("FeedingTimer の深夜跨ぎ（前日の記録として保存）", () 
 
     expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("7/17の記録として保存"))
     expect(toast.success).not.toHaveBeenCalledWith(expect.stringContaining("前日"))
+  })
+
+  it("手動入力は JST 00:10 に 20 分で記録しても当日の記録になる（授乳時間ぶん前日へ遡らせない）", async () => {
+    recordFeeding.mockResolvedValueOnce({ error: null, id: "manual-midnight" })
+    renderTimer({ initialFeedingType: "breast_left" })
+    fireEvent.click(screen.getByRole("button", { name: "手動入力" }))
+    // 左 20 分。押した時刻 − 20 分 なら JST 前日 23:50 開始の行になる
+    fireEvent.change(screen.getByLabelText("左の分"), { target: { value: "20" } })
+    fireEvent.click(screen.getByRole("button", { name: /記録する/ }))
+    await waitFor(() => expect(toast.success).toHaveBeenCalled())
+
+    expect(recordFeeding.mock.calls[0][0].loggedAt).toBe(MIDNIGHT_NOW.toISOString())
+    expect(toast.success).toHaveBeenCalledWith("授乳を記録しました（左から・左1回20分）")
   })
 
   it("同じ時計でも開始が当日（JST）なら従来どおり楽観 append する（positive control）", async () => {

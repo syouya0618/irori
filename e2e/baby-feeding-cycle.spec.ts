@@ -11,11 +11,12 @@ import { adminClient, loginViaMagicLink } from "./fixtures/auth"
  * → 記録行をタップ → 編集シートに左右回数ステッパーが seed 済みで出る
  *
  * ## なぜ DB 断面まで見るか（UI だけでは核心が検証できない）
- * 本変更の中核は「授乳行の logged_at の意味を終了時刻 → **開始時刻** へ統一した」
- * ことだが、UI の表示（母乳 / 左2 / 母乳1 / ステッパーの seed）は**どちらの意味でも
- * 同一に通る**。ゆえに logged_at ≒ 記録時刻 − 授乳時間 であることを service_role の
- * 直読みで固定する。手動入力を 1 分（60 秒）にしてあるのは、開始時刻と終了時刻を
- * 60 秒の差で判別可能にするため（下の SLACK_MS より十分大きい）。
+ * 授乳行の logged_at は**開始時刻**の意味で、手動入力は「記録する」を押した時刻を
+ * そのまま開始時刻として保存する（授乳時間ぶん遡らせない）。UI の表示（母乳 / 左2 /
+ * 母乳1 / ステッパーの seed）はこの値が違っても**同一に通る**。ゆえに logged_at ≒
+ * 押した時刻 であることを service_role の直読みで固定する。手動入力を 1 分（60 秒）に
+ * してあるのは、「押した時刻 − 授乳時間」へ遡らせる旧挙動への回帰を 60 秒の差で判別
+ * 可能にするため（下の SLACK_MS より十分大きい）。
  *
  * ## フレーク対策の方針（golden-path / calendar と同じ流儀）
  * - 時間ベースの sleep は使わない。書き込み完了は DB 断面を poll して同期する
@@ -37,23 +38,22 @@ import { adminClient, loginViaMagicLink } from "./fixtures/auth"
 // CI の cold path を考慮して上限を引き上げる（成功時の所要時間には影響しない）
 test.setTimeout(180_000)
 
-/** 手動入力で選ぶ授乳時間（分）。開始時刻 vs 終了時刻の判別幅でもある。 */
+/** 手動入力で選ぶ授乳時間（分）。押した時刻 vs 授乳時間ぶん遡った時刻の判別幅でもある。 */
 const MANUAL_MINUTES = 1
 const MANUAL_DURATION_SEC = MANUAL_MINUTES * 60
 
 /**
  * logged_at の許容誤差（ミリ秒）。クリック → Server Action → DB 書き込みの
  * 往復ぶんの揺れを吸収する。MANUAL_DURATION_SEC * 1000 (=60s) より十分小さく、
- * 「開始時刻ではなく終了時刻が入っている」回帰は必ず境界外に出る。
+ * 「授乳時間ぶん遡った時刻が入っている」回帰は必ず境界外に出る。
  */
 const SLACK_MS = 5_000
 
 /**
- * 深夜跨ぎで skip する JST 時刻の閾値（分）。手動入力の logged_at は
- * 「記録時刻 − 授乳時間」ゆえ、JST 00:00 直後に記録すると開始時刻が**前日**になる。
- * その行は仕様どおり前日として保存され（トーストが「前日の記録として保存」になる）、
- * 今日のタイムライン / 今日のまとめには出ない = 本テストの検証対象が成立しない。
- * 実害のある窓は最初の 1 分だけだが、記録後の DB poll / reload も含めて余裕を取る。
+ * 深夜跨ぎで skip する JST 時刻の閾値（分）。手動入力の logged_at は「記録する」を
+ * 押した時刻ゆえ、JST 24:00 の直前に押すと、記録後の DB poll / reload の間に日付が
+ * 変わり、行（前日）と今日のタイムライン / 今日のまとめ / todayJst() が食い違う
+ * = 本テストの検証対象が成立しない。記録後の DB poll / reload も含めて余裕を取る。
  */
 const MIDNIGHT_GUARD_MINUTES = 5
 
@@ -228,8 +228,8 @@ test("母乳サイクル: 手動入力で左2回を記録 → タイムライン
   // 深夜跨ぎガード（定数コメント参照）。prologue で時間が経つため、判定は
   // 「記録クリックの直前」で行う（テスト開始時の判定では窓がずれる）。
   test.skip(
-    jstMinutesOfDay() < MIDNIGHT_GUARD_MINUTES,
-    `JST 00:00〜00:0${MIDNIGHT_GUARD_MINUTES} は手動入力の開始時刻が前日になり、今日のタイムライン反映を検証できない`
+    jstMinutesOfDay() >= 24 * 60 - MIDNIGHT_GUARD_MINUTES,
+    `JST 23:${60 - MIDNIGHT_GUARD_MINUTES}〜24:00 は記録後に日付が変わり、今日のタイムライン反映を検証できない`
   )
 
   const beforeMs = Date.now()
@@ -256,15 +256,11 @@ test("母乳サイクル: 手動入力で左2回を記録 → タイムライン
   // duration_min は duration_sec からの派生（後方互換列）
   expect(row.duration_min).toBe(MANUAL_MINUTES)
 
-  // logged_at は「記録時刻 − 授乳時間」= サイクルの開始時刻。終了時刻（記録時刻）が
-  // 入る旧セマンティクスへの回帰は 60 秒ぶんずれるため、この境界で必ず落ちる。
+  // logged_at は「記録する」を押した時刻 = サイクルの開始時刻。授乳時間ぶん遡らせる
+  // 旧挙動（押した時刻 − 授乳時間）への回帰は 60 秒ぶんずれるため、この境界で必ず落ちる。
   const loggedAtMs = new Date(row.logged_at).getTime()
-  expect(loggedAtMs).toBeGreaterThanOrEqual(
-    beforeMs - MANUAL_DURATION_SEC * 1000 - SLACK_MS
-  )
-  expect(loggedAtMs).toBeLessThanOrEqual(
-    afterMs - MANUAL_DURATION_SEC * 1000 + SLACK_MS
-  )
+  expect(loggedAtMs).toBeGreaterThanOrEqual(beforeMs - SLACK_MS)
+  expect(loggedAtMs).toBeLessThanOrEqual(afterMs + SLACK_MS)
   // 念のため「今日（JST）の記録」であることも固定する（前日へ落ちていない）
   expect(
     new Intl.DateTimeFormat("en-CA", {
