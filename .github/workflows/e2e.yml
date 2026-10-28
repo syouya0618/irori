@@ -39,6 +39,11 @@ jobs:
           # v1 に留めること (dependabot.yml で major bump を ignore 済み)。
           version: 2.101.0
 
+      - name: Use official Docker Hub images
+        # setup-cli exports ghcr.io; shared runner pulls hit GHCR's 429 twice.
+        # CLI 2.101.0 supports docker.io with the same pinned upstream image tags.
+        run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io" >> "$GITHUB_ENV"
+
       - name: Start Supabase local stack
         # E2E に不要なサービスは除外して起動を軽くする
         # (-x の有効値は `supabase start --help` 参照。analytics = Logflare)
