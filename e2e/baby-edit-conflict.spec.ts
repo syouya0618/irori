@@ -217,6 +217,12 @@ test("二端末の編集競合: 古い画面からの保存は衝突として拒
       reopenedB.getByRole("button", { name: "少量", exact: true })
     ).toHaveClass(/bg-primary/)
     await expect(reopenedB.getByLabel("メモ")).toHaveValue("")
+    // v9 は古い版の書きかけを黙って上書きせず、戻すか破棄するまで入力を止める。
+    await expect(reopenedB.getByText("前回のメモの書きかけがあります（この端末）")).toBeVisible()
+    await expect(reopenedB.getByText("B の古い画面からのメモ", { exact: true })).toBeVisible()
+    await expect(reopenedB.getByLabel("メモ")).toBeDisabled()
+    await reopenedB.getByRole("button", { name: "破棄", exact: true }).click()
+    await expect(reopenedB.getByLabel("メモ")).toBeEditable()
     await reopenedB.getByLabel("メモ").fill("B が最新を見てから足したメモ")
     await reopenedB.getByRole("button", { name: "更新する" }).click()
     await expect(pageB.getByText("ログを更新しました")).toBeVisible({

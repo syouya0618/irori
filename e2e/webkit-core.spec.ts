@@ -120,7 +120,7 @@ test("WebKit/タッチ: 記録・量の置き換え・編集・下書き・CSV �
   await edit.getByRole("button", { name: "更新する" }).tap()
   await expect(page.getByText("ログを更新しました")).toBeVisible({ timeout: 15_000 })
 
-  // ── 日記の下書き（閉じる → 再読込 → 開き直すと戻る）─────────────────────
+  // ── 日記の下書き（再読込 → 開き直して「戻す」を選ぶ）─────────────────────
   await openOverlay(
     page.getByRole("button", { name: "日記を編集" }),
     page.getByRole("heading", { name: "育児日記" })
@@ -133,6 +133,9 @@ test("WebKit/タッチ: 記録・量の置き換え・編集・下書き・CSV �
     page.getByRole("button", { name: "日記を編集" }),
     page.getByRole("heading", { name: "育児日記" })
   )
+  // v9 は前回の下書きを自動では入れず、利用者が戻すか破棄するかを選ぶ。
+  await expect(openSheetOf(page).getByLabel("日記本文")).toBeDisabled()
+  await openSheetOf(page).getByRole("button", { name: "戻す", exact: true }).tap()
   await expect(openSheetOf(page).getByLabel("日記本文")).toHaveValue("WebKitの下書き", {
     timeout: 10_000,
   })

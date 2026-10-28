@@ -433,7 +433,7 @@ export function FeedbackForm({ userId }: { userId: string }) {
                 checked={diagnostic !== null}
                 onChange={(event) => handleDiagnosticToggle(event.currentTarget.checked)}
                 aria-describedby="feedback-diagnostic-note"
-                className="size-5 shrink-0 cursor-pointer accent-primary"
+                className="size-11 shrink-0 cursor-pointer accent-primary"
               />
               診断情報を添える（任意）
             </label>
