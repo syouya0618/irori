@@ -122,16 +122,16 @@ test("WebKit/タッチ: 記録・量の置き換え・編集・下書き・CSV �
 
   // ── 日記の下書き（再読込 → 開き直して「戻す」を選ぶ）─────────────────────
   await openOverlay(
-    page.getByRole("button", { name: "日記を編集" }),
-    page.getByRole("heading", { name: "育児日記" })
+    page.getByRole("button", { name: "日記を書く", exact: true }),
+    openSheetOf(page).getByRole("heading", { name: "育児日記", exact: true })
   )
   const diary = openSheetOf(page).getByLabel("日記本文")
   await diary.tap()
   await diary.pressSequentially("WebKitの下書き")
   await page.reload()
   await openOverlay(
-    page.getByRole("button", { name: "日記を編集" }),
-    page.getByRole("heading", { name: "育児日記" })
+    page.getByRole("button", { name: "日記を書く", exact: true }),
+    openSheetOf(page).getByRole("heading", { name: "育児日記", exact: true })
   )
   // v9 は前回の下書きを自動では入れず、利用者が戻すか破棄するかを選ぶ。
   await expect(openSheetOf(page).getByLabel("日記本文")).toBeDisabled()

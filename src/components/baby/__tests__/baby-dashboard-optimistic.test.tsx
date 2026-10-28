@@ -195,8 +195,8 @@ describe("BabyDashboard / 記録の楽観 append (B-03)", () => {
 
   it("保存の後の確認（C1）: 記録の釦の下に、サーバが返した時刻の行を「記録済み」で出し、取り消せば消える", async () => {
     const createdVersion = "2026-10-21T03:00:00.123456+00:00"
-    // DB が書いた logged_at（端末の時計ではない）
-    const dbLoggedAt = "2026-10-21T02:58:00.000000+00:00"
+    // DB が書いた logged_at（端末の時計ではない）。試験日から組み、取得窓の外へ経年させぬ。
+    const dbLoggedAt = `${TODAY}T11:58:00.000000+09:00`
     mockedRecordDiaper.mockResolvedValue({
       error: null,
       id: "diaper-confirm-1",
