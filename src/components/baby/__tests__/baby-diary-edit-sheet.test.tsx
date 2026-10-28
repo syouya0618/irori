@@ -16,6 +16,7 @@ vi.mock("@/app/(main)/baby/actions", () => ({
 import { BabyDiaryEditSheet } from "../baby-diary-edit-sheet"
 import { upsertBabyDiary } from "@/app/(main)/baby/actions"
 import { toast } from "sonner"
+import { SAVE_UNKNOWN_MESSAGE } from "@/lib/domain/save-attempt"
 
 const mockedUpsert = vi.mocked(upsertBabyDiary)
 
@@ -172,7 +173,7 @@ describe("BabyDiaryEditSheet（育児日記の編集・1日1本）", () => {
     expect(onOpenChange).not.toHaveBeenCalledWith(false)
   })
 
-  it("action が reject（通信断）すると圏外トーストへ倒し握り潰さない", async () => {
+  it("action が reject（通信断）すると結果不明として知らせ（未保存と断定せぬ）、握り潰さない", async () => {
     mockedUpsert.mockRejectedValue(new Error("network down"))
     render(
       <BabyDiaryEditSheet
@@ -187,11 +188,12 @@ describe("BabyDiaryEditSheet（育児日記の編集・1日1本）", () => {
     fireEvent.change(textarea(), { target: { value: "x" } })
     fireEvent.click(screen.getByRole("button", { name: "保存する" }))
 
+    // 2026-10-27: reject は「サーバに届かなかった」とは限らぬ（応答だけが失われた形と区別できぬ）。
+    // 日記の保存は同じ本文なら成功として返る（冪等）ゆえ、同じ内容での送り直しを促す
     await waitFor(() =>
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-        "通信できませんでした。電波の良い場所でもう一度お試しください",
-      ),
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(SAVE_UNKNOWN_MESSAGE),
     )
+    expect(textarea().value).toBe("x")
   })
 })
 

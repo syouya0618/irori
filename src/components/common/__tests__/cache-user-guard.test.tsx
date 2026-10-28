@@ -43,7 +43,7 @@ describe("CacheUserGuard", () => {
     localStorage.setItem(KEY, "user-a")
     purgeHouseholdCaches.mockResolvedValue(true)
 
-    render(<CacheUserGuard userId="user-b" />)
+    render(<CacheUserGuard userId="user-b" householdId="h1" />)
 
     await waitFor(() => expect(localStorage.getItem(KEY)).toBe("user-b"))
     expect(purgeHouseholdCaches).toHaveBeenCalledTimes(1)
@@ -53,7 +53,7 @@ describe("CacheUserGuard", () => {
     localStorage.setItem(KEY, "user-a")
     purgeHouseholdCaches.mockResolvedValue(true)
 
-    render(<CacheUserGuard userId="user-a" />)
+    render(<CacheUserGuard userId="user-a" householdId="h1" />)
 
     await waitFor(() => expect(localStorage.getItem(KEY)).toBe("user-a"))
     expect(purgeHouseholdCaches).not.toHaveBeenCalled()
@@ -62,7 +62,7 @@ describe("CacheUserGuard", () => {
   it("初回（前の ID 無し）は破棄せず、鍵だけを置く", async () => {
     purgeHouseholdCaches.mockResolvedValue(true)
 
-    render(<CacheUserGuard userId="user-a" />)
+    render(<CacheUserGuard userId="user-a" householdId="h1" />)
 
     await waitFor(() => expect(localStorage.getItem(KEY)).toBe("user-a"))
     expect(purgeHouseholdCaches).not.toHaveBeenCalled()
@@ -78,7 +78,7 @@ describe("CacheUserGuard", () => {
         }),
     )
 
-    render(<CacheUserGuard userId="user-b" />)
+    render(<CacheUserGuard userId="user-b" householdId="h1" />)
 
     await waitFor(() => expect(purgeHouseholdCaches).toHaveBeenCalledTimes(1))
     // 破棄の結果が出た**後**の状態を見る（resolve 前に読んで偽緑にせぬ）
@@ -91,19 +91,19 @@ describe("CacheUserGuard", () => {
   it("持ち主は利用者が同じでも初回でも、マウントのたびに今の利用者へ書く", async () => {
     purgeHouseholdCaches.mockResolvedValue(true)
     localStorage.setItem(KEY, "user-a")
-    render(<CacheUserGuard userId="user-a" />)
+    render(<CacheUserGuard userId="user-a" householdId="h1" />)
     await waitFor(() => expect(setCacheOwner).toHaveBeenCalledWith("user-a"))
     cleanup()
 
     localStorage.clear()
-    render(<CacheUserGuard userId="user-c" />)
+    render(<CacheUserGuard userId="user-c" householdId="h1" />)
     await waitFor(() => expect(setCacheOwner).toHaveBeenCalledWith("user-c"))
   })
 
   it("持ち主の交代では、破棄の**後**に今の利用者を持ち主として書く（破棄は持ち主を先に消す）", async () => {
     localStorage.setItem(KEY, "user-a")
     purgeHouseholdCaches.mockResolvedValue(true)
-    render(<CacheUserGuard userId="user-b" />)
+    render(<CacheUserGuard userId="user-b" householdId="h1" />)
     await waitFor(() => expect(setCacheOwner).toHaveBeenCalledWith("user-b"))
     expect(purgeHouseholdCaches.mock.invocationCallOrder[0]).toBeLessThan(
       setCacheOwner.mock.invocationCallOrder[0],
@@ -113,7 +113,7 @@ describe("CacheUserGuard", () => {
   it("⭐ 破棄を確かめられなくても、持ち主は今の利用者へ書く（前の ID は残す）", async () => {
     localStorage.setItem(KEY, "user-a")
     purgeHouseholdCaches.mockResolvedValue(false)
-    render(<CacheUserGuard userId="user-b" />)
+    render(<CacheUserGuard userId="user-b" householdId="h1" />)
     await waitFor(() => expect(setCacheOwner).toHaveBeenCalledWith("user-b"))
     // 破棄の再試行のため鍵は前の利用者のまま
     expect(localStorage.getItem(KEY)).toBe("user-a")
@@ -128,7 +128,7 @@ describe("CacheUserGuard", () => {
           resolvePurge = resolve
         }),
     )
-    const view = render(<CacheUserGuard userId="user-b" />)
+    const view = render(<CacheUserGuard userId="user-b" householdId="h1" />)
     await waitFor(() => expect(purgeHouseholdCaches).toHaveBeenCalledTimes(1))
     view.unmount()
     await act(async () => {

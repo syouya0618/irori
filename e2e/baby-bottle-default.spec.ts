@@ -33,7 +33,9 @@ import {
 
 test.setTimeout(240_000)
 
-const OFFLINE_ACTION_TOAST = "通信できませんでした。電波の良い場所でもう一度お試しください"
+// 圏外のクイック記録は結果不明として知らせる（2026-10-27 大型更新 A2。baby-quick-actions.tsx の
+// unknownQuickMessage と手動同期。「通信できませんでした」= 保存されておらぬとは言わぬ）
+const UNKNOWN_MILK_160_TOAST = /ミルク 160mlを保存できたか確認できていません/
 
 /** Sheet / Dialog を決定的に開く（baby-diaper-amount.spec.ts と同一実装）。 */
 async function openOverlay(trigger: Locator, readySignal: Locator): Promise<void> {
@@ -231,11 +233,11 @@ test("いつものミルク量: 未設定から初回設定 → 1 タップ → 
     rows = await waitForBottleRows(householdId, 2)
     expect(rows.map((r) => r.amount_ml)).toEqual([120, 120])
 
-    // ── 6. A: 通信断でミルク → 圏外トースト → 戻って押し直す → 160ml が 1 件だけ ──
+    // ── 6. A: 通信断でミルク → 結果不明の知らせ → 戻って押し直す（2 分以内 = 同じ id）→ 160ml が 1 件だけ ──
     await expect(milkA).toBeEnabled({ timeout: 15_000 })
     await page.context().setOffline(true)
     await milkA.click()
-    await expect(page.getByText(OFFLINE_ACTION_TOAST)).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(UNKNOWN_MILK_160_TOAST).first()).toBeVisible({ timeout: 15_000 })
     await page.context().setOffline(false)
     await expect(milkA).toBeEnabled({ timeout: 15_000 })
     await milkA.click()

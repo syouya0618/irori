@@ -1,5 +1,7 @@
-import { shiftYmd, toJstDateString } from "@/lib/utils/date-jst"
+import { isValidYmd, shiftYmd, toJstDateString } from "@/lib/utils/date-jst"
 import type { BabyLogData } from "@/lib/types/baby"
+import { isTimestamptzText } from "@/lib/domain/timestamptz-text"
+import type { BabyLogKeysetCursor } from "@/lib/domain/baby-log-keyset"
 
 /**
  * 育児ログ・日記の機械可読エクスポート（機能 D）の純粋な部分。
@@ -122,6 +124,83 @@ export interface ExportDocument {
   diaries_truncated_after: string | null
   logs: ExportLogRow[]
   diaries: ExportDiaryRow[]
+  /**
+   * 分割回収（2026-10-27 追加。schema_version 1 のまま足した欄）。この書き出しが何番目の続きで、
+   * 続きを取るには何を送ればよいか。`next` が null なら、この範囲はここで終わり。
+   */
+  part: ExportPartInfo
+  /** 整合性の限界（利用者・受け取った側へ。同時点の snapshot ではない） */
+  consistency_note: string
+}
+
+export interface ExportPartInfo {
+  /** 続きの要求か（最初の 1 回は false） */
+  continuation: boolean
+  /** この書き出しが始まった位置（最初は null。"end" はその表を取り終えておった） */
+  logs_after: string | null
+  diaries_after: string | null
+  /** 続きの要求に送る値。全部取り終えたら null。表ごとに取り終えたら "end" */
+  next: { logs_after: string; diaries_after: string } | null
+  /**
+   * 分けた書き出しの最後の部分か（next が null）。最後の部分でも、そのファイル単独では範囲の全件では
+   * ないゆえ `complete` は false のまま — 全体は第 1 部から最後の部分までを合わせたもの
+   */
+  is_last: boolean
+}
+
+/**
+ * 整合性の限界の文言（本文・画面で共有）。ページの取得は別々の問い合わせゆえ、取得の最中に家族が
+ * 記録を足す・直す・消すと、その差は書き出しに入ったり入らなかったりする。keyset ゆえ取得済みの範囲の
+ * 行が重複・欠落することは無いが、同時点の snapshot とは名乗らぬ。
+ */
+export const EXPORT_CONSISTENCY_NOTE =
+  "取得の途中に追加・変更・削除された記録は、含まれないことや変更前の内容のことがあります（同じ時点の完全な写しではありません）"
+
+/** 記録の継続位置の表記: `<logged_at の表記のまま>|<id>`（Date に通すと秒未満が落ちて同じ行を引き直す） */
+export function encodeLogsAfter(cursor: BabyLogKeysetCursor): string {
+  return `${cursor.loggedAt}|${cursor.id}`
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export type ParsedAfter<T> = { ok: true; value: T | "end" | null } | { ok: false }
+
+/**
+ * 記録の継続位置を読む。null（未指定）= 最初から。"end" = この表は取り終えた。
+ * URL から来た値は PostgREST の or 条件へ入るゆえ、形を確かめて引用符を壊す文字を通さぬ。
+ */
+export function parseLogsAfter(raw: string | null): ParsedAfter<BabyLogKeysetCursor> {
+  if (raw === null) return { ok: true, value: null }
+  if (raw === "end") return { ok: true, value: "end" }
+  const at = raw.lastIndexOf("|")
+  if (at < 0) return { ok: false }
+  const loggedAt = raw.slice(0, at)
+  const id = raw.slice(at + 1)
+  if (!isTimestamptzText(loggedAt) || !UUID_RE.test(id)) return { ok: false }
+  return { ok: true, value: { loggedAt, id } }
+}
+
+/** 日記の継続位置（diary_date は世帯内で一意ゆえ日付だけで全順序） */
+export function parseDiariesAfter(raw: string | null): ParsedAfter<string> {
+  if (raw === null) return { ok: true, value: null }
+  if (raw === "end") return { ok: true, value: "end" }
+  return isValidYmd(raw) ? { ok: true, value: raw } : { ok: false }
+}
+
+/**
+ * 続きの要求の対象範囲。最初の要求で決めた範囲を**そのまま**送らせる — 続きの時に「今日」を
+ * 引き直すと、日付を跨いだ後や 1 週間の窓で範囲がずれ、行が黙って増減する。
+ * `from` は "all"（下限なし）か暦日、`to` は暦日（今日より後は拒む）。
+ */
+export function parsePinnedRange(
+  fromRaw: string | null,
+  toRaw: string | null,
+  today: string,
+): { from: string | null; to: string } | null {
+  if (!isValidYmd(toRaw) || toRaw > today) return null
+  if (fromRaw === "all") return { from: null, to: toRaw }
+  if (!isValidYmd(fromRaw) || fromRaw > toRaw) return null
+  return { from: fromRaw, to: toRaw }
 }
 
 export interface ExportTruncation {
@@ -139,6 +218,7 @@ export function buildExportDocument(input: {
   logs: BabyLogData[]
   diaries: ExportDiaryRow[]
   truncated: ExportTruncation
+  part?: ExportPartInfo
 }): ExportDocument {
   const logs: ExportLogRow[] = input.logs.map((l) => ({
     ...l,
@@ -157,17 +237,38 @@ export function buildExportDocument(input: {
     members: input.members,
     units: EXPORT_UNITS,
     counts: { logs: logs.length, diaries: input.diaries.length },
-    complete: !input.truncated.logs && !input.truncated.diaries,
+    // 続きの部分（第 2 部以降）は、そのファイル単独では範囲の全件ではない — 最後の部分でも false
+    complete: !input.truncated.logs && !input.truncated.diaries && !(input.part?.continuation ?? false),
     // 記録と日記は別々に示す（日記だけが切り詰められた時に記録の時刻を指さぬ）
     truncated_after: input.truncated.logs && lastLog ? lastLog.logged_at : null,
     diaries_truncated_after:
       input.truncated.diaries && lastDiary ? lastDiary.diary_date : null,
     logs,
     diaries: input.diaries,
+    part: input.part ?? {
+      continuation: false,
+      logs_after: null,
+      diaries_after: null,
+      next: null,
+      is_last: true,
+    },
+    consistency_note: EXPORT_CONSISTENCY_NOTE,
   }
 }
 
-/** 保存ファイル名。ASCII だけ（Content-Disposition の filename は ASCII が安全） */
-export function exportFilename(from: string | null, to: string): string {
-  return `uchinolog_${from ?? "all"}_${to}.json`
+/**
+ * 保存ファイル名。ASCII だけ（Content-Disposition の filename は ASCII が安全）。
+ * 分けた書き出し（続きがある第 1 部・続きの部分）は番号を付け、全件の書き出しと取り違えぬ —
+ * CSV ではファイル名が「一部」を示す唯一の印じゃ（本文は表だけ）。
+ */
+export function exportFilename(
+  from: string | null,
+  to: string,
+  options: { ext?: "json" | "csv"; table?: "logs" | "diaries"; part?: number; split?: boolean } = {},
+): string {
+  const ext = options.ext ?? "json"
+  const table = options.table ? `_${options.table}` : ""
+  const partNo = options.part ?? 1
+  const part = options.split || partNo >= 2 ? `_part${partNo}` : ""
+  return `uchinolog${table}_${from ?? "all"}_${to}${part}.${ext}`
 }

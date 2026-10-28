@@ -66,14 +66,15 @@ jobs:
           restore-keys: |
             playwright-${{ runner.os }}-
 
-      - name: Install Playwright Chromium
-        run: pnpm exec playwright install chromium --with-deps
+      - name: Install Playwright Chromium and WebKit
+        run: pnpm exec playwright install chromium webkit --with-deps
 
       - name: Run Playwright tests
         env:
           # offline.spec.ts の opt-in ゲートを CI では常時有効にする
           # (SW は production build 前提のため、ローカル dev 検証者が誤って踏まない構え)
           E2E_OFFLINE: "1"
+          E2E_WEBKIT: "1"
         run: pnpm exec playwright test
 
       - name: Upload Playwright artifacts

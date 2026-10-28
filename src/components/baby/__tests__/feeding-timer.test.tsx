@@ -68,6 +68,7 @@ function renderTimer(
       onOpenChange={props.onOpenChange ?? vi.fn()}
       initialFeedingType={props.initialFeedingType ?? "breast_left"}
       userId={props.userId ?? "u1"}
+      householdId="h1"
       onLogRecorded={props.onLogRecorded}
       onRunningChange={props.onRunningChange}
     />,
@@ -76,6 +77,34 @@ function renderTimer(
 
 /** recordFeeding の完全一致 assert 用: 計測ごとの冪等 id は値を予見できぬため形だけ固定する */
 const ANY_CLIENT_ID = { clientId: expect.any(String) }
+
+/**
+ * 手動記録の「押した時刻」は端末の時計ではなく、サーバ時刻のサンプル（/api/version の serverTime）と
+ * 経過の時計（performance.now）で推定する（2026-10-28 N3）。ここでは時計のずれの無い端末として、
+ * サーバは偽の Date と同じ時刻を答え、経過の時計も偽の Date に揃えて進める。時計のずれ・スリープ・
+ * 退化は save-time-server-anchored.integration.test.tsx が受け持つ。戻り値は後片付け。
+ */
+function stubServerClock() {
+  const base = Date.now()
+  const spy = vi.spyOn(performance, "now").mockImplementation(() => Date.now() - base + 1_000)
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json({ buildId: "dev", releaseName: "test", serverTime: Date.now() }),
+    ),
+  )
+  return () => {
+    spy.mockRestore()
+    vi.unstubAllGlobals()
+  }
+}
+
+/** 開いた時のサンプルの取得を落ち着かせる（押下はサンプルの取得を待たぬゆえ、押す前に流す） */
+async function flushServerSample() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+}
 
 function stopButton() {
   return screen.getByRole("button", { name: /停止して記録|記録中/ })
@@ -511,10 +540,13 @@ describe("FeedingTimer の左右別授乳時間（stint banking）", () => {
 })
 
 describe("FeedingTimer 手動入力モード（分・秒 + 左右回数）", () => {
+  let unstubServerClock: () => void = () => {}
   beforeEach(() => {
     vi.useFakeTimers({ now: FIXED_NOW, toFake: ["Date"] })
+    unstubServerClock = stubServerClock()
   })
   afterEach(() => {
+    unstubServerClock()
     vi.useRealTimers()
   })
 
@@ -613,6 +645,7 @@ describe("FeedingTimer 手動入力モード（分・秒 + 左右回数）", () 
     fireEvent.change(screen.getByLabelText("左の秒"), { target: { value: "0" } })
     // 開いた時刻（startedAt）と押した時刻を分ける — 同じ時計のままだと、開いた時刻を
     // 送る誤りも緑で通ってしまう
+    await flushServerSample()
     const pressedAt = new Date(FIXED_NOW.getTime() + 90_000)
     vi.setSystemTime(pressedAt)
     fireEvent.click(recordButton())
@@ -626,8 +659,8 @@ describe("FeedingTimer 手動入力モード（分・秒 + 左右回数）", () 
       breastStartSide: "right",
       breastLeftSec: 60,
       breastRightSec: 160,
-      // logged_at（サイクル開始時刻）は「記録する」を押した時刻。左右合計（220 秒）ぶん
-      // 遡らせない
+      // logged_at（サイクル開始時刻）は「記録する」を押した時刻（サーバの時計で推定）。
+      // 左右合計（220 秒）ぶん遡らせない
       loggedAt: pressedAt.toISOString(),
       ...ANY_CLIENT_ID,
     })
@@ -638,6 +671,7 @@ describe("FeedingTimer 手動入力モード（分・秒 + 左右回数）", () 
     const onLogRecorded = vi.fn()
     renderTimer({ initialFeedingType: "breast_left", onLogRecorded })
     fireEvent.click(screen.getByRole("button", { name: "手動入力" }))
+    await flushServerSample()
     // 既定（開始側 5:00）のまま、開いてから 90 秒後に押す
     const pressedAt = new Date(FIXED_NOW.getTime() + 90_000)
     vi.setSystemTime(pressedAt)
@@ -659,6 +693,29 @@ describe("FeedingTimer 手動入力モード（分・秒 + 左右回数）", () 
     await waitFor(() => expect(onLogRecorded).toHaveBeenCalledTimes(1))
     const log = onLogRecorded.mock.calls[0][0] as { logged_at: string }
     expect(log.logged_at).toBe(pressedAt.toISOString())
+  })
+
+  it("サーバの時刻を得られぬ時は時刻を送らず（端末の時計で作らぬ）、受信時刻で記録したと伝える（N3）", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new TypeError("Failed to fetch")
+    }))
+    recordFeeding.mockResolvedValueOnce({
+      error: null,
+      id: "m-recv",
+      updatedAt: "2026-07-19T04:01:30.123456+00:00",
+      loggedAt: "2026-07-19T04:01:30.5+00:00",
+    })
+    openManual()
+    await flushServerSample()
+    vi.setSystemTime(new Date(FIXED_NOW.getTime() + 90_000))
+    fireEvent.click(recordButton())
+    await waitFor(() => expect(recordFeeding).toHaveBeenCalled())
+    expect(recordFeeding.mock.calls[0][0]).not.toHaveProperty("loggedAt")
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        expect.stringContaining("開始時刻は記録が届いた時刻（13:01）です"),
+      ),
+    )
   })
 
   it("既定は開始側 5:00・反対側 0:00", () => {
@@ -763,8 +820,10 @@ describe("FeedingTimer の深夜跨ぎ（前日の記録として保存）", () 
   })
 
   it("手動入力は JST 00:10 に 20 分で記録しても当日の記録になる（授乳時間ぶん前日へ遡らせない）", async () => {
+    const unstubServerClock = stubServerClock()
     recordFeeding.mockResolvedValueOnce({ error: null, id: "manual-midnight" })
     renderTimer({ initialFeedingType: "breast_left" })
+    await flushServerSample()
     fireEvent.click(screen.getByRole("button", { name: "手動入力" }))
     // 左 20 分。押した時刻 − 20 分 なら JST 前日 23:50 開始の行になる
     fireEvent.change(screen.getByLabelText("左の分"), { target: { value: "20" } })
@@ -773,6 +832,7 @@ describe("FeedingTimer の深夜跨ぎ（前日の記録として保存）", () 
 
     expect(recordFeeding.mock.calls[0][0].loggedAt).toBe(MIDNIGHT_NOW.toISOString())
     expect(toast.success).toHaveBeenCalledWith("授乳を記録しました（左から・左1回20分）")
+    unstubServerClock()
   })
 
   it("同じ時計でも開始が当日（JST）なら従来どおり楽観 append する（positive control）", async () => {
@@ -1240,11 +1300,12 @@ describe("FeedingTimer の持ち主と冪等 id（P3-08 / P2-08）", () => {
     // 計測と id は端末に残っている
     expect(savedTimerState().clientId).toBe(clientId)
 
+    // 結果不明の間は「同じ内容でもう一度送る」になり、固定した送信内容を送る（A2）
     recordFeeding.mockResolvedValueOnce({ error: null, id: clientId })
-    fireEvent.click(stopButton())
+    fireEvent.click(screen.getByRole("button", { name: "同じ内容でもう一度送る" }))
     await waitFor(() => expect(recordFeeding).toHaveBeenCalledTimes(2))
     expect(recordFeeding.mock.calls[0][0].clientId).toBe(clientId)
-    expect(recordFeeding.mock.calls[1][0].clientId).toBe(clientId)
+    expect(recordFeeding.mock.calls[1][0]).toEqual(recordFeeding.mock.calls[0][0])
     expect(savedTimerState()).toBeNull()
   })
 
@@ -1319,6 +1380,7 @@ describe("FeedingTimer の停め忘れの停止時判定と、端末保存が効
           onOpenChange={onOpenChange}
           initialFeedingType="breast_left"
           userId="u1"
+          householdId="h1"
           onRunningChange={onRunningChange}
         />,
       )
@@ -1334,6 +1396,7 @@ describe("FeedingTimer の停め忘れの停止時判定と、端末保存が効
           onOpenChange={onOpenChange}
           initialFeedingType="breast_left"
           userId="u1"
+          householdId="h1"
           onRunningChange={onRunningChange}
         />,
       )
@@ -1344,6 +1407,7 @@ describe("FeedingTimer の停め忘れの停止時判定と、端末保存が効
           onOpenChange={onOpenChange}
           initialFeedingType="breast_left"
           userId="u1"
+          householdId="h1"
           onRunningChange={onRunningChange}
         />,
       )
@@ -1367,6 +1431,7 @@ describe("FeedingTimer の停め忘れの停止時判定と、端末保存が効
         onOpenChange={onOpenChange}
         initialFeedingType="breast_left"
         userId="u1"
+        householdId="h1"
         onRunningChange={onRunningChange}
       />,
     )
@@ -1376,6 +1441,7 @@ describe("FeedingTimer の停め忘れの停止時判定と、端末保存が効
         onOpenChange={onOpenChange}
         initialFeedingType="breast_left"
         userId="u1"
+        householdId="h1"
         onRunningChange={onRunningChange}
       />,
     )
@@ -1388,6 +1454,7 @@ describe("FeedingTimer の停め忘れの停止時判定と、端末保存が効
         onOpenChange={onOpenChange}
         initialFeedingType="breast_left"
         userId="u1"
+        householdId="h1"
         onRunningChange={onRunningChange}
       />,
     )

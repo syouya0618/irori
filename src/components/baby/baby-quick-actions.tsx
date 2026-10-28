@@ -11,6 +11,7 @@ import {
   Undo2,
   CircleCheck,
   Pencil,
+  Settings2,
 } from "lucide-react"
 import { toast } from "sonner"
 import { formatTimeJst } from "@/lib/utils/date-jst"
@@ -29,6 +30,21 @@ import {
 import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
 import { newClientId } from "@/lib/utils/client-id"
 import {
+  phaseAfterFailure,
+  SAVE_CONFLICT_MESSAGE,
+  type SaveOwner,
+} from "@/lib/domain/save-attempt"
+import {
+  listPendingSaves,
+  putPendingSave,
+  removePendingSave,
+  PENDING_SAVE_SCHEMA_VERSION,
+  PAGE_LIFE_ID,
+  mayHaveLanded,
+  type PendingSave,
+  type PendingSaveAction,
+} from "@/lib/domain/pending-saves-storage"
+import {
   formatDiaperSummary,
   getDiaperTypeLabel,
   getFeedingTypeLabel,
@@ -37,6 +53,7 @@ import {
 // 最寄りの error boundary へ bubble し全画面エラー化 + 記録が無言で失われる。
 // 各ハンドラの reject を握ってトーストへ倒す（機序の詳細は offline-error.ts）。
 import { toastOfflineError } from "@/lib/utils/offline-error"
+import { noteServerActionFailure, STALE_CLIENT_ACTION_MESSAGE } from "@/lib/pwa/app-version"
 import type {
   BabyLogType,
   FeedingType,
@@ -141,11 +158,55 @@ type PoopDiaperType = Extract<DiaperType, "poop" | "both">
  */
 export const RETRY_WINDOW_MS = 2 * 60_000
 
+/** 期限の後に、確認中の同じ操作とは別の id で記録した時の知らせ（黙って二重にせぬ。v8） */
+export const SEPARATE_FROM_PENDING_NOTE =
+  "。「保存を確認中の記録」の前の操作とは別の記録です（同じ記録だった時は「取り消す」で戻せます）"
+/** 同上で、記録済みでした（replayed）の時（取り消しの帯は出ぬゆえ、戻し方は記録の一覧で） */
+export const SEPARATE_FROM_PENDING_REPLAY_NOTE =
+  "。「保存を確認中の記録」の前の操作とは別の記録です（同じ記録だった時は記録を開いて削除できます）"
+/** 同上で、新しい id の送信も結果不明になった時 */
+export const SEPARATE_FROM_PENDING_UNKNOWN_NOTE =
+  "（「保存を確認中の記録」の前の操作とは別の記録として送りました）"
+
+/**
+ * retryKey を持たぬ控え（記録シートの作成）の送信内容から、クイック記録の同じ操作の鍵を導く
+ * （`feeding:<種別>` / `diaper:<種別>:<うんちの量>`。handleFeeding / handleDiaper の鍵と同じ形）。
+ * 種類を読めぬ控えは null（どの鍵とも一致せぬ）。
+ */
+function quickKeyOfPayload(p: PendingSave): string | null {
+  const payload = p.payload
+  if (p.action === "recordFeeding" && typeof payload.feedingType === "string") {
+    return `feeding:${payload.feedingType}`
+  }
+  if (p.action === "recordDiaper" && typeof payload.diaperType === "string") {
+    const amount = typeof payload.poopAmount === "string" ? payload.poopAmount : ""
+    return `diaper:${payload.diaperType}:${amount}`
+  }
+  return null
+}
+
 interface PendingRetryId {
   key: string
   id: string
-  /** 作った時刻（epoch ms）。RETRY_WINDOW_MS を過ぎたら再利用せぬ */
+  /** 最初の押下の時刻（epoch ms・端末の時計）。一覧の目印にだけ使い、記録時刻には使わぬ（N3） */
   at: number
+  /**
+   * 押し直しの期限の起点（epoch ms）。最初は押下の時刻、結果不明と分かったらその時刻へ進める —
+   * 遅い失敗の後でも「2分以内に押し直せば同じ記録」の約束を守る（独立レビュー 2 周目）
+   */
+  windowFrom: number
+  /**
+   * 同じ画面での期限の起点（経過の時計 = performance.now）。同じ画面の中の期限はこれで測る —
+   * 端末の時計を直す（壁時計が跳ぶ）と、壁時計の差では 1 分後の押し直しが「期限切れ」になって
+   * 新しい id で二重に記録し、逆に跳び戻ると本当に新しい記録が前の id に吸われて消える
+   * （独立レビュー 2026-10-28 v7 N3-04）
+   */
+  windowFromMono: number
+}
+
+/** 経過の時計（端末の時計の変更で動かぬ）。描画中には読まぬ */
+function monoNow(): number {
+  return performance.now()
 }
 
 /**
@@ -155,15 +216,56 @@ interface PendingRetryId {
 function resolveRetryClientId(
   ref: { current: PendingRetryId | null },
   key: string,
-): string {
+  owner: SaveOwner | null,
+): PendingRetryId {
   const pending = ref.current
   const now = Date.now()
-  if (pending && pending.key === key && now - pending.at < RETRY_WINDOW_MS) {
-    return pending.id
+  const mono = monoNow()
+  if (pending && pending.key === key && mono - pending.windowFromMono < RETRY_WINDOW_MS) {
+    return pending
   }
-  const id = newClientId()
-  ref.current = { key, id, at: now }
-  return id
+  // 再読込・画面の作り直しで手元の記憶が消えても、端末に残した「結果の分からぬ同じ操作」が
+  // 期限内なら同じ id を使う（2026-10-27 A2。新しい id で登録し直すと本当の二重記録になる）。
+  // 画面を跨ぐと経過の時計は 0 に戻るゆえ壁時計の差で測る。負の差（時計を戻した）は期限内と
+  // 言えぬゆえ使わぬ — 先の控えは「保存を確認中の記録」に残り、そこで確かめられる
+  if (owner) {
+    const stored = listPendingSaves(owner, now).find((p) => {
+      const elapsed = now - new Date(p.unknownAt ?? p.firstAttemptAt).getTime()
+      return (
+        p.retryKey === key &&
+        p.phase !== "conflict" &&
+        elapsed >= 0 &&
+        elapsed < RETRY_WINDOW_MS
+      )
+    })
+    if (stored) {
+      const windowFrom = new Date(stored.unknownAt ?? stored.firstAttemptAt).getTime()
+      ref.current = {
+        key,
+        id: stored.clientId,
+        at: new Date(stored.firstAttemptAt).getTime(),
+        windowFrom,
+        // 以後この画面の中では経過の時計で測る（残りの期限を写す）
+        windowFromMono: mono - (now - windowFrom),
+      }
+      return ref.current
+    }
+  }
+  ref.current = { key, id: newClientId(), at: now, windowFrom: now, windowFromMono: mono }
+  return ref.current
+}
+
+/**
+ * 結果の分からぬクイック記録の案内（「失敗」とも「記録済み」とも言わぬ）。押し直しが同じ記録に
+ * なるのは期限（RETRY_WINDOW_MS）の内だけゆえ、期限を言い、期限の後は「保存を確認中の記録」の
+ * 一覧（同じ id・同じ内容で送り直す）へ案内する（独立レビュー 2026-10-28）。
+ */
+function unknownQuickMessage(summary: string, keptOnDevice: boolean): string {
+  return keptOnDevice
+    ? `${summary}を保存できたか確認できていません。2分以内にもう一度押すか、「保存を確認中の記録」から送り直すと、同じ記録として確かめます（二重にはなりません）`
+    : // 端末に控えを残せなかった（容量不足・保存が許されぬ・世帯が分からぬ）。一覧には出ぬゆえ
+      // 一覧へは案内せぬ（独立レビュー 2026-10-28 v7 F3）
+      `${summary}を保存できたか確認できていません。この端末に控えを残せなかったため、2分以内にもう一度押して確かめてください（同じ記録として確かめ、二重にはなりません）。過ぎた時は、記録の一覧で確かめてから記録してください`
 }
 
 /**
@@ -179,9 +281,18 @@ const POOP_AMOUNT_OPTIONS: { value: PoopAmount | null; label: string }[] = [
 interface BabyQuickActionsProps {
   /** 記録者（logged_by）。楽観 append 行の作成に使う（B-03） */
   userId: string
+  /**
+   * 今の世帯。結果の分からぬ記録を持ち主付きで端末に残すのに使う（2026-10-27 A2）。
+   * 省略時は端末に残さぬ（手元の記憶だけで同じ id を使う。従来どおり）。
+   */
+  householdId?: string
   onCreateLog: (type: BabyLogType) => void
-  /** 搾乳など量ベースの授乳を create シートで開く（母乳のタイマー導線とは別） */
-  onCreateFeeding: (type: FeedingType) => void
+  /**
+   * 搾乳など量ベースの授乳を create シートで開く（母乳のタイマー導線とは別）。
+   * `amountMl` は「今回の量を変える」の初期値（いつもの量）。その記録だけに使い、いつもの量は
+   * 変えぬ（2026-10-27 C2）。
+   */
+  onCreateFeeding: (type: FeedingType, opts?: { amountMl?: number }) => void
   onStartTimer: (type: FeedingType) => void
   /**
    * 記録成功時に楽観 append する行を親へ渡す（B-03）。Realtime 単一経路を脱し、
@@ -225,8 +336,20 @@ interface BabyQuickActionsProps {
   bottleDefault: BottleDefaultController
 }
 
+/**
+ * 押し直し（結果不明の後）が新しく記録した時の知らせ。時刻を送らぬクイック記録は、初回が DB に
+ * 届いておらねば、押し直した時の受信時刻で記録される。それを「押した時刻」と偽らず、記録された
+ * 時刻と直し方を伝える（2026-10-28 N3）。
+ */
+function receiptTimeNote(loggedAt: string | undefined): string {
+  return loggedAt
+    ? `。記録時刻は届いた時刻（${formatTimeJst(loggedAt)}）です。押した時刻と違う時は記録を開いて直せます`
+    : ""
+}
+
 export function BabyQuickActions({
   userId,
+  householdId,
   onCreateLog,
   onCreateFeeding,
   onStartTimer,
@@ -318,11 +441,204 @@ export function BabyQuickActions({
    * 消失に化ける）。期限内の再タップだけを再試行とみなす。
    */
   const retryIdRef = useRef<PendingRetryId | null>(null)
-  function clientIdFor(key: string): string {
-    return resolveRetryClientId(retryIdRef, key)
+  const owner: SaveOwner | null = householdId ? { userId, householdId } : null
+  function clientIdFor(key: string): PendingRetryId {
+    return resolveRetryClientId(retryIdRef, key, owner)
   }
   function settleClientId() {
     retryIdRef.current = null
+  }
+  // 一度でも結果が分からなかった操作の id（持ち主が分からず端末に残せぬ時の手元の控え）
+  const unknownIdsRef = useRef(new Set<string>())
+
+  type PendingEntry = {
+    clientId: string
+    action: PendingSaveAction
+    payload: Record<string, unknown>
+    summary: string
+    retryKey: string
+    /** 最初の押下の時刻（ISO・端末の時計）。期限と一覧の目印。記録時刻は DB の受信時刻（N3） */
+    firstAttemptAt: string
+  }
+
+  /**
+   * 端末に残す（送る前は sending、結果不明なら unknown）。送り直しは利用者の操作だけ。
+   * 残せたかを返す（持ち主が分からぬ・容量不足・保存が許されぬ時は false — 呼び出し側は
+   * 「保存を確認中の記録」に在るとは言わぬ。pending-saves-storage の putPendingSave の契約）
+   */
+  function rememberPending(entry: PendingEntry, phase: "sending" | "unknown"): boolean {
+    if (!owner) return false
+    return putPendingSave({
+      schemaVersion: PENDING_SAVE_SCHEMA_VERSION,
+      clientId: entry.clientId,
+      owner,
+      action: entry.action,
+      payload: entry.payload,
+      summary: entry.summary,
+      firstAttemptAt: entry.firstAttemptAt,
+      phase,
+      retryKey: entry.retryKey,
+      ...(phase === "sending"
+        ? { pageId: PAGE_LIFE_ID, sentAt: new Date().toISOString() }
+        : { unknownAt: new Date().toISOString() }),
+    })
+  }
+
+  /**
+   * 送る前の記録。この操作が既に「結果不明」だったか（= 先の送信が保存されておりうる）を返す。
+   * 送る**前**に sending で残すのは、応答の前に再読込・更新・ログアウトしても手がかりを失わぬため
+   * （独立レビュー 2026-10-28。更新・ログアウトの確認はこれを「端末に残る作業」として数える）。
+   */
+  function beforeSend(entry: PendingEntry): boolean {
+    const wasUnknown =
+      unknownIdsRef.current.has(entry.clientId) ||
+      (owner
+        ? listPendingSaves(owner).some(
+            (p) => p.clientId === entry.clientId && mayHaveLanded(p),
+          )
+        : false)
+    rememberPending(entry, "sending")
+    return wasUnknown
+  }
+
+  /**
+   * 同じ操作（同じ鍵）の、保存されておりうる**別の id**の控えが端末に在るか（押し直しの期限を
+   * 過ぎた後のタップ）。期限の後の同じ釦は新しい記録として送る（1 タップを止めぬ）が、黙っては
+   * 送らぬ — 成功の知らせで、確認中の前の操作とは別の記録になったことと戻し方を伝える（v8: 結果
+   * 不明の後の 2 回目の送信が黙って二重にならぬ）。送る前に読む
+   */
+  function hasOtherPendingOfSameKey(entry: PendingEntry): boolean {
+    if (!owner) return false
+    // 記録シートの控えは retryKey を持たぬゆえ、送信内容の種類から同じ鍵を導いて照らす。送信中の控えも
+    // 数える（閉じたシートのまだ返らぬ送信も 2 件目になりうる。独立レビュー v8rc1 V8-QN / V8-F2R）
+    return listPendingSaves(owner).some(
+      (p) => p.clientId !== entry.clientId && (p.retryKey ?? quickKeyOfPayload(p)) === entry.retryKey,
+    )
+  }
+
+  /** 結果の分からぬ記録（例外・サーバの unknown）。同じ id を手元にも端末にも残す。端末に残せたかを返す */
+  function rememberUnknown(entry: PendingEntry): boolean {
+    unknownIdsRef.current.add(entry.clientId)
+    // 押し直しの期限は、結果不明と分かった今から測り直す（遅い失敗でも約束どおり 2 分押し直せる）
+    if (retryIdRef.current?.id === entry.clientId) {
+      retryIdRef.current.windowFrom = recordedAtNow()
+      retryIdRef.current.windowFromMono = monoNow()
+    }
+    return rememberPending(entry, "unknown")
+  }
+
+  /** 結果が確定した（成功・衝突・初めての操作の拒否）。手元と端末の控えを消す */
+  function forgetPending(clientId: string) {
+    settleClientId()
+    unknownIdsRef.current.delete(clientId)
+    removePendingSave(clientId)
+  }
+
+  /**
+   * 記録の応答の振り分け（授乳・おむつで共有）。成功は DB の確定行で画面へ出す（無ければ送った値と
+   * サーバの時刻・版で組む）。replayed は応答を失った前回の記録が成立しておった — その確定行を出し、
+   * 「取り消す」は出さぬ。conflict は同じ id で別の内容が記録済み — 記録は在るゆえ確定行を出し、
+   * 何が記録されたかを確かめるよう伝える。rejected は保存の前に拒まれた（行は無い）。
+   * unknown は結果不明（同じ内容でだけ押し直す）。
+   */
+  function settleCreateResult(args: PendingEntry & {
+    result: Awaited<ReturnType<typeof recordFeeding>>
+    /** この送信の前に、同じ操作の結果が分からなかったか（beforeSend の戻り値） */
+    wasUnknown: boolean
+    /** 同じ操作の別の id の控えが確認中のまま、新しい id で送ったか（hasOtherPendingOfSameKey） */
+    separateFromPending: boolean
+    label: string
+    successMessage: string
+    replayMessage: string
+    buildFallback: (id: string, updatedAt: string | null, loggedAt: string | undefined) => BabyLogData
+  }) {
+    const { result, clientId } = args
+    if (result.error !== null) {
+      const phase = phaseAfterFailure({ thrown: false, failure: result.failure })
+      if (phase === "unknown") {
+        // 期限内の押し直しが同じ id になるよう手元の記憶は残す
+        const kept = rememberUnknown(args)
+        setLastRecorded(null)
+        toast.error(
+          `${unknownQuickMessage(args.summary, kept)}${args.separateFromPending ? SEPARATE_FROM_PENDING_UNKNOWN_NOTE : ""}`,
+        )
+        return
+      }
+      if (phase === "rejected" && args.wasUnknown) {
+        // この送信が拒まれた（ログイン切れ・一時的な失敗等）ことは、先の結果不明の送信が保存されて
+        // おらぬことを意味せぬ。id と端末の控えを捨てると、次の押下が新しい id になり二重記録しうる
+        // （独立レビュー 2026-10-28）。結果不明のまま残し、理由と確かめ方を伝える
+        const kept = rememberUnknown(args)
+        setLastRecorded(null)
+        toast.error(
+          kept
+            ? `${result.error}（前の送信が保存されたかは「保存を確認中の記録」で確かめられます）`
+            : `${result.error}（前の送信が保存されたかは、記録の一覧で確かめてください）`,
+        )
+        return
+      }
+      forgetPending(clientId)
+      if (phase === "conflict") {
+        setLastRecorded(null)
+        if (result.conflict?.current) onLogRecorded?.(result.conflict.current)
+        toast.error(SAVE_CONFLICT_MESSAGE)
+        return
+      }
+      toast.error(result.error)
+      return
+    }
+    // 応答が届いた（成功）ゆえ、この意図の id は役目を終えた
+    forgetPending(clientId)
+    if (result.replayed) {
+      // 応答を失った前回の記録が「直前」になった。帯の古い記録は畳む（取り消しの誤指し防止）。
+      // 確定行があれば画面へ出す（resync を待たずに「記録された」ことを確かめられるように）。
+      // 行を持たぬ応答（古い形）では、時刻を知らぬゆえ行を組まぬ（端末時計で架空の行を作らぬ）
+      setLastRecorded(null)
+      if (result.log) onLogRecorded?.(result.log)
+      toast.success(
+        `${args.replayMessage}${args.separateFromPending ? SEPARATE_FROM_PENDING_REPLAY_NOTE : ""}`,
+      )
+      return
+    }
+    const confirmed =
+      result.log ?? args.buildFallback(result.id, result.updatedAt ?? null, result.loggedAt)
+    // B-03: 確定行で即時 append（Realtime を待たず timeline/回数を更新）。記録時刻は DB が
+    // 書いた値 — 端末時計で組むと、分を跨いだ時に画面の時刻が DB と食い違い、編集の保存後に
+    // 表示が飛ぶ（actions.ts の InsertOutcome）
+    onLogRecorded?.(confirmed)
+    successWithUndo(
+      // 結果不明の後の送信が新しく記録した = 先の送信は届いておらず、この送信の受信時刻で記録した。
+      // 期限の後の新しい id なら、確認中の前の操作とは別の記録であることも落とさず言う（どちらも立ちうる）
+      `${args.successMessage}${
+        args.wasUnknown ? receiptTimeNote(confirmed.logged_at ?? result.loggedAt) : ""
+      }${args.separateFromPending ? SEPARATE_FROM_PENDING_NOTE : ""}`,
+      args.label,
+      result.id,
+      confirmed.updated_at ?? result.updatedAt,
+      args.summary,
+      confirmed.logged_at ?? result.loggedAt,
+    )
+  }
+
+  /** 例外（通信断・応答の喪失）。届かなかったのか、保存後に応答だけ失われたのか区別できぬ */
+  function settleCreateThrown(
+    where: string,
+    err: unknown,
+    entry: PendingEntry,
+    separateFromPending: boolean,
+  ) {
+    // 記録がサーバで成立したか分からぬ。成立しておれば帯の記録は「直前」でない
+    setLastRecorded(null)
+    const kept = rememberUnknown(entry)
+    console.error(`${where} が例外を投げました`, {
+      message: err instanceof Error ? err.message : String(err),
+    })
+    // デプロイを跨いだ古い画面（action が見つからぬ）。押し直しても同じ失敗ゆえ読み直しを案内する
+    toast.error(
+      noteServerActionFailure(err)
+        ? STALE_CLIENT_ACTION_MESSAGE
+        : `${unknownQuickMessage(entry.summary, kept)}${separateFromPending ? SEPARATE_FROM_PENDING_UNKNOWN_NOTE : ""}`,
+    )
   }
 
   // 片手操作での押し間違いをその場で取り消せるようにする（記録直後のトーストから）。
@@ -576,63 +892,64 @@ export function BabyQuickActions({
    * としてサーバが REPLAY_MISMATCH で止める（行は 1 件のまま。量を key に入れると二重記録に化ける）。
    */
   function handleFeeding(feedingType: FeedingType, amountMl: number | null = null) {
-    const clientId = clientIdFor(`feeding:${feedingType}`)
-    setBusyKey(`feeding:${feedingType}`)
+    const retryKey = `feeding:${feedingType}`
+    const { id: clientId, at } = clientIdFor(retryKey)
+    setBusyKey(retryKey)
     const summary =
       amountMl === null
         ? getFeedingTypeLabel(feedingType)
         : `${getFeedingTypeLabel(feedingType)} ${formatBottleAmount(amountMl)}`
+    // 送信値はここで一度だけ組み、送信・端末保持・楽観行で同じものを使う。
+    //
+    // 記録時刻は**送らぬ** — DB が受け取った時刻（now()）で記録する（2026-10-28 製品判断 N3）。
+    // 端末の時計を送ると、進んだ時計は「未来の時刻」で全て拒まれ、遅れた時計は黙って誤った時刻で
+    // 残る。時刻を送らぬことも送信内容として固定する: 押し直し・「確認中の記録」からの送り直しは
+    // 同じ id・同じ内容ゆえ、先の送信が届いておれば初回の行（初回の受信時刻）が返る。届いて
+    // おらねば送り直した時の受信時刻で記録され、それは成功の知らせで「届いた時刻」として伝える
+    // （settleCreateResult。押した時刻とは偽らぬ）。`firstAttemptAt` は端末の時計で、押し直しの
+    // 期限と一覧の目印にだけ使う
+    const firstAttemptAt = new Date(at).toISOString()
+    const payload = {
+      feedingType,
+      clientId,
+      ...(amountMl !== null && { amountMl }),
+    }
+    const entry: PendingEntry = {
+      clientId,
+      action: "recordFeeding",
+      payload,
+      summary,
+      retryKey,
+      firstAttemptAt,
+    }
+    const separateFromPending = hasOtherPendingOfSameKey(entry)
+    const wasUnknown = beforeSend(entry)
     startTransition(async () => {
       try {
-        const result = await recordFeeding({
-          feedingType,
-          clientId,
-          ...(amountMl !== null && { amountMl }),
-        })
-        // 応答が届いた（成功でも拒否でも）ゆえ、この意図の id は役目を終えた
-        settleClientId()
-        if (result.error) {
-          toast.error(result.error)
-          return
-        }
-        // 応答を失った前回の保存が受理されていた（二重には記録していない）。手元の行は
-        // 既に resync / Realtime で入っているか、これから入る。「取り消す」は出さぬ
-        // （前回の本物の行を消す導線になる）
-        if (result.replayed) {
-          // 応答を失った前回の記録が「直前」になった。帯の古い記録は畳む（取り消しの誤指し防止）
-          setLastRecorded(null)
-          toast.success("授乳は既に記録されています（二重には記録していません）")
-          return
-        }
-        // B-03: 返却 id で楽観 append（Realtime を待たず timeline/回数を即時更新）。
-        // 記録時刻は DB が書いた値で組む — 応答が届いた時の端末時計で組むと、分を跨いだ時に
-        // 画面の時刻が DB と食い違い、編集の保存後に表示が飛ぶ（actions.ts の InsertOutcome）
-        if (result.id) {
-          onLogRecorded?.(
+        const result = await recordFeeding(payload)
+        settleCreateResult({
+          ...entry,
+          wasUnknown,
+          separateFromPending,
+          result,
+          label: "授乳",
+          // 量を記録した時は何 ml で記録したかをトーストで確かめられるようにする
+          successMessage:
+            amountMl === null ? "授乳を記録しました" : `授乳を記録しました（${summary}）`,
+          replayMessage: `授乳（${summary}）は記録済みでした（二重には記録していません）`,
+          buildFallback: (id, updatedAt, loggedAt) =>
             buildOptimisticLog({
-              id: result.id,
-              updatedAt: result.updatedAt ?? null,
-              loggedAt: result.loggedAt,
+              id,
+              updatedAt,
+              loggedAt,
               logType: "feeding",
               loggedBy: userId,
               feedingType,
               amountMl,
             }),
-          )
-        }
-        successWithUndo(
-          // 量を記録した時は何 ml で記録したかをトーストで確かめられるようにする
-          amountMl === null ? "授乳を記録しました" : `授乳を記録しました（${summary}）`,
-          "授乳",
-          result.id,
-          result.updatedAt,
-          summary,
-          result.loggedAt,
-        )
+        })
       } catch (err) {
-        // 通信断: 記録がサーバで成立したか分からぬ。成立しておれば帯の記録は「直前」でない
-        setLastRecorded(null)
-        toastOfflineError("[baby-quick-actions] recordFeeding", err)
+        settleCreateThrown("[baby-quick-actions] recordFeeding", err, entry, separateFromPending)
       }
     })
   }
@@ -647,56 +964,54 @@ export function BabyQuickActions({
   }
 
   function handleDiaper(diaperType: DiaperType, poopAmount: PoopAmount | null) {
-    const clientId = clientIdFor(`diaper:${diaperType}:${poopAmount ?? ""}`)
+    const retryKey = `diaper:${diaperType}:${poopAmount ?? ""}`
+    const { id: clientId, at } = clientIdFor(retryKey)
     // 2 段目（量）から押した時は量の釦、1 段目（おしっこ）はその釦にスピナーを出す
     setBusyKey(
       diaperType === "poop" || diaperType === "both"
         ? `amount:${poopAmount ?? "none"}`
         : `diaper:${diaperType}`,
     )
+    const summary = formatDiaperSummary(diaperType, poopAmount)
+    // 記録時刻は送らず DB の受信時刻（授乳と同じ理由。N3）
+    const firstAttemptAt = new Date(at).toISOString()
+    const payload = { diaperType, poopAmount, clientId }
+    const entry: PendingEntry = {
+      clientId,
+      action: "recordDiaper",
+      payload,
+      summary,
+      retryKey,
+      firstAttemptAt,
+    }
+    const separateFromPending = hasOtherPendingOfSameKey(entry)
+    const wasUnknown = beforeSend(entry)
     startTransition(async () => {
       try {
-        const result = await recordDiaper({ diaperType, poopAmount, clientId })
-        settleClientId()
-        if (result.error) {
-          toast.error(result.error)
-          return
-        }
-        if (result.replayed) {
-          // 応答を失った前回の記録が「直前」になった。帯の古い記録は畳む（取り消しの誤指し防止）
-          setLastRecorded(null)
-          toast.success("おむつ交換は既に記録されています（二重には記録していません）")
-          return
-        }
-        // B-03: 返却 id で楽観 append（feeding/diaper は UNIQUE 防御が無いため、
-        // #92 下の再タップ二重記録を止血する本命経路）
-        if (result.id) {
-          onLogRecorded?.(
+        const result = await recordDiaper(payload)
+        settleCreateResult({
+          ...entry,
+          wasUnknown,
+          separateFromPending,
+          result,
+          label: "おむつ",
+          // 何を記録したか（うんち（大量）等）をトーストで確認できるようにする
+          successMessage: `おむつ交換を記録しました（${summary}）`,
+          replayMessage: `おむつ交換（${summary}）は記録済みでした（二重には記録していません）`,
+          buildFallback: (id, updatedAt, loggedAt) =>
             buildOptimisticLog({
-              id: result.id,
-              updatedAt: result.updatedAt ?? null,
+              id,
+              updatedAt,
               // 記録時刻は DB が書いた値（授乳と同じ理由）
-              loggedAt: result.loggedAt,
+              loggedAt,
               logType: "diaper",
               loggedBy: userId,
               diaperType,
               poopAmount,
             }),
-          )
-        }
-        // 何を記録したか（うんち（大量）等）をトーストで確認できるようにする
-        successWithUndo(
-          `おむつ交換を記録しました（${formatDiaperSummary(diaperType, poopAmount)}）`,
-          "おむつ",
-          result.id,
-          result.updatedAt,
-          formatDiaperSummary(diaperType, poopAmount),
-          result.loggedAt,
-        )
+        })
       } catch (err) {
-        // 通信断: 記録がサーバで成立したか分からぬ。成立しておれば帯の記録は「直前」でない
-        setLastRecorded(null)
-        toastOfflineError("[baby-quick-actions] recordDiaper", err)
+        settleCreateThrown("[baby-quick-actions] recordDiaper", err, entry, separateFromPending)
       } finally {
         // 成否にかかわらず 1 段目へ戻す（失敗時に 2 段目へ張り付くと、再タップで
         // 種別を選び直せず「うんちだったのか」が分からなくなる）
@@ -826,7 +1141,26 @@ export function BabyQuickActions({
             進むが、記録せずに先に量だけ決めたい時の口をここに置く。読めていない時は出さぬ
             （決めてある量を知らぬまま上書きさせぬ）。保存しても過去の記録は変わらず、次のミルクから効く */}
         {bottleState.status !== "error" && (
-          <div className="flex">
+          <div className="flex flex-wrap gap-x-1">
+            {/* 今回だけ別の量（2026-10-27 C2）。いつもの量で開いた記録シートで量を直して記録する。
+                いつもの量（世帯の設定）は変えぬ — 「ミルクの量を変更」とは別の意図 */}
+            {bottleState.status === "set" && (
+              <button
+                type="button"
+                onClick={() => {
+                  const current = bottleDefault.state
+                  onCreateFeeding(
+                    "bottle",
+                    current.status === "set" ? { amountMl: current.amountMl } : undefined,
+                  )
+                }}
+                disabled={isPending}
+                className="flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-muted-foreground transition-colors duration-200 hover:bg-muted hover:text-foreground active:bg-muted disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              >
+                <Pencil size={16} aria-hidden="true" />
+                今回だけ別の量
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -837,7 +1171,7 @@ export function BabyQuickActions({
               disabled={isPending}
               className="flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-muted-foreground transition-colors duration-200 hover:bg-muted hover:text-foreground active:bg-muted disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             >
-              <Pencil size={16} aria-hidden="true" />
+              <Settings2 size={16} aria-hidden="true" />
               {bottleState.status === "set" ? "ミルクの量を変更" : "ミルクの量を設定"}
             </button>
           </div>

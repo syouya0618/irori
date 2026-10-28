@@ -160,10 +160,11 @@ export default async function BabyPage({
   }
 
   return (
-    // 着地日ごとに作り直す（key）。`/baby?date=…` から `/baby` へ戻った時に同じ segment の
+    // 持ち主・世帯・着地日ごとに作り直す（key）。別の持ち主の画面の状態を持ち越さぬ。
+    // `/baby?date=…` から `/baby` へ戻った時に同じ segment の
     // component が残ると、useState(initialDate) の選択日が着地日のまま居座る
     <BabyDashboard
-      key={selectedDate}
+      key={`${userId}:${householdId}:${selectedDate}`}
       initialLogs={logs ?? []}
       initialWeeklyLogs={weeklyLogs ?? []}
       initialGrowthLogs={growthLogs ?? []}
@@ -186,6 +187,15 @@ export default async function BabyPage({
         id: m.id,
         displayName: m.display_name ?? "",
       }))}
+      // ⚠️ 上の `?? []` / `?? null` は失敗を空へ倒す。旗を渡さねば「読み込めなかった」を
+      // 「まだ記録がありません」「日記を書く」「予定なし」と描く（2026-10-27 C1）
+      initialLoadErrors={{
+        logs: Boolean(logsError),
+        weekly: Boolean(weeklyLogsError),
+        growth: Boolean(growthLogsError),
+        diary: Boolean(diaryError),
+        upcoming: Boolean(upcomingError),
+      }}
     />
   )
 }

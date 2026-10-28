@@ -73,6 +73,24 @@ export interface AuthErrorLike {
   message?: string
   code?: string
   status?: number
+  name?: string
+}
+
+/**
+ * 送信の結果が分からぬ時の文言（2026-10-27 E3）。通信断・期限切れでは、要求がサーバへ届いて
+ * メールが出たかどうかを端末からは確かめられぬ。「失敗しました」と断定すると、利用者は
+ * すぐ押し直し、届いておった場合は送信回数の上限で自分を締め出す（2026-08-10 に起きた形）。
+ */
+export const SIGN_IN_RESULT_UNKNOWN_MESSAGE =
+  "送信できたか確かめられませんでした。まずメール（迷惑メールのフォルダも）を確認し、届いていなければ少し待ってから送り直してください。"
+
+/**
+ * 結果が分からぬ失敗か。auth-js は fetch そのものの失敗（応答が無い）を
+ * `AuthRetryableFetchError`・status 0 で**返す**（throw せず error として）。5xx は
+ * サーバが答えた失敗ゆえ従来の文言（待てば直る側）に任せる。
+ */
+export function isSignInResultUnknown(error: AuthErrorLike): boolean {
+  return error.name === "AuthRetryableFetchError" && (error.status === 0 || error.status === undefined)
 }
 
 /**

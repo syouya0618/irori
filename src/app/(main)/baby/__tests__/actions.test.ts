@@ -199,7 +199,7 @@ describe("recordFeeding / recordDiaper が作成した log id を返す（Undo �
     const { client } = makeSupabase({ data: { id: "log-99" }, error: null })
     setContext(client)
     const result = await recordFeeding({ feedingType: "bottle" })
-    expect(result).toEqual({ error: null, id: "log-99" })
+    expect(result).toMatchObject({ error: null, id: "log-99", log: { id: "log-99" } })
   })
 
   it("recordFeeding: 失敗時は error を返し id は null、握り潰さず logSupabaseError を呼ぶ", async () => {
@@ -223,7 +223,7 @@ describe("recordFeeding / recordDiaper が作成した log id を返す（Undo �
     const { client } = makeSupabase({ data: { id: "log-77" }, error: null })
     setContext(client)
     const result = await recordDiaper({ diaperType: "pee" })
-    expect(result).toEqual({ error: null, id: "log-77" })
+    expect(result).toMatchObject({ error: null, id: "log-77", log: { id: "log-77" } })
   })
 })
 
@@ -232,21 +232,21 @@ describe("record{Temperature,Growth,Memo} が作成 log id を返す（B-03 楽�
     const { client } = makeSupabase({ data: { id: "temp-1" }, error: null })
     setContext(client)
     const result = await recordTemperature({ temperature: 36.7 })
-    expect(result).toEqual({ error: null, id: "temp-1" })
+    expect(result).toMatchObject({ error: null, id: "temp-1", log: { id: "temp-1" } })
   })
 
   it("recordGrowth: 成功時に id を返す", async () => {
     const { client } = makeSupabase({ data: { id: "growth-1" }, error: null })
     setContext(client)
     const result = await recordGrowth({ weightG: 5200 })
-    expect(result).toEqual({ error: null, id: "growth-1" })
+    expect(result).toMatchObject({ error: null, id: "growth-1", log: { id: "growth-1" } })
   })
 
   it("recordMemo: 成功時に id を返す", async () => {
     const { client } = makeSupabase({ data: { id: "memo-1" }, error: null })
     setContext(client)
     const result = await recordMemo({ memo: "hello" })
-    expect(result).toEqual({ error: null, id: "memo-1" })
+    expect(result).toMatchObject({ error: null, id: "memo-1", log: { id: "memo-1" } })
   })
 
   it("recordMemo: 空文字は id: null で早期 return（DB 到達なし）", async () => {
@@ -558,15 +558,14 @@ describe("updateLog の版ガード（P2-07: 開いた時点の版でしか書�
 })
 
 describe("record* は作成した行の版も返す（P2-07: 作成直後の編集に版が要る）", () => {
-  it("insert は id と updated_at を取り直し、updatedAt として返す", async () => {
-    const { client, insertSelect } = makeSupabase({
-      data: { id: "log-5", updated_at: V0, logged_at: V0 },
-      error: null,
-    })
+  it("insert は行一式（版・記録時刻を含む）を取り直し、updatedAt と確定行として返す", async () => {
+    const row = { id: "log-5", updated_at: V0, logged_at: V0, log_type: "diaper", diaper_type: "pee" }
+    const { client, insertSelect } = makeSupabase({ data: row, error: null })
     setContext(client)
     const result = await recordDiaper({ diaperType: "pee" })
-    expect(insertSelect).toHaveBeenCalledWith("id, updated_at, logged_at")
-    expect(result).toEqual({ error: null, id: "log-5", updatedAt: V0, loggedAt: V0 })
+    // 確定行で画面を組めるよう、編集・表示に使う列一式を読む（版だけでなく）
+    expect(insertSelect).toHaveBeenCalledWith(BABY_LOG_COLUMNS)
+    expect(result).toEqual({ error: null, id: "log-5", updatedAt: V0, loggedAt: V0, log: row })
   })
 
   it("loggedAt を送らぬクイック記録でも、DB が now() で書いた記録時刻をそのまま返す（楽観行の時刻の源）", async () => {

@@ -1,4 +1,4 @@
-import { isValidYmd } from "@/lib/utils/date-jst"
+import { isValidYmd, shiftYmd } from "@/lib/utils/date-jst"
 import { isTimestamptzText } from "@/lib/domain/timestamptz-text"
 import type { BabyLogKeysetCursor } from "@/lib/domain/baby-log-keyset"
 import type { BabyLogType } from "@/lib/types/database"
@@ -125,6 +125,45 @@ export function searchHref(
   if (page.beforeDate) sp.set("before_date", page.beforeDate)
   const qs = sp.toString()
   return qs ? `/baby/search?${qs}` : "/baby/search"
+}
+
+export interface SearchPreset {
+  label: string
+  href: string
+  /** 今の条件がこの入口と同じか（aria-current） */
+  active: boolean
+}
+
+/**
+ * よく使う条件の入口（2026-10-27 D）。既存の kind / from / to の組み合わせだけを作る。
+ * - 期間（今日・直近7日・全期間）は今の種類と検索語を保つ
+ * - 種類（授乳・おむつ・日記）は今の期間と検索語を保つ（もう一度押すと「すべて」へ戻す）
+ * 「直近7日」は今日を含む 7 暦日（JST）。ページ送りの cursor は引き継がぬ（1 ページ目から）。
+ */
+export function searchPresets(query: BabySearchQuery, today: string): SearchPreset[] {
+  const weekFrom = shiftYmd(today, -6)
+  const base = { q: query.q, kind: query.kind, from: query.from, to: query.to }
+  const period = (label: string, from: string | null, to: string | null): SearchPreset => ({
+    label,
+    href: searchHref({ ...base, from, to }),
+    active: query.from === from && query.to === to,
+  })
+  const kind = (k: SearchKind): SearchPreset => {
+    const active = query.kind === k
+    return {
+      label: SEARCH_KIND_LABELS[k],
+      href: searchHref({ ...base, kind: active ? "all" : k }),
+      active,
+    }
+  }
+  return [
+    period("今日", today, today),
+    period("直近7日", weekFrom, today),
+    period("全期間", null, null),
+    kind("feeding"),
+    kind("diaper"),
+    kind("diary"),
+  ]
 }
 
 /**

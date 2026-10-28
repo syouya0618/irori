@@ -315,6 +315,8 @@ export default async function SettingsPage({
           ? { id: household.id, name: household.name }
           : null
       }
+      // 世帯の行を読めなかった時も、所属は profile で分かっておる（端末の未確定作業の持ち主の判定用）
+      householdId={profile.household_id}
       // ⚠️ **「読めなかった」を空欄として描かせぬ（P2-31）。** 取得に失敗した時に
       // `?? null` と既定の間隔で埋めて渡せば、カードは空欄の編集フォームになり、
       // 間隔だけを直した保存の 1 クリックで名前と生年月日が NULL に上書きされる

@@ -421,6 +421,9 @@ describe("baby-report: max_rows=1000 の下でも全件を集計へ渡す（P1-0
     expect(generateBabyReport).toHaveBeenCalledWith(
       expect.objectContaining({ truncated: false }),
     )
+    // 個人データの PDF は中間・端末のキャッシュに残さぬ（E2: JSON と同じ no-store）
+    expect(res.headers.get("Cache-Control")).toBe("no-store")
+    expect(res.headers.get("Content-Type")).toBe("application/pdf")
   })
 
   it("各要求は max_rows 以下・(logged_at, id) の昇順で、(logged_at, id) の cursor で続きを引く", async () => {

@@ -34,7 +34,10 @@ vi.mock("@/lib/supabase/client", () => {
               monthRows.gridEnds.push(gridEnd)
               return {
                 gte: () => ({
-                  order: () => Promise.resolve({ data: monthRows.rows, error: null }),
+                  // 取得には期限とキャンセル（abortSignal）が付く（2026-10-27）
+                  order: () => ({
+                    abortSignal: () => Promise.resolve({ data: monthRows.rows, error: null }),
+                  }),
                 }),
               }
             },
@@ -58,10 +61,11 @@ vi.mock("@/app/(main)/calendar/actions", () => ({
 }))
 vi.mock("sonner", async () => {
   const { vi: viMod } = await import("vitest")
-  return { toast: { error: viMod.fn(), success: viMod.fn(), warning: viMod.fn() } }
+  return { toast: { error: viMod.fn(), success: viMod.fn(), warning: viMod.fn(), info: viMod.fn() } }
 })
 
 import { CalendarView } from "../calendar-view"
+import { resetPendingCreatesPageStateForTest } from "../calendar-pending-creates"
 import type { CalendarEventRecord } from "../use-month-events"
 import { formatDayJa } from "../calendar-display"
 
@@ -103,7 +107,11 @@ function ev(o: Partial<CalendarEventRecord> & { id: string }): CalendarEventReco
   }
 }
 
-beforeEach(() => cleanup())
+beforeEach(() => {
+  cleanup()
+  // 試験の間の再読込: ページの寿命の状態（送信中・端末に書けなんだ予定の作成の控え）も空にする
+  resetPendingCreatesPageStateForTest()
+})
 
 // ⚠️ **既存の振る舞いを一字も変えぬ形で 1 本の prop へ移す。** 旧 base は
 // `initialMonthFirst: "2026-07-01"` だけを渡し、選択日は「今日」に倒れておった

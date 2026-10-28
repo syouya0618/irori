@@ -1,11 +1,13 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   Baby,
   CalendarDays,
   Settings,
   Hand,
+  Smartphone,
+  UserPlus,
   type LucideIcon,
 } from "lucide-react"
 import {
@@ -27,33 +29,70 @@ interface TourStep {
   body: string
 }
 
-// 説明対象は BottomNav の 3 タブと対応（bottom-nav.tsx）。
-const STEPS: TourStep[] = [
-  {
-    icon: Hand,
-    title: "irori へようこそ",
-    body: "育児記録と予定を夫婦で共有するアプリです。片手でも、すき間時間でも使えます。",
-  },
-  {
-    icon: Baby,
-    title: "育児",
-    body: "授乳・おむつをワンタップで記録します。夜間や抱っこ中でもすぐ残せます。",
-  },
-  {
-    icon: CalendarDays,
-    title: "予定",
-    body: "健診や予防接種などの予定をふたりで共有します。Google カレンダーと連携すれば、ふだんの予定もここに並びます。",
-  },
-  {
-    icon: Settings,
-    title: "設定",
-    body: "テーマや世帯の設定はこちら。この使い方ツアーはいつでも設定から見返せます。",
-  },
-]
+/**
+ * 手順（2026-10-27 D）。設定がすべて済んでおらずとも記録は始められる、を最初に言い、
+ * 最初の記録・家族の招待・ホーム画面からの開き方を順に案内する。説明の画面名は BottomNav の
+ * 3 タブ（bottom-nav.tsx）と同じ言葉を使う。ホーム画面の手順は、いま開いておる形
+ * （ホーム画面から / ブラウザから）で言い分ける。
+ */
+function buildSteps(standalone: boolean): TourStep[] {
+  return [
+    {
+      icon: Hand,
+      title: "irori へようこそ",
+      body: "育児記録と予定を夫婦で共有するアプリです。設定がすべて済んでいなくても、すぐに記録を始められます。",
+    },
+    {
+      icon: Baby,
+      title: "最初の記録",
+      body: "「育児」の「授乳」「おむつ」ボタンを押すと、その時刻で記録されます。記録はタイムラインに並び、あとから直せます。",
+    },
+    {
+      icon: UserPlus,
+      title: "家族を招待",
+      body: "「設定」の「家族・世帯」から招待リンクを作れます。招待はあとからでも構いません。招待の前から記録できます。",
+    },
+    {
+      icon: Smartphone,
+      title: "ホーム画面から開く",
+      body: standalone
+        ? "いまはホーム画面から開いています。次からも irori のアイコンから開けます。"
+        : "ブラウザの共有メニューから「ホーム画面に追加」すると、次からアイコンで開けます。追加しなくても、このままブラウザで使えます。",
+    },
+    {
+      icon: CalendarDays,
+      title: "予定",
+      body: "健診や予防接種などの予定をふたりで共有します。Google カレンダーと連携すれば、ふだんの予定もここに並びます。",
+    },
+    {
+      icon: Settings,
+      title: "設定",
+      body: "テーマや世帯の設定はこちら。この使い方ツアーはいつでも設定から見返せます。",
+    },
+  ]
+}
+
+/** ホーム画面（standalone）から開いておるか。判らぬ環境では false（ブラウザ向けの案内） */
+function isStandaloneDisplay(): boolean {
+  try {
+    if (window.matchMedia?.("(display-mode: standalone)").matches) return true
+    return (navigator as Navigator & { standalone?: boolean }).standalone === true
+  } catch {
+    return false
+  }
+}
 
 export function OnboardingTour() {
   const { open, dismiss } = useOnboardingTour()
   const [step, setStep] = useState(0)
+  // 表示の形は描画の後にだけ読む（SSR と食い違わせぬ）
+  const [standalone, setStandalone] = useState(false)
+  useEffect(() => {
+    if (!open) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 表示の形（ブラウザの外部状態）は描画の後にだけ読む
+    setStandalone(isStandaloneDisplay())
+  }, [open])
+  const STEPS = buildSteps(standalone)
 
   // 閉じる時に step を先頭へ戻す。次に開いた時（初回・設定からの再表示とも）
   // 常に最初のステップから始まる。effect ではなくイベントでリセットする。

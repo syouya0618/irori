@@ -11,7 +11,7 @@ const BABY_DIARY_COLUMNS = "id, diary_date, content, updated_at"
 export default async function BabyDiaryPage() {
   const result = await getAuthContext()
   if (result.error !== null) return null
-  const { supabase, householdId } = result.context
+  const { supabase, householdId, userId } = result.context
 
   // 育児日記（1日1本）を日付降順で1ページ目のみ取得。
   // ページネーション掟: diary_date は UNIQUE(household_id, diary_date) ゆえ
@@ -44,7 +44,7 @@ export default async function BabyDiaryPage() {
         <h1 className="text-lg font-semibold">育児日記</h1>
       </div>
 
-      <BabyDiaryView initialDiaries={diaries ?? []} householdId={householdId} />
+      <BabyDiaryView initialDiaries={diaries ?? []} householdId={householdId} userId={userId} />
     </div>
   )
 }

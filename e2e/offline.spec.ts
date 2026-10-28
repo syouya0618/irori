@@ -40,11 +40,12 @@ const OFFLINE_BANNER_TEXT =
   "オフラインです。表示中の内容は最新でない可能性があります"
 
 // B-07: 圏外で記録タップ → Server Action が reject。ハンドラの try/catch が握って
-// 圏外トーストを出し、error boundary (src/app/(main)/baby/error.tsx = 下記見出し)
+// トーストを出し、error boundary (src/app/(main)/baby/error.tsx = 下記見出し)
 // へ全画面遷移しないことを検証する。
-// 文言は src/lib/utils/offline-error.ts の OFFLINE_ERROR_MESSAGE と手動同期。
-const OFFLINE_ACTION_TOAST =
-  "通信できませんでした。電波の良い場所でもう一度お試しください"
+// 2026-10-27 大型更新 A2: クイック記録の例外（圏外を含む）は「通信できませんでした」（= 保存されて
+// おらぬと読める。offline-error.ts の OFFLINE_ERROR_MESSAGE）と決めつけず、結果不明として知らせる。
+// 文言は baby-quick-actions.tsx の unknownQuickMessage と手動同期
+const UNKNOWN_PEE_TOAST = /おしっこを保存できたか確認できていません/
 const BABY_ERROR_BOUNDARY_HEADING = "育児ログの読み込みに失敗しました"
 
 /**
@@ -338,8 +339,10 @@ test("圏外で /baby のおしっこをタップ → 圏外トースト・error
   // full load 直後の click は React ハイドレーション完了前だと無反応になりうるため、
   // 「トースト未表示なら click」を toPass で再試行する。オフラインゆえ再タップしても
   // Server Action はサーバへ到達せず（DB 書き込みは起きず）トーストが出るだけで安全。
+  // reject は「保存できたか確認できていません」（結果不明。保存されておらぬとは言わぬ）で知らせる。
+  // 押し直しのたびに toast が重なりうるゆえ first() で見る
   const diaperButton = page.getByRole("button", { name: "おしっこ", exact: true })
-  const offlineToast = page.getByText(OFFLINE_ACTION_TOAST)
+  const offlineToast = page.getByText(UNKNOWN_PEE_TOAST).first()
   await expect(async () => {
     if (!(await offlineToast.isVisible())) {
       await diaperButton.click({ timeout: 2_000 })
@@ -356,6 +359,14 @@ test("圏外で /baby のおしっこをタップ → 圏外トースト・error
   await expect(
     page.getByRole("button", { name: "ミルク", exact: true })
   ).toBeVisible()
+  // 圏外ゆえ DB には何も書かれておらぬ（結果不明の知らせは「書いた」とも「書いておらぬ」とも言わぬが、
+  // この試験は到達しておらぬことを外から確かめられる）
+  const { count: offlineRows, error: offlineRowsError } = await admin
+    .from("baby_logs")
+    .select("id", { count: "exact", head: true })
+    .eq("household_id", householdId)
+  expect(offlineRowsError, formatError(offlineRowsError)).toBeNull()
+  expect(offlineRows).toBe(0)
 
   await context.setOffline(false)
 

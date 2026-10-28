@@ -222,6 +222,8 @@ export async function GET(request: Request) {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `attachment; filename="${filename}"`,
+      // 個人データ（受診用の集計）。JSON 書き出しと同じく中間キャッシュ・端末キャッシュに残さぬ
+      "Cache-Control": "no-store",
       // クライアントが「全件ではない」旨を即座に警告できるようにする。
       // 200 で返す以上、ヘッダが無ければ利用者は切り詰めに気づけない。
       ...(truncated ? { "X-Report-Truncated": "1" } : {}),

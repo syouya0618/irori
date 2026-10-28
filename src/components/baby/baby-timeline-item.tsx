@@ -56,7 +56,7 @@ export function BabyTimelineItem({
       onClick={() => onEdit(log)}
       className="flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors duration-200 hover:bg-muted/50 active:bg-muted/70 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
     >
-      <span className="w-12 shrink-0 font-mono text-base font-semibold tabular-nums">
+      <span className="min-w-12 shrink-0 font-mono text-base font-semibold tabular-nums">
         {formatTimeJst(log.logged_at)}
       </span>
       <div
@@ -86,12 +86,14 @@ export function BabyTimelineItem({
         )}
       </div>
 
-      <div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+      {/* 記録者の欄は縮めてよい（文字 200% の 360px で、固定幅の時刻・印と並ぶと行が画面の外へ
+          はみ出した。2026-10-27 実測）。名前は truncate、矢印は残す */}
+      <div className="flex min-w-0 shrink items-center gap-1 text-xs text-muted-foreground">
         {/* 記録者（二人以上の世帯でだけ親が渡す）。誰が付けた記録かで引き継ぎが分かる */}
         {recorderLabel && (
           <span className="max-w-20 truncate leading-tight">{recorderLabel}</span>
         )}
-        <ChevronRight size={16} aria-hidden="true" />
+        <ChevronRight size={16} className="shrink-0" aria-hidden="true" />
       </div>
     </button>
   )

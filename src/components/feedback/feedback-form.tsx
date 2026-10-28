@@ -23,6 +23,15 @@ import {
   feedbackTextErrorMessage,
   normalizeFeedbackText,
 } from "@/lib/domain/feedback"
+import {
+  appendDiagnostic,
+  collectDiagnosticSummary,
+  DIAGNOSTIC_HEADER,
+  recordClientFailure,
+} from "@/lib/diagnostics/diagnostic-summary"
+import { clientBuildId } from "@/lib/release/build-info"
+import { RELEASE_NAME } from "@/lib/release/release-notes"
+import { noteServerActionFailure, STALE_CLIENT_ACTION_MESSAGE } from "@/lib/pwa/app-version"
 
 /**
  * 下書きと送信の鍵の置き場（**sessionStorage**）。
@@ -38,7 +47,24 @@ const DRAFT_KEY_PREFIX = "irori:feedback-draft:v1:"
 interface Draft {
   requestId: string
   title: string
+  /** 利用者が書いた本文（診断は含まぬ） */
   body: string
+  /**
+   * 添えると決めた診断の文面（2026-10-27 E4）。**鍵（requestId）ごとに 1 度だけ作って固定する** —
+   * 押し直しのたびに作り直すと、追跡 id や経過が変わって本文が変わり、同じ鍵の再送が「別の内容」
+   * （IRF01 の衝突）になる。添えておらねば null。
+   */
+  diagnostic: string | null
+}
+
+const DIAGNOSTIC_MAX_LENGTH = 800
+
+function isDiagnosticText(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.startsWith(DIAGNOSTIC_HEADER) &&
+    countCodePoints(value) <= DIAGNOSTIC_MAX_LENGTH
+  )
 }
 
 function draftKey(userId: string): string {
@@ -51,11 +77,12 @@ function readDraft(userId: string): Draft | null {
     if (!raw) return null
     const parsed: unknown = JSON.parse(raw)
     if (!parsed || typeof parsed !== "object") return null
-    const { requestId, title, body } = parsed as Record<string, unknown>
+    const { requestId, title, body, diagnostic } = parsed as Record<string, unknown>
     if (!isClientId(requestId) || typeof title !== "string" || typeof body !== "string") {
       return null
     }
-    return { requestId, title, body }
+    // 旧版の下書き（diagnostic を持たぬ）は「添えておらぬ」。形の崩れた診断も添えぬ側へ倒す
+    return { requestId, title, body, diagnostic: isDiagnosticText(diagnostic) ? diagnostic : null }
   } catch (err) {
     console.warn("[feedback-form] 下書きを読めなかった", {
       message: err instanceof Error ? err.message : String(err),
@@ -133,6 +160,17 @@ export function FeedbackForm({ userId }: { userId: string }) {
   const [formMessage, setFormMessage] = useState<string | null>(null)
   /** 同じ鍵で先に届いておった要望（conflict の時）。そこへ辿れるようにする */
   const [priorFeedbackId, setPriorFeedbackId] = useState<string | null>(null)
+  /**
+   * 添える診断の文面（null = 添えぬ。既定はオフ）。ここに入っておる文字列を**そのまま**見せ、
+   * そのまま本文の末尾へ付けて送る。ref は送信の関数が最新の値を読むため（state と同じ値）
+   */
+  const [diagnostic, setDiagnostic] = useState<string | null>(null)
+  const diagnosticRef = useRef<string | null>(null)
+
+  function applyDiagnostic(next: string | null) {
+    diagnosticRef.current = next
+    setDiagnostic(next)
+  }
 
   useEffect(() => {
     const draft = readDraft(userId)
@@ -144,6 +182,9 @@ export function FeedbackForm({ userId }: { userId: string }) {
     // 開いた時点の端末保存（sessionStorage）から 1 度だけ復元する（外部ストアの読み出し）。
     setTitleLength(countCodePoints(titleRef.current?.value ?? ""))
     setBodyLength(countCodePoints(bodyRef.current?.value ?? ""))
+    // 同じ鍵で添えておった診断は、作り直さずそのまま戻す（同じ内容の再送にするため）
+    diagnosticRef.current = draft.diagnostic
+    setDiagnostic(draft.diagnostic)
   }, [userId])
 
   function persistCurrentDraft() {
@@ -152,7 +193,19 @@ export function FeedbackForm({ userId }: { userId: string }) {
       requestId: requestIdRef.current,
       title: titleRef.current?.value ?? "",
       body: bodyRef.current?.value ?? "",
+      diagnostic: diagnosticRef.current,
     })
+  }
+
+  /**
+   * 「診断情報を添える」を切り替えた。添える時はその場で 1 度だけ作り（追跡 id も新しく作る）、
+   * 送る本文が変わるゆえ欄の書き換えと同じ扱い（送り終えた鍵なら作り直す）にする。
+   */
+  function handleDiagnosticToggle(checked: boolean) {
+    applyDiagnostic(
+      checked ? collectDiagnosticSummary({ releaseName: RELEASE_NAME, buildId: clientBuildId() }) : null,
+    )
+    handleEdit()
   }
 
   /** 利用者が欄を書き換えた。送り終えた鍵のままなら、新しい要望として鍵を作り直す。 */
@@ -168,6 +221,8 @@ export function FeedbackForm({ userId }: { userId: string }) {
     if (bodyRef.current) bodyRef.current.value = ""
     setTitleLength(0)
     setBodyLength(0)
+    // 次の要望には添えぬ（既定のオフへ戻す）
+    applyDiagnostic(null)
   }
 
   async function handleSubmit(formData: FormData) {
@@ -213,14 +268,36 @@ export function FeedbackForm({ userId }: { userId: string }) {
         return
       }
 
+      // 診断を添えるなら本文の末尾へ付ける。上限は付けた後の全体で数える（サーバと同じ）
+      const attached = diagnosticRef.current
+      const sentBody = appendDiagnostic(body, attached)
+      if (attached !== null) {
+        const combinedError = checkFeedbackText(sentBody, {
+          max: FEEDBACK_BODY_MAX,
+          multiline: true,
+          required: false,
+        })
+        if (combinedError) {
+          setFieldError({
+            field: "body",
+            message:
+              combinedError === "too_long"
+                ? `診断情報を添えると ${FEEDBACK_BODY_MAX} 文字を超えます。詳しい内容を短くするか、診断情報を外してください`
+                : feedbackTextErrorMessage(combinedError, { label: "詳しい内容", max: FEEDBACK_BODY_MAX }),
+          })
+          bodyRef.current?.focus()
+          return
+        }
+      }
+
       // 送る**前に**鍵と下書きを保存する（応答が返らぬまま閉じても、開き直して同じ鍵で送れる）。
       // 鍵は FormData と同じ瞬間の値で決める（再生された 2 度目も、送り終えた鍵を使う）。
       requestIdRef.current ??= newClientId()
       const requestId = requestIdRef.current
       if (requestId !== settledKeyRef.current) {
-        writeDraft(userId, { requestId, title, body })
+        writeDraft(userId, { requestId, title, body, diagnostic: attached })
       }
-      const result = await submitFeedback({ requestId, title, body })
+      const result = await submitFeedback({ requestId, title, body: sentBody })
 
       if (result.status === "created" || result.status === "duplicate") {
         settledKeyRef.current = requestId
@@ -256,6 +333,13 @@ export function FeedbackForm({ userId }: { userId: string }) {
       // 通信断。鍵と下書きは残す — 書き換えずに押し直せば DB が同じ 1 行に畳む。
       // 一覧も読み直しておく（届いておれば、押し直す前に一覧に出る）。読み直しの失敗は
       // 次の可視化で取り直すゆえ、ここでは待たぬ。
+      if (noteServerActionFailure(err)) {
+        // 古い画面のまま新しいデプロイへ送った（action が見つからぬ）。サーバでは何も実行されておらぬ
+        recordClientFailure({ op: "feedback", kind: "stale-client" })
+        setFormMessage(STALE_CLIENT_ACTION_MESSAGE)
+        return
+      }
+      recordClientFailure({ op: "feedback", kind: "result-unknown" })
       toastOfflineError("[feedback-form] submitFeedback", err)
       setFormMessage(
         "送信できたか確かめられませんでした。そのままもう一度「送る」を押しても、同じ要望が二重に届くことはありません",
@@ -338,6 +422,40 @@ export function FeedbackForm({ userId }: { userId: string }) {
               <p id="feedback-body-error" role="alert" className="text-sm text-destructive">
                 {fieldError.message}
               </p>
+            )}
+          </div>
+
+          {/* 任意の診断（既定はオフ）。添える前に全文を見せ、その文面をそのまま本文の末尾へ付ける */}
+          <div className="flex flex-col gap-2">
+            <label className="flex min-h-11 cursor-pointer items-center gap-3 text-sm">
+              <input
+                type="checkbox"
+                checked={diagnostic !== null}
+                onChange={(event) => handleDiagnosticToggle(event.currentTarget.checked)}
+                aria-describedby="feedback-diagnostic-note"
+                className="size-5 shrink-0 cursor-pointer accent-primary"
+              />
+              診断情報を添える（任意）
+            </label>
+            <p id="feedback-diagnostic-note" className="text-sm text-muted-foreground">
+              アプリの版・端末の種類・この画面で直近に起きた失敗の種類だけです。日記や記録の内容、赤ちゃんの名前、メールアドレスは含みません。
+            </p>
+            {diagnostic !== null && (
+              <div className="flex flex-col gap-1">
+                <p className="text-sm font-medium" id="feedback-diagnostic-preview-label">
+                  添える内容（このまま本文の末尾に付きます）
+                </p>
+                <pre
+                  aria-labelledby="feedback-diagnostic-preview-label"
+                  data-testid="feedback-diagnostic-preview"
+                  className="whitespace-pre-wrap break-words rounded-xl bg-muted px-3 py-2 font-sans text-sm text-foreground"
+                >
+                  {diagnostic}
+                </pre>
+                <p className="text-sm text-muted-foreground">
+                  診断情報を含めて {(bodyLength === 0 ? 0 : bodyLength + 2) + countCodePoints(diagnostic)} / {FEEDBACK_BODY_MAX} 文字
+                </p>
+              </div>
             )}
           </div>
 

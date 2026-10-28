@@ -390,7 +390,8 @@ describe("BabyLogFormSheet の通信断 reject 握り（B-07）", () => {
     fireEvent.click(screen.getByRole("button", { name: "記録する" }))
 
     await waitFor(() =>
-      expect(mockedToast.error).toHaveBeenCalledWith(OFFLINE_MESSAGE),
+      // 作成の reject は結果不明（2026-10-27 A2）。「通信できませんでした」（未保存と読める）とは言わぬ
+      expect(mockedToast.error).toHaveBeenCalledWith(expect.stringContaining("保存できたか確認できていません")),
     )
     expect(mockedToast.success).not.toHaveBeenCalled()
   })

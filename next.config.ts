@@ -1,7 +1,24 @@
 import type { NextConfig } from "next"
 
+/**
+ * 端末が読んでおる build の識別子（2026-10-27 大型更新 E1）。Vercel の system env
+ * `VERCEL_GIT_COMMIT_SHA` の先頭 7 桁。未設定・空（e2e-env.sh は空文字を置く）・16 進でない値は "dev"。
+ * 規則は src/lib/release/build-info.ts の shortBuildId と同じ（build-info.test.ts が一致を確かめる）。
+ * branch 名（VERCEL_GIT_COMMIT_REF）や環境名は埋め込まぬ。
+ *
+ * `deploymentId` は設定せぬ: 版の食い違いを検知すると Next が**自動で全画面再読込**する
+ * （deploymentId.md「it triggers a hard navigation」）。書きかけ・計測・結果不明の保存がある間に
+ * 勝手に読み直さぬ方針（設定画面の更新案内で利用者に選ばせる）と衝突する。
+ * `experimental.useOffline` も入れぬ: 復帰時に Server Action を無人で再送する（outbox 相当）。
+ */
+const rawCommitSha = (process.env.VERCEL_GIT_COMMIT_SHA || "").trim().toLowerCase()
+const IRORI_BUILD_SHA = /^[0-9a-f]{7,40}$/.test(rawCommitSha) ? rawCommitSha.slice(0, 7) : "dev"
+
 const nextConfig: NextConfig = {
   reactCompiler: true,
+  env: {
+    IRORI_BUILD_SHA,
+  },
   experimental: {
     // Dynamic Route の Client Cache TTL（既定 0 秒 = 無効。experimental API、
     // node_modules/next/dist/docs/01-app/03-api-reference/05-config/01-next-config-js/staleTimes.md）。

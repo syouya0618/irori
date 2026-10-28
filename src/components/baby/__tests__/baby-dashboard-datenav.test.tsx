@@ -416,9 +416,10 @@ describe("BabyDashboard / 日付ナビの育児日記 refetch（W-1: fail-to-emp
     // 日記は error 時 null へ倒す（logs の stale 保持と違い、本文の残留は
     // 「前日の本文を別日として上書き保存」する事故経路になるため）。
     expect(screen.queryByText("今日の日記本文")).not.toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: /日記を書く/ }),
-    ).toBeInTheDocument()
+    // 2026-10-27: 失敗を「日記が無い」（日記を書く）と偽らぬ。失敗と再読み込みを出し、
+    // 書く・編集の導線も出さぬ（W-1 の門はそのまま）
+    expect(screen.getByText(/この日の日記を読み込めませんでした/)).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /日記を書く|日記を編集/ })).toBeNull()
   })
 
   it("日付を切り替えた直後の取得中は前の日の本文を見せず、編集も開けぬ（取得後に空状態へ）", async () => {

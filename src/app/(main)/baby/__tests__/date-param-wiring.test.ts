@@ -50,9 +50,9 @@ describe("baby/page → ?date= と世帯員の配線", () => {
   it("選択日を initialDate として渡し、選択日の logs と日記を取る", () => {
     const props = dashboardProps()
     expect(props).toContain("initialDate={selectedDate}")
-    // 着地日ごとに作り直す: `/baby?date=…` から `/baby` へ戻っても useState の選択日が
+    // 持ち主・世帯・着地日ごとに作り直す: 別の持ち主の状態を持ち越さず、`/baby?date=…` から `/baby` へ戻っても選択日が
     // 着地日のまま居座らぬ（レビュー P3）
-    expect(props).toContain("key={selectedDate}")
+    expect(props).toContain("key={`${userId}:${householdId}:${selectedDate}`}")
     const code = pageCode()
     expect(code).toContain('.eq("diary_date", selectedDate)')
     // 選択日の窓は baby-log-queries.ts の 1 実装（取り直しと同じ組み立て）。窓そのものは

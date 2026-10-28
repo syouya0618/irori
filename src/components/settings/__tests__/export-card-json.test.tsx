@@ -70,8 +70,10 @@ describe("ExportCard: JSON の書き出し", () => {
     clickJson()
 
     await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalled())
+    // 307 を追わず、取り消せる（signal）要求で叩く
     expect(fetchMock).toHaveBeenCalledWith("/api/baby-export?period=1month", {
       redirect: "manual",
+      signal: expect.any(AbortSignal),
     })
     expect(toastSuccess).toHaveBeenCalledWith("記録 12 件・日記 3 件を書き出しました")
     expect(toastError).not.toHaveBeenCalled()
@@ -86,7 +88,10 @@ describe("ExportCard: JSON の書き出し", () => {
     expect(screen.getByText(/PDF は 3ヶ月までです/)).toBeInTheDocument()
     clickJson()
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    expect(fetchMock).toHaveBeenCalledWith("/api/baby-export?period=all", { redirect: "manual" })
+    expect(fetchMock).toHaveBeenCalledWith("/api/baby-export?period=all", {
+      redirect: "manual",
+      signal: expect.any(AbortSignal),
+    })
   })
 
   it("JSON 以外（login の HTML 等）は保存せず失敗と言う", async () => {

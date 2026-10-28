@@ -41,7 +41,10 @@ const mockedUpdate = vi.mocked(updateBottleDefault)
 const mockedToast = vi.mocked(toast)
 
 const CREATED_VERSION = "2026-10-25T03:00:00.123456+00:00"
-const OFFLINE_MESSAGE = "通信できませんでした。電波の良い場所でもう一度お試しください"
+// reject は結果不明（2026-10-27 A2）。保存されておらぬとは言わず、同じ内容での押し直しを伝える
+const OFFLINE_MESSAGE = expect.stringContaining("保存できたか確認できていません")
+// いつもの量の保存（設定の書き換え）の通信断は従来の文言のまま（値の CAS で再送は吸収される）
+const SETTING_OFFLINE_MESSAGE = "通信できませんでした。電波の良い場所でもう一度お試しください"
 
 const refetchSpy = vi.fn<() => void>()
 const applySpy = vi.fn<(next: BottleDefaultState) => void>()
@@ -139,6 +142,7 @@ describe("いつもの量が決まっている時のミルク（1 タップ）",
     expect(mockedRecordFeeding).toHaveBeenCalledWith({
       feedingType: "bottle",
       clientId: expect.any(String),
+      // 記録時刻は送らず DB の受信時刻（2026-10-28 N3。完全一致ゆえ loggedAt が在れば落ちる）
       amountMl: 120,
     })
     expect(onLogRecorded.mock.calls[0][0]).toMatchObject({
@@ -162,6 +166,7 @@ describe("いつもの量が決まっている時のミルク（1 タップ）",
     expect(mockedRecordFeeding).toHaveBeenCalledWith({
       feedingType: "solid",
       clientId: expect.any(String),
+      // 記録時刻は送らず DB の受信時刻（2026-10-28 N3。完全一致ゆえ loggedAt が在れば落ちる）
     })
     expect(mockedToast.success.mock.calls.at(-1)?.[0]).toBe("授乳を記録しました")
   })
@@ -252,12 +257,24 @@ describe("量の変更（120 → 160 は次の記録から。過去の記録は�
   })
 
   it("通信断の後に量を 160 へ変えて押し直すと、同じ冪等 id・別の量で送る（サーバが別内容として止め、二重記録にせぬ）", async () => {
+    // サーバは同じ id の既存行（先に成立していた 120ml）を衝突として返す（actions.ts insertBabyLog）
+    const stored120 = {
+      id: "x",
+      log_type: "feeding" as const,
+      logged_at: "2026-10-27T03:00:00+00:00",
+      logged_by: "u1",
+      feeding_type: "bottle" as const,
+      amount_ml: 120,
+      updated_at: "2026-10-27T03:00:00.123456+00:00",
+    } as unknown as BabyLogData
     mockedRecordFeeding
       .mockRejectedValueOnce(new Error("network down"))
-      .mockResolvedValueOnce({
+      .mockImplementationOnce(async (input) => ({
         error: "この操作は少し前に別の内容で記録済みです。画面を更新して記録を確かめてください。",
         id: null,
-      })
+        failure: "conflict" as const,
+        conflict: { current: { ...stored120, id: input.clientId! } },
+      }))
     mockedUpdate.mockResolvedValue({ ok: true, amountMl: 160 })
     const onLogRecorded = vi.fn<(log: BabyLogData) => void>()
     render(<Harness initial={{ status: "set", amountMl: 120 }} onLogRecorded={onLogRecorded} />)
@@ -280,7 +297,11 @@ describe("量の変更（120 → 160 は次の記録から。過去の記録は�
         expect.stringContaining("別の内容で記録済み"),
       ),
     )
-    expect(onLogRecorded).not.toHaveBeenCalled()
+    // 記録は在る（先に成立した 120ml）。160ml の架空の行は出さず、DB の確定行だけを画面へ出す
+    expect(onLogRecorded).toHaveBeenCalledTimes(1)
+    expect(onLogRecorded).toHaveBeenCalledWith(
+      expect.objectContaining({ id: sentInput(0).clientId, amount_ml: 120 }),
+    )
   })
 
   it("対照: 通信断の後に同じ量で押し直すと同じ id・同じ量（応答を失った保存はサーバが replayed で吸収）", async () => {
@@ -456,7 +477,7 @@ describe("いつもの量が未設定の時のミルク（初回設定）", () =
     expect(await screen.findByText(/保存できませんでした/)).toBeInTheDocument()
 
     fireEvent.click(await screen.findByRole("button", { name: "保存して記録する" }))
-    await waitFor(() => expect(mockedToast.error).toHaveBeenCalledWith(OFFLINE_MESSAGE))
+    await waitFor(() => expect(mockedToast.error).toHaveBeenCalledWith(SETTING_OFFLINE_MESSAGE))
     expect(mockedRecordFeeding).not.toHaveBeenCalled()
     expect(amountText()).toBe("量を設定")
   })

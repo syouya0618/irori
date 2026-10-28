@@ -31,7 +31,7 @@ const sheetState = vi.hoisted(() => ({
     diaryDate: string
     initialContent: string
     initialUpdatedAt: string | null
-    onSaved: (diary: BabyDiaryData | null) => void
+    onSaved: (diary: BabyDiaryData | null, diaryDate: string) => void
   },
 }))
 
@@ -41,7 +41,7 @@ vi.mock("../baby-diary-edit-sheet", () => ({
     diaryDate: string
     initialContent: string
     initialUpdatedAt: string | null
-    onSaved: (diary: BabyDiaryData | null) => void
+    onSaved: (diary: BabyDiaryData | null, diaryDate: string) => void
   }) => {
     sheetState.props = props
     return props.open ? <div data-testid="diary-edit-sheet" /> : null
@@ -213,6 +213,7 @@ describe("BabyDiaryView の編集導線", () => {
     act(() => {
       sheetState.props?.onSaved(
         diaryRow({ id: "a", diary_date: "2026-07-22", content: "after" }),
+        "2026-07-22",
       )
     })
     expect(screen.getByText("after")).toBeInTheDocument()
@@ -223,10 +224,29 @@ describe("BabyDiaryView の編集導線", () => {
       screen.getByRole("button", { name: "2026-07-20 の日記を編集" }),
     )
     act(() => {
-      sheetState.props?.onSaved(null)
+      sheetState.props?.onSaved(null, "2026-07-20")
     })
     expect(screen.queryByText("古い日記")).not.toBeInTheDocument()
     expect(screen.getByText("after")).toBeInTheDocument()
+  })
+
+  it("削除の反映はシートが返した書いた日で除く（開き直した別の日の日記を消さぬ）", () => {
+    render(
+      <BabyDiaryView
+        householdId="h1"
+        initialDiaries={[
+          diaryRow({ id: "a", diary_date: "2026-07-22", content: "22日の日記" }),
+          diaryRow({ id: "b", diary_date: "2026-07-20", content: "20日の日記" }),
+        ]}
+      />,
+    )
+    // 20日の空保存の往復中に 22日を開き直した後、20日の削除の応答が着く
+    fireEvent.click(screen.getByRole("button", { name: "2026-07-22 の日記を編集" }))
+    act(() => {
+      sheetState.props?.onSaved(null, "2026-07-20")
+    })
+    expect(screen.queryByText("20日の日記")).not.toBeInTheDocument()
+    expect(screen.getByText("22日の日記")).toBeInTheDocument()
   })
 })
 
