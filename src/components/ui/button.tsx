@@ -36,7 +36,8 @@ const buttonVariants = cva(
           "hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50",
         destructive:
           // focus は基底の ring-ring（薄めぬ --ring）のまま。以前の ring-destructive/20 は 1.38:1 で見えなんだ
-          "bg-destructive/10 text-destructive hover:bg-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30",
+          // 白文字と不透明な destructive の対は両テーマで 4.5:1 以上（color-contrast-contract.test.ts）。
+          "bg-destructive text-white hover:bg-destructive",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

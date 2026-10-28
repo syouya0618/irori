@@ -585,7 +585,7 @@ export function NotificationCard({
           )}
         >
           {thisDevice !== "subscribed" && (
-            <p className="text-xs font-medium text-muted-foreground">この端末</p>
+            <p className="text-xs font-medium text-foreground">この端末</p>
           )}
           <p className="flex items-start gap-2 text-sm font-medium">
             {thisDevice === "subscribed" ? (
@@ -600,7 +600,7 @@ export function NotificationCard({
             {THIS_DEVICE_TEXT[thisDevice].title}
           </p>
           {thisDevice !== "subscribed" && (
-            <p className="text-xs text-muted-foreground">{THIS_DEVICE_TEXT[thisDevice].body}</p>
+            <p className="text-xs text-foreground">{THIS_DEVICE_TEXT[thisDevice].body}</p>
           )}
 
           {vapidPublicKey && supported !== false && (

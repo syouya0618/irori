@@ -340,10 +340,14 @@ test("夫婦の 1 日: 妻が決めた量で記録し、量を直しても時刻
     await expect(wifeMilk).toBeEnabled({ timeout: 15_000 })
     await page.context().clearCookies()
     await wifeMilk.click()
-    // 何かしらの失敗の知らせ（文言は経路で変わる: proxy の 307 を経た応答は「通信できませんでした」、
-    // Action まで届けば「認証されていません」）か、ログインへの遷移。無言で何も起きぬのも不可
+    // 何かしらの失敗の知らせ（文言は経路で変わる: Action まで届けば「認証されていません」、proxy の 307 を
+    // 経て Action が例外になれば結果不明の「保存できたか確認できていません」（2026-10-27 大型更新 A2。
+    // 例外を「通信できませんでした」= 保存されておらぬとは決めつけぬ）、他の経路は「通信できませんでした」）
+    // か、ログインへの遷移。無言で何も起きぬのも不可
     await expect(async () => {
-      const failed = await page.getByText(/通信できませんでした|認証されていません/).count()
+      const failed = await page
+        .getByText(/通信できませんでした|認証されていません|ミルク 160mlを保存できたか確認できていません/)
+        .count()
       const onLogin = /\/login/.test(page.url())
       expect(failed > 0 || onLogin).toBe(true)
     }).toPass({ timeout: 20_000 })

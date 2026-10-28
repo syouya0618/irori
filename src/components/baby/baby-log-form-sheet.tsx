@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState, useTransition } from "react"
+import { useState, useTransition } from "react"
 import {
   Sheet,
   SheetContent,
@@ -29,7 +29,22 @@ import {
   getLogTypeLabel,
   getFeedingTypeLabel,
   getDiaperTypeLabel,
+  formatDiaperSummary,
 } from "@/lib/utils/baby-log-labels"
+import {
+  phaseAfterFailure,
+  SAVE_CONFLICT_MESSAGE,
+  SAVE_UNKNOWN_MESSAGE,
+} from "@/lib/domain/save-attempt"
+import {
+  listPendingSaves,
+  putPendingSave,
+  removePendingSave,
+  PENDING_SAVE_SCHEMA_VERSION,
+  PAGE_LIFE_ID,
+  type PendingSave,
+  type PendingSaveAction,
+} from "@/lib/domain/pending-saves-storage"
 import {
   formatTimeJst,
   formatJstTimeInput,
@@ -54,9 +69,13 @@ import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
 import { getLogSummary } from "@/lib/domain/baby-log-summary"
 import { STALE_SCREEN_SAVE_ERROR } from "@/lib/domain/timestamptz-text"
 import { newClientId } from "@/lib/utils/client-id"
+import { readPersistedTimer, summarizePersistedTimer } from "@/lib/domain/feeding-timer-storage"
 // startTransition 内の未処理 reject は error boundary へ bubble し、入力/記録が
 // 無言で失われる。握ってトーストへ倒す（機序の詳細は offline-error.ts）。
 import { toastOfflineError } from "@/lib/utils/offline-error"
+import { noteServerActionFailure, STALE_CLIENT_ACTION_MESSAGE } from "@/lib/pwa/app-version"
+import { useDraft } from "@/lib/hooks/use-draft"
+import { DRAFT_RETENTION_NOTE } from "@/lib/domain/draft-storage"
 import type {
   BabyLogType,
   FeedingType,
@@ -117,6 +136,10 @@ const START_SIDE_OPTIONS: { value: BreastStartSide | null; label: string }[] = [
   { value: "right", label: "右から" },
   { value: null, label: "不明" },
 ]
+
+function isMemoDraft(value: unknown): value is string {
+  return typeof value === "string"
+}
 
 function seedStartSide(value: string | null | undefined): BreastStartSide | null {
   return value === "left" || value === "right" ? value : null
@@ -180,6 +203,16 @@ interface BabyLogFormSheetProps {
   /** 記録者（logged_by）。楽観 append 行の作成に使う（B-03） */
   userId: string
   /**
+   * 今の世帯。結果の分からぬ作成を持ち主付きで端末に残すのに使う（2026-10-27 A2）。
+   * 省略時は端末に残さぬ（このシートを開いている間だけ同じ id で押し直せる）。
+   */
+  householdId?: string
+  /**
+   * create mode の量の初期値（「今回だけ別の量」= いつもの量）。この記録だけに使い、いつもの量
+   * （世帯の設定）は変えぬ（2026-10-27 C2）。
+   */
+  createAmountMl?: number | null
+  /**
    * 編集中の行の記録者の表示名（機能 A）。二人以上の世帯でだけ親が渡し、説明文に添える。
    */
   recorderLabel?: string | null
@@ -208,6 +241,26 @@ interface BabyLogFormSheetProps {
   onReloadLog?: (log: BabyLogData) => void
 }
 
+/** 新しい id で送る前に確かめる、同じ種類の保存されておりうる別の操作（確認中の記録・授乳タイマー） */
+interface OtherPendingItem {
+  id: string
+  summary: string
+  /** 押した時刻（ISO・端末の時計。表示は「この端末の時計で」と明示する） */
+  at: string
+  sending: boolean
+  /** どこで確かめられるか（確認中の記録の一覧 / 授乳タイマーの「記録されたか確かめる」） */
+  source: "pending" | "timer"
+}
+
+/** 作成の種類 → 送り直しに使う Action（確認中の記録の控えの action と照らす）。睡眠は撤去済み */
+const CREATE_ACTION_OF: Partial<Record<BabyLogType, PendingSaveAction>> = {
+  feeding: "recordFeeding",
+  diaper: "recordDiaper",
+  temperature: "recordTemperature",
+  growth: "recordGrowth",
+  memo: "recordMemo",
+}
+
 export function BabyLogFormSheet({
   open,
   onOpenChange,
@@ -216,6 +269,8 @@ export function BabyLogFormSheet({
   createFeedingType,
   createDate,
   userId,
+  householdId,
+  createAmountMl = null,
   recorderLabel = null,
   onLogRecorded,
   onLogUpdated,
@@ -239,16 +294,29 @@ export function BabyLogFormSheet({
   // 新規記録の冪等 id（P2-08）。シートを開いた 1 回の入力 = 1 つの意図ゆえ、通信断の
   // 後に同じシートから「記録する」を押し直しても同じ id が届き、二重記録にならぬ。
   // 親は開くたびに key で作り直すため、次の記録は新しい id になる。
-  // 通信断の**後に入力を直した**なら、それは別の意図ゆえ id を作り直す（前回の保存が
-  // 成立していた場合、同じ id で違う内容を送るとサーバが fail-loud に拒む）。
-  const [clientId, setClientId] = useState(() => newClientId())
-  const sendFailedRef = useRef(false)
+  // 結果の分からぬ送信の**後に入力を直しても id は作り直さぬ**（2026-10-27 A2。旧版は作り
+  // 直していた）— 先の保存が成立しておれば、新しい id では本当の二重記録になる。同じ id で直した
+  // 内容を送ると、成立しておればサーバが「別の内容で記録済み」（conflict）と確定行を返し、成立して
+  // おらねば直した内容で 1 件だけ記録される。どちらでも行は 1 件。
+  const [clientId] = useState(() => newClientId())
+  // 結果の分からぬ送信がある（押し直しは同じ id）。画面に案内を出す
+  const [unknownSent, setUnknownSent] = useState(false)
+  // 同じ種類の、保存されておりうる別の操作の控え（このシートの id 以外。記録シート・クイック記録の
+  // どちらでも）。在る間は新しい id で送る前に確認を挟む（独立レビュー v7 F2: 結果不明のまま閉じて
+  // 開き直し、入れ直して押すと、黙って 2 件目になった）。確認すれば別の記録として送る
+  const [otherPending, setOtherPending] = useState<OtherPendingItem[] | null>(null)
+  const [otherPendingAcknowledged, setOtherPendingAcknowledged] = useState(false)
+  // 作成がこの id で別の内容と衝突した（同じ id では二度と通らぬ）
+  const [createConflicted, setCreateConflicted] = useState(false)
 
   // 親がkey={formKey}で毎回remountするため、propsから直接初期化
   const [feedingType, setFeedingType] = useState<FeedingType>(
     log?.feeding_type ?? createFeedingType ?? "bottle",
   )
-  const [amountMl, setAmountMl] = useState(log?.amount_ml?.toString() ?? "")
+  const [amountMl, setAmountMl] = useState(
+    log?.amount_ml?.toString() ??
+      (!log && createAmountMl != null ? String(createAmountMl) : ""),
+  )
   // 母乳サイクルの左右の吸わせ回数。既存行からは `??` で seed する — 0 は falsy だが
   // 有効値（片側だけ吸わせた回）ゆえ `||` で既定 1 に化けさせると DB と乖離する。
   // 他種別からの切替・新規記録は「左1・右0」を既定にする（片側から始める最頻ケース）。
@@ -302,6 +370,28 @@ export function BabyLogFormSheet({
   const [weightG, setWeightG] = useState(log?.weight_g?.toString() ?? "")
   const [heightCm, setHeightCm] = useState(log?.height_cm?.toString() ?? "")
   const [memo, setMemo] = useState(log?.memo ?? "")
+  // メモの端末下書き（2026-10-27 テーマ B: 長文メモ）。持ち主・対象（新規は種別、編集は記録の id）・
+  // 開いた時点の版つき。保存成功・削除・明示の破棄でこの対象だけを消す
+  const memoDraft = useDraft<string>({
+    owner: householdId ? { userId, householdId } : null,
+    target: log
+      ? { kind: "baby-log-memo", id: log.id }
+      : { kind: "baby-log-new", scope: createLogType ?? "" },
+    baseVersion: log?.updated_at ?? null,
+    isContent: isMemoDraft,
+  })
+  const [memoDraftDismissed, setMemoDraftDismissed] = useState(false)
+  const restoredMemo = memoDraft.restored?.content ?? ""
+  const memoDraftOffer =
+    !memoDraftDismissed && restoredMemo.trim() !== "" && restoredMemo !== (log?.memo ?? "")
+      ? restoredMemo
+      : null
+  // 保存・削除の成功で消すのは、この画面で書いた（または戻した）書きかけだけ。「戻す/破棄」を選んで
+  // おらぬ前回の書きかけは、送っておらぬゆえ消さぬ（独立レビュー 3 周目: 量だけ入れて記録すると黙って
+  // 消えた。仕様 B「正しい対象だけを消す」）
+  function clearMemoDraftAfterSave() {
+    if (memoDraftOffer === null) memoDraft.clear()
+  }
   // 記録時刻（JST の "HH:mm"）。編集時は既存 logged_at、新規時は現在時刻を既定に。
   // remount ごとに初期化式が再評価されるため resetForm 不要（全 state が prop から再構築される）。
   const [timeHm, setTimeHm] = useState(() =>
@@ -329,37 +419,77 @@ export function BabyLogFormSheet({
   const isCreateMode = !log && !!createLogType
   const logType = log?.log_type ?? createLogType
 
-  // 通信断の後に入力のどれかが変わったら冪等 id を作り直す（上の注記）。入力の state を
-  // まとめて依存にし、失敗フラグが立っている時だけ動く。
-  useEffect(() => {
-    if (!sendFailedRef.current) return
-    sendFailedRef.current = false
-    setClientId(newClientId())
-  }, [
-    feedingType,
-    amountMl,
-    breastLeftCount,
-    breastRightCount,
-    breastStartSide,
-    diaperType,
-    poopAmount,
-    temperature,
-    weightG,
-    heightCm,
-    memo,
-    timeHm,
-    dateYmd,
-  ])
-
   function handleSave() {
     if (isCreateMode) {
+      // このシートが既に送った後（unknownSent）の押し直しは自分の id ゆえ二重にならぬ。新しい id で
+      // 初めて送る前だけ、同じ種類の保存されておりうる控えを確かめる（押した時に読む — 開いた後に
+      // 確認中の記録で確定・取り下げされたもの、別のタブで増えたものも反映する）
+      if (!unknownSent && !otherPendingAcknowledged) {
+        const others = otherPendingSaves()
+        if (others.length > 0) {
+          setOtherPending(others)
+          return
+        }
+      }
       handleCreate()
     } else if (log) {
       handleUpdate()
     }
   }
 
+  /**
+   * 同じ種類の、保存されておりうる別の操作の控え（持ち主で絞る。このシートの id だけを除く）。
+   * `mayHaveLanded` では絞らぬ — それは「自分の控えと id を捨ててよいか」の判定で、このページで送信中の
+   * 控えを除く。別の id の送信中（閉じた前のシートの、まだ返らぬ送信）こそ 2 件目になりうる（独立レビュー
+   * v8rc1 V8-F2R）。確定・取り下げで控えは消えるゆえ、残っておる別の id は全て数える
+   */
+  function otherPendingSaves(): OtherPendingItem[] {
+    if (!householdId || !createLogType) return []
+    const action = CREATE_ACTION_OF[createLogType]
+    if (!action) return []
+    const owner = { userId, householdId }
+    const items: OtherPendingItem[] = listPendingSaves(owner)
+      .filter((p) => p.clientId !== clientId && p.action === action)
+      .map((p: PendingSave) => ({
+        id: p.clientId,
+        summary: p.summary,
+        at: p.firstAttemptAt,
+        sending: p.phase === "sending",
+        source: "pending" as const,
+      }))
+    // 授乳タイマーの送信内容は自分の端末保存（feeding-timer-storage）に持つ（確認中の記録の一覧には
+    // 入らぬ）。停止の保存が結果不明のまま残っておれば、手動の授乳の記録にも同じ確認を出す
+    // （独立レビュー v8rc2 TIMER-UNKNOWN-NOT-IN-SHEET-GUARD）
+    if (createLogType === "feeding") {
+      const timer = readPersistedTimer()
+      const summary = summarizePersistedTimer(timer, owner, Date.now())
+      if (timer?.submission && summary?.pendingSave && timer.submission.payload.clientId !== clientId) {
+        items.push({
+          id: timer.submission.payload.clientId,
+          summary: "母乳（授乳タイマー）",
+          at: timer.submission.firstAttemptAt,
+          sending: timer.submission.phase === "sending",
+          source: "timer",
+        })
+      }
+    }
+    return items
+  }
+
+  /** 確認を経て、別の記録として送る（新しい id のまま。別の意図を止めぬ） */
+  function handleCreateAsSeparate() {
+    setOtherPendingAcknowledged(true)
+    setOtherPending(null)
+    handleCreate()
+  }
+
   function handleCreate() {
+    // 送った内容（結果が分からぬ時に持ち主付きで端末へ残すため、await の前に決める）
+    let sent: {
+      action: PendingSaveAction
+      payload: Record<string, unknown>
+      summary: string
+    } | null = null
     startTransition(async () => {
       try {
         // 選択した日付・時刻（JST の logDate + timeHm）を ISO へ。未来/不正はここで弾く。
@@ -379,14 +509,9 @@ export function BabyLogFormSheet({
           return
         }
 
-        let result: {
-          error: string | null
-          id: string | null
-          updatedAt?: string
-          replayed?: true
-        }
-        // B-03: 成功時に返却 id（と行の版）で楽観 append する行を組む builder（値が
-        // in-scope な各 case 内で確定させる）。null のままなら append しない。
+        let result: Awaited<ReturnType<typeof recordFeeding>>
+        // 成功時に確定行（応答の log）が無い古い形の応答だけ、送った値とサーバの時刻・版で組む
+        // builder（値が in-scope な各 case 内で確定させる）。null のままなら append しない。
         let buildLog:
           | ((id: string, updatedAt: string | null) => BabyLogData)
           | null = null
@@ -409,7 +534,7 @@ export function BabyLogFormSheet({
             }
             // 開始側は母乳サイクルのみ（それ以外はサーバが拒否する契約ゆえ null）
             const startSide = feedingType === "breast" ? breastStartSide : null
-            result = await recordFeeding({
+            const payload = {
               feedingType,
               amountMl: amt,
               breastLeftCount: counts?.left ?? null,
@@ -418,7 +543,16 @@ export function BabyLogFormSheet({
               loggedAt,
               memo: memo || undefined,
               clientId,
-            })
+            }
+            sent = {
+              action: "recordFeeding",
+              payload,
+              summary:
+                amt !== null
+                  ? `${getFeedingTypeLabel(feedingType)} ${amt}ml`
+                  : getFeedingTypeLabel(feedingType),
+            }
+            result = await sendTracked(sent, () => recordFeeding(payload))
             buildLog = (id, updatedAt) =>
               buildOptimisticLog({
                 id,
@@ -441,13 +575,19 @@ export function BabyLogFormSheet({
             // 過去日の追記（機能 C）。クイック記録（1 タップ・今）とは別経路で、日付と
             // 時刻を見える形で持つ。量は poop / both の時だけ（CHECK のミラー）
             const amount = allowsPoopAmount(diaperType) ? poopAmount : null
-            result = await recordDiaper({
+            const payload = {
               diaperType,
               poopAmount: amount,
               loggedAt,
               memo: memo || undefined,
               clientId,
-            })
+            }
+            sent = {
+              action: "recordDiaper",
+              payload,
+              summary: `おむつ（${formatDiaperSummary(diaperType, amount)}）`,
+            }
+            result = await sendTracked(sent, () => recordDiaper(payload))
             buildLog = (id, updatedAt) =>
               buildOptimisticLog({
                 id,
@@ -467,12 +607,14 @@ export function BabyLogFormSheet({
               toast.error("体温は34.0〜42.0の範囲で入力してください")
               return
             }
-            result = await recordTemperature({
+            const payload = {
               temperature: temp,
               loggedAt,
               memo: memo || undefined,
               clientId,
-            })
+            }
+            sent = { action: "recordTemperature", payload, summary: `体温 ${temp}℃` }
+            result = await sendTracked(sent, () => recordTemperature(payload))
             buildLog = (id, updatedAt) =>
               buildOptimisticLog({
                 id,
@@ -492,13 +634,15 @@ export function BabyLogFormSheet({
               toast.error("体重または身長を入力してください")
               return
             }
-            result = await recordGrowth({
+            const payload = {
               weightG: w,
               heightCm: h,
               loggedAt,
               memo: memo || undefined,
               clientId,
-            })
+            }
+            sent = { action: "recordGrowth", payload, summary: "成長の記録" }
+            result = await sendTracked(sent, () => recordGrowth(payload))
             buildLog = (id, updatedAt) =>
               buildOptimisticLog({
                 id,
@@ -517,7 +661,10 @@ export function BabyLogFormSheet({
               toast.error("メモを入力してください")
               return
             }
-            result = await recordMemoAction({ memo: memo.trim(), loggedAt, clientId })
+            const payload = { memo: memo.trim(), loggedAt, clientId }
+            // 要約にメモの本文は入れぬ（端末に残る一覧は種別だけで足りる）
+            sent = { action: "recordMemo", payload, summary: "メモ" }
+            result = await sendTracked(sent, () => recordMemoAction(payload))
             buildLog = (id, updatedAt) =>
               buildOptimisticLog({
                 id,
@@ -533,28 +680,116 @@ export function BabyLogFormSheet({
             return
         }
 
-        if (result.error) {
+        if (result.error !== null) {
+          const phase = phaseAfterFailure({ thrown: false, failure: result.failure })
+          if (phase === "unknown") {
+            rememberUnknown(sent)
+            setUnknownSent(true)
+            toast.error(SAVE_UNKNOWN_MESSAGE)
+            return
+          }
+          if (phase === "rejected" && unknownSent) {
+            // 先の送信の結果が分からぬまま、この送信が拒まれた（ログイン切れ・一時的な失敗等）。先の
+            // 送信が保存されておらぬとは言えぬゆえ、端末の控えは消さぬ（独立レビュー 2026-10-28）
+            const kept = rememberUnknown(sent)
+            // 端末に控えを残せなんだ時は一覧へ案内せぬ（一覧には出ぬ。v7 F3）
+            toast.error(
+              kept
+                ? `${result.error}（前の送信が保存されたかは「保存を確認中の記録」で確かめられます）`
+                : `${result.error}（前の送信が保存されたかは、記録の一覧で確かめてください）`,
+            )
+            return
+          }
+          removePendingSave(clientId)
+          setUnknownSent(false)
+          if (phase === "conflict") {
+            // 同じ id で別の内容が先に記録済み（結果の分からぬ送信の後に直して送った）。記録は
+            // 在るゆえ確定行を画面へ出し、何が記録されたかを確かめるよう伝える。シートは閉じぬ —
+            // 直した入力はまだどこにも保存されておらぬ（閉じると失う）
+            if (result.conflict?.current) onLogRecorded?.(result.conflict.current)
+            // このシートの id は既に別の内容で記録済み。押し直しても同じ衝突にしかならぬゆえ止め、
+            // 別の記録にするなら閉じて開き直す（新しい id）よう示す（独立レビュー v8rc2 SHEET-CONFLICT-DEAD-END）
+            setCreateConflicted(true)
+            toast.error(SAVE_CONFLICT_MESSAGE)
+            return
+          }
           toast.error(result.error)
           return
         }
+        removePendingSave(clientId)
         if (result.replayed) {
-          // 応答を失った前回の保存が受理されていた。行は resync / Realtime で揃う
-          toast.success("既に記録されています（二重には記録していません）")
+          // 応答を失った前回の保存が受理されていた。確定行があれば画面へ出す（時刻を知らぬ古い形の
+          // 応答では行を組まぬ — 端末時計で架空の行を作らぬ）
+          if (result.log) onLogRecorded?.(result.log)
+          clearMemoDraftAfterSave()
+          toast.success("記録済みでした（二重には記録していません）")
           onOpenChange(false)
           return
         }
-        // B-03: Realtime を待たず timeline へ楽観 append。行の版も乗せる（作成直後に
+        // B-03: Realtime を待たず timeline へ確定行を append。行の版も乗る（作成直後に
         // 開いた編集が、その版で保存できるように。P2-07）
-        if (buildLog && result.id) {
-          onLogRecorded?.(buildLog(result.id, result.updatedAt ?? null))
-        }
+        const confirmed =
+          result.log ?? (buildLog ? buildLog(result.id, result.updatedAt ?? null) : null)
+        if (confirmed) onLogRecorded?.(confirmed)
+        clearMemoDraftAfterSave()
         toast.success("記録しました")
         onOpenChange(false)
       } catch (err) {
-        sendFailedRef.current = true
-        toastOfflineError("[baby-log-form-sheet] recordCreate", err)
+        // 届かなかったのか、保存の後で応答だけが失われたのか区別できぬ（reject ＝ 未到達と
+        // 決めつけぬ）。同じ id のまま押し直せる（このシートの id は作り直さぬ）
+        console.error("[baby-log-form-sheet] recordCreate が例外を投げました", {
+          message: err instanceof Error ? err.message : String(err),
+        })
+        rememberUnknown(sent)
+        setUnknownSent(true)
+        // デプロイを跨いだ古い画面（action が見つからぬ）は、押し直しても同じ失敗ゆえ読み直しを案内する
+        toast.error(noteServerActionFailure(err) ? STALE_CLIENT_ACTION_MESSAGE : SAVE_UNKNOWN_MESSAGE)
       }
     })
+  }
+
+  /**
+   * 結果の分からぬ作成を持ち主付きで端末に残す（自動では送らぬ。確認中の記録として出る）。
+   * 残せたかを返す（false なら「保存を確認中の記録」に在るとは言わぬ）
+   */
+  function rememberUnknown(
+    entry: { action: PendingSaveAction; payload: Record<string, unknown>; summary: string } | null,
+  ): boolean {
+    return rememberPending(entry, "unknown")
+  }
+
+  function rememberPending(
+    entry: { action: PendingSaveAction; payload: Record<string, unknown>; summary: string } | null,
+    phase: "sending" | "unknown",
+  ): boolean {
+    if (!entry || !householdId) return false
+    const owner = { userId, householdId }
+    const existing = listPendingSaves(owner).find((p) => p.clientId === clientId)
+    return putPendingSave({
+      schemaVersion: PENDING_SAVE_SCHEMA_VERSION,
+      clientId,
+      owner,
+      action: entry.action,
+      payload: entry.payload,
+      summary: entry.summary,
+      firstAttemptAt: existing?.firstAttemptAt ?? new Date().toISOString(),
+      phase,
+      ...(phase === "sending"
+        ? { pageId: PAGE_LIFE_ID, sentAt: new Date().toISOString() }
+        : { unknownAt: new Date().toISOString() }),
+    })
+  }
+
+  /**
+   * 送る**前**に送信中として端末へ残してから送る（応答の前に再読込・更新・ログアウトしても、確認中の
+   * 記録として照合できる。独立レビュー 2026-10-28）。成功・衝突・拒否の後は呼び出し側が消す
+   */
+  function sendTracked<R>(
+    entry: { action: PendingSaveAction; payload: Record<string, unknown>; summary: string } | null,
+    send: () => Promise<R>,
+  ): Promise<R> {
+    rememberPending(entry, "sending")
+    return send()
   }
 
   function handleUpdate() {
@@ -712,6 +947,7 @@ export function BabyLogFormSheet({
         if (result.log) {
           onLogUpdated?.(result.log)
         }
+        clearMemoDraftAfterSave()
         toast.success("ログを更新しました")
         onOpenChange(false)
       } catch (err) {
@@ -753,6 +989,7 @@ export function BabyLogFormSheet({
         }
         // B-03: Realtime DELETE echo を待たずローカル state からも除去
         onLogRemoved?.(log.id)
+        clearMemoDraftAfterSave()
         toast.success("ログを削除しました")
         onOpenChange(false)
       } catch (err) {
@@ -771,7 +1008,10 @@ export function BabyLogFormSheet({
   const description = isCreateMode
     ? isPastDateCreate
       ? `${formatDiaryDateHeadingFromYmd(logDate)} の記録として保存します。日付と時刻を確かめてください`
-      : undefined
+      : createAmountMl != null && createLogType === "feeding"
+        ? // 今回だけ別の量（C2）: いつもの量は変わらぬことを、押す前に読めるように
+          `今回の量だけを記録します。いつもの量（${createAmountMl}ml）は変わりません`
+        : undefined
     : log
       ? recorderLabel
         ? `${formatTimeJst(log.logged_at)} の記録（${recorderLabel}）を変更できます`
@@ -877,10 +1117,18 @@ export function BabyLogFormSheet({
                 value={timeHm}
                 onChange={(e) => setTimeHm(e.target.value)}
                 disabled={isPending}
+                aria-describedby={logType === "feeding" ? "log-time-meaning" : undefined}
                 className="min-h-11 rounded-lg"
               />
             </div>
           </div>
+          {/* 授乳の時刻の意味を押す前に読めるようにする（2026-10-27 C2 / U07）。終わった時刻を
+              入れると「開始時刻」の列に終了の意味が混ざり、事後に見分けられぬ */}
+          {logType === "feeding" && (
+            <p id="log-time-meaning" className="-mt-2 text-xs text-muted-foreground">
+              授乳を始めた時刻を入れてください（終わった時刻ではありません）
+            </p>
+          )}
 
           {/* Feeding fields */}
           {logType === "feeding" && (
@@ -1155,18 +1403,90 @@ export function BabyLogFormSheet({
           {/* Memo (all types) */}
           <div className="space-y-1.5">
             <Label htmlFor="memo">メモ</Label>
+            {/* メモの書きかけ（2026-10-27 テーマ B）。戻すかは利用者が選ぶ（自動で入れ替えぬ）。
+                記録がその後に更新されておれば、そのことを示してから選ばせる */}
+            {memoDraftOffer && (
+              <div
+                role="status"
+                className="flex flex-col gap-1.5 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-sm"
+              >
+                <p className="font-medium">前回のメモの書きかけがあります（この端末）</p>
+                {memoDraft.restoredIsStale && (
+                  <p className="text-xs text-muted-foreground">
+                    この記録は書きかけの後に更新されています。戻すと、今のメモ欄を書きかけで置き換えます。
+                  </p>
+                )}
+                <p className="line-clamp-2 text-xs text-muted-foreground break-words whitespace-pre-wrap">
+                  {memoDraftOffer}
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="min-h-11 rounded-lg"
+                    onClick={() => {
+                      setMemo(memoDraftOffer)
+                      setMemoDraftDismissed(true)
+                    }}
+                  >
+                    戻す
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="min-h-11 rounded-lg"
+                    onClick={() => {
+                      memoDraft.clear()
+                      setMemoDraftDismissed(true)
+                    }}
+                  >
+                    破棄
+                  </Button>
+                </div>
+              </div>
+            )}
             {/* 複数行対応: 改行を含む日記メモを保存できるよう textarea を使う。
                 日記ビューは whitespace-pre-wrap で改行を反映する。 */}
             <Textarea
               id="memo"
               placeholder={logType === "memo" ? "メモを入力" : "任意のメモ"}
               value={memo}
-              onChange={(e) => setMemo(e.target.value)}
-              disabled={isPending}
+              onChange={(e) => {
+                setMemo(e.target.value)
+                // 端末へ写すだけ（入力欄の値には触れぬ — IME の変換中の値を壊さぬ）。前回の書きかけを
+                // 戻すか決める前は書かぬ（同じ鍵の前の書きかけを無言で上書きせぬ。日記と同じ守り）
+                if (!memoDraftOffer) memoDraft.update(e.target.value)
+              }}
+              // 前回の書きかけを戻すか破棄するか決めるまで止める（日記と同じ。打てると上書きか
+              // 取りこぼしのどちらかになる）
+              disabled={isPending || memoDraftOffer !== null}
               autoComplete="off"
               rows={logType === "memo" ? 4 : 2}
+              aria-describedby={
+                memoDraftOffer !== null
+                  ? "memo-draft-offer-note"
+                  : memoDraft.failureMessage
+                    ? "memo-draft-failure"
+                    : undefined
+              }
               className="min-h-11 rounded-lg"
             />
+            {memoDraftOffer !== null ? (
+              <p id="memo-draft-offer-note" className="text-xs text-muted-foreground">
+                上の「戻す」か「破棄」を選ぶとメモを入力できます
+              </p>
+            ) : memoDraft.failureMessage ? (
+              <p id="memo-draft-failure" className="text-xs text-destructive">
+                {memoDraft.failureMessage}
+              </p>
+            ) : (
+              memo.length > 0 &&
+              householdId && (
+                <p className="text-xs text-muted-foreground">{DRAFT_RETENTION_NOTE}</p>
+              )
+            )}
           </div>
 
           {/* Delete (edit mode only) */}
@@ -1234,11 +1554,62 @@ export function BabyLogFormSheet({
         </div>
 
         <SheetFooter>
+          {/* 同じ種類の、保存されておりうる別の操作の控えが在る（F2）。新しい id で送る前に、同じ記録の
+              入れ直しか別の記録かを選ばせる。押された時に出すゆえ alert で読み上げる */}
+          {otherPending && isCreateMode && (
+            <div
+              role="alert"
+              className="flex flex-col gap-2 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-sm"
+            >
+              <p className="flex items-start gap-2 font-medium">
+                <AlertCircle size={16} className="mt-0.5 shrink-0 text-primary" aria-hidden="true" />
+                同じ種類の記録で、保存できたか確かめられていない操作があります
+              </p>
+              <ul className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+                {otherPending.slice(0, 3).map((p) => (
+                  <li key={p.id}>
+                    {p.summary}（この端末の時計で {formatTimeJst(p.at)} に押した操作・
+                    {p.sending ? "送信中" : "確認中"}）
+                  </li>
+                ))}
+                {otherPending.length > 3 && <li>ほか {otherPending.length - 3} 件</li>}
+              </ul>
+              <p className="text-xs text-muted-foreground">
+                同じ記録の入れ直しなら、ここでは記録しないでください。確認中のものは「保存を確認中の記録」から確かめられます（同じ内容で送り直せ、二重にはなりません）。送信中のものは、結果が出るまで一覧に出ないことがあります。
+                {otherPending.some((p) => p.source === "timer") &&
+                  "授乳タイマーの記録は、授乳タイマーを開いて「記録されたか確かめる」で確かめられます（一覧には出ません）。"}
+                別の記録なら下の釦で記録します。
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleCreateAsSeparate}
+                disabled={isPending}
+                className="min-h-11 w-full rounded-lg"
+              >
+                別の記録として記録する
+              </Button>
+            </div>
+          )}
+          {/* 結果の分からぬ送信の後（A2）。「失敗」とも「記録済み」とも言わず、押し直しが二重に
+              ならぬことを示す。内容を直して押しても同じ記録として扱う（先の内容が成立しておれば
+              そちらを知らせる） */}
+          {unknownSent && isCreateMode && (
+            <p role="status" className="text-sm text-muted-foreground">
+              前回の送信は保存できたか確認できていません。「記録する」を押すと同じ記録として確かめます（二重にはなりません）。
+            </p>
+          )}
+          {createConflicted && isCreateMode && (
+            <p role="status" className="text-sm text-muted-foreground">
+              この記録は少し前に別の内容で記録済みです。タイムラインで確かめてください。別の記録として追加するなら、このシートを閉じて開き直してから記録してください。
+            </p>
+          )}
           <Button
             onClick={handleSave}
             // 衝突の後は開いた時点の版のままゆえ、押しても同じ衝突になる（上書きの導線は
-            // 置かぬ — 全項目を古い値から送るため、家族が直した項目まで巻き戻る）
-            disabled={isPending || conflict !== null}
+            // 置かぬ — 全項目を古い値から送るため、家族が直した項目まで巻き戻る）。作成の衝突の後も
+            // 同じ id では通らぬゆえ止める
+            disabled={isPending || conflict !== null || createConflicted}
             className="min-h-11 w-full rounded-lg text-base font-semibold"
           >
             {isPending ? (

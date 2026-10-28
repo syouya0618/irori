@@ -12,25 +12,35 @@ import { Button } from "@/components/ui/button"
 import { Loader2, Square, Check, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 import { recordFeeding } from "@/app/(main)/baby/actions"
+import { lookupBabyLogs } from "@/lib/domain/baby-log-lookup-client"
+import { noteServerActionFailure, STALE_CLIENT_ACTION_MESSAGE } from "@/lib/pwa/app-version"
+import {
+  phaseAfterFailure,
+  SAVE_CONFLICT_MESSAGE,
+  SAVE_RESEND_LABEL,
+  SAVE_UNKNOWN_MESSAGE,
+} from "@/lib/domain/save-attempt"
 import {
   clampBreastCount,
   clampFeedingDurationSec,
   resolveBreastSideSeconds,
 } from "@/lib/domain/feeding"
 import { BreastCountStepper } from "@/components/baby/breast-count-stepper"
-import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
 import {
-  belongsToUser,
+  belongsToOwner,
   clearPersistedTimer,
   isTimerStale,
   readPersistedTimer,
   writePersistedTimer,
   type PersistedBreastSide,
+  type PersistedFeedingPayload,
+  type PersistedFeedingSubmission,
   type PersistedTimerState,
 } from "@/lib/domain/feeding-timer-storage"
 import { newClientId } from "@/lib/utils/client-id"
 import { useWakeLock } from "@/lib/hooks/use-wake-lock"
 import { useNow } from "@/lib/hooks/use-now"
+import { useServerClock } from "@/lib/hooks/use-server-clock"
 import { segmentCn } from "@/lib/utils/segment-cn"
 import {
   formatDurationSec,
@@ -46,12 +56,17 @@ import {
 } from "@/lib/utils/date-jst"
 import type { FeedingType, BreastStartSide } from "@/lib/types/database"
 import type { BabyLogData } from "@/lib/types/baby"
+import { buildOptimisticLog } from "@/lib/domain/baby-optimistic-log"
 
 // 開いてからこの時間未満のタイマーは「誤って開いた」とみなし、通常の閉じ方（暗幕・×・
 // Esc・Android の戻る）で計測を取り消して閉じる。タイマーはシートを開いた瞬間に始まる
 // ため、誤タップや手動入力のつもりで開いた 0 秒の計測が端末に残ってチップに居座らぬよう
 // にする。失うのは 1 分未満の計測だけで、手動入力で記録し直せる。
 const ACCIDENTAL_OPEN_GRACE_MS = 60_000
+
+// 記録の送信がこの時間を越えても返らぬ時は「応答を待っています」と出し、照合を先に使わせる
+// （Server Action は直列に送られるため、送り直しは同じ列で待たされる）
+const SEND_SLOW_NOTICE_MS = 15_000
 
 /**
  * 誤って開いた直後とみなせるか。**fail-closed** に判じる — 迷えば「計測中」とし、
@@ -147,6 +162,11 @@ export interface RunningTimer {
   side: BreastSide
   /** 開始から MAX_TIMER_AGE_MS を超えた停め忘れ。開けば記録か破棄を選ぶ */
   stale: boolean
+  /**
+   * 記録を押した後、保存できたか確かめられておらぬ（送信中・応答不明・内容の衝突）。
+   * 親のチップは「計測中」ではなく「保存を確認中」と出す（計測は止まっておる）。
+   */
+  pendingSave: boolean
 }
 
 /** localStorage / DB 用に CycleState の側を DB 値（left / right）へ写す。 */
@@ -285,7 +305,12 @@ function restoreCycle(state: PersistedTimerState): CycleState {
 function toPersistedState(
   startedAt: Date,
   cycle: CycleState,
-  meta: { userId: string; clientId: string },
+  meta: {
+    userId: string
+    householdId: string
+    clientId: string
+    submission: PersistedFeedingSubmission | null
+  },
 ): PersistedTimerState {
   return {
     startedAt: startedAt.toISOString(),
@@ -305,8 +330,41 @@ function toPersistedState(
         }),
     // 持ち主と冪等 id（P3-08 / P2-08）
     userId: meta.userId,
+    householdId: meta.householdId,
     clientId: meta.clientId,
+    // 記録を押した後の固定した送信内容（応答不明でも再読込で同じ内容を照合できる）
+    ...(meta.submission ? { submission: meta.submission } : {}),
   }
+}
+
+/** 固定した送信内容の要約（応答不明の間に「何を送ったか」を見せる）。 */
+function describeSubmission(payload: PersistedFeedingPayload): string {
+  // 時刻を持たぬ送信内容は、サーバが受け取った時刻で記録される（押した時刻を推定できなかった。N3）
+  const start =
+    payload.loggedAt !== undefined
+      ? `${formatTimeJst(payload.loggedAt)} 開始`
+      : "開始はサーバが受け取った時刻"
+  const startLabel =
+    payload.breastStartSide === "left"
+      ? "左から"
+      : payload.breastStartSide === "right"
+        ? "右から"
+        : ""
+  const breakdown =
+    payload.breastLeftSec !== undefined && payload.breastRightSec !== undefined
+      ? formatBreastSideBreakdown(
+          payload.breastLeftCount,
+          payload.breastRightCount,
+          payload.breastLeftSec,
+          payload.breastRightSec,
+        )
+      : [
+          formatBreastCounts(payload.breastLeftCount, payload.breastRightCount),
+          formatDurationSec(payload.durationSec ?? 0),
+        ]
+          .filter(Boolean)
+          .join("・")
+  return [start, startLabel, breakdown].filter(Boolean).join("・")
 }
 
 interface FeedingTimerProps {
@@ -315,6 +373,8 @@ interface FeedingTimerProps {
   initialFeedingType: FeedingType
   /** 記録者（logged_by）。楽観 append 行と端末保存の持ち主に使う（B-03 / P3-08） */
   userId: string
+  /** 今の世帯。端末保存の持ち主に使う（別世帯の計測・送信内容を復元も送信もせぬ） */
+  householdId: string
   /**
    * 記録成功時に楽観 append する行を親へ渡す（B-03）。深夜跨ぎ（サイクル開始が
    * JST で前日）の行も渡す — どの配列（選択日の logs・週窓・最終授乳の fallback）へ
@@ -329,11 +389,17 @@ interface FeedingTimerProps {
   onRunningChange?: (running: RunningTimer | null) => void
 }
 
-export function FeedingTimer({
+/** 利用者・世帯が替わった時は、計測・固定した送信内容を新しい名義へ持ち越さぬ。 */
+export function FeedingTimer(props: FeedingTimerProps) {
+  return <OwnedFeedingTimer key={`${props.userId}:${props.householdId}`} {...props} />
+}
+
+function OwnedFeedingTimer({
   open,
   onOpenChange,
   initialFeedingType,
   userId,
+  householdId,
   onLogRecorded,
   onRunningChange,
 }: FeedingTimerProps) {
@@ -348,6 +414,42 @@ export function FeedingTimer({
   const isSavingRef = useRef(false)
   // この計測の冪等 id（P2-08）。開始時に 1 回だけ作り、停止の再試行で同じ値を送る。
   const clientIdRef = useRef<string | null>(null)
+  // 記録を押した時に固定した送信内容（A2）。null は「まだ押していない / 直してよい」。
+  // 応答不明の間は入力を出さず、再送はこれをそのまま送る（時刻・秒数を作り直さぬ）。
+  const [submission, setSubmissionState] = useState<PersistedFeedingSubmission | null>(null)
+  const submissionRef = useRef<PersistedFeedingSubmission | null>(null)
+  function setSubmission(next: PersistedFeedingSubmission | null) {
+    submissionRef.current = next
+    setSubmissionState(next)
+  }
+  // 照合で見つからず内容を直す時に持ち越す、最初の押下の開始時刻（無い = 受信時刻で記録する送信）。
+  // 同じ id の間だけ使い、記録の確定・破棄・保存前の拒否で捨てる（N3-02）
+  const keptOriginRef = useRef<{ clientId: string; loggedAt: string | undefined } | null>(null)
+  // 「記録されたか確かめる」の状態。notFound は「まだ見つからぬ」— 保存されなんだ断定ではない
+  const [lookup, setLookup] = useState<"idle" | "checking" | "notFound" | "error">("idle")
+  // 同じ id で別の内容が記録済みだった時のサーバの確定行（端末には残さぬ。再読込後は照合で読み直す）
+  const [conflictLog, setConflictLog] = useState<BabyLogData | null>(null)
+  // 照合の取得（GET）の取消し口。閉じた後・次の照合の前に止める
+  const lookupAbortRef = useRef<AbortController | null>(null)
+  const activeRef = useRef(true)
+  useEffect(() => {
+    activeRef.current = true
+    return () => {
+      activeRef.current = false
+      lookupAbortRef.current?.abort()
+    }
+  }, [])
+  // 送信が SEND_SLOW_NOTICE_MS を越えても返らぬ。送り直しは直列の列で待たされるゆえ出さず、
+  // 照合（GET）だけを先に使えるようにする
+  const [slowSend, setSlowSend] = useState(false)
+  useEffect(() => {
+    if (!isSaving) {
+      setSlowSend(false) // eslint-disable-line react-hooks/set-state-in-effect -- 送信の終わりで案内を畳む
+      return
+    }
+    const id = setTimeout(() => setSlowSend(true), SEND_SLOW_NOTICE_MS)
+    return () => clearTimeout(id)
+  }, [isSaving])
   // 端末保存に失敗した時の通知は 1 回だけ（切替ごとに鳴らさぬ）
   const persistWarnedRef = useRef(false)
   // 手元の計測（state）の鏡。開く effect は deps を絞っておるため、ref で最新を読む
@@ -377,6 +479,9 @@ export function FeedingTimer({
   const everOpenedRef = useRef(false)
 
   useWakeLock(timerRunning)
+  // 手動記録の「押した時刻」をサーバの時計で推定し、タイマーの停止では端末の時計の開始時刻を
+  // サーバの時計へ写す（開いておる間、開いた時・画面復帰・10 分ごとに取り直す。N3 / v8 N3-01）
+  const { serverNowIso, toServerIso, deviceSkewMs } = useServerClock(open)
 
   // 計測の有無・側・停め忘れを親へ知らせる（UX-04a のチップ）。最新の callback を ref で読む。
   const onRunningChangeRef = useRef(onRunningChange)
@@ -387,16 +492,29 @@ export function FeedingTimer({
     if (!everOpenedRef.current) return
     onRunningChangeRef.current?.(
       startedAt
-        ? { startedAt: startedAt.toISOString(), side: cycle.side, stale }
+        ? {
+            startedAt: startedAt.toISOString(),
+            side: cycle.side,
+            stale,
+            pendingSave: submission !== null,
+          }
         : null,
     )
-  }, [startedAt, cycle.side, stale])
+  }, [startedAt, cycle.side, stale, submission])
 
   /** 端末保存へ書く。失敗（容量不足・プライベートモード）は 1 回だけ利用者へ知らせる。 */
   function persist(at: Date, next: CycleState) {
+    if (!activeRef.current) return
     const clientId = clientIdRef.current ?? newClientId()
     clientIdRef.current = clientId
-    const ok = writePersistedTimer(toPersistedState(at, next, { userId, clientId }))
+    const ok = writePersistedTimer(
+      toPersistedState(at, next, {
+        userId,
+        householdId,
+        clientId,
+        submission: submissionRef.current,
+      }),
+    )
     if (!ok && !persistWarnedRef.current) {
       persistWarnedRef.current = true
       toast.error(
@@ -421,6 +539,7 @@ export function FeedingTimer({
     setMode("timer")
     setConfirmingDiscard(false)
     setStale(false)
+    setLookup("idle")
     const startSide = normalizeSide(initialFeedingType)
     setManualLeftMin(startSide === "breast_left" ? DEFAULT_MANUAL_MINUTES : 0)
     setManualLeftSec(0)
@@ -443,18 +562,35 @@ export function FeedingTimer({
       return
     }
     if (saved) {
-      if (!belongsToUser(saved, userId)) {
-        // 別の利用者の計測（P3-08）。名義を変えて記録せぬよう捨てて始め直す。
+      if (!belongsToOwner(saved, { userId, householdId })) {
+        // 別の利用者・世帯の計測（P3-08）。名義を変えて記録せぬよう捨てて始め直す。
         // 本文は見せぬ（他人の記録）。ログには事実だけ残す
-        console.warn("[feeding-timer] 別の利用者の計測が端末に残っていたため破棄した")
+        console.warn("[feeding-timer] 別の利用者・世帯の計測が端末に残っていたため破棄した")
         clearPersistedTimer()
       } else {
         const savedTime = new Date(saved.startedAt)
         const restored = restoreCycle(saved)
+        // 送信内容の id は計測の id と同じでなければならぬ（食い違えば送信内容は信用せぬ）
+        const savedSubmission =
+          saved.submission && saved.submission.payload.clientId === saved.clientId
+            ? saved.submission
+            : null
         const clientId = saved.clientId ?? newClientId()
         clientIdRef.current = clientId
         setStartedAt(savedTime)
         setCycle(restored)
+        if (savedSubmission) {
+          // 記録を押した後に閉じた・再読込した。送信中のまま残ったものは結果不明として扱い、
+          // 走らせ直さず固定した内容で照合する（停め忘れの判定もせぬ — 送った内容は確定済み）
+          const pending: PersistedFeedingSubmission = {
+            ...savedSubmission,
+            phase: savedSubmission.phase === "sending" ? "unknown" : savedSubmission.phase,
+          }
+          setSubmission(pending)
+          persist(savedTime, restored)
+          if (pending.phase === "unknown") void checkSubmission(pending, { auto: true })
+          return
+        }
         if (isTimerStale(saved.startedAt, Date.now())) {
           // 停め忘れ: 黙って捨てず、開始時刻を保ったまま手動入力で記録するか破棄するかを
           // 選ばせる。走らせ直すと「3 時間の授乳」を上限で丸めて記録する嘘になる
@@ -473,12 +609,13 @@ export function FeedingTimer({
     const start = new Date()
     const seeded = seedCycle(normalizeSide(initialFeedingType), start.toISOString())
     clientIdRef.current = newClientId()
+    setSubmission(null)
     setStartedAt(start)
     setCycle(seeded)
     persist(start, seeded)
     /* eslint-enable react-hooks/set-state-in-effect */
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- persist は userId / ref だけを読む
-  }, [open, initialFeedingType, userId])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- persist / checkSubmission は持ち主 / ref だけを読む
+  }, [open, initialFeedingType, userId, householdId])
 
   /**
    * 吸わせる側を切り替える（タイマー中の stint カウント）。
@@ -555,25 +692,30 @@ export function FeedingTimer({
   // disabled を防ぐ（recordFeeding は redirect しないため finally で isSaving を戻せる）。
   //
   // loggedAt はサイクルの**開始時刻**（終了時刻ではない）。タイマーは開始時刻、
-  // 手動入力は「記録する」を押した時刻を渡す。過去行も backfill migration
+  // 手動入力は「記録する」を押した時刻（サーバの時計で推定した値。推定できねば渡さず、
+  // サーバの受信時刻で記録する。N3）を渡す。過去行も backfill migration
   // （20260726100003_baby_feeding_backfill_start_time）で開始基準へ揃えてある。
   //
-  // 冪等 id（clientId）は計測ごとに固定ゆえ、応答を失った停止の再タップは同じ id で
-  // 届き、サーバが「既に記録済み」として同じ id を返す（二重記録を作らぬ。P2-08）。
+  // **送信内容は最初の有効な押下で固定する**（2026-10-27 大型更新 A2 / 監査 F01）。結果が不明な間の
+  // 押し直しは、開始時刻・左右秒・回数・開始側・id を作り直さず同じものを送る — 作り直すと同じ id に
+  // 別の内容を送ることになり、サーバの内容照合（sameRecordedContent）に拒まれて、保存できているのに
+  // 成功を確定できぬ。固定した内容は端末保存にも残し、再読込の後も同じ内容で照合する。
   async function saveFeeding(params: {
-    loggedAt: string
+    /** 無い = サーバの受信時刻で記録する（手動記録で押した時刻を推定できなかった時だけ） */
+    loggedAt: string | undefined
     /** sidesUnknown（旧形式復元）のサイクル: 合計のみで保存する */
     durationSec?: number
     /** 左右別秒（resolveBreastSideSeconds 通過済み）。合計はサーバが導出する */
     sides?: { leftSec: number; rightSec: number }
   }) {
     if (isSavingRef.current) return
+    // 結果の分からぬ送信が在れば、今の画面の値ではなく固定した内容を送り直す
+    const pending = submissionRef.current
+    if (pending) {
+      await sendSubmission(pending)
+      return
+    }
     const { loggedAt, sides } = params
-    // 表示・楽観行用の合計。sides ありなら左右の和（サーバの導出と同じ値になる）
-    const durationSec = sides
-      ? sides.leftSec + sides.rightSec
-      : params.durationSec ?? 0
-
     const { leftCount, rightCount } = cycle
     // 合計 0 のサイクル行は「授乳していない行」ゆえサーバ検証と DB CHECK
     // chk_breast_counts_required に弾かれる。往復ぶんの通信を待たせず手前で止める
@@ -582,104 +724,233 @@ export function FeedingTimer({
       toast.error("左右の回数は合計1回以上にしてください")
       return
     }
-
-    isSavingRef.current = true
-    setIsSaving(true)
-
-    // 開始側。タイマーはタップした側で確定、旧形式復元は推定（不能なら null = 不明）。
-    const breastStartSide = toDbStartSide(cycle.startSide)
     const clientId = clientIdRef.current ?? newClientId()
     clientIdRef.current = clientId
+    const payload: PersistedFeedingPayload = {
+      feedingType: "breast",
+      breastLeftCount: leftCount,
+      breastRightCount: rightCount,
+      // 開始側。タイマーはタップした側で確定、旧形式復元は推定（不能なら null = 不明）。
+      breastStartSide: toDbStartSide(cycle.startSide),
+      // sides あり → 合計はサーバ導出（durationSec の同時指定はサーバが拒否する契約）。
+      // sides なし（sidesUnknown）→ 従来どおり合計のみ
+      ...(sides
+        ? { breastLeftSec: sides.leftSec, breastRightSec: sides.rightSec }
+        : { durationSec: params.durationSec ?? 0 }),
+      // 時刻が無いことも固定する（再送で後から時刻を足さぬ。PersistedFeedingPayload の注記）
+      ...(loggedAt !== undefined ? { loggedAt } : {}),
+      clientId,
+    }
+    await sendSubmission({
+      firstAttemptAt: new Date().toISOString(),
+      phase: "sending",
+      payload,
+    })
+  }
+
+  /** 固定した送信内容を送る（初回も再送も同じ経路）。 */
+  async function sendSubmission(base: PersistedFeedingSubmission) {
+    if (!activeRef.current || isSavingRef.current || !startedAt) return
+    isSavingRef.current = true
+    setIsSaving(true)
+    setLookup("idle")
+    // 初めての送信は saveFeeding が sending で渡す。それ以外（unknown・conflict・再読込で戻した
+    // もの）は、先の送信が保存されておりうる操作の送り直し
+    const mayHaveLanded = base.phase !== "sending"
+    const sending: PersistedFeedingSubmission = { ...base, phase: "sending" }
+    setSubmission(sending)
+    // 送る前に端末へ残す（送信中に閉じた・落ちた時も、再読込の後に同じ内容で照合できる）
+    persist(startedAt, cycle)
 
     let result: Awaited<ReturnType<typeof recordFeeding>>
     try {
-      result = await recordFeeding({
-        feedingType: "breast",
-        breastLeftCount: leftCount,
-        breastRightCount: rightCount,
-        breastStartSide,
-        // sides あり → 合計はサーバ導出（durationSec の同時指定はサーバが拒否する契約）。
-        // sides なし（sidesUnknown）→ 従来どおり合計のみ
-        ...(sides
-          ? { breastLeftSec: sides.leftSec, breastRightSec: sides.rightSec }
-          : { durationSec }),
-        loggedAt,
-        clientId,
-      })
+      result = await recordFeeding(sending.payload)
     } catch (err) {
-      // recordFeeding は通信断で reject しうる。握り潰さず記録し、再試行を促す。
-      // 計測（端末保存・冪等 id）はそのまま残り、再試行は同じ id で届く
+      // 持ち主が替わった後の応答で、新しい持ち主の計測や表示へ触れぬ。
+      if (!activeRef.current) return
+      // 通信断・応答の喪失で reject する。届かなかったのか、保存の後で応答だけが失われたのかは
+      // 区別できぬ（reject ＝ 未到達と決めつけぬ）。固定した内容のまま結果不明として残す
       console.error("[feeding-timer] recordFeeding が例外を投げました", {
         message: err instanceof Error ? err.message : String(err),
-        breastLeftCount: leftCount,
-        breastRightCount: rightCount,
-        durationSec,
-        loggedAt,
+        clientId: sending.payload.clientId,
       })
-      toast.error("授乳の記録に失敗しました。通信状況を確認してもう一度お試しください。")
+      // 照合で確定済み・破棄済みなら、遅れて届いた失敗で「確認中」を蘇らせぬ
+      if (submissionRef.current?.payload.clientId !== sending.payload.clientId) return
+      markSubmission({ ...sending, phase: "unknown" })
+      // デプロイを跨いだ古い画面（action が見つからぬ）。送り直しても同じ失敗ゆえ、読み直しを案内する。
+      // 送信内容は端末に残っており、読み直した新しい画面から同じ内容で照合・送り直しできる
+      toast.error(noteServerActionFailure(err) ? STALE_CLIENT_ACTION_MESSAGE : SAVE_UNKNOWN_MESSAGE)
       return
     } finally {
       // throw / 正常のいずれの経路でも必ず解除する（永久 disabled の防止）。
       // recordFeeding は redirect しないため finally で戻して問題ない。
       isSavingRef.current = false
-      setIsSaving(false)
+      if (activeRef.current) setIsSaving(false)
     }
 
-    if (result.error) {
-      toast.error(result.error)
+    if (!activeRef.current) return
+    if (result.error !== null) {
+      if (submissionRef.current?.payload.clientId !== sending.payload.clientId) return
+      const phase = phaseAfterFailure({ thrown: false, failure: result.failure })
+      if (phase === "rejected" && mayHaveLanded) {
+        // この送り直しが拒まれた（ログイン切れ・一時的な失敗等）ことは、先の結果不明の送信が保存
+        // されておらぬことを意味せぬ。固定した内容を捨てると、次の押下が時刻・秒数を作り直し、
+        // 破棄の文言が「記録していません」と偽る（独立レビュー 2026-10-28 v7 F1。クイック記録・
+        // 記録シート・確認中の記録と同じ規則）。結果不明のまま残し、理由と確かめ方を伝える
+        markSubmission({ ...sending, phase: "unknown" })
+        toast.error(`${result.error}（前の送信が保存されたかは「記録されたか確かめる」で確かめられます）`)
+        return
+      }
+      if (phase === "rejected") {
+        // 保存の前に拒まれた（検証・認証）。行は無いゆえ、入力へ戻して直せるようにする。
+        // id はこの計測のまま（同じ計測の記録ゆえ）。有効な保存操作ではなかったゆえ、
+        // 持ち越した時刻も捨て、次の押下の時刻を開始時刻にする
+        keptOriginRef.current = null
+        markSubmission(null)
+        toast.error(result.error)
+        return
+      }
+      if (phase === "conflict" && result.conflict?.current) {
+        // 同じ id で別の内容が先に記録済み（古い版の画面からの送信など）。記録は既に在る
+        setConflictLog(result.conflict.current)
+      }
+      markSubmission({ ...sending, phase })
+      toast.error(phase === "conflict" ? SAVE_CONFLICT_MESSAGE : result.error)
       return
     }
 
-    // 深夜跨ぎ: logged_at が開始時刻になったため、日付が変わってから停止すると
-    // 前日の行が生まれる（停め忘れなら 2 日以上前の行も）。どの配列へ入れるかは親の
-    // appendLog が行の日付で決める（選択日の logs・週窓・成長・最終授乳の fallback）ゆえ、
-    // ここでは日付で分岐せず常に渡す。トーストだけは「どの日の記録として保存したか」を
-    // 明示する（無言だと「記録されていない」と誤解して再タップし、二重記録になる）。
-    const logDate = toJstDateString(loggedAt)
-    const today = todayJstString()
-    const isSameJstDay = logDate === today
-
-    // B-03: 返却 id で楽観 append（Realtime を待たず timeline/回数を即時更新）
-    if (result.id) {
-      onLogRecorded?.(
+    // 確定行はサーバが返す（insertBabyLog の log）。行を持たぬ応答（古い形）だけは、送った内容と
+    // サーバの返した時刻・版で組む — 送った値は DB に書かれた値そのもので、手元の時計ではない。
+    // 時刻をどちらも持たぬ（受信時刻で記録した送信への古い形の応答）なら、手元の時計で行を組まず
+    // 照合の読みで DB の行を取りに行く
+    const knownLoggedAt = result.loggedAt ?? sending.payload.loggedAt
+    if (!result.log && knownLoggedAt === undefined) {
+      await checkSubmission(sending)
+      return
+    }
+    finishRecorded(
+      result.log ??
         buildOptimisticLog({
           id: result.id,
           updatedAt: result.updatedAt ?? null,
           logType: "feeding",
           loggedBy: userId,
           feedingType: "breast",
-          breastLeftCount: leftCount,
-          breastRightCount: rightCount,
-          breastLeftSec: sides?.leftSec ?? null,
-          breastRightSec: sides?.rightSec ?? null,
-          breastStartSide,
-          durationSec,
-          loggedAt,
+          breastLeftCount: sending.payload.breastLeftCount,
+          breastRightCount: sending.payload.breastRightCount,
+          breastLeftSec: sending.payload.breastLeftSec ?? null,
+          breastRightSec: sending.payload.breastRightSec ?? null,
+          breastStartSide: sending.payload.breastStartSide,
+          durationSec:
+            sending.payload.breastLeftSec !== undefined && sending.payload.breastRightSec !== undefined
+              ? sending.payload.breastLeftSec + sending.payload.breastRightSec
+              : sending.payload.durationSec ?? 0,
+          loggedAt: knownLoggedAt,
         }),
+      sending.payload,
+    )
+  }
+
+  /** 送信内容の状態を画面と端末保存の両方へ反映する。 */
+  function markSubmission(next: PersistedFeedingSubmission | null) {
+    setSubmission(next)
+    if (startedAtRef.current && cycleRef.current) persist(startedAtRef.current, cycleRef.current)
+  }
+
+  /**
+   * 「記録されたか確かめる」— DB に同じ id の行が在るかを読むだけ（送り直さぬ）。
+   * 在ればサーバの確定行で記録済みとして終える。見つからぬのは「まだ」かもしれぬ（応答の失われた
+   * 要求が処理中でありうる）ゆえ、保存されなかったとは断定せず、同じ内容での送り直しを勧める。
+   */
+  async function checkSubmission(
+    target: PersistedFeedingSubmission,
+    opts: { auto: boolean } = { auto: false },
+  ) {
+    if (!activeRef.current) return
+    // 送信中でも照合はできる（GET は Server Action の直列送信の列に並ばぬ）。応答の返らぬ送信の
+    // 結果を、利用者が待たずに確かめられるように
+    lookupAbortRef.current?.abort()
+    const controller = new AbortController()
+    lookupAbortRef.current = controller
+    setLookup("checking")
+    const outcome = await lookupBabyLogs([target.payload.clientId], { signal: controller.signal })
+    if (lookupAbortRef.current === controller) lookupAbortRef.current = null
+    if (!activeRef.current || outcome.status === "cancelled") return
+    // 照合の間に確定・破棄されておれば、その結果を優先する
+    if (submissionRef.current?.payload.clientId !== target.payload.clientId) return
+    if (outcome.status === "found") {
+      const found = outcome.logs.find((l) => l.id === target.payload.clientId)
+      if (found) {
+        finishRecorded(found, target.payload, { reconciled: true })
+        return
+      }
+    }
+    if (outcome.status === "notFound") {
+      setLookup("notFound")
+      return
+    }
+    setLookup("error")
+    if (!opts.auto) {
+      toast.error(
+        outcome.status === "auth"
+          ? "ログインの有効期限が切れています。ログインし直してから確かめてください（送った内容はこの端末に残っています）"
+          : outcome.status === "timeout"
+            ? "記録を確かめる応答がありませんでした。通信状況を確認してもう一度お試しください。"
+            : "記録を確かめられませんでした。通信状況を確認してください。",
       )
     }
+  }
+
+  /**
+   * 記録の確定（新規・再送の吸収・照合で見つかった）。成功の表示はサーバの確定行（id・logged_at・
+   * updated_at）で組み、手元の時計や入力中の値で架空の成功行を作らぬ。
+   */
+  function finishRecorded(
+    log: BabyLogData,
+    payload: PersistedFeedingPayload,
+    opts: { reconciled?: boolean } = {},
+  ) {
+    // 照合と送り直しが並んで届いた・閉じた後に遅れて届いた応答は、二度目を捨てる
+    // （確定は 1 回だけ。成功の知らせと閉じる操作を二重にせぬ）
+    if (submissionRef.current?.payload.clientId !== payload.clientId) return
+    // 深夜跨ぎ: logged_at が開始時刻になったため、日付が変わってから停止すると
+    // 前日の行が生まれる（停め忘れなら 2 日以上前の行も）。どの配列へ入れるかは親の
+    // appendLog が行の日付で決める（選択日の logs・週窓・成長・最終授乳の fallback）ゆえ、
+    // ここでは日付で分岐せず常に渡す。トーストだけは「どの日の記録として保存したか」を
+    // 明示する（無言だと「記録されていない」と誤解して再タップし、二重記録になる）。
+    onLogRecorded?.(log)
 
     clearPersistedTimer()
     clientIdRef.current = null
+    keptOriginRef.current = null
+    setSubmission(null)
+    setConflictLog(null)
+    setLookup("idle")
     setStartedAt(null)
     setStale(false)
+
+    const logDate = toJstDateString(log.logged_at)
+    const today = todayJstString()
+    const isSameJstDay = logDate === today
     // 内訳（左から・左2・右1）と時間を添えて「何が記録されたか」を確認できるようにする。
-    // 今日でない日の行は必ずその日を明示する — 無言だと「記録されていない」と誤解して
-    // 再タップし、二重記録になる。
-    const breakdown = sides
-      ? formatBreastSideBreakdown(
-          leftCount,
-          rightCount,
-          sides.leftSec,
-          sides.rightSec,
-        )
-      : [formatBreastCounts(leftCount, rightCount), formatDurationSec(durationSec)]
-          .filter(Boolean)
-          .join("・")
+    // 表示は DB の行から組む（送った内容と同じはずだが、確定値を正とする）
+    const leftCount = log.breast_left_count ?? payload.breastLeftCount
+    const rightCount = log.breast_right_count ?? payload.breastRightCount
+    const breakdown =
+      log.breast_left_sec != null && log.breast_right_sec != null
+        ? formatBreastSideBreakdown(
+            leftCount,
+            rightCount,
+            log.breast_left_sec,
+            log.breast_right_sec,
+          )
+        : [formatBreastCounts(leftCount, rightCount), formatDurationSec(log.duration_sec ?? 0)]
+            .filter(Boolean)
+            .join("・")
     const startLabel =
-      breastStartSide === "left"
+      log.breast_start_side === "left"
         ? "左から"
-        : breastStartSide === "right"
+        : log.breast_start_side === "right"
           ? "右から"
           : ""
     const detail = [startLabel, breakdown].filter(Boolean).join("・")
@@ -688,18 +959,50 @@ export function FeedingTimer({
     const [, m, d] = logDate.split("-")
     const dayLabel =
       logDate === shiftYmd(today, -1) ? "前日" : `${Number(m)}/${Number(d)}`
+    const head = opts.reconciled ? "授乳は記録済みでした" : "授乳を記録しました"
+    // 押した時刻を推定できず、サーバの受信時刻で記録した時は、その時刻と直し方を伝える
+    // （「押した時刻」とは偽らぬ。N3: 圏外・時計の変更・スリープの後・初回が届かなかった送り直し）
+    const receiptNote =
+      payload.loggedAt === undefined
+        ? `。開始時刻は記録が届いた時刻（${formatTimeJst(log.logged_at)}）です。違う時は記録を開いて直せます`
+        : ""
     toast.success(
       isSameJstDay
-        ? `授乳を記録しました（${detail}）`
-        : `授乳を記録しました（${detail}／${dayLabel}の記録として保存）`,
+        ? `${head}（${detail}）${receiptNote}`
+        : `${head}（${detail}／${dayLabel}の記録として保存）${receiptNote}`,
     )
     onOpenChange(false)
+  }
+
+  /**
+   * 照合で見つからなんだ後に、利用者が内容を直すと決めた（AC05: 確認後の明確な意図）。
+   * id はこの計測のまま — 先の要求が遅れて保存されておれば、直した内容の送信はサーバに
+   * 「別の内容で記録済み」と止められ、二重記録にはならぬ。
+   */
+  function handleEditAfterNotFound() {
+    // 直すのは内容だけ。開始時刻（または「時刻を送らぬ」こと）は最初の押下のまま持ち越す —
+    // 同じ id の同じ計測ゆえ、直した後の押下の時刻で作り直すと、押した時刻を黙って後ろへずらす
+    // （独立レビュー 2026-10-28 v7 N3-02）
+    const frozen = submissionRef.current
+    if (frozen) {
+      keptOriginRef.current = {
+        clientId: frozen.payload.clientId,
+        loggedAt: frozen.payload.loggedAt,
+      }
+    }
+    markSubmission(null)
+    setLookup("idle")
   }
 
   function handleStop() {
     // startedAt が無いのは「記録成功 → 親が閉じるまで」の一瞬だけ。開始時刻が
     // 無いまま now を代用すると logged_at の意味（開始時刻）が壊れるため記録しない。
     if (!startedAt) return
+    // 結果の分からぬ送信が在れば、経過を計り直さず固定した内容を送り直す（A2）
+    if (submissionRef.current) {
+      void sendSubmission(submissionRef.current)
+      return
+    }
     // 停め忘れはタイマーの経過で記録しない（手動入力に限る。画面でも停止は出さぬ）
     if (stale) return
     // 開いたまま（wake lock で画面が点いたまま）上限を超えた計測も同じ扱い: 膨らんだ
@@ -715,11 +1018,27 @@ export function FeedingTimer({
       )
       return
     }
+    // 開始時刻は端末の時計で測ってある。停めた時のサーバ時刻のサンプルで、端末の時計のずれ分だけ
+    // サーバの時計へ写して送る（独立レビュー v7 N3-01: 進んだ端末で 5 分未満の計測を停めると「未来の
+    // 時刻」で拒まれ、遅れた端末は黙って早い時刻で残った）。± に同じく効き（対称）、誤差は往復の
+    // 半分＋許す時計の食い違い 2 秒以内（有界）。写せぬ時（サンプル無し・時計の変更・スリープ）は従来
+    // どおり端末の時刻を送る。
+    // 授乳時間（経過）は端末の時計の差ゆえ、ずれの影響を受けぬ。送信内容は固定され、送り直しでは
+    // 写し直さぬ（saveFeeding）。停め忘れ（手動入力で開始時刻を保つ）は、画面が端末の時刻で
+    // 「HH:mm のまま保存します」と約束しておるゆえ写さぬ（handleManualRecord）
+    // 照合で見つからず内容を直した後の停止は、最初の停止で送った開始時刻を持ち越す（同じ id の同じ計測。
+    // 写し直すと、直す間に時計が変わった・サンプルが古くなった時に別の時刻へずれる。v8rc2 INFO・N3-02）
+    const kept =
+      keptOriginRef.current && keptOriginRef.current.clientId === clientIdRef.current
+        ? keptOriginRef.current
+        : null
+    // 持ち越すのは「時刻を送らぬ」ことも含む（`??` で写し直さぬ。handleManualRecord と同じ凍結の規則）
+    const loggedAt = kept ? kept.loggedAt : (toServerIso(startedAt) ?? startedAt.toISOString())
     if (cycle.sidesUnknown) {
       // 旧形式から復元したサイクル: 配分は復元不能ゆえ合計のみで保存（従来形）
       void saveFeeding({
         durationSec: clampFeedingDurationSec(elapsedSeconds),
-        loggedAt: startedAt.toISOString(),
+        loggedAt,
       })
       return
     }
@@ -733,10 +1052,15 @@ export function FeedingTimer({
       cycle.rightSec + (cycle.side === "breast_right" ? banked : 0),
       cycle.side,
     )
-    void saveFeeding({ sides, loggedAt: startedAt.toISOString() })
+    void saveFeeding({ sides, loggedAt })
   }
 
   function handleManualRecord() {
+    // 結果の分からぬ送信が在れば、押下時刻を作り直さず固定した内容を送り直す（A2）
+    if (submissionRef.current) {
+      void sendSubmission(submissionRef.current)
+      return
+    }
     const leftTotal = manualLeftMin * 60 + manualLeftSec
     const rightTotal = manualRightMin * 60 + manualRightSec
     // resolve 前の生値で 0 を弾く（resolveBreastSideSeconds は 0 を 1 秒へ持ち上げる
@@ -751,8 +1075,22 @@ export function FeedingTimer({
     // シートを開いた時刻（startedAt）でもない — 入力に手間取るほど押下時刻からずれる。
     // 停め忘れの復元では本当の開始時刻（端末保存の startedAt）を保つ — 押下時刻にすると
     // 数時間前の授乳が今の時刻に化け、最終授乳・目安の起点が嘘になる。
+    //
+    // 押した時刻は**端末の時計で作らぬ**（2026-10-28 N3）: 進んだ時計は「未来の時刻」で拒まれ、
+    // 遅れた時計は黙って誤った時刻で残る。サーバの時刻のサンプルと経過の時計で推定し
+    // （`@/lib/domain/server-clock`）、推定できねば時刻を送らずサーバの受信時刻で記録する。
+    // どちらでも送信内容として固定し、送り直しでは作り直さぬ（saveFeeding の注記）。
+    // 照合で見つからず内容を直した後の押下は、最初の押下の時刻を持ち越す（handleEditAfterNotFound）
+    const kept =
+      keptOriginRef.current && keptOriginRef.current.clientId === clientIdRef.current
+        ? keptOriginRef.current
+        : null
     const loggedAt =
-      stale && startedAt ? startedAt.toISOString() : new Date().toISOString()
+      stale && startedAt
+        ? startedAt.toISOString()
+        : kept
+          ? kept.loggedAt
+          : (serverNowIso() ?? undefined)
     void saveFeeding({ sides, loggedAt })
   }
 
@@ -773,6 +1111,10 @@ export function FeedingTimer({
   function discardTimer(message: string) {
     clearPersistedTimer()
     clientIdRef.current = null
+    keptOriginRef.current = null
+    setSubmission(null)
+    setConflictLog(null)
+    setLookup("idle")
     setStartedAt(null)
     setStale(false)
     setConfirmingDiscard(false)
@@ -782,7 +1124,24 @@ export function FeedingTimer({
 
   /** 確認を経た明示の破棄。計測を捨てる唯一の経路（誤って開いた直後の取り消しを除く）。 */
   function handleConfirmDiscard() {
-    discardTimer("授乳の計測を破棄しました（記録していません）")
+    // 送った後の破棄は「記録していない」と言えぬ（応答の失われた保存が成立しておりうる）
+    discardTimer(
+      submissionRef.current
+        ? "授乳の計測を閉じました。記録されているかはタイムラインで確かめてください"
+        : "授乳の計測を破棄しました（記録していません）",
+    )
+  }
+
+  /** 同じ id で別の内容が記録済みだった: 記録は既に在るゆえ、その確定行で終える。 */
+  function handleFinishWithStored() {
+    const pending = submissionRef.current
+    if (!pending) return
+    if (conflictLog) {
+      finishRecorded(conflictLog, pending.payload, { reconciled: true })
+      return
+    }
+    // 再読込の後は確定行を持たぬ。読み直して終える
+    void checkSubmission(pending)
   }
 
   /**
@@ -797,14 +1156,17 @@ export function FeedingTimer({
    */
   function handleOpenChange(isOpen: boolean) {
     if (!isOpen && startedAt && !isSavingRef.current) {
-      if (isAccidentalOpen(startedAt, Date.now(), cycle)) {
+      // 送った後は「誤って開いた直後」の取り消しをせぬ（記録が成立しておりうる操作を無言で捨てぬ）
+      if (!submissionRef.current && isAccidentalOpen(startedAt, Date.now(), cycle)) {
         discardTimer("授乳の計測を取り消しました")
         return
       }
       toast.success(
-        stale
-          ? "計測は残っています。「授乳の計測が残っています」から記録か破棄を選べます"
-          : "計測は続いています。「授乳を計測中」から戻れます",
+        submissionRef.current
+          ? "保存の確認は残っています。「授乳の保存を確認中」から戻れます"
+          : stale
+            ? "計測は残っています。「授乳の計測が残っています」から記録か破棄を選べます"
+            : "計測は続いています。「授乳を計測中」から戻れます",
       )
     }
     onOpenChange(isOpen)
@@ -819,7 +1181,7 @@ export function FeedingTimer({
   // 判定）。開いて 1 分未満・未操作の計測は誤って開いたものとして取り消され、それ以外は
   // 端末に残ってチップから戻れる。表示と結果を食い違わせぬため、判定は同じ関数で行う
   const closeDiscardsTimer =
-    !!startedAt && isAccidentalOpen(startedAt, now.getTime(), cycle)
+    !!startedAt && !submission && isAccidentalOpen(startedAt, now.getTime(), cycle)
 
   return (
     <Sheet open={open} onOpenChange={handleOpenChange}>
@@ -830,7 +1192,9 @@ export function FeedingTimer({
         <SheetHeader className="pb-2">
           <SheetTitle>授乳を記録</SheetTitle>
           <SheetDescription>
-            {stale
+            {submission
+              ? "記録を送りました。保存できたかを確かめるまで、送った内容は変えられません"
+              : stale
               ? "停め忘れた計測です。授乳にかかった時間と左右の回数を入れて記録するか、破棄してください"
               : mode === "timer"
                 ? "吸わせる側を替えたら、その側を押してください。停止すると1回の授乳として記録します"
@@ -842,7 +1206,7 @@ export function FeedingTimer({
             破棄の確認が下で切れて押せなくならぬよう、記録シート・日記シートと同じ型。 */}
         <div className="flex flex-col items-center gap-5 overflow-y-auto px-4 pt-2 pb-6">
           {/* 停め忘れの案内。黙って捨てず、本当の開始時刻を保ったまま記録か破棄を選ばせる */}
-          {stale && startedAt && (
+          {stale && startedAt && !submission && (
             <div
               role="status"
               className="flex w-full flex-col gap-1 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm"
@@ -854,6 +1218,16 @@ export function FeedingTimer({
               <p className="text-xs text-muted-foreground">
                 開始時刻は {staleStartLabel} のまま保存します。経過時間は授乳時間として使いません。
               </p>
+              {/* 2026-10-28 製品判断: 停め忘れの開始時刻は推し量って書き換えぬ（開始の時のサーバ時刻の
+                  手がかりが無い）。今のサンプルが端末の時計のずれを示す時だけ、その時刻が端末の時計に
+                  よるものでずれておりうることと、保存の後に直せることを伝える */}
+              {deviceSkewMs !== null && (
+                <p className="text-xs text-amber-800 dark:text-amber-200">
+                  この端末の時計は約{Math.max(1, Math.round(Math.abs(deviceSkewMs) / 60_000))}分
+                  {deviceSkewMs > 0 ? "進んで" : "遅れて"}います。開始時刻 {staleStartLabel}
+                  はこの端末の時計で測ったため、実際とずれている可能性があります。記録した後、タイムラインの記録を開いて開始時刻を直せます。
+                </p>
+              )}
             </div>
           )}
 
@@ -861,7 +1235,7 @@ export function FeedingTimer({
               左右の釦（橙の塗り）と見間違えぬよう、控えめなタブの見た目にする — 以前は同じ
               セグメントが縦に 2 段並び、活性の橙が 2 つ見えて「どちらが吸わせ中の側か」を
               夜間に読み違えうった */}
-          {!stale && (
+          {!stale && !submission && (
             <div
               role="group"
               aria-label="入力方法"
@@ -885,7 +1259,92 @@ export function FeedingTimer({
             </div>
           )}
 
-          {mode === "timer" ? (
+          {submission ? (
+            // 記録を押した後、結果が確かめられておらぬ（A2）。入力は出さず、固定した送信内容と
+            // 次の操作だけを見せる — 直した値を同じ id で送るとサーバに拒まれ、新しい id で
+            // 送ると本当の二重記録になるゆえ、確かめるまで内容は変えさせぬ（AC05）
+            <>
+              <div
+                role="status"
+                className="flex w-full flex-col gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-sm"
+              >
+                <p className="flex items-start gap-2 font-medium text-amber-800 dark:text-amber-200">
+                  <TriangleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                  {submission.phase === "sending"
+                    ? slowSend
+                      ? "応答を待っています。保存できたかは下の「記録されたか確かめる」で確かめられます。"
+                      : "記録を送っています"
+                    : submission.phase === "conflict"
+                      ? SAVE_CONFLICT_MESSAGE
+                      : SAVE_UNKNOWN_MESSAGE}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  送った内容: {describeSubmission(submission.payload)}
+                </p>
+                {lookup === "checking" && (
+                  <p className="text-xs text-muted-foreground">記録を確かめています</p>
+                )}
+                {lookup === "notFound" && (
+                  <p className="text-xs text-muted-foreground">
+                    まだ記録は見つかりません。同じ内容でもう一度送っても二重にはなりません。内容を直して記録することもできます。
+                  </p>
+                )}
+                {lookup === "error" && (
+                  <p className="text-xs text-muted-foreground">
+                    記録を確かめられませんでした。通信状況を確認してください。
+                  </p>
+                )}
+              </div>
+              {submission.phase === "conflict" ? (
+                <Button
+                  onClick={handleFinishWithStored}
+                  disabled={isSaving || lookup === "checking"}
+                  size="lg"
+                  className="min-h-14 w-full rounded-2xl text-lg font-semibold"
+                >
+                  <Check size={20} />
+                  記録済みの内容で閉じる
+                </Button>
+              ) : (
+                <div className="flex w-full flex-col gap-2">
+                  <Button
+                    onClick={() => void sendSubmission(submission)}
+                    disabled={isSaving}
+                    size="lg"
+                    className="min-h-14 w-full rounded-2xl text-lg font-semibold"
+                  >
+                    {isSaving ? (
+                      <>
+                        <Loader2 className="animate-spin" />
+                        記録中...
+                      </>
+                    ) : (
+                      SAVE_RESEND_LABEL
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => void checkSubmission(submission)}
+                    // 送信中でも、応答が遅い時は照合（GET）を先に使える
+                    disabled={(isSaving && !slowSend) || lookup === "checking"}
+                    className="min-h-11 w-full rounded-xl"
+                  >
+                    記録されたか確かめる
+                  </Button>
+                  {lookup === "notFound" && (
+                    <Button
+                      variant="ghost"
+                      onClick={handleEditAfterNotFound}
+                      disabled={isSaving}
+                      className="min-h-11 w-full rounded-xl"
+                    >
+                      内容を直して記録し直す
+                    </Button>
+                  )}
+                </div>
+              )}
+            </>
+          ) : mode === "timer" ? (
             <>
               {/* 経過時間（合計）。最も大きく出す */}
               <div className="flex flex-col items-center">
@@ -1085,7 +1544,9 @@ export function FeedingTimer({
               className="flex w-full flex-col gap-2 border-t pt-3"
             >
               <p className="text-sm text-destructive">
-                この授乳を記録せずに破棄しますか？開始時刻・左右の回数と時間は元に戻せません。
+                {submission
+                  ? "この計測を閉じますか？送った記録が保存されている場合、記録は消えません（タイムラインで確かめてください）。送り直しはできなくなります。"
+                  : "この授乳を記録せずに破棄しますか？開始時刻・左右の回数と時間は元に戻せません。"}
               </p>
               <div className="flex items-center justify-end gap-2">
                 <Button
@@ -1120,7 +1581,9 @@ export function FeedingTimer({
                 >
                   {closeDiscardsTimer
                     ? "閉じる（開いたばかりの計測は取り消し）"
-                    : stale
+                    : submission
+                      ? "閉じる（保存の確認は残ります）"
+                      : stale
                       ? "閉じる（計測は残ります）"
                       : "閉じる（計測は続きます）"}
                 </button>

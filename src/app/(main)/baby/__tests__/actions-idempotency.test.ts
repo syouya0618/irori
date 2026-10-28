@@ -75,6 +75,8 @@ const STORED_BOTTLE_ROW = {
   memo: null,
   logged_at: "2026-10-19T03:00:00+00:00",
   logged_by: "user-1",
+  // DB が振った版（マイクロ秒つきの表記のまま返すこと）
+  updated_at: "2026-10-19T03:00:00.123456+00:00",
 }
 
 beforeEach(() => {
@@ -88,7 +90,7 @@ describe("record* の冪等 id（P2-08）", () => {
     const { client, insert } = makeSupabase({ insert: { data: { id: CLIENT_ID }, error: null } })
     setContext(client)
     const result = await recordFeeding({ feedingType: "bottle", clientId: CLIENT_ID })
-    expect(result).toEqual({ error: null, id: CLIENT_ID })
+    expect(result).toMatchObject({ error: null, id: CLIENT_ID, log: { id: CLIENT_ID } })
     expect(insertedRow(insert)).toMatchObject({ id: CLIENT_ID, household_id: HOUSEHOLD, logged_by: "user-1" })
   })
 
@@ -115,7 +117,15 @@ describe("record* の冪等 id（P2-08）", () => {
     })
     setContext(client)
     const result = await recordFeeding({ feedingType: "bottle", clientId: CLIENT_ID })
-    expect(result).toEqual({ error: null, id: CLIENT_ID, replayed: true })
+    // 応答を失った保存を確かめた画面が、手元の値でなくサーバの確定行（版・時刻）で成功を組めるよう
+    expect(result).toEqual({
+      error: null,
+      id: CLIENT_ID,
+      replayed: true,
+      updatedAt: STORED_BOTTLE_ROW.updated_at,
+      loggedAt: STORED_BOTTLE_ROW.logged_at,
+      log: STORED_BOTTLE_ROW,
+    })
     expect(insert).toHaveBeenCalledTimes(1)
     // 読み直しは id と世帯の両方で絞り、内容を比べるため列一式を読む
     expect(lookupSelect).toHaveBeenCalledWith(expect.stringContaining("feeding_type"))
@@ -134,6 +144,11 @@ describe("record* の冪等 id（P2-08）", () => {
     const result = await recordFeeding({ feedingType: "bottle", amountMl: 140, clientId: CLIENT_ID })
     expect(result.id).toBeNull()
     expect(result.error).toContain("別の内容で記録済み")
+    // 衝突として分類し、自世帯の確定行を返す（画面は「記録は在る」を示せる）
+    expect(result).toMatchObject({
+      failure: "conflict",
+      conflict: { current: { id: CLIENT_ID, amount_ml: 120 } },
+    })
     expect(revalidatePath).not.toHaveBeenCalled()
   })
 
@@ -151,7 +166,7 @@ describe("record* の冪等 id（P2-08）", () => {
       loggedAt: "2026-10-19T03:00:00.000Z",
       clientId: CLIENT_ID,
     })
-    expect(result).toEqual({ error: null, id: CLIENT_ID, replayed: true })
+    expect(result).toMatchObject({ error: null, id: CLIENT_ID, replayed: true })
   })
 
   it("対照: 送った logged_at が既存行と違う時刻なら不一致", async () => {
@@ -178,6 +193,8 @@ describe("record* の冪等 id（P2-08）", () => {
     const result = await recordFeeding({ feedingType: "bottle", clientId: CLIENT_ID })
     expect(result.error).toBeTruthy()
     expect(result.id).toBeNull()
+    // この id では書けぬ（行は書かれておらぬ）と断定できる
+    expect(result).toMatchObject({ failure: "rejected" })
     expect(revalidatePath).not.toHaveBeenCalled()
     expect(mockedLog).toHaveBeenCalledWith(
       "baby",
@@ -196,6 +213,30 @@ describe("record* の冪等 id（P2-08）", () => {
     const result = await recordFeeding({ feedingType: "bottle", clientId: CLIENT_ID })
     expect(result.error).toBeTruthy()
     expect(result.id).toBeNull()
+    // 自世帯に同じ id の行が在るかもしれぬ（確かめられなんだ）ゆえ「書かれておらぬ」とは言わぬ
+    expect(result).toMatchObject({ failure: "unknown" })
+  })
+
+  it("失敗の分類: SQLSTATE を持つ DB の拒否は rejected、code の無い通信の失敗は unknown", async () => {
+    for (const [error, failure] of [
+      [{ message: "check", code: "23514" }, "rejected"],
+      [{ message: "jwt expired", code: "PGRST301" }, "rejected"],
+      [{ message: "TypeError: fetch failed", code: "" }, "unknown"],
+      [{ message: "timeout" }, "unknown"],
+    ] as const) {
+      const { client } = makeSupabase({ insert: { data: null, error } })
+      setContext(client)
+      const result = await recordFeeding({ feedingType: "bottle", clientId: CLIENT_ID })
+      expect(result).toMatchObject({ id: null, failure })
+    }
+  })
+
+  it("DB に届く前の検証・認証の失敗は rejected（送り直しても同じ結果。入力を直してよい）", async () => {
+    const invalid = await recordFeeding({ feedingType: "bottle", clientId: "not-a-uuid" })
+    expect(invalid).toMatchObject({ id: null, failure: "rejected" })
+    getAuthContext.mockResolvedValue({ error: "認証されていません", reason: "unauthenticated", context: null })
+    const unauth = await recordFeeding({ feedingType: "bottle", clientId: CLIENT_ID })
+    expect(unauth).toMatchObject({ id: null, failure: "rejected", error: "認証されていません" })
   })
 
   it("clientId 無しの 23505 は再試行とみなさず通常の失敗（対照）", async () => {
@@ -219,7 +260,7 @@ describe("record* の冪等 id（P2-08）", () => {
       const { client, insert } = makeSupabase({ insert: { data: { id: CLIENT_ID }, error: null } })
       setContext(client)
       const result = await run()
-      expect(result).toEqual({ error: null, id: CLIENT_ID })
+      expect(result).toMatchObject({ error: null, id: CLIENT_ID, log: { id: CLIENT_ID } })
       expect(insertedRow(insert).id).toBe(CLIENT_ID)
     }
   })

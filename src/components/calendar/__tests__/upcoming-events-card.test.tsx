@@ -18,7 +18,9 @@ import type { ViFn } from "@/test-utils/supabase-realtime-mock"
 import {
   resetRefetchMockState,
   setRefetchData,
+  setRefetchErrorOnce,
 } from "@/test-utils/supabase-realtime-mock"
+import * as React from "react"
 import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
 import { shiftYmd, todayJstString } from "@/lib/utils/date-jst"
 
@@ -225,6 +227,130 @@ describe("UpcomingEventsCard", () => {
     await waitFor(() =>
       expect(screen.getByText("あとから入った予定")).toBeInTheDocument(),
     )
+  })
+})
+
+// 2026-10-27 C1: 取得失敗を「予定なし」と区別する / C4: 前回の確認の後の追加・更新 / C3: 畳む
+describe("UpcomingEventsCard / 取得失敗・引き継ぎの印・折り畳み", () => {
+  beforeEach(() => {
+    cleanup()
+    resetRefetchMockState(mockState)
+  })
+
+  it("初回の取得に失敗していれば、0 件の null ではなく失敗と再試行を出す（予定がないとは言わぬ）", async () => {
+    render(
+      <UpcomingEventsCard initialEvents={[]} householdId="h1" initialToday={TODAY} initialLoadFailed />,
+    )
+    const alert = screen.getByRole("alert")
+    expect(alert).toHaveTextContent("予定を読み込めませんでした（予定がないとは限りません）")
+
+    // 再試行が通って空なら、空として null に戻る（対照）
+    setRefetchData(mockState, [])
+    await act(async () => {
+      screen.getByRole("button", { name: "予定をもう一度読み込む" }).click()
+    })
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument())
+  })
+
+  it("表示中の予定がある時の取り直しの失敗は、予定を残したまま「最新を確認できません」と出す", async () => {
+    render(
+      <UpcomingEventsCard
+        initialEvents={[timedEvent({ id: "e1", title: "健診" })]}
+        householdId="h1"
+        initialToday={TODAY}
+      />,
+    )
+    setRefetchErrorOnce(mockState, { message: "upstream 503" })
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"))
+    })
+    await waitFor(() => expect(screen.getByText(/最新を確認できません/)).toBeInTheDocument())
+    expect(screen.getByText("健診")).toBeInTheDocument()
+  })
+
+  it("持ち主を渡すと、この端末で見た予定の id と版で印を出す（時刻の閾値で前後を断定せぬ。独立レビュー 2 周）", async () => {
+    localStorage.clear()
+    const owner = { userId: "u1", householdId: "h1" }
+    const KEY = "irori:handoff-events-seen:v2:u1:h1"
+    // 前回この端末で見たのは o1（版 06-30）と u1（版 06-20）。育児ログの印は無関係
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({
+        o1: { u: "2026-06-30T00:00:00Z", d: TODAY },
+        u1: { u: "2026-06-20T00:00:00Z", d: TODAY },
+      }),
+    )
+    localStorage.setItem("irori:handoff-seen:v1:u1:h1", "2026-06-01T00:00:00Z")
+    const view = render(
+      <UpcomingEventsCard
+        initialEvents={[
+          // 前回の閲覧より前に作られたが、窓の外にいて見ておらぬ予定。時刻の前後は言わず「初めて表示」
+          timedEvent({ id: "n1", title: "窓に入った予定", updated_at: "2026-06-01T00:00:00Z" }),
+          timedEvent({ id: "o1", title: "前からの予定", updated_at: "2026-06-30T00:00:00Z" }),
+          timedEvent({ id: "u1", title: "直された予定", updated_at: "2026-07-02T00:00:00Z" }),
+          timedEvent({ id: "g1", title: "Google の予定", source: "google", updated_at: "2026-07-03T00:00:00Z" }),
+        ]}
+        householdId="h1"
+        initialToday={TODAY}
+        seenOwner={owner}
+      />,
+    )
+    await waitFor(() => expect(screen.getByText("この端末で初めて表示")).toBeInTheDocument())
+    expect(screen.getByText("この端末で初めて表示").closest("li")).toHaveTextContent("窓に入った予定")
+    expect(screen.getByText("前回の確認後に更新").closest("li")).toHaveTextContent("直された予定")
+    expect(screen.queryByText(/前回の確認後に追加/)).toBeNull()
+    view.unmount()
+    // 離れる時に、見えておる irori の予定（id と版）を足して残す（Google は数えぬ・育児ログの印には触れぬ）
+    const saved = JSON.parse(localStorage.getItem(KEY)!)
+    expect(Object.keys(saved).sort()).toEqual(["n1", "o1", "u1"])
+    expect(saved.u1.u).toBe("2026-07-02T00:00:00Z")
+    expect(localStorage.getItem("irori:handoff-seen:v1:u1:h1")).toBe("2026-06-01T00:00:00Z")
+  })
+
+  it("初めての確認（記録が無い）では印を出さず、畳んでおる間は「見た」と残さぬ", async () => {
+    localStorage.clear()
+    const owner = { userId: "u1", householdId: "h1" }
+    const view = render(
+      <UpcomingEventsCard
+        initialEvents={[timedEvent({ id: "n1", title: "予定", updated_at: "2026-07-02T00:00:00Z" })]}
+        householdId="h1"
+        initialToday={TODAY}
+        seenOwner={owner}
+        folded
+        onFoldChange={() => {}}
+      />,
+    )
+    expect(screen.queryByText(/この端末で初めて表示|前回の確認後に更新/)).toBeNull()
+    view.unmount()
+    expect(localStorage.getItem("irori:handoff-events-seen:v2:u1:h1")).toBeNull()
+  })
+
+  it("畳むと件数だけの一行になり、開けば戻る（リンクは 1 本のまま）", () => {
+    function Harness() {
+      const [folded, setFolded] = React.useState(false)
+      return (
+        <UpcomingEventsCard
+          initialEvents={[timedEvent({ id: "e1", title: "健診" })]}
+          householdId="h1"
+          initialToday={TODAY}
+          folded={folded}
+          onFoldChange={setFolded}
+        />
+      )
+    }
+    render(<Harness />)
+    expect(screen.getAllByRole("link")).toHaveLength(1)
+    act(() => {
+      screen.getByRole("button", { name: "今日・明日の予定を畳む" }).click()
+    })
+    expect(screen.queryByText("健診")).not.toBeInTheDocument()
+    const row = screen.getByRole("button", { name: /今日・明日の予定/ })
+    expect(row).toHaveAttribute("aria-expanded", "false")
+    expect(row).toHaveTextContent("1件")
+    act(() => {
+      row.click()
+    })
+    expect(screen.getByText("健診")).toBeInTheDocument()
   })
 })
 

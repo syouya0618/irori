@@ -23,6 +23,7 @@ import {
 const monthFetch = vi.hoisted(() => ({
   queue: [] as Array<{ data: unknown[] | null; error: unknown }>,
   calls: 0,
+  signals: [] as AbortSignal[],
 }))
 
 vi.mock("@/lib/supabase/client", () => {
@@ -36,10 +37,14 @@ vi.mock("@/lib/supabase/client", () => {
           eq: () => ({
             lte: () => ({
               gte: () => ({
-                order: () => {
-                  monthFetch.calls += 1
-                  return Promise.resolve(monthFetch.queue.shift() ?? { data: [], error: null })
-                },
+                // 取得には期限とキャンセル（abortSignal）が付く（2026-10-27）
+                order: () => ({
+                  abortSignal: (signal: AbortSignal) => {
+                    monthFetch.calls += 1
+                    monthFetch.signals.push(signal)
+                    return Promise.resolve(monthFetch.queue.shift() ?? { data: [], error: null })
+                  },
+                }),
               }),
             }),
           }),
@@ -61,11 +66,12 @@ vi.mock("@/lib/supabase/log-error", () => ({ logSupabaseError: vi.fn() }))
 vi.mock("sonner", async () => {
   const { vi: viMod } = await import("vitest")
   return {
-    toast: { error: viMod.fn(), success: viMod.fn(), warning: viMod.fn() },
+    toast: { error: viMod.fn(), success: viMod.fn(), warning: viMod.fn(), info: viMod.fn() },
   }
 })
 
 import { CalendarView } from "../calendar-view"
+import { resetPendingCreatesPageStateForTest } from "../calendar-pending-creates"
 import type { CalendarEventRecord } from "../use-month-events"
 import { formatDayJa } from "../calendar-display"
 import {
@@ -110,6 +116,10 @@ beforeEach(() => {
   vi.clearAllMocks()
   monthFetch.queue = []
   monthFetch.calls = 0
+  monthFetch.signals = []
+  localStorage.clear()
+  // 試験の間の再読込: ページの寿命の状態（送信中・端末に書けなんだ予定の作成の控え）も空にする
+  resetPendingCreatesPageStateForTest()
 })
 
 describe("読み込み状態（読めなかった月を空と偽らぬ）", () => {
@@ -193,8 +203,10 @@ describe("保存の結果を言い分け、失敗した入力を失わせぬ", (
   })
 
   it("作成に失敗したら入力を握り、もう一度開くと復元する", async () => {
+    // サーバが「作られておらぬ」と分類した失敗（contract-v1 §2 の failure: rejected）
     vi.mocked(createCalendarEvent).mockResolvedValueOnce({
       error: "予定の作成に失敗しました。もう一度お試しください。",
+      failure: "rejected",
     } as never)
     render(<CalendarView {...base} initialEvents={[]} />)
     openNewAndSave("失敗する予定")
@@ -241,7 +253,7 @@ describe("保存の結果を言い分け、失敗した入力を失わせぬ", (
     expect((screen.getByLabelText("タイトル") as HTMLInputElement).value).toBe("検診（直し）")
   })
 
-  it("家族が先に直した（版が変わった）予定には、古い入力を戻さず捨てる", async () => {
+  it("家族が先に直した（版が変わった）予定には、古い入力をフォームへ戻さず読むだけで見せる", async () => {
     vi.mocked(updateCalendarEvent).mockResolvedValueOnce({
       error: "予定の更新に失敗しました。もう一度お試しください。",
     })
@@ -265,13 +277,19 @@ describe("保存の結果を言い分け、失敗した入力を失わせぬ", (
     fireEvent.click(within(agenda()).getByText("検診（家族）"))
     expect((screen.getByLabelText("タイトル") as HTMLInputElement).value).toBe("検診（家族）")
     expect(screen.queryByText("保存できなかった入力を復元しました。")).not.toBeInTheDocument()
-    expect(toast.warning).toHaveBeenCalledWith(expect.stringMatching(/先に更新されたため破棄/))
+    // 2026-10-27: 以前は「先に更新されたため破棄」で捨てておった。今は捨てず、版が違う旨と
+    // 残っていた入力を読むだけで見せる（フォームの値は家族の最新のまま = 自動で上書きせぬ）
+    const stale = screen.getByText("この予定は別の端末で更新されています。下は最新の内容です。")
+      .closest("[role=status]") as HTMLElement
+    expect(within(stale).getByText("検診（古い入力）")).toBeInTheDocument()
+    expect(toast.warning).not.toHaveBeenCalled()
   })
 
   it("復元した新規の入力を破棄しても、裏で失敗した別の予定の入力は消さぬ", async () => {
     // 1. 新規作成が失敗 → "new" の入力を握る
     vi.mocked(createCalendarEvent).mockResolvedValueOnce({
       error: "予定の作成に失敗しました。もう一度お試しください。",
+      failure: "rejected",
     } as never)
     // 2. 既存予定 e1 の更新は保留し、後で失敗させる
     let failUpdate!: (v: { error: string }) => void
@@ -288,8 +306,13 @@ describe("保存の結果を言い分け、失敗した入力を失わせぬ", (
     fireEvent.change(screen.getByLabelText("タイトル"), { target: { value: "検診（直し）" } })
     fireEvent.click(screen.getByRole("button", { name: "更新" }))
 
-    // 3. 復元した新規シートを開いておる間に、e1 の保存が失敗して入力を握り直す
-    fireEvent.click(screen.getByRole("button", { name: /^\d+月\d+日（.）に予定を追加$/ }))
+    // 3. 復元した新規シートを開いておる間に、e1 の保存が失敗して入力を握り直す（v9: 保存できなかった
+    // 作成は「保存を確認中の予定」の「入力に戻る」で開く）
+    fireEvent.click(
+      within(screen.getByRole("region", { name: "予定の追加の確認" })).getByRole("button", {
+        name: "入力に戻る",
+      }),
+    )
     expect(screen.getByText("保存できなかった入力を復元しました。")).toBeInTheDocument()
     failUpdate({ error: "予定の更新に失敗しました。もう一度お試しください。" })
     // シートが開いておる間は背景が inert ゆえ、失敗の通知で待つ

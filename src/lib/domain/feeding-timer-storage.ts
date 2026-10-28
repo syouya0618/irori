@@ -36,6 +36,98 @@ export interface PersistedTimerState {
    * サーバが主キー重複を「既に記録済み」として同じ id を返す。タイマー開始時に 1 回だけ作る。
    */
   clientId?: string
+  /** 計測を始めた世帯（2026-10-27）。別世帯へ切り替えた端末では復元せぬ。旧形式には無い。 */
+  householdId?: string
+  /**
+   * 「停止して記録」/「記録する」を押した時に固定した送信内容（2026-10-27 大型更新 A2）。
+   * 結果が不明な間（応答の喪失・通信断）は、再送も再読込後の照合もこの内容をそのまま使う —
+   * 押し直しのたびに開始時刻・経過秒を作り直すと、同じ id に別の内容を送ってサーバの照合に
+   * 拒まれる（監査 F01）。成功の確定・確認済みの破棄で計測ごと消える。
+   */
+  submission?: PersistedFeedingSubmission
+}
+
+/**
+ * 固定した授乳の送信内容。`payload` は recordFeeding の入力そのもの（clientId を含む）。
+ * phase は端末に残す時点の状態: sending のまま再読込されたものは unknown として扱う。
+ */
+export interface PersistedFeedingSubmission {
+  firstAttemptAt: string
+  phase: "sending" | "unknown" | "conflict"
+  payload: PersistedFeedingPayload
+}
+
+export interface PersistedFeedingPayload {
+  feedingType: "breast"
+  breastLeftCount: number
+  breastRightCount: number
+  breastStartSide: "left" | "right" | null
+  breastLeftSec?: number
+  breastRightSec?: number
+  durationSec?: number
+  /**
+   * 開始時刻。タイマーは開始時刻、手動記録は押した時刻をサーバの時計で推定した値（2026-10-28 N3）。
+   * **無い**のは、手動記録で押した時刻をサーバの時計で推定できなかった時 — サーバが受け取った時刻
+   * （DB の now()）で記録する。無いことも送信内容の一部として固定する（再送で後から時刻を足すと、
+   * 先の送信が届いておった時に同じ id・別の内容となり照合に拒まれる）。
+   */
+  loggedAt?: string
+  clientId: string
+}
+
+function isNonNegativeInt(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) >= 0
+}
+
+/**
+ * 端末保存の送信内容を検証する。形が崩れたもの（手で弄られた・旧版の書きかけ）は送らず
+ * 捨てる（null）— 壊れた内容を「同じ内容の再送」として送ると、サーバが拒むか、もっと悪くは
+ * 別の内容で記録してしまう。捨てても計測そのものは残り、利用者は改めて記録できる。
+ */
+export function parsePersistedSubmission(value: unknown): PersistedFeedingSubmission | null {
+  if (typeof value !== "object" || value === null) return null
+  const s = value as Record<string, unknown>
+  if (typeof s.firstAttemptAt !== "string" || Number.isNaN(new Date(s.firstAttemptAt).getTime())) {
+    return null
+  }
+  if (s.phase !== "sending" && s.phase !== "unknown" && s.phase !== "conflict") return null
+  const p = s.payload as Record<string, unknown> | null
+  if (typeof p !== "object" || p === null) return null
+  if (p.feedingType !== "breast") return null
+  if (!isNonNegativeInt(p.breastLeftCount) || !isNonNegativeInt(p.breastRightCount)) return null
+  if (p.breastStartSide !== "left" && p.breastStartSide !== "right" && p.breastStartSide !== null) {
+    return null
+  }
+  const hasSides = p.breastLeftSec !== undefined || p.breastRightSec !== undefined
+  if (hasSides) {
+    if (!isNonNegativeInt(p.breastLeftSec) || !isNonNegativeInt(p.breastRightSec)) return null
+    if (p.durationSec !== undefined) return null
+  } else if (!isNonNegativeInt(p.durationSec)) {
+    return null
+  }
+  // 無い = サーバの受信時刻で記録する送信内容（上の注記）。在るなら妥当な時刻に限る
+  if (
+    p.loggedAt !== undefined &&
+    (typeof p.loggedAt !== "string" || Number.isNaN(new Date(p.loggedAt).getTime()))
+  ) {
+    return null
+  }
+  if (typeof p.clientId !== "string" || p.clientId.length === 0) return null
+  return {
+    firstAttemptAt: s.firstAttemptAt,
+    phase: s.phase,
+    payload: {
+      feedingType: "breast",
+      breastLeftCount: p.breastLeftCount,
+      breastRightCount: p.breastRightCount,
+      breastStartSide: p.breastStartSide,
+      ...(hasSides
+        ? { breastLeftSec: p.breastLeftSec as number, breastRightSec: p.breastRightSec as number }
+        : { durationSec: p.durationSec as number }),
+      ...(typeof p.loggedAt === "string" ? { loggedAt: p.loggedAt } : {}),
+      clientId: p.clientId,
+    },
+  }
 }
 
 export function readPersistedTimer(): PersistedTimerState | null {
@@ -50,7 +142,17 @@ export function readPersistedTimer(): PersistedTimerState | null {
     if (state.feedingType !== "breast_left" && state.feedingType !== "breast_right") {
       return null
     }
-    return state as PersistedTimerState
+    // 送信内容は形を確かめ直したものだけを残す（崩れておれば送信内容だけ捨て、計測は残す）
+    const { submission: rawSubmission, ...rest } = state
+    const submission =
+      rawSubmission === undefined ? null : parsePersistedSubmission(rawSubmission)
+    if (rawSubmission !== undefined && submission === null) {
+      console.warn("[feeding-timer] 端末保存の送信内容が壊れていたため送信内容だけ捨てた")
+    }
+    return {
+      ...(rest as PersistedTimerState),
+      ...(submission ? { submission } : {}),
+    }
   } catch {
     return null
   }
@@ -94,4 +196,43 @@ export function belongsToUser(
   userId: string,
 ): boolean {
   return state.userId === undefined || state.userId === userId
+}
+
+/**
+ * 保存されたタイマーが今の利用者・世帯のものか（2026-10-27）。世帯を持たぬ旧形式は利用者だけで
+ * 判じる（belongsToUser と同じ理由）。世帯を持つなら一致を要する — 同じ利用者が世帯を移った
+ * 端末で、前の世帯の計測・送信内容を今の世帯へ記録せぬ。
+ */
+/**
+ * ダッシュボードのチップ用の要約（シートを開く前・再読込の後）。持ち主と世帯が違う保存は null
+ * （他人・別世帯の計測を見せぬ）。pendingSave は「記録を押した後、保存を確かめられておらぬ」。
+ */
+export function summarizePersistedTimer(
+  state: PersistedTimerState | null,
+  owner: { userId: string; householdId: string },
+  nowMs: number,
+): {
+  startedAt: string
+  side: PersistedBreastSide
+  stale: boolean
+  pendingSave: boolean
+} | null {
+  if (!state || !belongsToOwner(state, owner)) return null
+  const pendingSave =
+    state.submission !== undefined && state.submission.payload.clientId === state.clientId
+  return {
+    startedAt: state.startedAt,
+    side: state.feedingType,
+    // 送った後の計測は停め忘れではない（送った内容は確定済み）
+    stale: !pendingSave && isTimerStale(state.startedAt, nowMs),
+    pendingSave,
+  }
+}
+
+export function belongsToOwner(
+  state: PersistedTimerState,
+  owner: { userId: string; householdId: string },
+): boolean {
+  if (!belongsToUser(state, owner.userId)) return false
+  return state.householdId === undefined || state.householdId === owner.householdId
 }

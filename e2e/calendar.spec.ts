@@ -325,7 +325,11 @@ test("時刻付き予定は終了時刻も表示し、アジェンダは終日�
   await expect(page.getByText("〜15:00")).toBeVisible()
 
   // 並び順: 終日 → 時刻付き(sortDayEvents)。時刻文字列でなくタイトルの DOM 順で検証。
-  const agenda = page.locator("section").filter({ hasText: "の予定" })
+  // その日のアジェンダ（見出し「{日付} の予定」で名前を持つ region。calendar-agenda.tsx）に絞る —
+  // 「の予定」の文字を含む section で拾うと、同じ画面の「直近の予定」（名前を持たぬ section と
+  // 見出しの釦。calendar-upcoming-list.tsx）まで数えてしまう
+  const agenda = page.getByRole("region", { name: /の予定$/ })
+  await expect(agenda).toHaveCount(1)
   const items = agenda.getByRole("button")
   await expect(items).toHaveCount(2)
   await expect(items.nth(0)).toContainText("終日イベント")

@@ -193,6 +193,36 @@ describe("BabyDashboard / 記録の楽観 append (B-03)", () => {
     expect(screen.queryByText("まだ記録がありません")).not.toBeInTheDocument()
   })
 
+  it("保存の後の確認（C1）: 記録の釦の下に、サーバが返した時刻の行を「記録済み」で出し、取り消せば消える", async () => {
+    const createdVersion = "2026-10-21T03:00:00.123456+00:00"
+    // DB が書いた logged_at（端末の時計ではない）。試験日から組み、取得窓の外へ経年させぬ。
+    const dbLoggedAt = `${TODAY}T11:58:00.000000+09:00`
+    mockedRecordDiaper.mockResolvedValue({
+      error: null,
+      id: "diaper-confirm-1",
+      updatedAt: createdVersion,
+      loggedAt: dbLoggedAt,
+    })
+    mockedDeleteLog.mockResolvedValue({ error: null })
+    render(<BabyDashboard {...defaultProps()} />)
+    expect(screen.queryByRole("status", { name: "直前に記録した内容" })).toBeNull()
+
+    fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
+    const confirm = await screen.findByRole("status", { name: "直前に記録した内容" })
+    expect(confirm.textContent).toContain("記録済み")
+    expect(confirm.textContent).toContain(formatTimeJst(dbLoggedAt))
+    expect(confirm.textContent).toContain("おしっこ")
+
+    // トーストの「取り消す」で行が消えれば、確認の表示も消える（別の状態を持たぬ）
+    const undo = lastUndoOnClick()
+    act(() => {
+      undo?.()
+    })
+    await waitFor(() =>
+      expect(screen.queryByRole("status", { name: "直前に記録した内容" })).toBeNull(),
+    )
+  })
+
   it("Undo（取り消す）成功で logs から除去され、今日のまとめが 0 に戻る", async () => {
     // 取り消しは作成に成功した時の版でしか消せぬ（版の無い応答には「取り消す」を出さぬ）
     const createdVersion = "2026-10-21T03:00:00.123456+00:00"
@@ -840,7 +870,11 @@ describe("BabyDashboard / 取り消しと Realtime 通知の競合", () => {
       updatedAt: "2026-10-21T03:05:00.000000+00:00",
       loggedAt: new Date().toISOString(),
     })
-    fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
+    // 取り消しの transition が閉じるまで釦は止まっておる（React 19: 集計の更新は isPending=false より先に
+    // 描かれる）。止まった釦への click は捨てられ、負荷の高い全件実行でだけ落ちた（2026-10-28）
+    const pee = screen.getByRole("button", { name: "おしっこ" })
+    await waitFor(() => expect(pee).not.toBeDisabled())
+    fireEvent.click(pee)
     await waitFor(() =>
       expect(within(summary()).getByText("おしっこ1・うんち0")).toBeInTheDocument(),
     )

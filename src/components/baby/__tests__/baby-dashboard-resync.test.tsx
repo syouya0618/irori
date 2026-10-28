@@ -871,3 +871,195 @@ describe("BabyDashboard / 日記の編集シートへ保持中の版を渡す（
     )
   })
 })
+
+// ---------------------------------------------------------------------------
+// 2026-10-27 C1 / C3 / C4: 範囲ごとの最新の確認・初回の取得失敗・折り畳み・引き継ぎ
+// ---------------------------------------------------------------------------
+
+describe("BabyDashboard / 最新を確認できぬ範囲（C1 鮮度・AC15）", () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it("日次の取り直しだけが失敗したら、記録を消さず「この日の記録」の最終確認と再試行を出す（週は最新扱いのまま）", async () => {
+    await renderDashboard({ initialLogs: [feedingA], initialWeeklyLogs: [feedingA] })
+    expect(screen.queryByText(/最新を確認できません/)).not.toBeInTheDocument()
+
+    await fireVisible()
+    await resolveLatestResync({
+      day: { data: null, error: { message: "upstream 503", code: "" } },
+      weekly: { data: [feedingA], error: null },
+    })
+
+    const notice = screen.getByText(/最新を確認できません/)
+    expect(notice.textContent).toBe("最新を確認できません: この日の記録（最終確認 12:00）")
+    expect(notice.textContent).not.toMatch(/週間/)
+    // 「記録なし」「0 件」と偽らぬ: 直前に取れた記録は出したまま
+    expect(screen.getByText("ROW_A")).toBeInTheDocument()
+    expect(screen.queryByText("まだ記録がありません")).not.toBeInTheDocument()
+
+    // 再試行で取り直し、成功すれば消える
+    fireEvent.click(screen.getByRole("button", { name: "最新をもう一度読み込む" }))
+    await flushResyncStart()
+    await resolveLatestResync({
+      day: { data: [feedingA], error: null },
+      weekly: { data: [feedingA], error: null },
+    })
+    expect(screen.queryByText(/最新を確認できません/)).not.toBeInTheDocument()
+  })
+
+  it("session が無く取り直せなんだ時も、最新を確認できぬと出す（anon の 0 行を真値にせぬ）", async () => {
+    await renderDashboard({ initialLogs: [feedingA] })
+    mockState.session = { data: { session: null }, error: null }
+    await fireVisible()
+    expect(screen.getByText(/最新を確認できません/)).toBeInTheDocument()
+    expect(screen.getByText("ROW_A")).toBeInTheDocument()
+  })
+
+  it("初回描画の記録の取得失敗を「まだ記録がありません」と描かず、失敗と再読み込みを出す", async () => {
+    render(<BabyDashboard {...defaultProps({ initialLoadErrors: { logs: true } })} />)
+    expect(screen.queryByText("まだ記録がありません")).not.toBeInTheDocument()
+    expect(screen.getByText("この日の記録を読み込めませんでした")).toBeInTheDocument()
+    // 今日のまとめの数字も 0 と言わぬ（週の内訳は別の窓で、取れておる）
+    const todaySummary = screen.getByRole("group", { name: "今日のまとめ" })
+    expect(within(todaySummary).queryByText("おしっこ0・うんち0")).not.toBeInTheDocument()
+
+    // マウント時の取り直しが通れば癒える（対照: 取れた空は「まだ記録がありません」）
+    await flushResyncStart()
+    await resolveLatestResync({ day: { data: [], error: null } })
+    expect(screen.getByText("まだ記録がありません")).toBeInTheDocument()
+  })
+
+  it("初回描画の日記の取得失敗を「日記を書く」と描かず、失敗と再読み込みを出す", async () => {
+    render(<BabyDashboard {...defaultProps({ initialLoadErrors: { diary: true } })} />)
+    expect(screen.getByText(/この日の日記を読み込めませんでした/)).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /日記を書く|日記を編集/ })).toBeNull()
+    expect(screen.getByRole("button", { name: "日記をもう一度読み込む" })).toBeInTheDocument()
+  })
+})
+
+describe("BabyDashboard / 前回この端末で見てから（C4 引き継ぎ・AC16）", () => {
+  const SEEN = "2026-07-18T02:00:00.000000+00:00" // JST 11:00
+  const seenKey = "irori:handoff-seen:v1:u1:h1"
+
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  const otherNew = makeLog({
+    id: "n1",
+    log_type: "diaper",
+    diaper_type: "pee",
+    logged_by: "spouse",
+    logged_at: `${TODAY}T11:30:00+09:00`,
+    created_at: "2026-07-18T02:30:00.000000+00:00",
+    updated_at: "2026-07-18T02:30:00.000000+00:00",
+  })
+  const mineNew = makeLog({
+    id: "n2",
+    log_type: "diaper",
+    diaper_type: "poop",
+    logged_by: "u1",
+    logged_at: `${TODAY}T11:40:00+09:00`,
+    created_at: "2026-07-18T02:40:00.000000+00:00",
+    updated_at: "2026-07-18T02:40:00.000000+00:00",
+  })
+  const edited = makeLog({
+    id: "e1",
+    log_type: "diaper",
+    diaper_type: "pee",
+    logged_by: "spouse",
+    logged_at: `${TODAY}T08:00:00+09:00`,
+    created_at: "2026-07-17T23:00:00.000000+00:00",
+    updated_at: "2026-07-18T02:50:00.000000+00:00",
+  })
+
+  it("新規（ほかの方が作成）と更新を分けて数え、範囲を添え、変更者・既読・削除の有無を断定せぬ", async () => {
+    localStorage.setItem(seenKey, SEEN)
+    await renderDashboard({ initialWeeklyLogs: [otherNew, mineNew, edited] })
+    const card = screen.getByRole("region", { name: "前回この端末で見てから" })
+    expect(card.textContent).toMatch(/新しい記録 1件（ほかの方が記録）/)
+    expect(card.textContent).toMatch(/更新のある記録 1件/)
+    expect(card.textContent).toMatch(/直近8日の範囲で数えています/)
+    expect(card.textContent).toMatch(/ご自身の記録 1件は含めていません/)
+    expect(card.textContent).toMatch(/更新した人は記録されていません/)
+    expect(card.textContent).not.toMatch(/全部で|読んだ|既読|削除なし|が変更/)
+  })
+
+  it("初回（この端末に前回の確認が無い）は件数を出さず、離れる時に今見えておる最新の版を残す", async () => {
+    const view = await renderDashboard({ initialWeeklyLogs: [otherNew, edited] })
+    expect(screen.queryByRole("region", { name: "前回この端末で見てから" })).not.toBeInTheDocument()
+    view.unmount()
+    expect(localStorage.getItem(seenKey)).toBe("2026-07-18T02:50:00.000000+00:00")
+  })
+
+  it("週の窓を読めなんだ時は数えず（0 件と言わず）、前回の確認の印も進めぬ", async () => {
+    localStorage.setItem(seenKey, SEEN)
+    const view = render(
+      <BabyDashboard
+        {...defaultProps({ initialWeeklyLogs: [], initialLoadErrors: { weekly: true } })}
+      />,
+    )
+    expect(screen.getByText(/読み込めなかったため数えられません/)).toBeInTheDocument()
+    view.unmount()
+    expect(localStorage.getItem(seenKey)).toBe(SEEN)
+  })
+
+  it("「確認した」はこの端末の印だけを進めて閉じる", async () => {
+    localStorage.setItem(seenKey, SEEN)
+    await renderDashboard({ initialWeeklyLogs: [otherNew] })
+    fireEvent.click(screen.getByRole("button", { name: "確認した" }))
+    expect(
+      screen.queryByRole("region", { name: "前回この端末で見てから" }),
+    ).not.toBeInTheDocument()
+    expect(localStorage.getItem(seenKey)).toBe("2026-07-18T02:30:00.000000+00:00")
+  })
+})
+
+describe("BabyDashboard / 低頻度の面を任意で畳める（C3）", () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it("体温・日記を畳むとこの端末（持ち主ごと）に覚え、作り直しても畳んだまま。記録の釦は畳まれぬ", async () => {
+    const view = await renderDashboard()
+    fireEvent.click(screen.getByRole("button", { name: "体温を畳む" }))
+    fireEvent.click(screen.getByRole("button", { name: "育児日記を畳む" }))
+    expect(screen.queryByRole("button", { name: /日記を書く/ })).toBeNull()
+    expect(JSON.parse(localStorage.getItem("irori:home-folds:v1:u1:h1")!)).toMatchObject({
+      temperature: false,
+      diary: false,
+    })
+    view.unmount()
+
+    await renderDashboard()
+    expect(screen.getByRole("button", { name: /体温/, expanded: false })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /日記を書く/ })).toBeNull()
+    // 主要操作は畳まぬ
+    expect(screen.getByRole("button", { name: "おしっこ" })).toBeInTheDocument()
+
+    // 別の利用者には持ち込まぬ
+    cleanup()
+    await renderDashboard({ userId: "u2" })
+    expect(screen.getByRole("button", { name: /日記を書く/ })).toBeInTheDocument()
+  })
+
+  it("この日の日記の下書きが端末に残っておれば、日記は畳まずその旨を出す", async () => {
+    localStorage.setItem("irori:home-folds:v1:u1:h1", JSON.stringify({ diary: false }))
+    localStorage.setItem(
+      `irori:draft:v1:u1:h1:diary:${TODAY}`,
+      JSON.stringify({
+        schemaVersion: 1,
+        owner: { userId: "u1", householdId: "h1" },
+        target: { kind: "diary", date: TODAY },
+        baseVersion: null,
+        content: { text: "下書き" },
+        createdAt: FIXED_NOW.toISOString(),
+        updatedAt: FIXED_NOW.toISOString(),
+      }),
+    )
+    await renderDashboard()
+    expect(screen.getByText(/保存していない下書きがあります/)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /日記を書く/ })).toBeInTheDocument()
+  })
+})

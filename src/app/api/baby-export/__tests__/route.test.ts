@@ -364,3 +364,192 @@ describe("baby-export route / 本文と境界", () => {
     expect(requests.filter((r) => r.table === "baby_logs").length).toBe(1)
   })
 })
+
+async function get(query: string) {
+  return GET(new Request(`http://localhost/api/baby-export?${query}`))
+}
+
+/** 応答の続きの位置で次の要求を組む（画面の「続きを書き出す」と同じ規則） */
+function continuationQuery(res: Response, base: string, part: number): string | null {
+  if (res.headers.get("x-export-truncated") !== "1") return null
+  const params = new URLSearchParams(base)
+  params.set("from", res.headers.get("x-export-from")!)
+  params.set("to", res.headers.get("x-export-to")!)
+  params.set("part", String(part))
+  const logs = res.headers.get("x-export-next-logs-after")
+  const diaries = res.headers.get("x-export-next-diaries-after")
+  if (logs !== null) params.set("logs_after", decodeURIComponent(logs))
+  if (diaries !== null) params.set("diaries_after", decodeURIComponent(diaries))
+  return params.toString()
+}
+
+describe("baby-export route / 分割回収（E2・AC22 の integration 層）", () => {
+  it("⭐ 予算を超える記録も、続きの位置を辿れば重複・欠落なく全件を回収できる", async () => {
+    // 1 行 ≈ 3.6KB × 2,000 行 ≈ 7.2MB（1 回の予算 3.2MB の 2 倍超）
+    const heavy = makeLogs(2000, 80).map((r) => ({ ...r, memo: "あ".repeat(1200) }))
+    const { client } = makeSupabase({ logs: heavy, diaries: makeDiaries(3) })
+    setContext(client)
+
+    const collected: string[] = []
+    const diaries: string[] = []
+    let query: string | null = "period=3months"
+    let part = 1
+    let lastBody: { part: { next: unknown; continuation: boolean }; complete: boolean } | null = null
+    while (query !== null) {
+      const res = await get(query)
+      expect(res.status).toBe(200)
+      const text = await res.text()
+      expect(Buffer.byteLength(text, "utf8")).toBeLessThan(4_500_000)
+      const body = JSON.parse(text)
+      collected.push(...body.logs.map((l: { id: string }) => l.id))
+      diaries.push(...body.diaries.map((d: { diary_date: string }) => d.diary_date))
+      // どの部分も、そのファイル単独では全件と名乗らぬ（最後の部分も complete=false）
+      expect(body.complete).toBe(false)
+      // ファイル名に部の番号（第 1 部も）— CSV ではこれが「一部」の唯一の印
+      expect(res.headers.get("content-disposition")).toContain(`_part${part}.json`)
+      if (res.headers.get("x-export-truncated") === "1") {
+        expect(body.part.next).not.toBeNull()
+        expect(body.part.is_last).toBe(false)
+      } else {
+        expect(body.part.is_last).toBe(true)
+      }
+      expect(body.part.continuation).toBe(part > 1)
+      expect(body.consistency_note).toContain("同じ時点の完全な写しではありません")
+      lastBody = body
+      part++
+      query = continuationQuery(res, "period=3months", part)
+      if (part > 10) throw new Error("続きが終わらぬ")
+    }
+    expect(part - 1).toBeGreaterThanOrEqual(3)
+    expect(lastBody!.part.next).toBeNull()
+    expect(collected).toHaveLength(2000)
+    expect(new Set(collected).size).toBe(2000)
+    expect(collected).toEqual(heavy.map((r) => (r as Row).id))
+    // 日記は最初の部分で取り終え、続きで重ねて出さぬ
+    expect(diaries).toHaveLength(3)
+  })
+
+  it("続きのファイル名は番号付き・範囲は最初の値に固定（今日を引き直さぬ）", async () => {
+    const { client, requests } = makeSupabase({ logs: makeLogs(3, 5) })
+    setContext(client)
+    const from = shiftYmd(TODAY, -30)
+    const to = shiftYmd(TODAY, -1)
+    const res = await get(
+      `period=1month&from=${from}&to=${to}&logs_after=end&diaries_after=end&part=3`,
+    )
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-disposition")).toBe(
+      `attachment; filename="uchinolog_${from}_${to}_part3.json"`,
+    )
+    const body = await res.json()
+    expect(body.period).toMatchObject({ from, to })
+    // 続きの部分は単独では全件ではない
+    expect(body.complete).toBe(false)
+    // 両方取り終えた続きは DB を引かぬ
+    expect(requests.filter((r) => r.table === "baby_logs" || r.table === "baby_diaries")).toHaveLength(0)
+  })
+
+  it("続きの位置より後だけを引く（keyset の or 条件に cursor をそのまま渡す）", async () => {
+    const logs = makeLogs(5, 5)
+    const { client, requests } = makeSupabase({ logs })
+    setContext(client)
+    const cursor = `${logs[1].logged_at}|${logs[1].id}`
+    const res = await get(
+      `period=1month&from=${shiftYmd(TODAY, -30)}&to=${TODAY}&logs_after=${encodeURIComponent(cursor)}&diaries_after=end&part=2`,
+    )
+    const body = await res.json()
+    expect(body.logs.map((l: { id: string }) => l.id)).toEqual(logs.slice(2).map((l) => l.id))
+    expect(body.part.logs_after).toBe(cursor)
+    const first = requests.find((r) => r.table === "baby_logs")!
+    expect(first.calls.some(([m]) => m === "or")).toBe(true)
+  })
+
+  it.each([
+    ["形の壊れた cursor", "period=all&from=all&to=TODAY&logs_after=nope"],
+    ["引用符を差し込む cursor", "period=all&from=all&to=TODAY&logs_after=2026-10-01T00:00:00Z%22)|x"],
+    ["日記の cursor が日付でない", "period=all&from=all&to=TODAY&diaries_after=2026-13-40"],
+    ["続きなのに範囲が無い", "period=all&logs_after=end"],
+    ["未来の to", "period=all&from=all&to=2999-01-01&logs_after=end"],
+    ["from > to", "period=all&from=TODAY&to=2020-01-01&logs_after=end"],
+    ["未知の format", "period=all&format=xml"],
+    ["CSV の表の指定が無い", "period=all&format=csv"],
+  ])("%s は 400（PostgREST の条件へ通さぬ）", async (_label, q) => {
+    const { client, requests } = makeSupabase({ logs: makeLogs(1) })
+    setContext(client)
+    const res = await get(q.replace(/TODAY/g, TODAY))
+    expect(res.status).toBe(400)
+    expect(requests).toHaveLength(0)
+  })
+
+  it("1 件だけで予算を超える行は、同じ位置を返し続けず失敗にする（無限の続きを作らぬ）", async () => {
+    const huge = makeLogs(1).map((r) => ({ ...r, memo: "あ".repeat(1_200_000) }))
+    const { client } = makeSupabase({ logs: huge })
+    setContext(client)
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    expect((await get("period=1month")).status).toBe(500)
+    errorSpy.mockRestore()
+  })
+})
+
+describe("baby-export route / CSV（E2・AC23 の integration 層）", () => {
+  it("記録の CSV: BOM 付き UTF-8・RFC 4180・式の無効化・数値は数値のまま・no-store", async () => {
+    const logs = makeLogs(2).map((r, i) =>
+      i === 0
+        ? { ...r, log_type: "feeding", feeding_type: "bottle", amount_ml: 160, memo: '=HYPERLINK("http://x")\n2行目, "引用"' }
+        : { ...r, memo: "-5ml だけ" },
+    )
+    const { client, requests } = makeSupabase({ logs, diaries: makeDiaries(2) })
+    setContext(client)
+    const res = await get("period=1month&format=csv&table=logs")
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toBe("text/csv; charset=utf-8")
+    expect(res.headers.get("cache-control")).toBe("no-store")
+    expect(res.headers.get("content-disposition")).toBe(
+      `attachment; filename="uchinolog_logs_${shiftYmd(TODAY, -30)}_${TODAY}.csv"`,
+    )
+    // BOM はバイト列で確かめる（Response.text() の UTF-8 復号は先頭の BOM を取り除く — 画面側も
+    // CSV は text() を通さず blob のまま保存せねば BOM が消える）
+    const bytes = new Uint8Array(await res.arrayBuffer())
+    expect(Array.from(bytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf])
+    const text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes)
+    expect(text.charCodeAt(0)).toBe(0xfeff)
+    const lines = text.slice(1).split("\r\n")
+    expect(lines[0]).toContain('"記録ID","日時(JST)"')
+    // 式は ' で無効化し、改行・引用符は 1 セルに収まる
+    expect(text).toContain(`"'=HYPERLINK(""http://x"")\n2行目, ""引用"""`)
+    expect(text).toContain(`"'-5ml だけ"`)
+    // 量は数値のまま（引用符も ' も付けぬ）
+    expect(text).toMatch(/,"bottle",160,/)
+    // 記録した人は名前で出す
+    expect(text).toContain('"はな"')
+    // 記録の CSV では日記を引かぬ
+    expect(requests.some((r) => r.table === "baby_diaries")).toBe(false)
+  })
+
+  it("日記の CSV は日記だけ（household の行を引かず、本文の式も無効化する）", async () => {
+    const diaries = makeDiaries(1).map((d) => ({ ...d, content: "@SUM(A1)\n今日は寝た" }))
+    const { client, requests } = makeSupabase({ diaries })
+    setContext(client)
+    const res = await get("period=1month&format=csv&table=diaries")
+    const text = await res.text()
+    expect(text).toContain(`"'@SUM(A1)\n今日は寝た"`)
+    expect(requests.some((r) => r.table === "baby_logs" || r.table === "households")).toBe(false)
+  })
+
+  it("⭐ 切り詰めた CSV の第 1 部はファイル名に _part1 を付ける（全件の CSV と同じ名前にせぬ）", async () => {
+    const heavy = makeLogs(1200, 80).map((r) => ({ ...r, memo: "あ".repeat(1200) }))
+    const { client } = makeSupabase({ logs: heavy })
+    setContext(client)
+    const res = await get("period=3months&format=csv&table=logs")
+    expect(res.headers.get("x-export-truncated")).toBe("1")
+    expect(res.headers.get("content-disposition")).toBe(
+      `attachment; filename="uchinolog_logs_${shiftYmd(TODAY, -90)}_${TODAY}_part1.csv"`,
+    )
+  })
+
+  it("CSV でも途中の取得失敗は 500（部分を全件と偽らぬ）", async () => {
+    const { client } = makeSupabase({ logs: makeLogs(1500, 80), failLogsOnRequest: 2 })
+    setContext(client)
+    expect((await get("period=3months&format=csv&table=logs")).status).toBe(500)
+  })
+})

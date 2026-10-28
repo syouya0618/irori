@@ -49,9 +49,28 @@ export default defineConfig({
   },
   projects: [
     {
+      // 既存の全 spec（axe の検査を含む）。WebKit 用の中核ケースだけは重ねて走らせぬ
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
+      testIgnore: /webkit-core\.spec\.ts/,
     },
+    // 2026-10-27 F2: 中核ケースだけを WebKit・iPhone 相当の端末設定（hasTouch・isMobile・393px）で。
+    // ⚠️ これは**エミュレーション**じゃ: iPhone 実機・ホーム画面の standalone・日本語 IME・
+    // VoiceOver の保証ではない。WebKit の本体が要るゆえ `E2E_WEBKIT=1` の時だけ足す
+    // （E2E_OFFLINE / E2E_SHOTS と同じ流儀。CI は `playwright install webkit --with-deps` と併せて立てる）。
+    ...(process.env.E2E_WEBKIT
+      ? [
+          {
+            name: "webkit-iphone",
+            use: {
+              ...devices["iPhone 15"],
+              locale: "ja-JP",
+              timezoneId: "Asia/Tokyo",
+            },
+            testMatch: /webkit-core\.spec\.ts/,
+          },
+        ]
+      : []),
   ],
   webServer: [
     {

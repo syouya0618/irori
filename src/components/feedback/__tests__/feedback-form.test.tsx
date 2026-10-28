@@ -14,9 +14,14 @@ vi.mock("@/app/(main)/feedback/actions", () => ({
 }))
 const push = vi.fn()
 const refresh = vi.fn()
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push, refresh }),
-}))
+// 版の食い違いの判定（unstable_isUnrecognizedActionError）は実物を使う（instanceof の判定ゆえ）
+vi.mock("next/navigation", async () => {
+  const actual = await vi.importActual<typeof import("next/navigation")>("next/navigation")
+  return {
+    useRouter: () => ({ push, refresh }),
+    unstable_isUnrecognizedActionError: actual.unstable_isUnrecognizedActionError,
+  }
+})
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 const toastOfflineError = vi.fn()
 vi.mock("@/lib/utils/offline-error", () => ({

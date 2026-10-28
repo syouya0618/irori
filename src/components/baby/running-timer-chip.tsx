@@ -28,7 +28,8 @@ function formatClock(totalSeconds: number): string {
  * 時計は 1 秒刻み（シートの表示と同じ）。走っていない停め忘れでは刻まぬ。
  */
 export function RunningTimerChip({ running, onOpen }: RunningTimerChipProps) {
-  const now = useNow(1000, !running.stale)
+  // 記録を押した後は計測が止まっておる（送った内容は固定済み）ゆえ時計を刻まぬ
+  const now = useNow(1000, !running.stale && !running.pendingSave)
   const elapsedSec = Math.max(
     0,
     Math.floor((now.getTime() - new Date(running.startedAt).getTime()) / 1000),
@@ -39,6 +40,30 @@ export function RunningTimerChip({ running, onOpen }: RunningTimerChipProps) {
   // （夜間に「計測が走っておるか」を一瞥で判る。DESIGN_SYSTEM の暖色の範囲）
   const buttonCn =
     "flex min-h-16 w-full items-center gap-3 rounded-2xl border-2 px-3 py-2.5 text-left shadow-lg shadow-black/[0.04] transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+
+  if (running.pendingSave) {
+    // 記録を押したが、保存できたかを確かめられておらぬ（応答の喪失・通信断）。「計測中」とも
+    // 「記録済み」とも言わず、開いて同じ内容で送り直すか確かめるよう促す（2026-10-27 A2）
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`授乳の保存を確認中（${startLabel} 開始）。開いて確かめる`}
+        className={`${buttonCn} border-amber-500/60 bg-amber-50 hover:bg-amber-100 active:bg-amber-200 dark:border-amber-500/50 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 dark:active:bg-amber-900/80`}
+      >
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-amber-700 text-white">
+          <TriangleAlert size={20} aria-hidden="true" />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="text-base font-semibold">授乳の保存を確認中</span>
+          <span className="text-sm text-foreground/90">
+            {startLabel} 開始・タップして保存を確かめる
+          </span>
+        </span>
+        <ChevronRight size={20} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+      </button>
+    )
+  }
 
   if (running.stale) {
     return (

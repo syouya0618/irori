@@ -6,7 +6,37 @@ import {
   setCacheOwner,
   LAST_USER_ID_STORAGE_KEY,
 } from "@/lib/pwa/sw-messages"
-import { clearPersistedTimer } from "@/lib/domain/feeding-timer-storage"
+import {
+  belongsToOwner,
+  clearPersistedTimer,
+  readPersistedTimer,
+} from "@/lib/domain/feeding-timer-storage"
+import { purgeDraftsNotOwnedBy } from "@/lib/domain/draft-storage"
+import { purgePendingSavesNotOwnedBy } from "@/lib/domain/pending-saves-storage"
+import { purgeCalendarPendingCreatesNotOwnedBy } from "@/lib/domain/calendar-pending-creates"
+import { HANDOFF_EVENTS_KEY_PREFIX, HANDOFF_KEY_PREFIX } from "@/lib/domain/handoff"
+import { HOME_FOLD_KEY_PREFIX } from "@/components/baby/baby-collapsible-section"
+
+/**
+ * 持ち主（`<prefix><userId>:<householdId>`）付きの表示の好み・印のうち、今の持ち主以外のものを消す。
+ * 記録の本文は持たぬが、前の利用者の「いつ見たか」「何を畳んだか」を共用端末に残さぬ。
+ */
+function purgeOwnerScopedKeys(prefixes: string[], owner: { userId: string; householdId: string }) {
+  try {
+    const stale: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (!key) continue
+      const prefix = prefixes.find((p) => key.startsWith(p))
+      if (prefix && key !== `${prefix}${owner.userId}:${owner.householdId}`) stale.push(key)
+    }
+    for (const key of stale) localStorage.removeItem(key)
+  } catch (err) {
+    console.warn("[cache-user-guard] 持ち主付きの表示設定を整理できず", {
+      message: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
 
 /**
  * 別ユーザーでのログインを検知して世帯データ入り SW キャッシュを破棄する (render なし)。
@@ -18,8 +48,23 @@ import { clearPersistedTimer } from "@/lib/domain/feeding-timer-storage"
  * あわせて世帯キャッシュの持ち主を今の利用者にする（setCacheOwner）。SW は持ち主のタグが
  * 一致する項目しか配らぬゆえ、破棄の後に届いた前の利用者の応答も、破棄に失敗して残った
  * 前の利用者の項目も、今の利用者には配られぬ。
+ *
+ * 端末の未確定の作業（下書き・応答不明の保存・授乳の計測。2026-10-27 大型更新）は持ち主
+ * （利用者・世帯）付きで、今の持ち主と違うものはここで消す — 前の利用者・前の世帯の本文や送信内容を
+ * 今の利用者へ見せず、送らぬ。今の持ち主のものは残す（同じ人のログアウト→再ログインで戻れる）。
+ * 各保存は読む時にも持ち主で絞る（二重の防御）。
  */
-export function CacheUserGuard({ userId }: { userId: string }) {
+export function CacheUserGuard({ userId, householdId }: { userId: string; householdId: string }) {
+  useEffect(() => {
+    const owner = { userId, householdId }
+    purgeDraftsNotOwnedBy(owner)
+    purgePendingSavesNotOwnedBy(owner)
+    purgeCalendarPendingCreatesNotOwnedBy(owner)
+    purgeOwnerScopedKeys([HOME_FOLD_KEY_PREFIX, HANDOFF_KEY_PREFIX, HANDOFF_EVENTS_KEY_PREFIX], owner)
+    const timer = readPersistedTimer()
+    if (timer && !belongsToOwner(timer, owner)) clearPersistedTimer()
+  }, [userId, householdId])
+
   useEffect(() => {
     let cancelled = false
 

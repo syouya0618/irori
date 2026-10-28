@@ -25,6 +25,7 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 import { BabyLogFormSheet } from "../baby-log-form-sheet"
 import { recordMemo } from "@/app/(main)/baby/actions"
 import { toast } from "sonner"
+import { listPendingSaves } from "@/lib/domain/pending-saves-storage"
 
 const mockedRecordMemo = vi.mocked(recordMemo)
 const mockedToast = vi.mocked(toast)
@@ -34,6 +35,7 @@ beforeEach(() => {
   // clearAllMocks は Once の待ち行列を消さぬ。落ちたテストの未消費の応答が次のテストへ漏れて
   // 連鎖して赤になるゆえ、記録の mock は実装ごと戻す
   mockedRecordMemo.mockReset()
+  localStorage.clear()
   cleanup()
 })
 afterEach(cleanup)
@@ -88,7 +90,11 @@ describe("BabyLogFormSheet の冪等 id（P2-08）", () => {
     expect(clientIdOf(1)).toBe(clientIdOf(0))
   })
 
-  it("通信断の後に入力を直して押し直すと新しい冪等 id を送る（別の意図）", async () => {
+
+  it("結果の分からぬ送信の後に入力を直しても id は作り直さぬ（新しい id は本当の二重記録になる。2026-10-27 A2）", async () => {
+    // 旧版はここで新しい id を作っていた。先の保存が成立しておれば、新しい id の直した内容が 2 件目に
+    // なる。同じ id なら、成立しておればサーバが conflict と確定行を返し、成立しておらねば直した内容で
+    // 1 件だけ記録される（どちらでも 1 件）
     mockedRecordMemo
       .mockRejectedValueOnce(new Error("network down"))
       .mockResolvedValueOnce({ error: null, id: "m2" })
@@ -97,12 +103,13 @@ describe("BabyLogFormSheet の冪等 id（P2-08）", () => {
     typeMemo("ミルク多め")
     await pressRecord()
     await waitFor(() => expect(mockedToast.error).toHaveBeenCalled())
+    // 失敗とも記録済みとも言わず、押し直しが二重にならぬことを示す
+    expect(screen.getByRole("status")).toHaveTextContent("保存できたか確認できていません")
     typeMemo("ミルク多め・ぐずり")
     await pressRecord()
     await waitFor(() => expect(mockedRecordMemo).toHaveBeenCalledTimes(2))
 
-    expect(clientIdOf(1)).toMatch(/^[0-9a-f-]{36}$/)
-    expect(clientIdOf(1)).not.toBe(clientIdOf(0))
+    expect(clientIdOf(1)).toBe(clientIdOf(0))
     expect(mockedRecordMemo.mock.calls[1][0]).toMatchObject({ memo: "ミルク多め・ぐずり" })
   })
 
@@ -127,22 +134,106 @@ describe("BabyLogFormSheet の冪等 id（P2-08）", () => {
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
 
     expect(mockedToast.success).toHaveBeenCalledWith(
-      expect.stringContaining("既に記録されています"),
+      expect.stringContaining("記録済みでした"),
     )
+    // 確定行を持たぬ応答（古い形）では時刻を知らぬゆえ行を組まぬ
     expect(onLogRecorded).not.toHaveBeenCalled()
   })
 
-  it("サーバが「別の内容で記録済み」と拒んだ時はエラーとして見せ、閉じぬ", async () => {
+  it("replayed が確定行を持てば、その行（DB の版・時刻）を画面へ出す", async () => {
+    const stored = {
+      id: "m5",
+      log_type: "memo",
+      logged_at: "2026-10-27T03:00:00+00:00",
+      logged_by: "u1",
+      memo: "ミルク多め",
+      updated_at: "2026-10-27T03:00:00.123456+00:00",
+    }
+    mockedRecordMemo.mockResolvedValueOnce({
+      error: null,
+      id: "m5",
+      replayed: true,
+      log: stored as never,
+    })
+    const onLogRecorded = vi.fn()
+    renderMemoSheet({ onLogRecorded })
+    typeMemo("ミルク多め")
+    await pressRecord()
+    await waitFor(() => expect(onLogRecorded).toHaveBeenCalledWith(stored))
+  })
+
+  it("サーバが「別の内容で記録済み」（conflict）と返した時は確定行を出してエラーを見せ、入力を残して閉じぬ", async () => {
+    const current = {
+      id: "m6",
+      log_type: "memo",
+      logged_at: "2026-10-27T03:00:00+00:00",
+      logged_by: "u1",
+      memo: "前の内容",
+      updated_at: "2026-10-27T03:00:00.123456+00:00",
+    }
     mockedRecordMemo.mockResolvedValueOnce({
       error: "この操作は少し前に別の内容で記録済みです。画面を更新して記録を確かめてください。",
       id: null,
+      failure: "conflict",
+      conflict: { current: current as never },
     })
     const onOpenChange = vi.fn()
-    renderMemoSheet({ onOpenChange })
+    const onLogRecorded = vi.fn()
+    renderMemoSheet({ onOpenChange, onLogRecorded })
     typeMemo("ミルク多め")
     await pressRecord()
     await waitFor(() => expect(mockedToast.error).toHaveBeenCalled())
     expect(mockedToast.error).toHaveBeenCalledWith(expect.stringContaining("別の内容で記録済み"))
+    expect(onLogRecorded).toHaveBeenCalledWith(current)
     expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    expect(screen.getByLabelText("メモ")).toHaveValue("ミルク多め")
+  })
+
+  it("結果不明の後に直して送り、それが拒まれても、控えは最初の内容のまま残す（独立レビュー 2 周目 S1 を反転）", async () => {
+    mockedRecordMemo
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce({ error: "認証されていません", id: null, failure: "rejected" })
+    render(
+      <BabyLogFormSheet open onOpenChange={vi.fn()} log={null} createLogType="memo" userId="u1" householdId="h1" />,
+    )
+    typeMemo("最初に送った本文")
+    await pressRecord()
+    await waitFor(() => expect(mockedToast.error).toHaveBeenCalled())
+    typeMemo("直した本文")
+    await pressRecord()
+    await waitFor(() => expect(mockedRecordMemo).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(mockedToast.error).toHaveBeenLastCalledWith(expect.stringContaining("認証されていません（前の送信が保存されたかは")),
+    )
+    const raw = listPendingSaves({ userId: "u1", householdId: "h1" })
+    expect(raw).toHaveLength(1)
+    expect(raw[0]).toMatchObject({ phase: "unknown", payload: { memo: "最初に送った本文" } })
+    expect(raw[0].payload.clientId).toBe(clientIdOf(0))
+  })
+
+  it("持ち主（householdId）を渡せば、結果の分からぬ作成を端末に残し、確定したら消す（AC06）", async () => {
+    mockedRecordMemo
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce({ error: null, id: "m7" })
+    render(
+      <BabyLogFormSheet
+        open
+        onOpenChange={vi.fn()}
+        log={null}
+        createLogType="memo"
+        userId="u1"
+        householdId="h1"
+      />,
+    )
+    typeMemo("ミルク多め")
+    await pressRecord()
+    await waitFor(() => expect(mockedToast.error).toHaveBeenCalled())
+    const raw = listPendingSaves({ userId: "u1", householdId: "h1" })
+    expect(raw).toHaveLength(1)
+    // 要約に本文は入れぬ（端末に残る一覧は種別だけ）
+    expect(raw[0]).toMatchObject({ action: "recordMemo", summary: "メモ", owner: { userId: "u1", householdId: "h1" } })
+    await pressRecord()
+    await waitFor(() => expect(mockedRecordMemo).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(listPendingSaves({ userId: "u1", householdId: "h1" })).toHaveLength(0))
   })
 })

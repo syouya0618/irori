@@ -106,6 +106,8 @@ export default async function CalendarPage({
       // events は null で `[]` に倒れる。旗を渡さねば、通知から開いた日が黙って
       // 「予定はありません」になる（設定画面の P2-31 と同じ筋）。
       initialLoadFailed={Boolean(error)}
+      // 予定フォームの端末下書きの持ち主（利用者 × 世帯。2026-10-27 テーマ B）
+      userId={userId}
     />
   )
 }

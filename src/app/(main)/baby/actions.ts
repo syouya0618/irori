@@ -20,12 +20,14 @@ import {
   type UpdateBottleDefaultResult,
 } from "@/lib/domain/bottle-default"
 import { BABY_LOG_COLUMNS } from "@/lib/domain/baby-log-columns"
+import { parseLookupIds, selectBabyLogsByIds } from "@/lib/domain/baby-log-lookup"
 import { todayJstString } from "@/lib/utils/date-jst"
 import {
   isTimestamptzText,
   STALE_SCREEN_SAVE_ERROR,
 } from "@/lib/domain/timestamptz-text"
 import type { BabyDiaryData, BabyLogData } from "@/lib/types/baby"
+import { failureKindOfDbError, type CreateFailureKind } from "@/lib/domain/save-attempt"
 import type {
   FeedingType,
   DiaperType,
@@ -112,20 +114,45 @@ const LOG_DELETED_ERROR = "この記録は他の端末で削除されていま�
  * now() で書かれ、応答が届いた時の端末時計とは数秒（時計がずれておればそれ以上）食い違う。
  * 楽観行をその端末時計で組むと、分を跨いだ時に画面の HH:mm が DB と違い、編集シートが
  * 違う時刻で seed され、保存の後に表示が DB の時刻へ飛ぶ（2026-10-25 のミルクの報告）。
+ *
+ * 成功（新規・replayed とも）は DB の確定行（`log`）も返す。replayed で版・時刻を返さぬと、
+ * 応答を失った保存を再送で確かめた画面が、手元の値で架空の成功行を組むことになる（2026-10-27
+ * 大型更新 A2: 保存済みはサーバの確定値で示す）。
+ *
+ * 失敗は `failure` で分類する（`@/lib/domain/save-attempt` の CreateFailureKind）:
+ * rejected = 行は書かれておらぬと断定できる / unknown = 書かれたかもしれぬ / conflict = 同じ id に
+ * 別の内容が保存済み（`conflict.current` に自世帯の確定行）。
  */
+type InsertFailure = {
+  error: string
+  id: null
+  // このサーバでは常に付ける。無い応答（古い形）は受け手が unknown として扱う（phaseAfterFailure）
+  failure?: CreateFailureKind
+  conflict?: { current: BabyLogData }
+  updatedAt?: undefined
+  loggedAt?: undefined
+  replayed?: undefined
+  log?: undefined
+}
+// 成功の版・時刻・確定行は、このサーバでは常に返す。型を optional に留めるのは、行を返さぬ
+// 古い形の応答（デプロイを跨いだ画面・試験の stub）でも呼び出し側が壊れぬよう、受け手に
+// 「無ければ送った値とサーバの時刻で組む」退避を書かせるため（feeding-timer の finishRecorded）
 type InsertOutcome =
+  | InsertFailure
   | {
-      error: string | null
-      id: string | null
-      updatedAt?: undefined
-      loggedAt?: undefined
-      replayed?: undefined
+      error: null
+      id: string
+      updatedAt?: string
+      loggedAt?: string
+      log?: BabyLogData
+      replayed?: true
+      failure?: undefined
+      conflict?: undefined
     }
-  | { error: null; id: string; updatedAt: string; loggedAt: string; replayed?: undefined }
-  | { error: null; id: string; updatedAt?: undefined; loggedAt?: undefined; replayed: true }
 
 const REPLAY_MISMATCH_ERROR =
   "この操作は少し前に別の内容で記録済みです。画面を更新して記録を確かめてください。"
+
 
 /**
  * DB の行が、今回送った内容と一致するか。二つの再試行で共有する:
@@ -177,7 +204,11 @@ async function insertBabyLog(
   clientId: string | undefined,
   label: string,
 ): Promise<InsertOutcome> {
-  const failure: InsertOutcome = { error: `${label}に失敗しました。`, id: null }
+  const failed = (failure: CreateFailureKind): InsertFailure => ({
+    error: `${label}に失敗しました。`,
+    id: null,
+    failure,
+  })
   const { data, error } = await supabase
     .from("baby_logs")
     .insert({
@@ -186,7 +217,7 @@ async function insertBabyLog(
       logged_by: userId,
       ...body,
     })
-    .select("id, updated_at, logged_at")
+    .select(BABY_LOG_COLUMNS)
     .single()
 
   if (error) {
@@ -203,40 +234,59 @@ async function insertBabyLog(
           householdId,
           clientId,
         })
-        return failure
+        // 自世帯に同じ id の行が在るかもしれぬ（確かめられなんだ）
+        return failed("unknown")
       }
       if (existing) {
+        const stored = existing as BabyLogData
         if (!sameRecordedContent(existing as Record<string, unknown>, body)) {
           // 前回の保存は成立しており、今回は別の内容。黙ってどちらかを採らぬ
           console.warn(`[baby] ${label}: 同じ冪等 id に別の内容の再試行`, {
             householdId,
             clientId,
           })
-          return { error: REPLAY_MISMATCH_ERROR, id: null }
+          return {
+            error: REPLAY_MISMATCH_ERROR,
+            id: null,
+            failure: "conflict",
+            conflict: { current: stored },
+          }
         }
-        // 応答を失った前回の保存が成立していた。再試行を吸収して同じ id を返す
+        // 応答を失った前回の保存が成立していた。再試行を吸収して同じ id と確定行を返す
         console.info(`[baby] ${label}: 再試行を既存の記録として受理`, {
           householdId,
           clientId,
         })
         revalidatePath("/baby")
-        return { error: null, id: existing.id, replayed: true }
+        return {
+          error: null,
+          id: stored.id,
+          updatedAt: stored.updated_at as string,
+          loggedAt: stored.logged_at,
+          log: stored,
+          replayed: true,
+        }
       }
+      // 自世帯に行が無い主キー重複（別世帯の id の流用・推測）。この id では書けぬ
+      logSupabaseError("baby", `${label}に失敗`, error, { userId, householdId })
+      return failed("rejected")
     }
     logSupabaseError("baby", `${label}に失敗`, error, { userId, householdId })
-    return failure
+    return failed(failureKindOfDbError(error))
   }
   if (!data) {
     console.error(`[baby] ${label}: 行が返らず`, { userId, householdId })
-    return failure
+    return failed("unknown")
   }
 
+  const saved = data as BabyLogData
   revalidatePath("/baby")
   return {
     error: null,
-    id: data.id,
-    updatedAt: data.updated_at,
-    loggedAt: data.logged_at,
+    id: saved.id,
+    updatedAt: saved.updated_at as string,
+    loggedAt: saved.logged_at,
+    log: saved,
   }
 }
 
@@ -383,11 +433,11 @@ interface RecordMemoInput {
 
 export async function recordFeeding(input: RecordFeedingInput) {
   const memoError = validateMemoLength(input.memo)
-  if (memoError) return { error: memoError, id: null }
+  if (memoError) return { error: memoError, id: null, failure: "rejected" as const }
   const timeError = validateCreateLoggedAt(input.loggedAt)
-  if (timeError) return { error: timeError, id: null }
+  if (timeError) return { error: timeError, id: null, failure: "rejected" as const }
   const clientIdError = validateClientId(input.clientId)
-  if (clientIdError) return { error: clientIdError, id: null }
+  if (clientIdError) return { error: clientIdError, id: null, failure: "rejected" as const }
 
   // breast_left_count / breast_right_count の検証（DB CHECK
   // chk_breast_counts_only_breast / chk_breast_counts_required のミラー）。
@@ -396,10 +446,10 @@ export async function recordFeeding(input: RecordFeedingInput) {
       input.breastLeftCount,
       input.breastRightCount,
     )
-    if (countsError) return { error: countsError, id: null }
+    if (countsError) return { error: countsError, id: null, failure: "rejected" as const }
   } else if (input.breastLeftCount != null || input.breastRightCount != null) {
     // chk_breast_counts_only_breast のミラー: breast 以外は counts を持てない
-    return { error: "この授乳タイプには左右の回数を指定できません", id: null }
+    return { error: "この授乳タイプには左右の回数を指定できません", id: null, failure: "rejected" as const }
   }
 
   // 左右別の授乳時間（sides）。指定時は合計をサーバ導出する（二重真値源の禁止）。
@@ -407,31 +457,31 @@ export async function recordFeeding(input: RecordFeedingInput) {
     input.breastLeftSec != null || input.breastRightSec != null
   if (hasSides) {
     if (input.feedingType !== "breast") {
-      return { error: BREAST_SIDES_TYPE_ERROR, id: null }
+      return { error: BREAST_SIDES_TYPE_ERROR, id: null, failure: "rejected" as const }
     }
     if (input.durationSec != null) {
-      return { error: BREAST_SIDES_WITH_TOTAL_ERROR, id: null }
+      return { error: BREAST_SIDES_WITH_TOTAL_ERROR, id: null, failure: "rejected" as const }
     }
     const sidesError = validateBreastSideSeconds(
       input.breastLeftSec,
       input.breastRightSec,
     )
-    if (sidesError) return { error: sidesError, id: null }
+    if (sidesError) return { error: sidesError, id: null, failure: "rejected" as const }
   }
 
   // 開始側（chk_breast_start_side_value / chk_breast_start_side_only_breast のミラー）。
   // null は「不明」として素通し（旧形式タイマー復元・編集シートの「不明」）。
   if (input.breastStartSide != null) {
     if (!isBreastStartSide(input.breastStartSide)) {
-      return { error: BREAST_START_SIDE_ERROR, id: null }
+      return { error: BREAST_START_SIDE_ERROR, id: null, failure: "rejected" as const }
     }
     if (input.feedingType !== "breast") {
-      return { error: BREAST_START_SIDE_TYPE_ERROR, id: null }
+      return { error: BREAST_START_SIDE_TYPE_ERROR, id: null, failure: "rejected" as const }
     }
   }
 
   const result = await getAuthContext()
-  if (result.error !== null) return { error: result.error, id: null }
+  if (result.error !== null) return { error: result.error, id: null, failure: "rejected" as const }
   const { supabase, userId, householdId } = result.context
 
   // sides あり → duration_sec は左右の和（chk_breast_side_sec_total の等式）。
@@ -471,25 +521,25 @@ export async function recordFeeding(input: RecordFeedingInput) {
 
 export async function recordDiaper(input: RecordDiaperInput) {
   const memoError = validateMemoLength(input.memo)
-  if (memoError) return { error: memoError, id: null }
+  if (memoError) return { error: memoError, id: null, failure: "rejected" as const }
   const timeError = validateCreateLoggedAt(input.loggedAt)
-  if (timeError) return { error: timeError, id: null }
+  if (timeError) return { error: timeError, id: null, failure: "rejected" as const }
   const clientIdError = validateClientId(input.clientId)
-  if (clientIdError) return { error: clientIdError, id: null }
+  if (clientIdError) return { error: clientIdError, id: null, failure: "rejected" as const }
 
   // うんちの量（chk_poop_amount_value / chk_poop_amount_only_poop のミラー）。
   // null / 未指定は「量の記録なし」として素通し（クイック記録の「指定なし」）。
   if (input.poopAmount != null) {
     if (!isPoopAmount(input.poopAmount)) {
-      return { error: POOP_AMOUNT_ERROR, id: null }
+      return { error: POOP_AMOUNT_ERROR, id: null, failure: "rejected" as const }
     }
     if (!allowsPoopAmount(input.diaperType)) {
-      return { error: POOP_AMOUNT_TYPE_ERROR, id: null }
+      return { error: POOP_AMOUNT_TYPE_ERROR, id: null, failure: "rejected" as const }
     }
   }
 
   const result = await getAuthContext()
-  if (result.error !== null) return { error: result.error, id: null }
+  if (result.error !== null) return { error: result.error, id: null, failure: "rejected" as const }
   const { supabase, userId, householdId } = result.context
 
   return insertBabyLog(
@@ -513,14 +563,14 @@ export async function recordDiaper(input: RecordDiaperInput) {
 
 export async function recordTemperature(input: RecordTemperatureInput) {
   const memoError = validateMemoLength(input.memo)
-  if (memoError) return { error: memoError, id: null }
+  if (memoError) return { error: memoError, id: null, failure: "rejected" as const }
   const timeError = validateCreateLoggedAt(input.loggedAt)
-  if (timeError) return { error: timeError, id: null }
+  if (timeError) return { error: timeError, id: null, failure: "rejected" as const }
   const clientIdError = validateClientId(input.clientId)
-  if (clientIdError) return { error: clientIdError, id: null }
+  if (clientIdError) return { error: clientIdError, id: null, failure: "rejected" as const }
 
   const result = await getAuthContext()
-  if (result.error !== null) return { error: result.error, id: null }
+  if (result.error !== null) return { error: result.error, id: null, failure: "rejected" as const }
   const { supabase, userId, householdId } = result.context
 
   // B-03: 楽観 append 用に作成ログの id を返す。
@@ -541,14 +591,14 @@ export async function recordTemperature(input: RecordTemperatureInput) {
 
 export async function recordGrowth(input: RecordGrowthInput) {
   const memoError = validateMemoLength(input.memo)
-  if (memoError) return { error: memoError, id: null }
+  if (memoError) return { error: memoError, id: null, failure: "rejected" as const }
   const timeError = validateCreateLoggedAt(input.loggedAt)
-  if (timeError) return { error: timeError, id: null }
+  if (timeError) return { error: timeError, id: null, failure: "rejected" as const }
   const clientIdError = validateClientId(input.clientId)
-  if (clientIdError) return { error: clientIdError, id: null }
+  if (clientIdError) return { error: clientIdError, id: null, failure: "rejected" as const }
 
   const result = await getAuthContext()
-  if (result.error !== null) return { error: result.error, id: null }
+  if (result.error !== null) return { error: result.error, id: null, failure: "rejected" as const }
   const { supabase, userId, householdId } = result.context
 
   // B-03: 楽観 append 用に作成ログの id を返す。
@@ -569,16 +619,16 @@ export async function recordGrowth(input: RecordGrowthInput) {
 }
 
 export async function recordMemo(input: RecordMemoInput) {
-  if (!input.memo) return { error: "メモを入力してください", id: null }
+  if (!input.memo) return { error: "メモを入力してください", id: null, failure: "rejected" as const }
   const memoError = validateMemoLength(input.memo)
-  if (memoError) return { error: memoError, id: null }
+  if (memoError) return { error: memoError, id: null, failure: "rejected" as const }
   const timeError = validateCreateLoggedAt(input.loggedAt)
-  if (timeError) return { error: timeError, id: null }
+  if (timeError) return { error: timeError, id: null, failure: "rejected" as const }
   const clientIdError = validateClientId(input.clientId)
-  if (clientIdError) return { error: clientIdError, id: null }
+  if (clientIdError) return { error: clientIdError, id: null, failure: "rejected" as const }
 
   const result = await getAuthContext()
-  if (result.error !== null) return { error: result.error, id: null }
+  if (result.error !== null) return { error: result.error, id: null, failure: "rejected" as const }
   const { supabase, userId, householdId } = result.context
 
   // B-03: 楽観 append 用に作成ログの id を返す。
@@ -594,6 +644,39 @@ export async function recordMemo(input: RecordMemoInput) {
     input.clientId,
     "メモの記録",
   )
+}
+
+const LOOKUP_ERROR = "記録を確かめられませんでした。通信状況を確認してもう一度お試しください。"
+
+/**
+ * 応答不明の保存（`@/lib/domain/save-attempt` の unknown）が DB に在るかを確かめる**読みだけ**の
+ * Action。利用者の「記録されたか確かめる」と、再読込・復帰の照合に使う。送り直しはせぬ。
+ *
+ * 世帯は引数で受けず getAuthContext の世帯で絞る（RLS と二重。別世帯の id は見つからぬのと
+ * 同じ応答 = 存在を漏らさぬ）。見つからぬことは「保存されなかった」の断定ではない — 応答の
+ * 失われた要求がまだ処理中でありうるゆえ、呼び出し側は同じ内容の送り直し（冪等）を勧める。
+ *
+ * ⚠️ Server Action は直列に送られる。応答の返らぬ記録の後ろでは待たされるゆえ、送信が終わらぬ
+ * 間の照合は GET /api/baby-logs/lookup（期限・取消しつき）を使うこと（`@/lib/domain/baby-log-lookup`）。
+ */
+export async function findBabyLogsByIds(
+  ids: string[],
+): Promise<{ error: string; logs: null } | { error: null; logs: BabyLogData[] }> {
+  const parsed = parseLookupIds(ids)
+  if (!parsed) return { error: CLIENT_ID_ERROR, logs: null }
+  const result = await getAuthContext()
+  if (result.error !== null) return { error: result.error, logs: null }
+  const { supabase, householdId } = result.context
+
+  const { logs, error } = await selectBabyLogsByIds(supabase, householdId, parsed)
+  if (error) {
+    logSupabaseError("baby", "保存の照合（id の読み）に失敗", error, {
+      householdId,
+      count: parsed.length,
+    })
+    return { error: LOOKUP_ERROR, logs: null }
+  }
+  return { error: null, logs }
 }
 
 export async function updateLog(

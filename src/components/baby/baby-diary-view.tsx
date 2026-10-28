@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { BookOpen, Loader2, PenLine } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
@@ -19,6 +19,11 @@ const BABY_DIARY_COLUMNS = "id, diary_date, content, updated_at"
 interface BabyDiaryViewProps {
   initialDiaries: BabyDiaryData[]
   householdId: string
+  /**
+   * 端末下書きの持ち主（2026-10-27 テーマ B）。省略時は下書きを端末へ書かぬ（従来どおり）。
+   * diary/page.tsx が渡す（共有ファイル: 主担当へ差分案）。
+   */
+  userId?: string
 }
 
 /**
@@ -35,7 +40,12 @@ interface BabyDiaryViewProps {
 export function BabyDiaryView({
   initialDiaries,
   householdId,
+  userId,
 }: BabyDiaryViewProps) {
+  const draftOwner = useMemo(
+    () => (userId ? { userId, householdId } : null),
+    [userId, householdId],
+  )
   const [diaries, setDiaries] = useState<BabyDiaryData[]>(initialDiaries)
   // 「もっと見る」押下ごとに増やして追ページ取得の useEffect を発火させるトークン。
   const [loadToken, setLoadToken] = useState(0)
@@ -109,9 +119,11 @@ export function BabyDiaryView({
   }
 
   // 保存/削除の反映: 1日1本ゆえ diary_date で置換・除去し、日付降順を保つ。
-  const handleSaved = (diary: BabyDiaryData | null) => {
+  // 削除（diary が null）はシートが返す**書いた日**で除く（開いた時の closure の editDate では
+  // ない — 保存の往復中に別の日を開き直すと、別の日の日記を一覧から消す）。
+  const handleSaved = (diary: BabyDiaryData | null, savedDate: string) => {
     setDiaries((prev) => {
-      if (!diary) return prev.filter((d) => d.diary_date !== editDate)
+      if (!diary) return prev.filter((d) => d.diary_date !== savedDate)
       const without = prev.filter((d) => d.diary_date !== diary.diary_date)
       return [...without, diary].sort((a, b) =>
         b.diary_date.localeCompare(a.diary_date),
@@ -142,6 +154,7 @@ export function BabyDiaryView({
       initialContent={editContent}
       initialUpdatedAt={editUpdatedAt}
       onSaved={handleSaved}
+      owner={draftOwner}
     />
   )
 

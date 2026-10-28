@@ -50,10 +50,15 @@ vi.mock("@/lib/pwa/sw-messages", () => ({
 
 // unstable_rethrow は「呼ばれたか・いつ呼ばれたか」を見るため spy 化する
 // （実物の throw 挙動は rethrow-contract.test.ts が担保）。
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
-  unstable_rethrow: vi.fn(),
-}))
+// 版の食い違いの判定（unstable_isUnrecognizedActionError）は実物を使う（instanceof の判定ゆえ）
+vi.mock("next/navigation", async () => {
+  const actual = await vi.importActual<typeof import("next/navigation")>("next/navigation")
+  return {
+    useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
+    unstable_rethrow: vi.fn(),
+    unstable_isUnrecognizedActionError: actual.unstable_isUnrecognizedActionError,
+  }
+})
 vi.mock("sonner", async () => {
   const { vi: viMod } = await import("vitest")
   return { toast: { error: viMod.fn(), success: viMod.fn() } }
@@ -72,11 +77,18 @@ vi.mock("@/components/settings/baby-profile-card", () => ({
 vi.mock("@/components/settings/export-card", () => ({ ExportCard: () => null }))
 vi.mock("@/components/settings/theme-card", () => ({ ThemeCard: () => null }))
 vi.mock("@/components/settings/help-card", () => ({ HelpCard: () => null }))
+// 版の欄は /api/version を引く（検証対象外。version-card.test.tsx が固定する）
+vi.mock("@/components/settings/version-card", () => ({ VersionCard: () => null }))
 
 import { SettingsContent } from "../settings-content"
 import { CacheUserGuard } from "@/components/common/cache-user-guard"
 import { unstable_rethrow } from "next/navigation"
 import { toast } from "sonner"
+import {
+  beginCalendarCreateAttempt,
+  clearMemoryOnlyCalendarCreatesForTest,
+  putMemoryOnlyCalendarCreate,
+} from "@/lib/domain/calendar-pending-creates"
 
 const mockedRethrow = vi.mocked(unstable_rethrow)
 const mockedToast = vi.mocked(toast)
@@ -111,6 +123,7 @@ beforeEach(() => {
   clearCacheOwner.mockReset()
   clearCacheOwner.mockResolvedValue(true)
   localStorage.clear()
+  clearMemoryOnlyCalendarCreatesForTest()
   caughtByBoundary = null
   // 本物の unstable_rethrow はフレームワークの信号だけを投げ返す
   mockedRethrow.mockImplementation((err: unknown) => {
@@ -139,6 +152,7 @@ function renderSettings() {
         defaultPage: "baby",
       }}
       household={{ id: "h1", name: "我が家" }}
+      householdId="h1"
       email="test@example.com"
       isAppOperator={false}
       pendingUsers={[]}
@@ -382,9 +396,149 @@ describe("SettingsContent の LAST_USER_ID（破棄の確認 + signOut の成功
     purgeHouseholdCaches.mockClear()
 
     // A のセッションが後で失効し、同じ端末で B がログインして (main) に入る
-    render(<CacheUserGuard userId="u2" />)
+    render(<CacheUserGuard userId="u2" householdId="h1" />)
 
     await waitFor(() => expect(localStorage.getItem(LAST_USER_ID_KEY)).toBe("u2"))
     expect(purgeHouseholdCaches).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * 2026-10-27 大型更新 §1・contract §5: ログアウトで端末の作業を**無言で捨てぬ**。
+ * かつて成功時に clearPersistedTimer で計測を消しておった（同じ人が入り直すと計測と
+ * 「保存を確認中」の送信内容まで失われた）。今は持ち主付きで残し、確認の文言で伝え、
+ * 別の利用者・世帯でログインした時は CacheUserGuard が持ち主の違うものを消す。
+ */
+describe("ログアウトと端末の作業（持ち主付きで残す・確認で伝える）", () => {
+  const TIMER_KEY = "irori:feeding-timer"
+  const OWNED_TIMER = JSON.stringify({
+    startedAt: "2026-10-27T03:00:00.000Z",
+    feedingType: "breast_left",
+    userId: "u1",
+    householdId: "h1",
+  })
+  const LEGACY_TIMER = JSON.stringify({
+    startedAt: "2026-10-27T03:00:00.000Z",
+    feedingType: "breast_right",
+  })
+
+  it("⭐ signOut が成功（redirect）しても、持ち主付きの計測はそのまま残す（同じ人の再ログインで戻る）", async () => {
+    localStorage.setItem(TIMER_KEY, OWNED_TIMER)
+    signOut.mockRejectedValueOnce(REDIRECT)
+    fireEvent.click(renderSettings())
+    await waitFor(() => expect(caughtByBoundary).toBe(REDIRECT))
+    // 1 バイトも変えずに残す（clearPersistedTimer に戻すとここが null で落ちる）
+    expect(localStorage.getItem(TIMER_KEY)).toBe(OWNED_TIMER)
+  })
+
+  it("持ち主の無い旧形式の計測は、今の持ち主を書き込んでから残す（次の別の利用者には guard が消す）", async () => {
+    localStorage.setItem(TIMER_KEY, LEGACY_TIMER)
+    signOut.mockRejectedValueOnce(REDIRECT)
+    fireEvent.click(renderSettings())
+    await waitFor(() => expect(caughtByBoundary).toBe(REDIRECT))
+    const saved = JSON.parse(localStorage.getItem(TIMER_KEY) ?? "null")
+    expect(saved).toMatchObject({
+      startedAt: "2026-10-27T03:00:00.000Z",
+      feedingType: "breast_right",
+      userId: "u1",
+      householdId: "h1",
+    })
+
+    cleanup()
+    // 別の利用者 B が同じ端末でログイン → 持ち主が違うゆえ消える
+    render(<CacheUserGuard userId="u2" householdId="h2" />)
+    await waitFor(() => expect(localStorage.getItem(TIMER_KEY)).toBeNull())
+  })
+
+  it("対照: 同じ利用者・同じ世帯で入り直した時は、guard も計測を消さぬ", async () => {
+    localStorage.setItem(TIMER_KEY, OWNED_TIMER)
+    signOut.mockRejectedValueOnce(REDIRECT)
+    fireEvent.click(renderSettings())
+    await waitFor(() => expect(caughtByBoundary).toBe(REDIRECT))
+    cleanup()
+    render(<CacheUserGuard userId="u1" householdId="h1" />)
+    // guard の effect を流しきってから見る（同じ利用者ゆえ破棄も走らぬ）
+    await waitFor(() => expect(setCacheOwner).toHaveBeenCalledWith("u1"))
+    expect(localStorage.getItem(TIMER_KEY)).toBe(OWNED_TIMER)
+  })
+
+  it("確認の文言に、この端末に残るもの（describeLocalWork）と、残す・消える条件を出す", () => {
+    localStorage.setItem(TIMER_KEY, OWNED_TIMER)
+    renderSettings()
+    const note = screen.getByTestId("sign-out-local-work")
+    expect(note).toHaveTextContent("この端末に、まだ家族と共有されていないものがあります（授乳の計測）")
+    expect(note).toHaveTextContent("同じアカウントでログインし直すと戻ります")
+    expect(note).toHaveTextContent("別の人がこの端末でログインすると消えます")
+    // 確認の説明（aria-describedby）に含まれる
+    const group = screen.getByRole("group", { name: /ログアウト/ })
+    expect(group).toHaveAccessibleDescription(expect.stringContaining("授乳の計測"))
+  })
+
+  it("対照: 端末に何も残っておらぬ時は、残るものの一文を出さぬ", () => {
+    renderSettings()
+    expect(screen.queryByTestId("sign-out-local-work")).not.toBeInTheDocument()
+  })
+
+  it("別の利用者の計測は数えぬ（他人の作業を自分のものとして伝えぬ）", () => {
+    localStorage.setItem(
+      TIMER_KEY,
+      JSON.stringify({ startedAt: "2026-10-27T03:00:00.000Z", feedingType: "breast_left", userId: "u9", householdId: "h1" }),
+    )
+    renderSettings()
+    expect(screen.queryByTestId("sign-out-local-work")).not.toBeInTheDocument()
+  })
+
+  it("端末の保存領域を読めぬ時は「確認できなかった」と言う（何も無いとは言わぬ）", () => {
+    const getItem = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("SecurityError")
+    })
+    try {
+      renderSettings()
+      expect(screen.getByTestId("sign-out-local-work")).toHaveTextContent(
+        "この端末に書きかけや計測中のものが残っているか確認できませんでした",
+      )
+    } finally {
+      getItem.mockRestore()
+    }
+  })
+
+  it.each([false, true])("端末に残せなかった予定もログアウト前に数え、再ログインで戻ると約束しない（読み取り失敗=%s、RC2-2）", (readFails) => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("full", "QuotaExceededError")
+    })
+    const clientId = "2c2c2c2c-0000-4000-8000-000000000007"
+    const { entry, persisted } = beginCalendarCreateAttempt({
+      owner: { userId: "u1", householdId: "h1" },
+      clientId,
+      payload: { title: "検診", memo: null, isAllDay: true, startDate: "2026-11-02", endDate: "2026-11-02", startAt: null, endAt: null, clientId },
+      formValue: { title: "検診", memo: null, isAllDay: true, startDate: "2026-11-02", endDate: "2026-11-02", startTime: "09:00", endTime: "", repeat: "none", repeatUntil: "" },
+      reminderChoice: "none",
+    })
+    expect(persisted).toBe(false)
+    putMemoryOnlyCalendarCreate(entry)
+    if (readFails) vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("SecurityError") })
+    renderSettings()
+    const note = screen.getByTestId("sign-out-local-work")
+    expect(note).toHaveTextContent("保存を確認中の予定 1件")
+    expect(note).toHaveTextContent("端末に残せていない予定の控えは、読み直すと消えます")
+    expect(note).not.toHaveTextContent("ログアウトしても消さずに残し、同じアカウントでログインし直すと戻ります")
+    if (readFails) expect(note).toHaveTextContent("確認できませんでした")
+    expect(signOut).not.toHaveBeenCalled()
+  })
+
+  it("古い画面のまま新しいデプロイへ送った（action が見つからぬ）時は、読み直しを促す", async () => {
+    const { UnrecognizedActionError } = await import(
+      "next/dist/client/components/unrecognized-action-error"
+    )
+    signOut.mockRejectedValueOnce(new UnrecognizedActionError("Server Action \"x\" was not found on the server."))
+    const button = renderSettings()
+    fireEvent.click(button)
+    await waitFor(() =>
+      expect(mockedToast.error).toHaveBeenCalledWith(
+        "アプリが新しくなっています。画面を読み直してから、もう一度お試しください",
+      ),
+    )
+    expect(mockedToast.error).not.toHaveBeenCalledWith(SIGN_OUT_FAILED_MESSAGE)
+    expect(button).not.toBeDisabled()
   })
 })

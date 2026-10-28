@@ -23,6 +23,9 @@ import type { CalendarEventSource } from "@/lib/types/database"
 /** 作成の楽観行に使うローカル擬似 id の prefix。 */
 export const OPTIMISTIC_EVENT_ID_PREFIX = "optimistic-cal-"
 
+/** 月の取得の期限（これを過ぎた応答は待たず失敗として扱う） */
+export const MONTH_FETCH_TIMEOUT_MS = 10_000
+
 /** カレンダー UI が扱うイベント全体。CalendarEventLite を包含する。 */
 export interface CalendarEventRecord extends CalendarEventLite {
   memo: string | null
@@ -93,6 +96,16 @@ export function useMonthEvents({
     monthFirstRef.current = monthFirst
   }, [monthFirst])
   const fetchGenerationRef = useRef(0)
+  const inFlightRef = useRef<AbortController | null>(null)
+  const unmountedRef = useRef(false)
+  // 離脱で in-flight の取得を止める（離脱後の setState を走らせぬ）
+  useEffect(() => {
+    unmountedRef.current = false
+    return () => {
+      unmountedRef.current = true
+      inFlightRef.current?.abort()
+    }
+  }, [])
 
   const today = todayJstString()
 
@@ -118,6 +131,12 @@ export function useMonthEvents({
     async (targetMonthFirst: string, opts: { foreground?: boolean } = {}) => {
       const generation = ++fetchGenerationRef.current
       if (opts.foreground) setLoadState("loading")
+      // 取得には期限とキャンセルを付ける（2026-10-27）。新しい取得が始まれば前の取得を止め、
+      // 期限を過ぎれば失敗として扱う（応答を待ち続けて「読み込み中」に張り付かせぬ）
+      inFlightRef.current?.abort()
+      const controller = new AbortController()
+      inFlightRef.current = controller
+      const timer = setTimeout(() => controller.abort(), MONTH_FETCH_TIMEOUT_MS)
       const supabase = createClient()
       const { gridStart, gridEnd } = gridRangeOf(targetMonthFirst)
       let data: unknown[] | null = null
@@ -130,6 +149,9 @@ export function useMonthEvents({
           .lte("start_date", gridEnd) // 重なり判定: start_date <= gridEnd
           .gte("end_date", gridStart) //           AND end_date >= gridStart
           .order("start_date")
+          .abortSignal(controller.signal)
+        // 新しい取得に置き換えられた・離脱した（abort）応答は、成功とも失敗とも数えぬ
+        if (generation !== fetchGenerationRef.current || unmountedRef.current) return
         if (res.error) {
           // 世代が古くとも失敗は記録する（真因を辿れるように）
           logSupabaseError("calendar", "month lookup failed", res.error, { householdId })
@@ -138,11 +160,15 @@ export function useMonthEvents({
           data = res.data as unknown[] | null
         }
       } catch (err) {
+        if (generation !== fetchGenerationRef.current || unmountedRef.current) return
         console.error("[calendar] month lookup threw", {
           householdId,
           message: err instanceof Error ? err.message : String(err),
         })
         failed = true
+      } finally {
+        clearTimeout(timer)
+        if (inFlightRef.current === controller) inFlightRef.current = null
       }
 
       // 月送り連打時に古い応答が新しい月を上書きしないよう世代トークンで捨てる

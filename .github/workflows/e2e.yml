@@ -39,6 +39,11 @@ jobs:
           # v1 に留めること (dependabot.yml で major bump を ignore 済み)。
           version: 2.101.0
 
+      - name: Use official Docker Hub images
+        # setup-cli exports ghcr.io; shared runner pulls hit GHCR's 429 twice.
+        # CLI 2.101.0 supports docker.io with the same pinned upstream image tags.
+        run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io" >> "$GITHUB_ENV"
+
       - name: Start Supabase local stack
         # E2E に不要なサービスは除外して起動を軽くする
         # (-x の有効値は `supabase start --help` 参照。analytics = Logflare)
@@ -66,14 +71,15 @@ jobs:
           restore-keys: |
             playwright-${{ runner.os }}-
 
-      - name: Install Playwright Chromium
-        run: pnpm exec playwright install chromium --with-deps
+      - name: Install Playwright Chromium and WebKit
+        run: pnpm exec playwright install chromium webkit --with-deps
 
       - name: Run Playwright tests
         env:
           # offline.spec.ts の opt-in ゲートを CI では常時有効にする
           # (SW は production build 前提のため、ローカル dev 検証者が誤って踏まない構え)
           E2E_OFFLINE: "1"
+          E2E_WEBKIT: "1"
         run: pnpm exec playwright test
 
       - name: Upload Playwright artifacts

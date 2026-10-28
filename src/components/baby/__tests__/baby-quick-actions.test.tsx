@@ -83,9 +83,13 @@ function lastSuccessOptions() {
 // (node_modules/next/dist/docs/01-app/01-getting-started/10-error-handling.md:375)。
 // 各ハンドラが try/catch で握って圏外トーストへ倒すことを固定する。
 // toast.error(OFFLINE_MESSAGE) が呼ばれること自体が「catch が発火した=reject が
-// 未処理で漏れていない」ことの証跡になる（catch 内でしか呼ばれない文言）。
-const OFFLINE_MESSAGE =
-  "通信できませんでした。電波の良い場所でもう一度お試しください"
+// 未処理で漏れていない」ことの証跡になる。
+// 2026-10-27 A2: reject は「サーバに未到達」と断定できぬ（保存の後で応答だけが失われた形と
+// 区別できぬ）ゆえ、「通信できませんでした」（= 保存されておらぬと読める）ではなく、結果不明と
+// 同じ内容での押し直しを伝える文言になった。
+const OFFLINE_MESSAGE = expect.stringContaining("保存できたか確認できていません")
+// 取り消し（削除）の通信断は従来の文言のまま（削除は版つきで、押し直しは「既に削除」で吸収される）
+const UNDO_OFFLINE_MESSAGE = "通信できませんでした。電波の良い場所でもう一度お試しください"
 
 describe("BabyQuickActions の通信断 reject 握り（B-07）", () => {
   it("授乳（ミルク）記録が reject → 圏外トースト", async () => {
@@ -145,7 +149,7 @@ describe("BabyQuickActions の通信断 reject 握り（B-07）", () => {
       | undefined
     undoOpts?.action?.onClick()
     await waitFor(() =>
-      expect(mockedToast.error).toHaveBeenCalledWith(OFFLINE_MESSAGE),
+      expect(mockedToast.error).toHaveBeenCalledWith(UNDO_OFFLINE_MESSAGE),
     )
   })
 })
@@ -477,7 +481,7 @@ describe("BabyQuickActions の冪等 id（P2-08: 通信断の再タップで二�
 
   it("サーバが拒んだ（検証エラー）後の再タップは新しい id（意図が変わりうる）", async () => {
     mockedRecordFeeding
-      .mockResolvedValueOnce({ error: "だめ", id: null })
+      .mockResolvedValueOnce({ error: "だめ", id: null, failure: "rejected" })
       .mockResolvedValueOnce({ error: null, id: "log-4" })
     renderActions()
 
@@ -494,6 +498,8 @@ describe("BabyQuickActions の冪等 id（P2-08: 通信断の再タップで二�
     // 期限が無いと、数時間後の本物の「次のおしっこ」が過去の保存に吸収され、成功と出るのに
     // 行が増えぬ（レビュー P2-2）。期限内の再タップは上の test が同じ id を固定しておる
     vi.useFakeTimers({ now: new Date("2026-10-19T03:00:00Z"), toFake: ["Date"] })
+    // 同じ画面の期限は経過の時計（performance.now）で測る（v7 N3-04）。ここでは壁時計と一緒に進める
+    const mono = vi.spyOn(performance, "now").mockImplementation(() => Date.now())
     try {
       mockedRecordFeeding
         .mockRejectedValueOnce(new Error("network down"))
@@ -509,6 +515,57 @@ describe("BabyQuickActions の冪等 id（P2-08: 通信断の再タップで二�
         clientIdOf(mockedRecordFeeding.mock.calls[0]),
       )
     } finally {
+      mono.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it("端末の時計を 10 分進めて直しても、本当は 1 分後の押し直しは同じ id（壁時計の跳びで期限を切らぬ。v7 N3-04）", async () => {
+    vi.useFakeTimers({ now: new Date("2026-10-19T03:00:00Z"), toFake: ["Date"] })
+    let mono = 1_000
+    const spy = vi.spyOn(performance, "now").mockImplementation(() => mono)
+    try {
+      mockedRecordFeeding
+        .mockRejectedValueOnce(new Error("network down"))
+        .mockResolvedValueOnce({ error: null, id: "log-c1", replayed: true })
+      renderActions()
+      fireEvent.click(screen.getByRole("button", { name: "ミルク" }))
+      await waitFor(() => expect(mockedToast.error).toHaveBeenCalled())
+      // 遅れておった時計を自動で直した（壁時計だけ 10 分跳ぶ）+ 本当に 1 分たった
+      mono += 60_000
+      vi.setSystemTime(new Date("2026-10-19T03:11:00Z"))
+      await clickWhenEnabled("ミルク")
+      await waitFor(() => expect(mockedRecordFeeding).toHaveBeenCalledTimes(2))
+      expect(clientIdOf(mockedRecordFeeding.mock.calls[1])).toBe(
+        clientIdOf(mockedRecordFeeding.mock.calls[0]),
+      )
+    } finally {
+      spy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it("端末の時計を戻しても、本当は 3 分後の押下は新しい記録（前の id に吸わせて消さぬ。v7 N3-04）", async () => {
+    vi.useFakeTimers({ now: new Date("2026-10-19T03:10:00Z"), toFake: ["Date"] })
+    let mono = 1_000
+    const spy = vi.spyOn(performance, "now").mockImplementation(() => mono)
+    try {
+      mockedRecordDiaper
+        .mockRejectedValueOnce(new Error("network down"))
+        .mockResolvedValueOnce({ error: null, id: "log-c2" })
+      renderActions()
+      fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
+      await waitFor(() => expect(mockedToast.error).toHaveBeenCalled())
+      // 進んでおった時計を直した（壁時計は 10 分戻る）+ 本当に 3 分たった
+      mono += 3 * 60_000
+      vi.setSystemTime(new Date("2026-10-19T03:03:00Z"))
+      await clickWhenEnabled("おしっこ")
+      await waitFor(() => expect(mockedRecordDiaper).toHaveBeenCalledTimes(2))
+      expect(clientIdOf(mockedRecordDiaper.mock.calls[1])).not.toBe(
+        clientIdOf(mockedRecordDiaper.mock.calls[0]),
+      )
+    } finally {
+      spy.mockRestore()
       vi.useRealTimers()
     }
   })
@@ -552,7 +609,7 @@ describe("BabyQuickActions の冪等 id（P2-08: 通信断の再タップで二�
     fireEvent.click(screen.getByRole("button", { name: "ミルク" }))
     await waitFor(() => expect(mockedToast.success).toHaveBeenCalled())
     expect(mockedToast.success).toHaveBeenCalledWith(
-      expect.stringContaining("既に記録されています"),
+      expect.stringContaining("記録済みでした"),
     )
     expect(lastSuccessOptions()?.action).toBeUndefined()
     expect(onLogRecorded).not.toHaveBeenCalled()
@@ -582,6 +639,7 @@ describe("BabyQuickActions のうんちの量（2 段目）", () => {
       diaperType: "pee",
       poopAmount: null,
       clientId: expect.any(String),
+      // 記録時刻は送らず DB の受信時刻（2026-10-28 N3。完全一致ゆえ loggedAt が在れば落ちる）
     })
     // 2 段目は出ていない
     expect(screen.queryByRole("button", { name: "少量" })).toBeNull()
@@ -608,6 +666,7 @@ describe("BabyQuickActions のうんちの量（2 段目）", () => {
       diaperType: "poop",
       poopAmount: "small",
       clientId: expect.any(String),
+      // 記録時刻は送らず DB の受信時刻（2026-10-28 N3。完全一致ゆえ loggedAt が在れば落ちる）
     })
     await waitFor(() => expect(mockedToast.success).toHaveBeenCalled())
     expect(mockedToast.success.mock.calls.at(-1)?.[0]).toBe(
@@ -631,6 +690,7 @@ describe("BabyQuickActions のうんちの量（2 段目）", () => {
       diaperType: "both",
       poopAmount: "large",
       clientId: expect.any(String),
+      // 記録時刻は送らず DB の受信時刻（2026-10-28 N3。完全一致ゆえ loggedAt が在れば落ちる）
     })
     expect(onLogRecorded.mock.calls[0][0]).toMatchObject({
       diaper_type: "both",
@@ -648,6 +708,7 @@ describe("BabyQuickActions のうんちの量（2 段目）", () => {
       diaperType: "poop",
       poopAmount: null,
       clientId: expect.any(String),
+      // 記録時刻は送らず DB の受信時刻（2026-10-28 N3。完全一致ゆえ loggedAt が在れば落ちる）
     })
     expect(mockedToast.success.mock.calls.at(-1)?.[0]).toBe(
       "おむつ交換を記録しました（うんち）",
@@ -664,7 +725,7 @@ describe("BabyQuickActions のうんちの量（2 段目）", () => {
   })
 
   it("記録が失敗しても 2 段目に張り付かず 1 段目へ戻る", async () => {
-    mockedRecordDiaper.mockResolvedValue({ error: "boom", id: null })
+    mockedRecordDiaper.mockResolvedValue({ error: "boom", id: null, failure: "rejected" })
     renderActions()
     fireEvent.click(screen.getByRole("button", { name: "うんち" }))
     fireEvent.click(screen.getByRole("button", { name: "大量" }))
@@ -894,7 +955,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
     await clickWhenEnabled("おしっこ")
     await waitFor(() =>
       expect(mockedToast.success).toHaveBeenCalledWith(
-        expect.stringContaining("既に記録されています"),
+        expect.stringContaining("記録済みでした"),
       ),
     )
     expect(screen.queryByRole("button", { name: INLINE_UNDO })).toBeNull()
@@ -977,7 +1038,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
     fireEvent.click(screen.getByRole("button", { name: "おしっこ" }))
     await screen.findByRole("button", { name: INLINE_UNDO })
     await clickWhenEnabled(INLINE_UNDO)
-    await waitFor(() => expect(mockedToast.error).toHaveBeenCalledWith(OFFLINE_MESSAGE))
+    await waitFor(() => expect(mockedToast.error).toHaveBeenCalledWith(UNDO_OFFLINE_MESSAGE))
     expect(onLogRemoved).not.toHaveBeenCalled()
     await screen.findByRole("button", { name: INLINE_UNDO })
     await clickWhenEnabled(INLINE_UNDO)
@@ -1003,7 +1064,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
       await screen.findByRole("button", { name: INLINE_UNDO })
       vi.setSystemTime(new Date(T0.getTime() + 3 * 60_000))
       await clickWhenEnabled(INLINE_UNDO)
-      await waitFor(() => expect(mockedToast.error).toHaveBeenCalledWith(OFFLINE_MESSAGE))
+      await waitFor(() => expect(mockedToast.error).toHaveBeenCalledWith(UNDO_OFFLINE_MESSAGE))
       const restored = await screen.findByRole("button", { name: INLINE_UNDO })
       expect(restored).toHaveAccessibleName("直前の記録（12:00）を取り消す")
       expect(screen.getByTestId("inline-undo")).toHaveTextContent("12:00 おしっこを記録しました")
@@ -1018,7 +1079,7 @@ describe("BabyQuickActions の直前の記録（インラインの取り消し�
       await screen.findByRole("button", { name: INLINE_UNDO })
       vi.setSystemTime(new Date(T0.getTime() + 3 * 60_000))
       await clickWhenEnabled(INLINE_UNDO)
-      await waitFor(() => expect(mockedToast.error).toHaveBeenCalledWith(OFFLINE_MESSAGE))
+      await waitFor(() => expect(mockedToast.error).toHaveBeenCalledWith(UNDO_OFFLINE_MESSAGE))
       await screen.findByRole("button", { name: INLINE_UNDO })
 
       // 記録から 5 分 1 秒（失敗からは 2 分 1 秒）。記録の時刻で測れば期限切れ

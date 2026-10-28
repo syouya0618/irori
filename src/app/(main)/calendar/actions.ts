@@ -9,7 +9,12 @@ import {
   type CalendarRepeat,
 } from "@/lib/domain/calendar-validation"
 import { generateRecurrenceDates } from "@/lib/domain/calendar-recurrence"
-import { sameCalendarEventContent } from "@/lib/domain/calendar-event-conflict"
+import {
+  sameCalendarEventContent,
+  type CalendarEventEditableValue,
+} from "@/lib/domain/calendar-event-conflict"
+import { isClientId } from "@/lib/utils/client-id"
+import { failureKindOfDbError, type CreateFailureKind } from "@/lib/domain/save-attempt"
 import {
   isTimestamptzText,
   STALE_SCREEN_SAVE_ERROR,
@@ -66,14 +71,63 @@ export interface CalendarEventActionInput {
   repeat?: CalendarRepeat
   /** repeat !== "none" のときの終了日(YYYY-MM-DD, inclusive)。 */
   repeatUntil?: string | null
+  /**
+   * 冪等 id（UUID。2026-10-27 大型更新 A4 / AC28）。作成の操作ごとにクライアントが 1 回だけ作り、
+   * 結果が分からぬ再送でも同じ値を送る。単発は予定の主キー、繰返しは series_id と初回の行の
+   * 主キーに使う — 応答だけを失った作成を押し直しても、主キー重複で二重にならぬ。
+   * 省略時は従来どおり（サーバが採番。再送の吸収は効かぬ）。update では無視される。
+   */
+  clientId?: string
 }
 
-export async function createCalendarEvent(input: CalendarEventActionInput) {
+const CREATE_CLIENT_ID_ERROR =
+  "予定の識別子が不正です。画面を再読み込みしてからもう一度お試しください。"
+const CREATE_REPLAY_MISMATCH_ERROR =
+  "この予定は少し前に別の内容で作成済みです。予定の一覧で確かめてください。"
+const CREATE_FAILED_ERROR = "予定の作成に失敗しました。もう一度お試しください。"
+const CREATE_SERIES_FAILED_ERROR = "繰り返し予定の作成に失敗しました。もう一度お試しください。"
+// 同じ冪等 id のシリーズが在るが、今の回の並びが送った内容と違う（一部の回の削除・別の頻度や終了日）。
+// 「別の内容で作成済み」とは限らぬゆえ、事実だけを言う
+const CREATE_SERIES_CHANGED_ERROR =
+  "この繰り返し予定は少し前に作成済みですが、今の回の並びが送った内容と違います（一部の回の削除・別の頻度や終了日など）。予定の一覧で確かめてください。"
+
+/**
+ * 作成の結果。失敗は `failure`（`@/lib/domain/save-attempt` の CreateFailureKind）で分類する:
+ * rejected = 予定は作られておらぬ / unknown = 作られたかもしれぬ（同じ clientId でだけ送り直す）/
+ * conflict = 同じ id で別の内容が作成済み。`replayed` は応答を失った前回の作成が成立しておった。
+ * 「reject（例外）＝ サーバに未到達」とは決めつけぬ（応答だけが失われた形と区別できぬ）。
+ */
+export type CreateCalendarEventResult =
+  | { error: string; failure?: CreateFailureKind; eventId?: undefined; seriesId?: undefined }
+  | {
+      error: null
+      eventId: string
+      updatedAt: string | null
+      replayed?: true
+      seriesId?: undefined
+      failure?: undefined
+    }
+  | {
+      error: null
+      seriesId: string
+      count: number
+      replayed?: true
+      eventId?: undefined
+      failure?: undefined
+    }
+
+export async function createCalendarEvent(
+  input: CalendarEventActionInput,
+): Promise<CreateCalendarEventResult> {
   const v = validateCalendarEventInput(input)
-  if (v.error !== null) return { error: v.error }
+  if (v.error !== null) return { error: v.error, failure: "rejected" }
+  const clientId = input.clientId
+  if (clientId !== undefined && !isClientId(clientId)) {
+    return { error: CREATE_CLIENT_ID_ERROR, failure: "rejected" }
+  }
 
   const result = await getAuthContext()
-  if (result.error !== null) return { error: result.error }
+  if (result.error !== null) return { error: result.error, failure: "rejected" }
   const { supabase, userId, householdId } = result.context
 
   // 繰り返しは materialize 展開して一括挿入する分岐へ。
@@ -85,12 +139,14 @@ export async function createCalendarEvent(input: CalendarEventActionInput) {
       value: v.value,
       repeat: v.value.repeat,
       repeatUntil: v.value.repeatUntil,
+      clientId,
     })
   }
 
   const { data, error } = await supabase
     .from("calendar_events")
     .insert({
+      ...(clientId !== undefined && { id: clientId }),
       household_id: householdId,
       title: v.value.title,
       memo: v.value.memo,
@@ -109,12 +165,15 @@ export async function createCalendarEvent(input: CalendarEventActionInput) {
   // error と「行なし」を分離: logSupabaseError は非 null の PostgrestError を要求
   // するため error! を渡さない。
   if (error) {
+    if (error.code === "23505" && clientId !== undefined) {
+      return replayCreatedEvent(supabase, householdId, clientId, v.value)
+    }
     logSupabaseError("calendar", "create failed", error, { userId, householdId })
-    return { error: "予定の作成に失敗しました。もう一度お試しください。" }
+    return { error: CREATE_FAILED_ERROR, failure: failureKindOfDbError(error) }
   }
   if (!data) {
     console.error("[calendar] create returned no row", { userId, householdId })
-    return { error: "予定の作成に失敗しました。もう一度お試しください。" }
+    return { error: CREATE_FAILED_ERROR, failure: "unknown" }
   }
 
   revalidateCalendarConsumers()
@@ -122,6 +181,49 @@ export async function createCalendarEvent(input: CalendarEventActionInput) {
     error: null,
     eventId: data.id,
     updatedAt: isTimestamptzText(data.updated_at) ? data.updated_at : null,
+  }
+}
+
+/**
+ * 単発の作成の主キー重複（23505）: 応答を失った前回の作成の再送か。同じ世帯に同じ id の
+ * **単発の** native 予定が在り、内容も同じなら作成済みとして成功（replayed）を返す。内容が違えば
+ * 衝突。世帯に見えぬ（別世帯の id の流用）なら、この id では作れぬ（rejected）。
+ */
+async function replayCreatedEvent(
+  supabase: AuthContext["supabase"],
+  householdId: string,
+  clientId: string,
+  value: CalendarEventEditableValue,
+): Promise<CreateCalendarEventResult> {
+  const { data: existing, error } = await supabase
+    .from("calendar_events")
+    .select("id, title, memo, is_all_day, start_date, end_date, start_at, end_at, source, series_id, updated_at")
+    .eq("id", clientId)
+    .eq("household_id", householdId)
+    .maybeSingle()
+  if (error) {
+    logSupabaseError("calendar", "create replay re-read failed", error, { householdId, clientId })
+    return { error: CREATE_FAILED_ERROR, failure: "unknown" }
+  }
+  if (!existing) {
+    console.warn("[calendar] create: 自世帯に無い id の主キー重複", { householdId, clientId })
+    return { error: CREATE_FAILED_ERROR, failure: "rejected" }
+  }
+  if (
+    existing.source !== "native" ||
+    existing.series_id !== null ||
+    !sameCalendarEventContent(existing, value)
+  ) {
+    console.warn("[calendar] create: 同じ冪等 id に別の内容の再試行", { householdId, clientId })
+    return { error: CREATE_REPLAY_MISMATCH_ERROR, failure: "conflict" }
+  }
+  console.info("[calendar] create: 再試行を既存の予定として受理", { householdId, clientId })
+  revalidateCalendarConsumers()
+  return {
+    error: null,
+    eventId: existing.id,
+    updatedAt: isTimestamptzText(existing.updated_at) ? existing.updated_at : null,
+    replayed: true,
   }
 }
 
@@ -157,8 +259,9 @@ async function createCalendarEventSeries(args: {
   }
   repeat: Exclude<CalendarRepeat, "none">
   repeatUntil: string
-}) {
-  const { supabase, userId, householdId, value, repeat, repeatUntil } = args
+  clientId: string | undefined
+}): Promise<CreateCalendarEventResult> {
+  const { supabase, userId, householdId, value, repeat, repeatUntil, clientId } = args
 
   let dates: string[]
   try {
@@ -172,7 +275,10 @@ async function createCalendarEventSeries(args: {
       repeatUntil,
       householdId,
     })
-    return { error: "繰り返し予定の生成に失敗しました。設定を確認してください。" }
+    return {
+      error: "繰り返し予定の生成に失敗しました。設定を確認してください。",
+      failure: "rejected",
+    }
   }
 
   // 複数日 span は開始↔終了の日数差を各開催日で維持する(daysBetweenYmd は
@@ -187,14 +293,23 @@ async function createCalendarEventSeries(args: {
     ? normalizeJstMidnight(formatTimeJst(value.endAt))
     : null
 
-  const seriesId = randomUUID()
-  const rows = dates.map((date) => {
+  // 冪等 id があれば series_id と**初回の行の主キー**に使う（2026-10-27 A4）。series_id には一意
+  // 制約が無いゆえ、それだけでは再送が N 行を二重に入れる。初回の行の主キーを決めれば、単一の
+  // 一括 INSERT（原子的）が主キー重複で丸ごと落ち、半端なシリーズも二重のシリーズも作らぬ
+  // （並んで届いた再送も、片方は主キー重複で落ちる）
+  const seriesId = clientId ?? randomUUID()
+  const rows = dates.map((date, index) => {
     const endDate = spanDays === 0 ? date : shiftYmd(date, spanDays)
     const startAt =
       !value.isAllDay && startTime ? jstWallClockToIso(date, startTime) : null
     const endAt =
       !value.isAllDay && endTime ? jstWallClockToIso(endDate, endTime) : null
     return {
+      // **全行に id を持たせる**（鍵の集合を揃える）。supabase-js の配列 insert は全行の鍵の和集合を
+      // 列に載せ、ある行に無い鍵を DEFAULT ではなく NULL で入れる（postgrest-js insert の
+      // defaultToNull 既定）。初回の行だけに id を足すと 2 行目以降が id NULL の 23502 で落ちる
+      // （v7 の回帰。e2e calendar.spec の毎週×3 が 0 件になった）
+      id: index === 0 && clientId !== undefined ? clientId : randomUUID(),
       household_id: householdId,
       title: value.title,
       memo: value.memo,
@@ -209,29 +324,154 @@ async function createCalendarEventSeries(args: {
     }
   })
 
+  // 初回の回だけが消された後の再送（独立レビュー F4）: 初回の行の主キーはもう重ならぬゆえ、主キーの
+  // 守りだけでは残りの回を丸ごと二重に入れる。同じシリーズの行が世帯に残っておれば、入れずに照合へ
+  // 回す（全行が残る普通の再送は replayed、回が欠けておれば conflict）。全ての回が消されておれば
+  // 作り直す — 残る行が無く二重にはならぬ（利用者の明示の送り直し）。この読みと INSERT の間に並んで
+  // 届いた再送は、初回の行の主キーで片方が落ちる
+  if (clientId !== undefined) {
+    const { data: survivors, error: survivorsError } = await supabase
+      .from("calendar_events")
+      .select("id")
+      .eq("household_id", householdId)
+      .eq("series_id", clientId)
+      .limit(1)
+    if (survivorsError) {
+      logSupabaseError("calendar", "create series pre-check failed", survivorsError, {
+        householdId,
+        clientId,
+      })
+      // この要求は何も書いておらぬが、先の送信が成立しておりうる。同じ id でだけ送り直させる
+      return { error: CREATE_SERIES_FAILED_ERROR, failure: "unknown" }
+    }
+    if (survivors && survivors.length > 0) {
+      return replayCreatedSeries(supabase, householdId, clientId, rows[0], dates)
+    }
+  }
+
   const { data, error } = await supabase
     .from("calendar_events")
     .insert(rows)
     .select("id")
 
   if (error) {
+    if (error.code === "23505" && clientId !== undefined) {
+      return replayCreatedSeries(supabase, householdId, clientId, rows[0], dates)
+    }
     logSupabaseError("calendar", "create series failed", error, {
       userId,
       householdId,
       count: rows.length,
     })
-    return { error: "繰り返し予定の作成に失敗しました。もう一度お試しください。" }
+    return { error: CREATE_SERIES_FAILED_ERROR, failure: failureKindOfDbError(error) }
   }
   if (!data || data.length === 0) {
     console.error("[calendar] create series returned no rows", {
       userId,
       householdId,
     })
-    return { error: "繰り返し予定の作成に失敗しました。もう一度お試しください。" }
+    return { error: CREATE_SERIES_FAILED_ERROR, failure: "unknown" }
   }
 
   revalidateCalendarConsumers()
   return { error: null, seriesId, count: data.length }
+}
+
+/**
+ * 繰返し作成の再送の照合（主キー重複、または同じシリーズの行が世帯に残っておった時）。初回の行
+ * （id = clientId）が同じ世帯に在り、同じシリーズ（series_id = clientId）で内容も同じで、今の開催日の
+ * 並びが今回作ろうとした並びと一致する時だけ、前回の一括作成が成立しておった（replayed）とする。
+ * 初回の行が消されておる・並びが違う時は conflict（二重にも成功にもせぬ）。初回の行もシリーズの行も
+ * 世帯に無い主キー重複は、別世帯の id ゆえ rejected。
+ */
+async function replayCreatedSeries(
+  supabase: AuthContext["supabase"],
+  householdId: string,
+  clientId: string,
+  first: {
+    title: string
+    memo: string | null
+    is_all_day: boolean
+    start_date: string
+    end_date: string
+    start_at: string | null
+    end_at: string | null
+  },
+  /** 今回の送信が作ろうとした全開催日（初回の行だけでなく、頻度・終了日の違いも照合する） */
+  requestedDates: string[],
+): Promise<CreateCalendarEventResult> {
+  const { data: existing, error } = await supabase
+    .from("calendar_events")
+    .select("id, title, memo, is_all_day, start_date, end_date, start_at, end_at, source, series_id")
+    .eq("id", clientId)
+    .eq("household_id", householdId)
+    .maybeSingle()
+  if (error) {
+    logSupabaseError("calendar", "create series replay re-read failed", error, { householdId, clientId })
+    return { error: CREATE_SERIES_FAILED_ERROR, failure: "unknown" }
+  }
+  // 今のシリーズの開催日（世帯で絞る）。初回の行の有無と並びの照合の両方に使う
+  const { data: seriesRows, error: seriesError } = await supabase
+    .from("calendar_events")
+    .select("start_date")
+    .eq("household_id", householdId)
+    .eq("series_id", clientId)
+  if (seriesError) {
+    logSupabaseError("calendar", "create series replay series re-read failed", seriesError, {
+      householdId,
+      clientId,
+    })
+    return { error: CREATE_SERIES_FAILED_ERROR, failure: "unknown" }
+  }
+  const storedDates = (seriesRows ?? []).map((r) => r.start_date as string).sort()
+  if (!existing) {
+    if (storedDates.length === 0) {
+      console.warn("[calendar] create series: 自世帯に無い id の主キー重複", { householdId, clientId })
+      return { error: CREATE_SERIES_FAILED_ERROR, failure: "rejected" }
+    }
+    // 初回の回だけが消された後の再送（独立レビュー F4）。残りの回を二重に作らぬ
+    console.warn("[calendar] create series: 初回の回が消されたシリーズへの再試行", {
+      householdId,
+      clientId,
+      stored: storedDates.length,
+    })
+    return { error: CREATE_SERIES_CHANGED_ERROR, failure: "conflict" }
+  }
+  const same =
+    existing.source === "native" &&
+    existing.series_id === clientId &&
+    sameCalendarEventContent(existing, {
+      title: first.title,
+      memo: first.memo,
+      isAllDay: first.is_all_day,
+      startDate: first.start_date,
+      endDate: first.end_date,
+      startAt: first.start_at,
+      endAt: first.end_at,
+    })
+  if (!same) {
+    console.warn("[calendar] create series: 同じ冪等 id に別の内容の再試行", { householdId, clientId })
+    return { error: CREATE_REPLAY_MISMATCH_ERROR, failure: "conflict" }
+  }
+  // 初回の行が同じでも、頻度・終了日を変えた再送は別の内容（独立レビュー 2026-10-28 の指摘）。
+  // 今のシリーズの開催日の並びが、今回作ろうとした並びと完全に一致する時だけ「成立済み」とする。
+  // 家族が一部の回を消していた等で一致せぬ時も、成功とは言わず衝突として確かめさせる（安全側）
+  const wanted = [...requestedDates].sort()
+  if (
+    storedDates.length !== wanted.length ||
+    storedDates.some((d, i) => d !== wanted[i])
+  ) {
+    console.warn("[calendar] create series: 同じ冪等 id で開催日の並びが違う再試行", {
+      householdId,
+      clientId,
+      stored: storedDates.length,
+      requested: wanted.length,
+    })
+    return { error: CREATE_SERIES_CHANGED_ERROR, failure: "conflict" }
+  }
+  console.info("[calendar] create series: 再試行を既存のシリーズとして受理", { householdId, clientId })
+  revalidateCalendarConsumers()
+  return { error: null, seriesId: clientId, count: storedDates.length, replayed: true }
 }
 
 export type UpdateCalendarEventResult =

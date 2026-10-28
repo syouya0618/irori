@@ -2,6 +2,7 @@ import { redirect } from "next/navigation"
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { BottomNav } from "@/components/common/bottom-nav"
 import { CacheUserGuard } from "@/components/common/cache-user-guard"
+import { AppUpdateNotice } from "@/components/common/app-update-notice"
 import { OnboardingTour } from "@/components/common/onboarding-tour"
 import { PushSubscriptionReconciler } from "@/components/common/push-subscription-reconciler"
 
@@ -38,7 +39,10 @@ export default async function MainLayout({
   return (
     <div className="min-h-dvh bg-background">
       {/* 別ユーザーログイン時に前ユーザーの世帯キャッシュ (SW) を破棄 */}
-      <CacheUserGuard userId={context.userId} />
+      <CacheUserGuard userId={context.userId} householdId={context.householdId} />
+      {/* 新しい版の控えめな案内（2026-10-27 E1）。押した時だけ読み直し、端末に残る作業があれば
+          先に知らせる。自動では読み直さぬ */}
+      <AppUpdateNotice owner={{ userId: context.userId, householdId: context.householdId }} />
       {/* 410 で消された購読を起動時に張り直す（B-4）。layout ゆえクライアント
           遷移では再マウントされず、走るのはハードロードごとに 1 回じゃ。
           userId は「印を利用者で区切る」ために要る（CacheUserGuard と同じ理由で、

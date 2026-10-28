@@ -27,7 +27,16 @@ import {
   clearCacheOwner,
   LAST_USER_ID_STORAGE_KEY,
 } from "@/lib/pwa/sw-messages"
-import { clearPersistedTimer } from "@/lib/domain/feeding-timer-storage"
+import {
+  readPersistedTimer,
+  writePersistedTimer,
+} from "@/lib/domain/feeding-timer-storage"
+import { describeLocalWork, summarizeLocalWork } from "@/lib/domain/local-work"
+import type { SaveOwner } from "@/lib/domain/save-attempt"
+import {
+  noteServerActionFailure,
+  STALE_CLIENT_ACTION_MESSAGE,
+} from "@/lib/pwa/app-version"
 // startTransition 内の未処理 reject は error boundary へ bubble する（詳細は
 // offline-error.ts）。圏外サインアウトで設定画面ごと落ちないよう握ってトーストへ倒す。
 // 文言は「ログアウトできなかった」と明示するため、ログだけ共通の helper を使う。
@@ -48,6 +57,7 @@ import {
 } from "@/components/settings/google-calendar-card"
 import { ThemeCard } from "@/components/settings/theme-card"
 import { HelpCard, type HelpCardFeedback } from "@/components/settings/help-card"
+import { VersionCard } from "@/components/settings/version-card"
 import type { HouseholdRole } from "@/lib/types/database"
 import type { NotificationHealthView } from "@/lib/domain/notification-health"
 
@@ -63,6 +73,12 @@ interface SettingsContentProps {
     id: string
     name: string
   } | null
+  /**
+   * 利用者の所属世帯（profiles.household_id）。世帯の行を**読めなかった**時（household が null）も
+   * 分かっておる値ゆえ別に運ぶ — 端末の未確定作業（下書き・計測）の持ち主の判定に使う。
+   * 渡されぬ時（旧い呼び出し）は持ち主が分からぬものとして「確認できなかった」と言う。
+   */
+  householdId?: string | null
   email: string
   /** インスタンスの運用者か（P1-02）。承認カードの可否は**これだけ**で決まる（世帯の役割ではない）。 */
   isAppOperator: boolean
@@ -252,12 +268,48 @@ function clearLastUserId() {
 }
 
 /**
- * 端末に残る授乳タイマーの計測を消す（P3-08）。signOut が成功した時だけ呼ぶ —
- * 圏外で signOut が reject した時に消すと、利用者は同じまま計測だけが失われる。
- * 別の利用者がログインした時の保険は CacheUserGuard とタイマーの持ち主判定が担う。
+ * ログアウトしても端末の授乳の計測は**消さぬ**（2026-10-27 大型更新 §1・contract §5）。
+ * かつて（P3-08）は成功時に無言で消しておったが、同じ人が入り直した時に計測と「保存を確認中」の
+ * 送信内容まで失われた。今は持ち主（利用者・世帯）付きで残し、別の利用者・世帯でログインした時は
+ * CacheUserGuard が持ち主の違うものを消す（cache-user-guard.tsx）。
+ *
+ * ただし**持ち主の無い旧形式**（userId を持たぬ）の計測は `belongsToUser` が誰のものとしても
+ * 受け入れるゆえ、そのまま残すと次の利用者の guard を素通りして見えてしまう。ログアウトの時点で
+ * 画面に出しておった計測（＝今の利用者のもの）ゆえ、今の持ち主を書き込んでから残す。
+ * 世帯が分からぬ時は利用者だけ書く（世帯を推測で書かぬ）。signOut が成功した時だけ呼ぶ。
  */
-function clearDeviceTimer() {
-  clearPersistedTimer()
+function adoptUnownedTimer(userId: string, householdId: string | null) {
+  const timer = readPersistedTimer()
+  if (!timer || timer.userId !== undefined) return
+  const written = writePersistedTimer({
+    ...timer,
+    userId,
+    ...(householdId ? { householdId } : {}),
+  })
+  if (!written) {
+    console.warn("[settings] 持ち主の無い計測に持ち主を書けなかった")
+  }
+}
+
+type SignOutWorkNote =
+  | { kind: "none" }
+  | { kind: "work"; text: string }
+  | { kind: "unknown" }
+
+/** ログアウトの確認に添える「この端末に残るもの」（押した瞬間の端末保存を読む）。 */
+function readSignOutWorkNote(owner: SaveOwner | null): SignOutWorkNote {
+  if (owner === null) return { kind: "unknown" }
+  const summary = summarizeLocalWork(owner)
+  const text = describeLocalWork(summary)
+  if (text !== null) {
+    return {
+      kind: "work",
+      text: summary.storageReadable
+        ? text
+        : `${text}。この端末に書きかけや計測中のものが残っているか確認できませんでした`,
+    }
+  }
+  return summary.storageReadable ? { kind: "none" } : { kind: "unknown" }
 }
 
 /**
@@ -274,6 +326,7 @@ function restoreCacheOwner(userId: string) {
 export function SettingsContent({
   profile,
   household,
+  householdId = null,
   email,
   isAppOperator,
   pendingUsers,
@@ -292,6 +345,13 @@ export function SettingsContent({
   const [isSigningOut, setIsSigningOut] = useState(false)
   // ログアウトは押し間違いの代償が大きい（メールで入り直し・この端末の通知が止まる）ゆえ確認を挟む
   const [confirmSignOut, setConfirmSignOut] = useState(false)
+  const [signOutWorkNote, setSignOutWorkNote] = useState<SignOutWorkNote>({ kind: "none" })
+  const owner: SaveOwner | null = householdId ? { userId: profile.id, householdId } : null
+  const openSignOutConfirm = () => {
+    // 端末保存は描画中に読まぬ（SSR と hydration を食い違わせぬ）。押した瞬間に読む
+    setSignOutWorkNote(readSignOutWorkNote(owner))
+    setConfirmSignOut(true)
+  }
   const attention = attentionItems({
     household,
     googleConnections,
@@ -350,7 +410,8 @@ export function SettingsContent({
         try {
           unstable_rethrow(err)
         } catch (frameworkSignal) {
-          clearDeviceTimer()
+          // 計測・下書き・確認中の保存は消さぬ（持ち主付きで残す。→ adoptUnownedTimer）
+          adoptUnownedTimer(profile.id, householdId)
           if (purged) clearLastUserId()
           // 持ち主の記録を改めて消す。破棄で先に消してあるが、signOut の往復の間に別タブが
           // (main) を開き直しておれば、その guard が（鍵はまだこの利用者ゆえ）持ち主を書き
@@ -365,7 +426,8 @@ export function SettingsContent({
         // 圏外 reject でボタンが押せないまま固まるのを防ぐ（永久ローディング対策）。
         setIsSigningOut(false)
         logOfflineError("[settings-content] purgeHouseholdCaches/signOut", err)
-        toast.error(SIGN_OUT_FAILED_MESSAGE)
+        // 古い画面のまま新しいデプロイの signOut を呼んだ（action が見つからぬ）。読み直せば直る
+        toast.error(noteServerActionFailure(err) ? STALE_CLIENT_ACTION_MESSAGE : SIGN_OUT_FAILED_MESSAGE)
       }
     })
   }
@@ -488,6 +550,7 @@ export function SettingsContent({
 
       <SettingsSection id="settings-help" title="ヘルプとアカウント">
         <HelpCard feedback={feedback} />
+        <VersionCard owner={owner} />
 
         <Separator />
 
@@ -503,10 +566,21 @@ export function SettingsContent({
             <p id="sign-out-confirm-title" className="text-sm font-medium">
               この端末からログアウトしますか？
             </p>
-            <p id="sign-out-confirm-desc" className="text-xs text-muted-foreground">
-              この端末への通知は届かなくなり、端末に保存した表示用のデータも消えます。
-              もう一度使うときはログインし直してください。
-            </p>
+            <div id="sign-out-confirm-desc" className="flex flex-col gap-2 text-xs text-muted-foreground">
+              <p>
+                この端末への通知は届かなくなり、端末に保存した表示用のデータも消えます。
+                もう一度使うときはログインし直してください。
+              </p>
+              {signOutWorkNote.kind !== "none" && (
+                <p className="rounded-lg bg-muted/60 px-2 py-1.5 text-foreground" data-testid="sign-out-local-work">
+                  {signOutWorkNote.kind === "work"
+                    ? `${signOutWorkNote.text}。`
+                    : "この端末に書きかけや計測中のものが残っているか確認できませんでした。"}
+                  {signOutWorkNote.kind === "work" &&
+                    "端末に保存できたものは、同じアカウントでログインし直すと戻ります。別の人がこの端末でログインすると消えます。保存を確認中のものは、ログインし直すまで確かめられません。"}
+                </p>
+              )}
+            </div>
             <div className="flex gap-2">
               <Button
                 type="button"
@@ -539,7 +613,7 @@ export function SettingsContent({
             type="button"
             variant="ghost"
             size="lg"
-            onClick={() => setConfirmSignOut(true)}
+            onClick={openSignOutConfirm}
             className="cursor-pointer text-destructive hover:text-destructive"
           >
             <LogOut size={16} />

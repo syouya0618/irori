@@ -1,16 +1,26 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import Link from "next/link"
 import {
   AlertCircle,
   BellRing,
   CalendarClock,
+  ExternalLink,
   History,
   Loader2,
   Lock,
   Repeat,
+  RotateCw,
   Trash2,
 } from "lucide-react"
+import { useDraft } from "@/lib/hooks/use-draft"
+import {
+  DRAFT_RETENTION_NOTE,
+  draftWriteFailureMessage,
+  type DraftOwner,
+  type DraftTarget,
+} from "@/lib/domain/draft-storage"
 import {
   Sheet,
   SheetContent,
@@ -50,7 +60,7 @@ import {
   type ReminderChoice,
   type ReminderState,
 } from "@/lib/domain/event-reminder"
-import type { CalendarEventRecord } from "./use-month-events"
+import { OPTIMISTIC_EVENT_ID_PREFIX, type CalendarEventRecord } from "./use-month-events"
 import { eventWhenLabel, repeatSummary } from "./calendar-display"
 
 // フォーム値の型は中立モジュール（calendar-form.ts）が正本。既存の import 元を
@@ -108,6 +118,169 @@ interface Props {
   initialDraft?: CalendarEventFormValue | null
   /** 復元した入力を捨てた（親の保持も消す）。 */
   onDiscardDraft?: () => void
+  /**
+   * 復元した入力の由来（2026-10-27 テーマ B）。文言を言い分ける — 閉じただけの未保存の入力を
+   * 「保存できなかった」と言わず、応答不明の入力を「保存できなかった」と断定せぬ。
+   * 省略時は rejected（保存できなかった）。
+   */
+  draftNotice?: CalendarDraftAttempt
+  /**
+   * 端末下書きの持ち主（null / 省略なら端末へは書かぬ）。入力中の値を
+   * `@/lib/domain/draft-storage` の対象（新規: calendar-event-new / 編集: calendar-event + id）へ写す。
+   */
+  draftOwner?: DraftOwner | null
+  /**
+   * 新規の下書きの scope（保存できなかった作成を直す時はその作成の id。null = 新しい入力の枠）。
+   * 送った作成の冪等 id は下書きに持たせぬ（v9: 作成の控えが持つ）
+   */
+  draftScope?: string | null
+  /**
+   * 開いた時に端末へ書けると確かめられたか（false なら「7日間残ります」と言わず、残せぬと言う。N1）
+   */
+  draftStorageAvailable?: boolean
+  /** 保持の注記の言い換え（直す入力は元の控えの期限で消える等）。null なら既定の DRAFT_RETENTION_NOTE */
+  draftRetentionNote?: string | null
+  /** 端末へ書かぬ理由（在れば書かず、「残ります」の代わりにこの文を出す） */
+  draftDisabledReason?: string | null
+  /**
+   * 開いた予定が、下書きを始めた後に別の端末で更新されていた時の、その下書き。フォームには
+   * 最新の内容を出し、下書きは読むだけ（古い版の入力を新しい版へ自動で載せぬ）。
+   */
+  staleDraft?: CalendarEventFormValue | null
+  /** 古い下書きを捨てる */
+  onDiscardStaleDraft?: () => void
+  /**
+   * 新規の作成で、自分の id 以外の作成が送信中・結果不明で残っておる時の要約（親が押した時に判じる）。
+   * 在れば保存の前に確認を出す（v8rc2 CAL-INFLIGHT-SECOND-CREATE）
+   */
+  createGuard?: string[] | null
+  /** 確認を経て別の予定として作成する（親が確認済みを記録する。続けてシートが保存し直す） */
+  onCreateAsSeparate?: () => void
+}
+
+/** 下書きの由来。null = 打っただけ（未送信） */
+export type CalendarDraftAttempt = "unsaved" | "rejected" | "unknown" | "conflict"
+
+/** 予定の端末下書きの中身（`useDraft` の T）。 */
+export interface CalendarDraftContent {
+  value: CalendarEventFormValue
+  /**
+   * 常に null（v9）。v8 までは新規の作成の冪等 id をここに持ったが、送った作成は作成ごとの控え
+   * （`@/lib/domain/calendar-pending-creates`）が持つ。形の互換のために残す
+   */
+  clientId: string | null
+  /** 最後の送信の結果（未送信は null）。編集の下書きだけが持つ */
+  attempt: Exclude<CalendarDraftAttempt, "unsaved"> | null
+}
+
+function isFormValue(v: unknown): v is CalendarEventFormValue {
+  if (typeof v !== "object" || v === null) return false
+  const o = v as Record<string, unknown>
+  return (
+    typeof o.title === "string" &&
+    (o.memo === null || typeof o.memo === "string") &&
+    typeof o.isAllDay === "boolean" &&
+    typeof o.startDate === "string" &&
+    typeof o.endDate === "string" &&
+    typeof o.startTime === "string" &&
+    typeof o.endTime === "string" &&
+    (o.repeat === "none" || o.repeat === "daily" || o.repeat === "weekly" || o.repeat === "monthly") &&
+    typeof o.repeatUntil === "string"
+  )
+}
+
+/** 端末から読んだ下書きの形の検証（壊れた・旧版の形は読む時に捨てられる）。 */
+export function isCalendarDraftContent(v: unknown): v is CalendarDraftContent {
+  if (typeof v !== "object" || v === null) return false
+  const o = v as Record<string, unknown>
+  return (
+    isFormValue(o.value) &&
+    (o.clientId === null || typeof o.clientId === "string") &&
+    (o.attempt === null || o.attempt === "rejected" || o.attempt === "unknown" || o.attempt === "conflict")
+  )
+}
+
+/**
+ * 予定の下書きの対象。編集は予定 id ごと。新規は送っておらぬ入力の枠（scope 無し）と、保存できなかった
+ * 作成を直す入力の枠（scope = その作成の id）。
+ */
+export function calendarDraftTarget(editingId: string | null, scope: string | null = null): DraftTarget {
+  if (editingId !== null) return { kind: "calendar-event", id: editingId }
+  return scope ? { kind: "calendar-event-new", scope } : { kind: "calendar-event-new" }
+}
+
+/** メモの定型の入口（既存の自由文の末尾へ行として足す。置き換えぬ） */
+const MEMO_TEMPLATES = ["担当: ", "持ち物: ", "連絡: "] as const
+
+/** 既存のメモの末尾へ定型の行を足す（空なら定型だけ）。 */
+export function appendMemoTemplate(memo: string | null, template: string): string {
+  const current = memo ?? ""
+  if (current === "") return template
+  return current.endsWith("\n") ? `${current}${template}` : `${current}\n${template}`
+}
+
+/**
+ * 入力中の値を端末下書きへ写す（描画はせぬ）。対象ごとに key で作り直す — 前の対象の
+ * 打ちかけを次の対象の鍵へ書かぬため（useDraft の書き出しは最新の対象を読む）。
+ * 閉じる・アンマウントで書き切るのは useDraft が持つ。
+ */
+function CalendarDraftWriter({
+  owner,
+  target,
+  baseVersion,
+  content,
+  dirty,
+  enabled,
+  onFailure,
+  handleRef,
+}: {
+  owner: DraftOwner
+  target: DraftTarget
+  baseVersion: string | null
+  content: CalendarDraftContent
+  dirty: boolean
+  enabled: boolean
+  onFailure: (message: string | null) => void
+  /** 親（シート）が「破棄して閉じる」で書き出しを止めて消すための把手 */
+  handleRef: React.RefObject<{ clear: () => void; flush: () => void } | null>
+}) {
+  const draft = useDraft<CalendarDraftContent>({
+    owner,
+    target,
+    baseVersion,
+    isContent: isCalendarDraftContent,
+    enabled,
+  })
+  const { update, clear, flush } = draft
+  useEffect(() => {
+    handleRef.current = { clear, flush: () => void flush() }
+    return () => {
+      handleRef.current = null
+    }
+  }, [clear, flush, handleRef])
+  // 値の写しだけ（入力欄の値には触れぬ。IME の変換中も書き戻さぬ）。元の値へ戻した時は、
+  // 未送信の写しなら消す。送信の結果が分からぬ・拒まれた下書き（attempt あり）は消さぬ —
+  // 冪等 id と送った内容を、結果を確かめるまで持つため
+  // 開いただけ（一度も打っておらぬ）では消さぬ — 開いた予定の古い下書きを読むだけの時に、
+  // 開いた瞬間に端末から消してしまわぬため
+  const attempt = content.attempt
+  const wasDirtyRef = useRef(false)
+  useEffect(() => {
+    if (dirty) {
+      wasDirtyRef.current = true
+      update(content)
+    } else if (enabled && wasDirtyRef.current && attempt === null) {
+      // 書けぬ間（同じ枠に別の作成の確認中の入力が在る等）は消しもせぬ — useDraft の clear は enabled を
+      // 見ぬゆえ、ここで止める（v8rc4 確認 P-D）
+      wasDirtyRef.current = false
+      clear()
+    }
+  }, [content, dirty, attempt, enabled, update, clear])
+  const failure = draft.failureMessage
+  useEffect(() => {
+    onFailure(failure)
+  }, [failure, onFailure])
+  return null
 }
 
 /** 確認パネル。null = 通常のフッタ。 */
@@ -189,7 +362,7 @@ function ReminderField({
   )
 }
 
-function initialValue(
+export function initialValue(
   editing: CalendarEventRecord | null,
   defaultDate: string,
 ): CalendarEventFormValue {
@@ -225,7 +398,7 @@ function initialValue(
 }
 
 /** フォーム値の比較（入力途中の判定用）。memo の "" と null は同じとみなす。 */
-function sameFormValue(a: CalendarEventFormValue, b: CalendarEventFormValue): boolean {
+export function sameFormValue(a: CalendarEventFormValue, b: CalendarEventFormValue): boolean {
   return (
     a.title === b.title &&
     (a.memo ?? "") === (b.memo ?? "") &&
@@ -266,6 +439,16 @@ export function CalendarEventFormSheet({
   onReminderChange,
   initialDraft = null,
   onDiscardDraft,
+  draftNotice = "rejected",
+  draftOwner = null,
+  draftScope = null,
+  draftStorageAvailable = true,
+  draftRetentionNote = null,
+  draftDisabledReason = null,
+  staleDraft = null,
+  onDiscardStaleDraft,
+  createGuard = null,
+  onCreateAsSeparate,
 }: Props) {
   // open/editing 変化でフォームを初期化(render-time conditional setState)。
   const [prevKey, setPrevKey] = useState<string | null>(null)
@@ -282,6 +465,8 @@ export function CalendarEventFormSheet({
   } | null>(null)
   const [panel, setPanel] = useState<Panel>(null)
   const [draftRestored, setDraftRestored] = useState(false)
+  // 端末下書きを書けなんだ時の文言（書けた・未だ書いておらぬ時は null）
+  const [draftFailure, setDraftFailure] = useState<string | null>(null)
   if (currentKey !== prevKey) {
     setPrevKey(currentKey)
     if (open) {
@@ -289,6 +474,7 @@ export function CalendarEventFormSheet({
       setError(null) // 前回の失敗を新しいフォームへ持ち越さない
       setPanel(null)
       setDraftRestored(initialDraft !== null)
+      setDraftFailure(null)
     }
   }
 
@@ -300,6 +486,33 @@ export function CalendarEventFormSheet({
   // 入力途中か（閉じる前に破棄を確かめる）。基準は開いた時点の予定（復元した入力ではない）。
   const dirty =
     !isGoogle && !sameFormValue(value, initialValue(editing, defaultDate))
+
+  // ── 端末下書き（テーマ B）。楽観行（一時 id）は再読込で別の行と同じ id になりうるゆえ書かぬ
+  const draftTargetId = editing ? editing.id : null
+  const canWriteDraft =
+    draftOwner !== null &&
+    !isGoogle &&
+    !(draftTargetId?.startsWith(OPTIMISTIC_EVENT_ID_PREFIX) ?? false)
+  // 送信の結果を持つのは編集の下書きだけ（新規の下書きは送っておらぬ入力。v9）
+  const draftAttempt: CalendarDraftContent["attempt"] =
+    editing && initialDraft !== null && draftNotice !== "unsaved" ? draftNotice : null
+  const draftContent = useMemo<CalendarDraftContent>(
+    () => ({ value, clientId: null, attempt: draftAttempt }),
+    [value, draftAttempt],
+  )
+  const draftHandleRef = useRef<{ clear: () => void; flush: () => void } | null>(null)
+  // 古い版の下書き（staleDraft）を読むだけで見せておる間は、同じ鍵へ書かぬ — 打ち直しの途中の
+  // 入力で古い下書きを無言で上書きし、利用者が破棄を選ばぬまま消えてしまうため（独立レビュー
+  // 2026-10-28 v7。日記・記録のメモの「戻す／破棄を選ぶまで書かぬ」と同じ規則）
+  const draftWriterEnabled = !staleDraft && !draftDisabledReason
+  // 端末へ書かぬ理由・書けぬと開いた時に分かった・書けなんだ時の文言（「残ります」とは言わぬ）
+  const draftProblem =
+    draftDisabledReason ??
+    draftFailure ??
+    (canWriteDraft && !draftStorageAvailable ? draftWriteFailureMessage("unavailable") : null)
+  // 下書きを残せる（閉じても入力が戻る）か。書けると確かめられ、書いてよく、書けなんだことが無い時だけ
+  // （N1: 書けぬ・書かぬシートで「7日間残ります」と言わぬ）
+  const draftKeepsInput = canWriteDraft && draftWriterEnabled && draftStorageAvailable && draftProblem === null
 
   // 確認パネルを開いたら、まず「取り消し側」へフォーカスを置く（誤操作を確定させぬ）。
   const panelCancelRef = useRef<HTMLButtonElement>(null)
@@ -357,7 +570,16 @@ export function CalendarEventFormSheet({
   /** 明示的に破棄して閉じる。復元した入力も親から消す（次に開いた時に蘇らせぬ）。 */
   const discardAndClose = () => {
     setPanel(null)
+    // 端末の下書きも消す（閉じる時の書き出しより先に止める）。古い版の下書きを読むだけで見せておる
+    // シートは、その下書きを消さぬ（破棄は「残っていた入力を破棄」で選ばせる）
+    if (draftWriterEnabled) draftHandleRef.current?.clear()
     if (initialDraft) onDiscardDraft?.()
+    onOpenChange(false)
+  }
+
+  /** 下書きを端末に残して閉じる（閉じる時に書き切るのは下書きの部品が持つ） */
+  const keepDraftAndClose = () => {
+    setPanel(null)
     onOpenChange(false)
   }
 
@@ -379,6 +601,9 @@ export function CalendarEventFormSheet({
       }
       return
     }
+    // 打鍵の間引きで残っておる書き出しを先に書き切る。閉じる時の書き出しが、親が送る前に残す
+    // 「送った・結果を確認中」の下書きを「保存していない入力」で上書きせぬように（v7）
+    draftHandleRef.current?.flush()
     onSubmit(value)
   }
 
@@ -464,9 +689,33 @@ export function CalendarEventFormSheet({
                 {editing.memo}
               </p>
             )}
-            <p className="text-xs text-muted-foreground">
-              内容を変えるときは Google カレンダーで編集してください。次の同期で反映されます。
-            </p>
+            {/* 閲覧のみの理由と、安全な次の操作（2026-10-27 D）。irori は Google の予定を
+                書き換えぬ（読み取りの連携のみ）。元の予定は Google カレンダーで直し、反映が
+                遅い時は設定の連携から確かめる */}
+            <div className="flex flex-col gap-2 rounded-xl bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
+              <p>
+                irori は Google カレンダーの予定を読み取って表示するだけで、内容は変えられません。
+                変えるときは Google カレンダーで編集してください。次の同期で反映されます。
+              </p>
+              <div className="flex flex-wrap gap-x-4">
+                <a
+                  href="https://calendar.google.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex min-h-11 items-center gap-1 font-medium text-primary transition-colors duration-200 hover:text-primary/80"
+                >
+                  <ExternalLink size={14} aria-hidden="true" />
+                  Google カレンダーを開く
+                </a>
+                <Link
+                  href="/settings"
+                  className="flex min-h-11 items-center gap-1 font-medium text-primary transition-colors duration-200 hover:text-primary/80"
+                >
+                  <RotateCw size={14} aria-hidden="true" />
+                  設定で連携を確かめる
+                </Link>
+              </div>
+            </div>
             {/* 本文は read-only でも通知だけは操作できる(B-2 の眼目)。 */}
             <div className="pt-1">{reminderField}</div>
           </div>
@@ -478,11 +727,22 @@ export function CalendarEventFormSheet({
                 className="flex items-start gap-2 rounded-xl bg-primary/10 px-3 py-2 text-sm text-primary"
               >
                 <History size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-                <span className="flex-1">保存できなかった入力を復元しました。</span>
+                <span className="flex-1">
+                  {draftNotice === "unsaved"
+                    ? "保存していない入力を復元しました。"
+                    : draftNotice === "unknown"
+                      ? "保存できたか確認できていない入力を復元しました。同じ内容で送れば二重になりません。"
+                      : draftNotice === "conflict"
+                        ? // 「別の内容」とは決めつけぬ — 繰返しの一部の回が消された後の送り直しも衝突になる（v8 F4）
+                          "この操作の予定は既に作成されています（内容か、繰り返しの回の並びが違います）。一覧の予定を確かめてください。保存すると、別の予定として新しく追加されます（繰り返しは全ての回）。"
+                        : "保存できなかった入力を復元しました。"}
+                </span>
                 <button
                   type="button"
                   onClick={() => {
                     setDraftRestored(false)
+                    // このシートの対象の下書きだけを消す（他の予定・他の作成の控えには触れぬ）
+                    if (draftWriterEnabled) draftHandleRef.current?.clear()
                     setValue(initialValue(editing, defaultDate))
                     setError(null)
                     onDiscardDraft?.()
@@ -491,6 +751,51 @@ export function CalendarEventFormSheet({
                 >
                   破棄
                 </button>
+              </div>
+            )}
+
+            {/* 下書きを始めた後に、この予定が別の端末で更新されていた（版が違う）。フォームは
+                最新の内容で始め、下書きは読むだけにする — 古い入力を新しい版へ載せて送ると、
+                家族の変更を巻き戻すため。誰が直したかは分からぬゆえ断定せぬ */}
+            {staleDraft && (
+              <div
+                role="status"
+                className="flex flex-col gap-2 rounded-xl border border-amber-500/40 bg-amber-50 px-3 py-2 text-sm dark:bg-amber-950/40"
+              >
+                <p className="flex items-start gap-2 font-medium">
+                  <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                  この予定は別の端末で更新されています。下は最新の内容です。
+                </p>
+                <div className="flex flex-col gap-1 rounded-lg bg-background/60 p-2 text-xs">
+                  <span className="font-medium text-muted-foreground">
+                    この端末に残っていた入力（保存されていません）
+                  </span>
+                  <span className="break-words">{staleDraft.title || "（タイトルなし）"}</span>
+                  {formWhenLabel(staleDraft) && (
+                    <span className="tabular-nums text-muted-foreground">
+                      {formWhenLabel(staleDraft)}
+                    </span>
+                  )}
+                  {staleDraft.memo && (
+                    <span className="whitespace-pre-wrap break-words text-muted-foreground">
+                      {staleDraft.memo}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    必要なら最新の内容に打ち直して更新してください。残っていた入力を破棄するまで、ここで打った内容はこの端末に残りません。
+                  </span>
+                  {onDiscardStaleDraft && (
+                    <button
+                      type="button"
+                      onClick={onDiscardStaleDraft}
+                      className="touch-target shrink-0 cursor-pointer rounded-lg px-2 font-medium text-primary transition-colors duration-200 hover:bg-primary/10"
+                    >
+                      残っていた入力を破棄
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
@@ -655,9 +960,52 @@ export function CalendarEventFormSheet({
                 value={value.memo ?? ""}
                 onChange={(e) => set("memo", e.target.value || null)}
                 placeholder="場所や持ち物など"
+                aria-describedby="cal-memo-hint"
                 {...fieldAria("memo")}
               />
+              {/* 担当・持ち物・短い連絡はメモの定型で書く（2026-10-27 D）。既存の文の末尾へ行を
+                  足すだけで置き換えぬ。「担当」は書いた人の記入で、相手が引き受けた印ではない */}
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="メモに定型を足す">
+                {MEMO_TEMPLATES.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => set("memo", appendMemoTemplate(value.memo, t))}
+                    className="min-h-11 cursor-pointer rounded-full border border-border px-3 text-xs font-medium text-muted-foreground transition-colors duration-200 hover:bg-muted/60 hover:text-foreground"
+                  >
+                    {t.replace(/: $/, "")}を書く
+                  </button>
+                ))}
+              </div>
+              <p id="cal-memo-hint" className="text-xs text-muted-foreground">
+                「担当」は書いた人のメモです。相手が引き受けたことは表しません。
+              </p>
             </div>
+
+            {/* 端末下書きの保持（バックアップではない）。書けると確かめられ、書いておる時だけ「残る」と
+                言う（N1）。書けなんだ・書けぬ環境は理由を、古い版の下書きを見せておる間は上の注記が
+                「残りません」と言う */}
+            {canWriteDraft &&
+              (draftProblem ? (
+                <p role="alert" className="text-xs text-destructive">
+                  {draftProblem}
+                </p>
+              ) : draftKeepsInput ? (
+                <p className="text-xs text-muted-foreground">{draftRetentionNote ?? DRAFT_RETENTION_NOTE}</p>
+              ) : null)}
+            {open && canWriteDraft && draftOwner && (
+              <CalendarDraftWriter
+                key={`${draftTargetId ?? `new:${draftScope ?? ""}`}`}
+                owner={draftOwner}
+                target={calendarDraftTarget(draftTargetId, draftScope)}
+                baseVersion={editing ? editing.updated_at : null}
+                content={draftContent}
+                dirty={dirty}
+                enabled={draftWriterEnabled}
+                onFailure={setDraftFailure}
+                handleRef={draftHandleRef}
+              />
+            )}
           </div>
         )}
 
@@ -698,6 +1046,15 @@ export function CalendarEventFormSheet({
               <p id="cal-discard-title" className="text-sm font-medium">
                 入力中の内容を破棄して閉じますか？
               </p>
+              {draftKeepsInput && (
+                <Button
+                  variant="outline"
+                  onClick={keepDraftAndClose}
+                  className="w-full cursor-pointer"
+                >
+                  下書きを残して閉じる
+                </Button>
+              )}
               <div className="flex gap-2">
                 <Button
                   ref={panelCancelRef}
@@ -774,6 +1131,37 @@ export function CalendarEventFormSheet({
                   </Button>
                 </div>
               )}
+            </div>
+          ) : createGuard && createGuard.length > 0 && !isEditing ? (
+            // 自分の id 以外の作成が送信中・結果不明（v8rc2）。押されて出るゆえ alert で読み上げる
+            <div
+              role="alert"
+              className="flex flex-col gap-2 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-sm"
+            >
+              <p className="flex items-start gap-2 font-medium">
+                <AlertCircle size={16} className="mt-0.5 shrink-0 text-primary" aria-hidden="true" />
+                保存できたか確かめられていない予定の作成があります
+              </p>
+              <ul className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+                {createGuard.slice(0, 3).map((label, i) => (
+                  <li key={i}>{label}</li>
+                ))}
+                {createGuard.length > 3 && <li>ほか {createGuard.length - 3} 件</li>}
+              </ul>
+              <p className="text-xs text-muted-foreground">
+                同じ予定の入れ直しなら、ここでは追加しないでください。確認中の予定は、このシートを閉じて画面の「予定の追加の確認」から同じ内容で送り直せます（二重にはなりません）。送信中のものは結果が出るまでお待ちください。別の予定なら下の釦で追加します。
+              </p>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  onCreateAsSeparate?.()
+                  handleSave()
+                }}
+                disabled={saving}
+                className="min-h-11 w-full cursor-pointer"
+              >
+                別の予定として追加
+              </Button>
             </div>
           ) : (
             <div className="flex gap-3">

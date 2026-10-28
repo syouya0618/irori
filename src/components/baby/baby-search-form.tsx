@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { Search } from "lucide-react"
+import { CalendarDays, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -7,8 +7,10 @@ import {
   SEARCH_KIND_LABELS,
   SEARCH_KINDS,
   SEARCH_QUERY_MAX_LENGTH,
+  searchPresets,
   type BabySearchQuery,
 } from "@/lib/domain/baby-search"
+import { BABY_DATE_PARAM } from "@/lib/domain/baby-link"
 
 interface BabySearchFormProps {
   query: BabySearchQuery
@@ -23,7 +25,51 @@ interface BabySearchFormProps {
 export function BabySearchForm({ query, today }: BabySearchFormProps) {
   const hasCondition =
     query.q !== "" || query.kind !== "all" || query.from !== null || query.to !== null
+  const presets = searchPresets(query, today)
   return (
+    <>
+    {/* よく使う条件の入口（2026-10-27 D）。既存の kind / from / to の組み合わせへのリンクで、
+        新しい検索の仕組みは足さぬ。期間の入口は今の種類を、種類の入口は今の期間を保つ */}
+    <nav aria-label="よく使う条件" className="flex flex-wrap gap-1.5">
+      {presets.map((p) => (
+        <Link
+          key={p.label}
+          href={p.href}
+          aria-current={p.active ? "true" : undefined}
+          className={`inline-flex min-h-11 items-center rounded-full border px-3 text-sm transition-colors duration-200 ${
+            p.active
+              ? "border-primary bg-primary/10 font-medium text-primary"
+              : "border-border text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+          }`}
+        >
+          {p.label}
+        </Link>
+      ))}
+    </nav>
+    {/* 過去の日へ迷わず移る（その日の育児画面を開く。検索とは別の入口） */}
+    <form
+      method="get"
+      action="/baby"
+      aria-label="日付を指定して開く"
+      className="glass flex items-end gap-2 rounded-2xl p-4 shadow-lg shadow-black/[0.04]"
+    >
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <Label htmlFor="search-open-date">日付を指定して開く</Label>
+        <Input
+          id="search-open-date"
+          name={BABY_DATE_PARAM}
+          type="date"
+          max={today}
+          defaultValue={query.to ?? today}
+          required
+          className="min-h-11 rounded-lg"
+        />
+      </div>
+      <Button type="submit" variant="outline" className="min-h-11 shrink-0">
+        <CalendarDays size={16} />
+        この日を開く
+      </Button>
+    </form>
     <form
       method="get"
       action="/baby/search"
@@ -102,5 +148,6 @@ export function BabySearchForm({ query, today }: BabySearchFormProps) {
         )}
       </div>
     </form>
+    </>
   )
 }

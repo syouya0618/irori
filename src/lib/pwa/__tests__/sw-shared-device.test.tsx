@@ -35,10 +35,15 @@ const signOut = vi.fn()
 vi.mock("@/app/(main)/settings/actions", () => ({
   signOut: (...args: unknown[]) => signOut(...args),
 }))
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
-  unstable_rethrow: vi.fn(),
-}))
+// 版の食い違いの判定（unstable_isUnrecognizedActionError）はログアウトの失敗経路が呼ぶ。実物を使う
+vi.mock("next/navigation", async () => {
+  const actual = await vi.importActual<typeof import("next/navigation")>("next/navigation")
+  return {
+    useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
+    unstable_rethrow: vi.fn(),
+    unstable_isUnrecognizedActionError: actual.unstable_isUnrecognizedActionError,
+  }
+})
 vi.mock("sonner", async () => {
   const { vi: viMod } = await import("vitest")
   return { toast: { error: viMod.fn(), success: viMod.fn() } }
@@ -56,6 +61,7 @@ vi.mock("@/components/settings/baby-profile-card", () => ({
 vi.mock("@/components/settings/export-card", () => ({ ExportCard: () => null }))
 vi.mock("@/components/settings/theme-card", () => ({ ThemeCard: () => null }))
 vi.mock("@/components/settings/help-card", () => ({ HelpCard: () => null }))
+vi.mock("@/components/settings/version-card", () => ({ VersionCard: () => null }))
 
 import { SettingsContent } from "@/app/(main)/settings/settings-content"
 import { CacheUserGuard } from "@/components/common/cache-user-guard"
@@ -352,7 +358,7 @@ async function settle() {
 /** 利用者がログインして (main) に入る: cookie を切り替え、CacheUserGuard を走らせる。 */
 async function enterMain(world: ReturnType<typeof makeWorld>, userId: string) {
   world.setSession(userId)
-  render(<CacheUserGuard userId={userId} />)
+  render(<CacheUserGuard userId={userId} householdId="h1" />)
   await settle()
 }
 
@@ -600,7 +606,7 @@ describe.each(["orphan", "name-bound"] as const)(
       world.store.failures.householdDelete = true
       world.setSession(USER_B)
       expect(await (await world.request("document", "/baby")).text()).toBe("B家の記録:/baby")
-      render(<CacheUserGuard userId={USER_B} />)
+      render(<CacheUserGuard userId={USER_B} householdId="h1" />)
       await settle()
       expect(localStorage.getItem(LAST_USER_ID_STORAGE_KEY)).toBe(USER_A)
 
@@ -612,7 +618,7 @@ describe.each(["orphan", "name-bound"] as const)(
       expect(await (await world.request("document", "/calendar")).text()).toBe(
         "A家の記録:/calendar",
       )
-      render(<CacheUserGuard userId={USER_A} />)
+      render(<CacheUserGuard userId={USER_A} householdId="h1" />)
       await settle()
 
       // 4. A がオフラインで開く: B の世帯は出ぬ

@@ -25,6 +25,40 @@ describe("BabySearchForm（記録を探す条件・GET フォーム）", () => {
     expect(clear.className).not.toContain("transition-all")
   })
 
+  it("よく使う条件の入口を Link で出し（44px）、今の条件に当たる入口に aria-current を付ける", () => {
+    render(
+      <BabySearchForm
+        query={{ q: "", kind: "all", from: "2026-10-13", to: TODAY, before: null, beforeDate: null }}
+        today={TODAY}
+      />,
+    )
+    const nav = screen.getByRole("navigation", { name: "よく使う条件" })
+    const week = screen.getByRole("link", { name: "直近7日" })
+    expect(nav).toContainElement(week)
+    expect(week).toHaveAttribute("aria-current", "true")
+    expect(week.className).toContain("min-h-11")
+    expect(screen.getByRole("link", { name: "今日" })).not.toHaveAttribute("aria-current")
+    expect(screen.getByRole("link", { name: "授乳" })).toHaveAttribute(
+      "href",
+      "/baby/search?kind=feeding&from=2026-10-13&to=2026-10-19",
+    )
+  })
+
+  it("過去の日へ移る入口は /baby?date= の GET フォームで、未来の日を選ばせぬ", () => {
+    render(
+      <BabySearchForm
+        query={{ q: "", kind: "all", from: null, to: null, before: null, beforeDate: null }}
+        today={TODAY}
+      />,
+    )
+    const form = screen.getByRole("form", { name: "日付を指定して開く" })
+    expect(form).toHaveAttribute("action", "/baby")
+    expect(form).toHaveAttribute("method", "get")
+    const input = screen.getByLabelText("日付を指定して開く", { selector: "input" })
+    expect(input).toHaveAttribute("name", "date")
+    expect(input).toHaveAttribute("max", TODAY)
+  })
+
   it("条件が無ければ「条件をクリア」は出さぬ", () => {
     render(
       <BabySearchForm

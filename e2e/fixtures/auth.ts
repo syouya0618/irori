@@ -284,7 +284,8 @@ export async function loginViaMagicLink(
   const sentAtMs = Date.now()
   await page.getByRole("button", { name: "マジックリンクを送信" }).click()
   await expect(
-    page.getByRole("heading", { name: "メールを送信しました" })
+    // 2026-10-27 E3: 「受け付けた」ことだけを言う見出しへ（配達は端末から確かめられぬ）
+    page.getByRole("heading", { name: "ログインリンクを送りました" })
   ).toBeVisible()
 
   const link = await fetchMagicLink(email, sentAtMs)
