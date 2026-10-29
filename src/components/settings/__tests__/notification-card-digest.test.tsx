@@ -73,6 +73,7 @@ const DEVICE: PushDeviceView = {
 
 function renderCard(
   props: {
+    feedingReminderMinutes?: number | null
     digestTime?: string | null
     unknown?: boolean
     devices?: PushDeviceView[]
@@ -82,6 +83,7 @@ function renderCard(
     <NotificationCard
       devices={props.devices ?? []}
       health={health}
+      feedingReminderMinutes={props.feedingReminderMinutes ?? null}
       digestTime={props.digestTime ?? null}
       digestTimeUnknown={props.unknown ?? false}
     />,
@@ -372,4 +374,11 @@ describe("届かぬのに届くと描かぬ（購読ゼロ）", () => {
     renderCard({ digestTime: "07:00", devices: [] })
     expect(digestTrigger()).not.toBeDisabled()
   })
+})
+
+it("授乳設定の新しいサーバ読取りを受けたら、古いローカル選択を残さない", () => {
+  const view = renderCard({ feedingReminderMinutes: 15 })
+  expect(document.getElementById("feeding-reminder")).toHaveTextContent("15分前")
+  view.rerender(<NotificationCard devices={[]} health={health} digestTime={null} digestTimeUnknown={false} feedingReminderMinutes={5} />)
+  expect(document.getElementById("feeding-reminder")).toHaveTextContent("5分前")
 })

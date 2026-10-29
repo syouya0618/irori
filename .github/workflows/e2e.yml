@@ -56,6 +56,11 @@ jobs:
         # ここで直接検証する。build 前に置き、DB 分離の破れを早期に赤で止める。
         run: supabase test db
 
+      - name: Test feeding reminder concurrency on isolated local DB
+        env:
+          PGPASSWORD: postgres # Supabase local fixture password; never a hosted credential.
+        run: python3 scripts/test-feeding-reminder-concurrency.py --port 54322
+
       - name: Generate .env.e2e
         run: ./scripts/e2e-env.sh
 

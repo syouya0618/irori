@@ -182,7 +182,7 @@ export default async function SettingsPage({
     // 未設定なら行が無いのが正常ゆえ `.maybeSingle()` で 0 行を error にせぬ。
     supabase
       .from("notification_preferences")
-      .select("digest_time")
+      .select("digest_time, feeding_reminder_minutes")
       .eq("user_id", userId)
       .maybeSingle(),
     // 要望・改善提案: 自分の要望への未読の更新（ヘルプのカードの件数）。
@@ -355,6 +355,7 @@ export default async function SettingsPage({
       // 「送らない」と表示すれば、実際には毎朝届く設定が画面の上では切れて見える
       // （B-4 の診断が「読めなかった」を never と偽らぬのと同じ筋じゃ）。
       digestTimeUnknown={Boolean(notificationPrefsError)}
+      feedingReminderMinutes={notificationPrefs?.feeding_reminder_minutes ?? null}
       // ⚠️ 同じ筋で、読めなかった接続・端末一覧を「未接続」「端末なし」と描かせぬ。
       // 未接続と偽れば接続ボタンを押させ、端末なしと偽れば「届きません」と嘘を言う。
       googleConnectionsUnknown={Boolean(googleConnectionsError)}

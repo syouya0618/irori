@@ -302,3 +302,69 @@ select cron.unschedule('notify-deliveries');
 - 認可の機械検査: `e2e/cron-routes-auth.spec.ts`（proxy に食われぬこと + 鍵の分離）
 - 登録 verb の機械検査: `src/app/api/cron/notify/__tests__/runbook-contract.test.ts`
   （この手順書の `net.http_*()` とハンドラの export が食い違えば赤になる）
+
+## 次の授乳の目安（feeding）
+
+既存の5分Cronで、本人がONにした端末だけへ送る。個人設定は
+`notification_preferences.feeding_reminder_minutes` の1列（NULL=OFF、5/10/15/30）。
+既存行は全てOFFで始まり、初回の推奨操作は15分前。予定通知・朝のまとめの列は変更しない。
+通知許可と購読登録は上の既存手順のまま、本人の明示操作で行う。
+
+画面と同じ `findLastNursing` / `computeNextFeeding` を使い、開始時刻 `logged_at`
++ 世帯の `feeding_interval_min` - 本人のリード時間を導く。搾乳だけを除き、NULLや
+将来の授乳種別は起点に含める。期限前の未来行を積み溜めず、期限に達した現在の
+サイクルだけを既存 `notification_deliveries` へ入れる。15分graceを越えたもの、
+次の目安自体が過ぎたものは送らない。通知は `/baby` を開き、画面が最新の記録を取得する。
+
+`kind='feeding'` の部分UNIQUEは `(event_key, subscription_key)`。
+`event_key` は最終授乳ログIDの不変コピーで、削除時にも配信履歴を消さない。
+`dedupe_day` を鍵に含めないため、時刻編集でJST日付が変わっても送信済みの同じ
+授乳・購読へ再通知しない。PostgRESTの列指定upsertは部分索引を推論できないため、
+service role専用 `enqueue_feeding_delivery` RPCが明示的な `ON CONFLICT ... WHERE`
+を行う。未送信行だけを再照準し、送信済み・失効済みの行を復活させない。
+
+送信は既存のclaim・失敗処理・購読診断を共有する。授乳だけは
+`claim_feeding_delivery` RPCが先にキュー行のロックを取得し、その**後の新しい
+READ COMMITTEDスナップショット**で、最終ログID/開始時刻・間隔・個人設定・
+承認済みの現在の世帯所属・有効な購読・graceを再確認する。
+1本の `UPDATE ... EXISTS` だけでは、行ロック待ちの間に確定した新授乳やOFFを
+古い断面で見逃す（2接続で再現済み）。ロック前の断面へ戻してはならない。
+RPCのEXECUTEはservice roleだけで、SECURITY INVOKERを維持する。
+
+最終確認の後に確定した変更や、Pushサービスが受理済みの通知を完全には取り消せない。
+TTLは最大300秒・目安までの残時間以内を指定し、端末の `tag='feeding'` で前の表示を
+置き換える。PushサービスやOS側の配送・表示時刻の保証ではない。
+応答不明の送信はclaimを保持して再送せず、明示的な拒否だけ次回へ回す。
+購読を削除するのは従来どおり404/410だけ。401/403/429/5xxでは購読を残す。
+
+### 適用・検証・復旧
+
+- `20261028232155_feeding_reminders.sql` を**コードの公開より先**に適用する。
+  個人列・制約・索引・RPCの追加で、旧コードも継続動作する。
+- 本番のproject ref、migration履歴、dry-run差分が今回の1件だけであること、
+  バックアップと復旧手段を確認する。確認できなければ適用とmain mergeを止める。
+  credential brokerのallowlistやmanifestを拡張して進めない。
+- ローカルでは `pnpm test:run` / `pnpm lint` / `pnpm exec tsc --noEmit` / `pnpm build`、
+  隔離Supabaseで `supabase test db` / Playwrightを実行する。
+- 実ロック競合は **新規の隔離テストDBだけ**で
+  `python3 scripts/test-feeding-reminder-concurrency.py --port 54322`。
+  CIは起動した専用Supabaseへ実行する。既存の共有ローカルスタックへ実行しない。
+  enqueue/claimの重複に加え、ロック待ち中の新授乳・OFF・リード変更・世帯変更を検証する。
+- 公開後は上記のCron・HTTP応答・heartbeatを連続する複数回で照合する。
+  `sent_at` はclaimであり、OS実機で受信した証拠と混ぜない。新機能を勝手にONにしたり、
+  家族端末へ試験Pushを送ったりしない。
+- 障害時は授乳設定を本人の操作でOFFにするか、確認済みの直前アプリへrollbackする。
+  旧コードはfeedingを展開・送信しない。追加スキーマと履歴は残し、DB restoreや
+  既存育児データの削除を行わない。受理済みPushの取消しは保証できない。
+
+診断は秘密列を取得せず、件数だけで行う。
+
+```sql
+SELECT kind, count(*) AS total,
+       count(*) FILTER (WHERE sent_at IS NOT NULL) AS claimed,
+       count(*) FILTER (WHERE skipped_at IS NOT NULL) AS skipped,
+       count(*) FILTER (WHERE sent_at IS NULL AND skipped_at IS NULL) AS pending
+FROM public.notification_deliveries
+WHERE created_at > now() - interval '1 day'
+GROUP BY kind;
+```

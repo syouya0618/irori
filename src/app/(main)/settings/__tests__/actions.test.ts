@@ -33,6 +33,7 @@ import {
   updateBabyProfile,
   updateDefaultPage,
   updateDigestTime,
+  updateFeedingReminder,
   updateGoogleCalendarSelection,
   updateProfile,
 } from "../actions"
@@ -597,5 +598,26 @@ describe("signOut: 失敗を成功と偽らない", () => {
       expect.stringContaining("[settings]"),
       expect.objectContaining({ message: "fetch failed" }),
     )
+  })
+})
+
+describe("updateFeedingReminder", () => {
+  it.each([null, 5, 10, 15, 30])("自分の1列だけを保存する: %s", async (value) => {
+    const { client, upsert } = makeUpsertSupabase({ data: [{ user_id: "user-1" }], error: null })
+    setContext(client)
+    expect(await updateFeedingReminder(value)).toEqual({ success: true })
+    expect(upsert).toHaveBeenCalledWith({ user_id: "user-1", feeding_reminder_minutes: value }, { onConflict: "user_id" })
+  })
+  it.each([0, 6, 15.1, NaN, "15", undefined])("不正入力をDB前に拒む: %s", async (value) => {
+    expect(await updateFeedingReminder(value as number)).toHaveProperty("error")
+    expect(getAuthContext).not.toHaveBeenCalled()
+  })
+  it("未承認・別世帯などの認証拒否を通さない", async () => {
+    getAuthContext.mockResolvedValue({ error: "利用できません", context: null })
+    expect(await updateFeedingReminder(15)).toEqual({ error: "利用できません" })
+  })
+  it.each([{ data: [], error: null }, { data: null, error: { code: "42501", message: "denied" } }])("0行/DB失敗を成功としない", async (response) => {
+    setContext(makeUpsertSupabase(response).client)
+    expect(await updateFeedingReminder(15)).toHaveProperty("error")
   })
 })
