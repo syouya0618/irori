@@ -4,6 +4,7 @@ import { resolve } from "node:path"
 import { runInNewContext } from "node:vm"
 // classic script の sw.js は import できぬゆえ、手動同期の綻びをここで殺す
 // （既定の着地先がアプリ側の定数と一致することを機械で縛る）。
+import { buildFeedingNotification } from "@/lib/notifications/feeding-rules"
 import { CALENDAR_DATE_PARAM, CALENDAR_PATH } from "@/lib/domain/calendar-link"
 import {
   isHouseholdCacheName,
@@ -1106,6 +1107,14 @@ describe("push リスナ — 通知の data.url（B-6）", () => {
     expect(shown[0].options.data?.url).toBe("/calendar?date=2026-09-01")
   })
 
+  it("授乳通知も可視通知として出し、/babyをそのまま渡す", async () => {
+    const { shown, dispatch } = setup()
+    await dispatch(buildFeedingNotification("2026-10-29T09:30:00Z", "2026-10-29T12:30:00Z"))
+    expect(shown).toHaveLength(1)
+    expect(shown[0].options.data?.url).toBe("/baby")
+    expect(shown[0].options.body).toContain("次の授乳の目安 21:30")
+  })
+
   it("url を持たぬ古いペイロードは既定の /calendar へ倒す（data を空にせぬ）", async () => {
     const { hooks, shown, dispatch } = setup()
     await dispatch({ title: "お知らせ", body: "本文" })
@@ -1178,6 +1187,13 @@ describe("notificationclick — 既存タブの日付を動かす（B-6）", () 
       data: url === undefined ? {} : { url },
       close: onClose ?? (() => {}),
     },
+  })
+
+  it("授乳通知のタップは既存タブも/babyへnavigateする", async () => {
+    const { client, record } = makeClient()
+    const { hooks } = setup([client])
+    await hooks.handleNotificationClick(clickEvent("/baby"))
+    expect(record.navigated).toEqual(["/baby"])
   })
 
   it("既存タブを focus し、**`?date=` 付きの URL へ navigate する**", async () => {

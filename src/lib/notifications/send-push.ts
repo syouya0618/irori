@@ -126,6 +126,8 @@ export function readVapidConfig(): VapidConfig | null {
  */
 const PUSH_TIMEOUT_MS = 10_000
 
+export interface PushSendOptions { ttlSeconds: number }
+
 /**
  * 1 通送る。**例外を投げず結果を返す** — 1 台の失敗で世帯の残りを止めぬため。
  *
@@ -137,6 +139,7 @@ export async function sendPushNotification(
   target: PushTarget,
   vapid: VapidConfig,
   payload: unknown,
+  options?: PushSendOptions,
 ): Promise<PushSendResult> {
   try {
     await webpush.sendNotification(
@@ -148,7 +151,7 @@ export async function sendPushNotification(
       {
         // Apple は TTL ヘッダを必須とする（正の数）。grace window と揃えて
         // 15 分: 端末が圏外の間に期限が切れても、遅れて雪崩れるより良い。
-        TTL: 900,
+        TTL: options ? Math.max(1, Math.min(900, Math.floor(options.ttlSeconds))) : 900,
         vapidDetails: vapid,
         timeout: PUSH_TIMEOUT_MS,
       },

@@ -387,16 +387,19 @@ export interface Database {
           user_id: string
           event_default_minutes: number | null
           digest_time: string | null
+          feeding_reminder_minutes: number | null
           updated_at: string
         }
         Insert: {
           user_id: string
           event_default_minutes?: number | null
           digest_time?: string | null
+          feeding_reminder_minutes?: number | null
         }
         Update: {
           event_default_minutes?: number | null
           digest_time?: string | null
+          feeding_reminder_minutes?: number | null
         }
         Relationships: []
       }
@@ -751,6 +754,14 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
+      enqueue_feeding_delivery: {
+        Args: { p_household_id: string; p_log_id: string; p_subscription_id: string; p_scheduled_at: string }
+        Returns: string | null
+      }
+      claim_feeding_delivery: {
+        Args: { p_delivery_id: string; p_logged_at: string; p_interval: number; p_lead: number; p_scheduled_at: string }
+        Returns: boolean
+      }
       /**
        * push 購読の**唯一の書込経路**（SECURITY DEFINER）。
        * `push_subscriptions` は authenticated に INSERT/UPDATE の GRANT も

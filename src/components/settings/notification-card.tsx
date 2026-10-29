@@ -66,6 +66,7 @@ import {
 } from "@/lib/pwa/push-reconcile"
 import { toastOfflineError } from "@/lib/utils/offline-error"
 import { cn } from "@/lib/utils"
+import { FeedingReminderControl } from "./feeding-reminder-control"
 import type { NotificationHealthView } from "@/lib/domain/notification-health"
 
 export interface PushDeviceView {
@@ -99,6 +100,7 @@ interface NotificationCardProps {
    * 前者は「分からぬ」、後者は「送らないと決まっておる」じゃ。
    */
   digestTimeUnknown: boolean
+  feedingReminderMinutes?: number | null
   /**
    * 端末一覧を**読めなかった**。`devices.length === 0` と混ぜてはならぬ —— 前者は
    * 「分からぬ」、後者は「受け取れる端末が無いと決まっておる」じゃ。
@@ -295,6 +297,7 @@ export function NotificationCard({
   health,
   digestTime,
   digestTimeUnknown,
+  feedingReminderMinutes = null,
   devicesUnknown = false,
 }: NotificationCardProps) {
   // 公開鍵はビルド時に埋まる（`NEXT_PUBLIC_` ゆえレンダー中に読んで安全）。
@@ -715,6 +718,14 @@ export function NotificationCard({
             </p>
           </div>
         )}
+
+        <FeedingReminderControl
+          key={`${feedingReminderMinutes ?? "off"}:${digestTimeUnknown}`}
+          minutes={feedingReminderMinutes}
+          unknown={digestTimeUnknown}
+          reachable={digestReachable}
+          reachabilityKnown={digestReachabilityKnown}
+        />
 
         {/* ── 毎朝のまとめ（B-5）────────────────────────────────
             その日の予定を 1 通にまとめて送る。**既定は無効**（主が自ら選ぶまで

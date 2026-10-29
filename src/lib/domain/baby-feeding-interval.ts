@@ -50,8 +50,8 @@ export function computeNextFeeding(
  *（`deriveDashboardSummary` と同じ理由）。dashboard の logs は logged_at 降順で
  * 入る前提だが、タイマー由来の行は開始時刻（過去）を持つため順序に依存しない。
  */
-export function findLastNursing(logs: BabyLogData[]): BabyLogData | null {
-  let latest: BabyLogData | null = null
+export function findLastNursing<T extends Pick<BabyLogData, "log_type" | "feeding_type" | "logged_at">>(logs: T[]): T | null {
+  let latest: T | null = null
   let latestEpoch = Number.NEGATIVE_INFINITY
   for (const log of logs) {
     if (log.log_type !== "feeding" || log.feeding_type === "pumped") continue

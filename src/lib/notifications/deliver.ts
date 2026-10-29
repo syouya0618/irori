@@ -66,6 +66,9 @@ import {
   type PushTarget,
   type VapidConfig,
 } from "./send-push"
+import { findLastNursing } from "@/lib/domain/baby-feeding-interval"
+import { buildFeedingNotification, dueFeedingReminder, isFeedingReminderMinutes } from "./feeding-rules"
+import type { PushSendOptions } from "./send-push"
 import { deliverFeedbackNotifications } from "./deliver-feedback"
 
 export interface DeliveryRunResult {
@@ -101,6 +104,7 @@ export interface DeliveryDeps {
     target: PushTarget,
     vapid: VapidConfig,
     payload: unknown,
+    options?: PushSendOptions,
   ) => Promise<PushSendResult>
 }
 
@@ -244,6 +248,14 @@ export async function deliverDueNotifications(
           message: err instanceof Error ? err.message : String(err),
         })
       }
+    }
+
+    // 予定/まとめの処理を先に完了させる。授乳通知の失敗は別に数える。
+    try {
+      await deliverFeedingReminders(supabase, vapid, deps, counters)
+    } catch (error) {
+      counters.failed += 1
+      console.error("[cron-notify] 授乳通知の処理に失敗", { code: error && typeof error === "object" && "code" in error ? error.code : undefined })
     }
 
     // ── 要望の知らせ（別フェーズ・受信者ごとの専用キュー）──────────────
@@ -805,6 +817,7 @@ async function processPending(
     .from("notification_deliveries")
     .select(DELIVERY_COLUMNS)
     .eq("household_id", householdId)
+    .in("kind", ["event", "digest"])
     .is("sent_at", null)
     .is("skipped_at", null)
     .lte("scheduled_at", nowIso)
@@ -1038,6 +1051,7 @@ async function claimAndSend(
   deps: DeliveryDeps,
   counters: Counters,
   householdId: string,
+  feeding?: { claim: () => Promise<boolean>; ttlSeconds: number },
 ): Promise<void> {
   const subscriptionId = delivery.subscription_id
   const target = subscriptionId ? subscriptionById.get(subscriptionId) : undefined
@@ -1061,26 +1075,30 @@ async function claimAndSend(
     return
   }
 
-  const { data: claimed, error: claimError } = await supabase
-    .from("notification_deliveries")
-    .update({ sent_at: nowIso })
-    .eq("id", delivery.id)
-    .is("sent_at", null)
-    .is("skipped_at", null)
-    // 購読が失効した行（SET NULL で宛先を失った行）は claim させぬ。
-    .not("subscription_id", "is", null)
-    .select("id")
-  if (claimError) {
-    logSupabaseError("cron-notify", "claim に失敗", claimError, {
-      householdId,
-      deliveryId: delivery.id,
-    })
-    counters.failed += 1
-    return
+  if (feeding) {
+    if (!(await feeding.claim())) return
+  } else {
+    const { data: claimed, error: claimError } = await supabase
+      .from("notification_deliveries")
+      .update({ sent_at: nowIso })
+      .eq("id", delivery.id)
+      .is("sent_at", null)
+      .is("skipped_at", null)
+      // 購読が失効した行（SET NULL で宛先を失った行）は claim させぬ。
+      .not("subscription_id", "is", null)
+      .select("id")
+    if (claimError) {
+      logSupabaseError("cron-notify", "claim に失敗", claimError, {
+        householdId,
+        deliveryId: delivery.id,
+      })
+      counters.failed += 1
+      return
+    }
+    // ⚠️ `.update()` は 0 行でも error: null（既知の罠）。**行数で判断する。**
+    // 0 行 = 別プロセスが先に取った、または宛先を失った → 送らぬ。
+    if (!claimed || claimed.length === 0) return
   }
-  // ⚠️ `.update()` は 0 行でも error: null（既知の罠）。**行数で判断する。**
-  // 0 行 = 別プロセスが先に取った、または宛先を失った → 送らぬ。
-  if (!claimed || claimed.length === 0) return
 
   if (!target) {
     // claim と読み込みの間に購読が消えた。claim を解いて次の実行へ委ねる。
@@ -1088,15 +1106,11 @@ async function claimAndSend(
     return
   }
 
-  const result = await deps.sendPush(
-    {
-      endpoint: target.endpoint,
-      p256dh: target.p256dh,
-      auth: target.auth,
-    },
-    vapid,
-    payload,
-  )
+  const pushTarget = { endpoint: target.endpoint, p256dh: target.p256dh, auth: target.auth }
+  // No awaited work between the final DB validation/claim and the provider call.
+  const result = feeding
+    ? await deps.sendPush(pushTarget, vapid, payload, { ttlSeconds: feeding.ttlSeconds })
+    : await deps.sendPush(pushTarget, vapid, payload)
 
   if (result.ok) {
     counters.sent += 1
@@ -1261,3 +1275,74 @@ async function writeHeartbeat(
 
 /** grace window の幅を外へ見せる（runbook と route のコメントが参照する）。 */
 export { DELIVERY_GRACE_MS }
+
+/** Only opted-in users are enumerated; one indexed latest-log query per household. */
+async function deliverFeedingReminders(
+  supabase: Client, vapid: VapidConfig, deps: DeliveryDeps, counters: Counters,
+): Promise<void> {
+  const { data: prefs, error: prefsError } = await supabase.from("notification_preferences")
+    .select("user_id, feeding_reminder_minutes").not("feeding_reminder_minutes", "is", null)
+  if (prefsError) throw prefsError
+  const leads = new Map((prefs ?? []).filter((p) => isFeedingReminderMinutes(p.feeding_reminder_minutes))
+    .map((p) => [p.user_id, p.feeding_reminder_minutes as number]))
+  if (!leads.size) return
+  const { data: members, error: memberError } = await supabase.from("profiles")
+    .select("id, household_id").in("id", [...leads.keys()]).eq("is_approved", true)
+    .not("household_id", "is", null)
+  if (memberError) throw memberError
+  for (const householdId of new Set((members ?? []).map((m) => m.household_id))) {
+    if (!householdId) continue
+    try {
+      const memberIds = (members ?? []).filter((m) => m.household_id === householdId).map((m) => m.id)
+      const { rows: subscriptions, error: subError } = await loadSubscriptionRows(supabase, memberIds)
+      if (subError) throw subError
+      if (!subscriptions.length) continue
+      const [logResult, householdResult] = await Promise.all([
+        supabase.from("baby_logs").select("id, logged_at, log_type, feeding_type")
+          .eq("household_id", householdId).eq("log_type", "feeding")
+          .or("feeding_type.is.null,feeding_type.neq.pumped")
+          .order("logged_at", { ascending: false }).order("id", { ascending: false }).limit(1),
+        supabase.from("households").select("feeding_interval_min").eq("id", householdId).maybeSingle(),
+      ])
+      const { data: logs, error: logError } = logResult
+      const { data: household, error: householdError } = householdResult
+      if (logError) throw logError
+      if (householdError) throw householdError
+      const log = findLastNursing(logs ?? [])
+      if (!log || !household) continue
+      const byId = new Map(subscriptions.map((s) => [s.id, s]))
+      for (const subscription of subscriptions) {
+        const now = deps.now()
+        const lead = leads.get(subscription.user_id)
+        const due = dueFeedingReminder(log.logged_at, household.feeding_interval_min, lead, now)
+        if (!due || lead === undefined) continue
+        const { data: id, error: enqueueError } = await supabase.rpc("enqueue_feeding_delivery", {
+          p_household_id: householdId, p_log_id: log.id, p_subscription_id: subscription.id,
+          p_scheduled_at: due.scheduledAt,
+        })
+        if (enqueueError) throw enqueueError
+        if (!id) continue // already sent, gone, or no longer eligible
+        counters.scheduled += 1
+        const delivery: PendingDelivery = {
+          id, event_key: log.id, subscription_id: subscription.id,
+          scheduled_at: due.scheduledAt, dedupe_day: dedupeDayOf(due.scheduledAt),
+        }
+        await claimAndSend(supabase, delivery, buildFeedingNotification(log.logged_at, due.targetIso),
+          byId, now.toISOString(), vapid, deps, counters, householdId, {
+            ttlSeconds: due.ttlSeconds,
+            claim: async () => {
+              const { data: claimed, error: claimError } = await supabase.rpc("claim_feeding_delivery", {
+                p_delivery_id: id, p_logged_at: log.logged_at, p_interval: household.feeding_interval_min,
+                p_lead: lead, p_scheduled_at: due.scheduledAt,
+              })
+              if (claimError) throw claimError
+              return claimed === true
+            },
+          })
+      }
+    } catch (error) {
+      counters.failed += 1
+      console.error("[cron-notify] 世帯の授乳通知に失敗", { householdId, code: error && typeof error === "object" && "code" in error ? error.code : undefined })
+    }
+  }
+}

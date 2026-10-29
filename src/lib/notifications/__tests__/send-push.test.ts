@@ -147,3 +147,11 @@ describe("readVapidConfig", () => {
     expect(readVapidConfig()).toBeNull()
   })
 })
+
+it("授乳通知は短いTTLを指定でき、既存通知の既定TTLは900秒のまま", async () => {
+  sendNotification.mockResolvedValue({ statusCode: 201 })
+  await sendPushNotification(TARGET, VAPID, { title: "feeding" }, { ttlSeconds: 30 })
+  expect(sendNotification.mock.calls[0][2].TTL).toBe(30)
+  await sendPushNotification(TARGET, VAPID, { title: "event" })
+  expect(sendNotification.mock.calls[1][2].TTL).toBe(900)
+})

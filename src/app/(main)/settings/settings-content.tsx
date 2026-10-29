@@ -102,6 +102,7 @@ interface SettingsContentProps {
   digestTime: string | null
   /** まとめの設定を**読めなかった**（＝「送らない」とは限らぬ）。 */
   digestTimeUnknown: boolean
+  feedingReminderMinutes?: number | null
   /** Google 接続を**読めなかった**（＝未接続とは限らぬ）。 */
   googleConnectionsUnknown?: boolean
   /** 通知の端末一覧を**読めなかった**（＝端末が無いとは限らぬ）。 */
@@ -337,6 +338,7 @@ export function SettingsContent({
   pushHealth,
   digestTime,
   digestTimeUnknown,
+  feedingReminderMinutes = null,
   googleConnectionsUnknown = false,
   pushDevicesUnknown = false,
   feedback,
@@ -519,10 +521,12 @@ export function SettingsContent({
 
       <SettingsSection id="settings-notification" title="通知と端末" titleHidden>
         <NotificationCard
+          key={`${profile.id}:${householdId ?? household?.id ?? "unknown"}`}
           devices={pushDevices}
           health={pushHealth}
           digestTime={digestTime}
           digestTimeUnknown={digestTimeUnknown}
+          feedingReminderMinutes={feedingReminderMinutes}
           devicesUnknown={pushDevicesUnknown}
         />
       </SettingsSection>

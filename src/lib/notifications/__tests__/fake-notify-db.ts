@@ -20,6 +20,8 @@ import type { Database } from "@/lib/types/database"
 type Row = Record<string, unknown>
 
 export interface FakeNotifyDb {
+  households: Row[]
+  baby_logs: Row[]
   profiles: Row[]
   push_subscriptions: Row[]
   calendar_events: Row[]
@@ -37,6 +39,8 @@ export interface FakeNotifyDb {
 
 export function emptyNotifyDb(): FakeNotifyDb {
   return {
+    households: [],
+    baby_logs: [],
     profiles: [],
     push_subscriptions: [],
     calendar_events: [],
@@ -53,6 +57,7 @@ export function emptyNotifyDb(): FakeNotifyDb {
 
 type Filter =
   | { kind: "eq" | "neq" | "lt" | "lte" | "gt" | "gte"; column: string; value: unknown }
+  | { kind: "nullOrNeq"; column: string; value: unknown }
   | { kind: "isNull"; column: string }
   | { kind: "isNotNull"; column: string }
   | { kind: "in"; column: string; values: unknown[] }
@@ -66,6 +71,7 @@ export interface QueryRecord {
   filters: Filter[]
   returning: boolean
   order: string | null
+  orders: { column: string; ascending: boolean }[]
   /** `.limit(n)`（要望の知らせの 1 周の上限）。null = 無制限。 */
   limit: number | null
 }
@@ -83,6 +89,7 @@ function compare(a: unknown, b: unknown): number {
 
 function matches(row: Row, filters: Filter[]): boolean {
   return filters.every((f) => {
+    if (f.kind === "nullOrNeq") return row[f.column] == null || row[f.column] !== f.value
     if (f.kind === "eq") return row[f.column] === f.value
     if (f.kind === "isNull") return row[f.column] === null || row[f.column] === undefined
     if (f.kind === "isNotNull")
@@ -178,9 +185,14 @@ export function createFakeNotifySupabase(
 
     if (record.op === "select") {
       let hits = store.filter((row) => matches(row, record.filters))
-      if (record.order) {
-        const key = record.order
-        hits = [...hits].sort((a, b) => compare(a[key], b[key]))
+      if (record.orders.length) {
+        hits = [...hits].sort((a, b) => {
+          for (const { column, ascending } of record.orders) {
+            const c = compare(a[column], b[column])
+            if (c) return ascending ? c : -c
+          }
+          return 0
+        })
       }
       if (record.limit !== null) hits = hits.slice(0, record.limit)
       return { data: hits.map((row) => ({ ...row })), error: null }
@@ -259,6 +271,7 @@ export function createFakeNotifySupabase(
       filters: [],
       returning: false,
       order: null,
+      orders: [],
       limit: null,
     }
     records.push(record)
@@ -336,7 +349,13 @@ export function createFakeNotifySupabase(
         record.filters.push({ kind: "in", column, values })
         return builder
       },
-      order(column: string) {
+      or(expression: string) {
+        if (expression !== "feeding_type.is.null,feeding_type.neq.pumped") throw new Error("unsupported fake OR")
+        record.filters.push({ kind: "nullOrNeq", column: "feeding_type", value: "pumped" })
+        return builder
+      },
+      order(column: string, options?: { ascending?: boolean }) {
+        record.orders.push({ column, ascending: options?.ascending ?? true })
         record.order = column
         return builder
       },

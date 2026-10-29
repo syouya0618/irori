@@ -13,6 +13,7 @@ import {
   FEEDING_INTERVAL_DEFAULT,
   normalizeFeedingInterval,
 } from "@/lib/domain/baby-feeding-interval"
+import { isFeedingReminderMinutes } from "@/lib/notifications/feeding-rules"
 import {
   DIGEST_TIME_NONE,
   isDigestTimeSlot,
@@ -343,6 +344,24 @@ export async function updateDigestTime(value: string) {
     return { error: "通知の設定に失敗しました" }
   }
 
+  revalidatePath("/settings")
+  return { success: true }
+}
+
+/** 自分の授乳通知だけを変更する。他の設定列をupsertへ混ぜない。 */
+export async function updateFeedingReminder(value: number | null) {
+  if (value !== null && !isFeedingReminderMinutes(value)) return { error: "無効な通知時間です" }
+  const result = await getAuthContext()
+  if (result.error !== null) return { error: result.error }
+  const { supabase, userId } = result.context
+  const { data, error } = await supabase.from("notification_preferences")
+    .upsert({ user_id: userId, feeding_reminder_minutes: value }, { onConflict: "user_id" })
+    .select("user_id")
+  if (error) {
+    logSupabaseError("settings", "feeding reminder update failed", error, { userId })
+    return { error: "授乳通知の設定を保存できませんでした" }
+  }
+  if (!data?.length) return { error: "授乳通知の設定を保存できませんでした" }
   revalidatePath("/settings")
   return { success: true }
 }
