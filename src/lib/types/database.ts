@@ -64,6 +64,13 @@ export type GoogleSyncErrorKind =
 export interface Database {
   public: {
     Tables: {
+      sleep_sessions: {
+        Row: { id: string; household_id: string; child_id: string; started_at: string; ended_at: string | null; started_by: string | null; ended_by: string | null; memo: string | null; voided: boolean; updated_at: string; created_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+
       child_shares: {
         Row: { id: string; household_id: string; child_id: string; invitation_id: string; viewer_id: string | null; allow_daily: boolean; allow_diary: boolean; allow_health: boolean; allow_custom: boolean; expires_at: string | null; revoked_at: string | null; created_at: string }
         Insert: never
@@ -783,6 +790,10 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
+      start_sleep: { Args: { p_id: string; p_child: string; p_start?: string | null; p_end?: string | null; p_memo?: string | null }; Returns: Json }
+      stop_sleep: { Args: { p_id: string; p_child: string; p_version: string; p_stop_id: string; p_end?: string | null }; Returns: Json }
+      edit_sleep: { Args: { p_id: string; p_child: string; p_version: string; p_start: string; p_end: string; p_memo?: string | null; p_voided?: boolean }; Returns: Json }
+
       create_child_share: { Args: { p_child_id: string; p_daily: boolean; p_diary: boolean; p_health: boolean; p_custom: boolean; p_until?: string | null }; Returns: Json }
       accept_child_share: { Args: { p_token: string }; Returns: string }
       revoke_child_share: { Args: { p_share_id: string }; Returns: boolean }

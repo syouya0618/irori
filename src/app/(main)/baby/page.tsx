@@ -1,3 +1,4 @@
+import Link from "next/link"
 import { getChildContext } from "@/lib/supabase/child-context"
 import { ChildScopeProvider } from "@/components/baby/child-scope"
 import { ChildPicker } from "@/components/baby/child-picker"
@@ -154,6 +155,7 @@ export default async function BabyPage({
     // component が残ると、useState(initialDate) の選択日が着地日のまま居座る
     <ChildScopeProvider key={child.id} scope={{ id: child.id, isLegacy: child.is_legacy, updatedAt: child.updated_at }}>
     <ChildPicker childrenList={children} selectedId={child.id} />
+    <Link href="/baby/sleep" className="mx-4 mt-2 flex min-h-11 items-center text-sm text-primary">睡眠・生活リズム</Link>
     <BabyDashboard
       key={`${userId}:${householdId}:${child.id}:${selectedDate}`}
       initialLogs={logs ?? []}

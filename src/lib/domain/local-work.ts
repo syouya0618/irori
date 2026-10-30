@@ -1,3 +1,4 @@
+import { listPendingSleep } from "@/lib/domain/sleep-pending"
 import { ownedChildTimerIds, readPersistedTimer, summarizePersistedTimer } from "@/lib/domain/feeding-timer-storage"
 import { countHouseholdPendingSaves, listPendingSaves } from "@/lib/domain/pending-saves-storage"
 import { countOwnedDrafts } from "@/lib/domain/draft-storage"
@@ -55,7 +56,7 @@ export function summarizeLocalWork(owner: SaveOwner, nowMs: number = Date.now())
   return {
     storageReadable,
     timer: timer ? { pendingSave: timer.pendingSave, stale: timer.stale } : null,
-    pendingSaves: owner.childId ? listPendingSaves(owner, nowMs).length : countHouseholdPendingSaves(owner, nowMs),
+    pendingSaves: (owner.childId ? listPendingSaves(owner, nowMs).length : countHouseholdPendingSaves(owner, nowMs)) + listPendingSleep(owner).items.length,
     calendarCreates: creates.filter((e) => e.status !== "rejected").length,
     calendarCreatesRejected: creates.filter((e) => e.status === "rejected").length,
     calendarCreatesMemoryOnly: memoryCreates.length,
