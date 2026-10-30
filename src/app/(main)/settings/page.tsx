@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
+import { getProfileForRequest } from "@/lib/supabase/profile-for-request"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { getVerifiedUser } from "@/lib/supabase/verified-user"
 import { FEEDING_INTERVAL_DEFAULT } from "@/lib/domain/baby-feeding-interval"
@@ -96,11 +97,7 @@ export default async function SettingsPage({
   }
   const { userId, email } = verified
 
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("id, display_name, avatar_url, household_id, role, default_page")
-    .eq("id", userId)
-    .single()
+  const { data: profile, error: profileError } = await getProfileForRequest(userId)
 
   if (profileError) {
     logSupabaseError("settings", "profile lookup failed", profileError, {
