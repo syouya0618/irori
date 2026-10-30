@@ -3,8 +3,8 @@ import { SleepView } from "@/components/baby/sleep-view"
 import { SLEEP_COLUMNS } from "@/lib/domain/sleep"
 import { BABY_LOG_COLUMNS } from "@/lib/domain/baby-log-columns"
 import { jstDayStartIso,shiftYmd,todayJstString } from "@/lib/utils/date-jst"
-export default async function SleepPage(){
- const {supabase,child,userId,householdId}=await getChildContext()
+export default async function SleepPage({searchParams}:{searchParams:Promise<{child?:string}>}){
+ const {supabase,child,userId,householdId}=await getChildContext((await searchParams).child)
  const from=jstDayStartIso(shiftYmd(todayJstString(),-9))
  const [{data:sessions,error:sleepError},{data:active,error:activeError},{data:feeding,error:feedingError}]=await Promise.all([
   supabase.from("sleep_sessions").select(SLEEP_COLUMNS).eq("household_id",householdId).eq("child_id",child.id).gte("started_at",from).order("started_at",{ascending:false}).limit(501),

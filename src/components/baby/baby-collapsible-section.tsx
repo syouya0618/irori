@@ -92,8 +92,8 @@ export const HOME_FOLD_DEFAULTS: Record<HomeFoldId, boolean> = {
 
 export const HOME_FOLD_KEY_PREFIX = "irori:home-folds:v1:"
 
-export function homeFoldStorageKey(owner: { userId: string; householdId: string }): string {
-  return `${HOME_FOLD_KEY_PREFIX}${owner.userId}:${owner.householdId}`
+export function homeFoldStorageKey(owner: { userId: string; householdId: string; childId?: string }): string {
+  return `${HOME_FOLD_KEY_PREFIX}${owner.userId}:${owner.householdId}${owner.childId?`:${owner.childId}`:""}`
 }
 
 function readFolds(key: string): Partial<Record<HomeFoldId, boolean>> {
@@ -118,7 +118,7 @@ function readFolds(key: string): Partial<Record<HomeFoldId, boolean>> {
  * 面の開閉をこの端末に覚える（持ち主ごと。別の利用者・世帯の好みを持ち込まぬ）。localStorage は
  * effect で読む（SSR の描画と食い違わせぬ）。書けぬ環境では画面の間だけ効く。
  */
-export function useHomeFolds(owner: { userId: string; householdId: string } | null) {
+export function useHomeFolds(owner: { userId: string; householdId: string; childId?: string } | null) {
   const key = owner ? homeFoldStorageKey(owner) : null
   const [stored, setStored] = useState<Partial<Record<HomeFoldId, boolean>>>({})
   useEffect(() => {

@@ -60,6 +60,10 @@ import {
 } from "@/lib/domain/handoff"
 import { UpcomingEventsCard } from "@/components/calendar/upcoming-events-card"
 import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
+import { HomeTools,useHomeFocus } from "./home-tools"
+import { homeDetailOrder } from "@/lib/domain/home-priority"
+import { ageMonthsAt } from "@/lib/domain/child-age"
+import { Fragment } from "react"
 import { useNow } from "@/lib/hooks/use-now"
 import { useVisibilityRefetch } from "@/lib/hooks/use-visibility-refetch"
 import { useBottleDefault } from "@/lib/hooks/use-bottle-default"
@@ -407,6 +411,8 @@ export function BabyDashboard({
   // 選択日に属さぬと判定されてタイムラインから消える。now をキーにすれば毎分追従する。
   // 回帰の番人: __tests__/today-clock-contract.test.ts（vitest は Compiler を通さぬ）
   const today = todayJstString(now)
+  const homeFocus = useHomeFocus({userId,householdId,childId:childId??"legacy"})
+  const months = ageMonthsAt(babyBirthDate,today)
 
   // 開いたまま日を跨いだ瞬間の調整（描画中の state 調整 — effect にすると isToday=false の
   // 中間状態が commit され、予定カード等が一瞬外れる）。
@@ -1408,6 +1414,73 @@ export function BabyDashboard({
     return `最新 ${latest.temperature}℃`
   })()
 
+  const detailPanels = {
+    temperature: (
+      <HomeFoldFrame
+        title="体温"
+        summary={temperatureSummary}
+        icon={<Thermometer size={20} />}
+        open={folds.isOpen("temperature") || dateNavStatus === "error"}
+        onOpenChange={(o) => folds.setOpen("temperature", o)}
+      >
+        <BabyTemperatureCard
+          logs={visibleLogs}
+          date={selectedDate}
+          isToday={isToday}
+          status={dateNavStatus}
+          onEdit={handleEdit}
+          onCreate={handleCreateTemperature}
+        />
+      </HomeFoldFrame>
+    ),
+    diary: (
+      <BabyDailyDiary
+        diary={visibleDiary}
+        isToday={isToday}
+        loading={!diaryReady && !diaryFailed}
+        failed={diaryFailed}
+        onRetry={retryDiary}
+        hasDraft={diaryDraftExists}
+        folded={!folds.isOpen("diary")}
+        onFoldChange={(f) => folds.setOpen("diary", !f)}
+        onEdit={() => {
+          // 取得中は開かぬ（前の日の本文を新しい日の下書きにせぬ）。ボタンも隠しておるが、
+          // 二重の防御（レビュー P2-4）
+          if (!diaryReady) return
+          setDiaryKey((k) => k + 1)
+          setDiaryEditOpen(true)
+        }}
+      />
+    ),
+    weekly: (
+      <BabyCollapsibleSection
+        title="週間サマリー"
+        summary={weeklyHeadline}
+        icon={<BarChart3 size={20} />}
+        open={folds.isOpen("weekly")}
+        onOpenChange={(o) => folds.setOpen("weekly", o)}
+      >
+        <BabyWeeklySummary
+          days={weeklySummary}
+          diaperBreakdown={weeklyDiaperBreakdown}
+          average={weeklyAverage}
+          embedded
+        />
+      </BabyCollapsibleSection>
+    ),
+    growth: (
+      <BabyCollapsibleSection
+        title="成長の記録"
+        summary={growthLatestSummary(growthSeries)}
+        icon={<TrendingUp size={20} />}
+        open={folds.isOpen("growth")}
+        onOpenChange={(o) => folds.setOpen("growth", o)}
+      >
+        <GrowthChartSection series={growthSeries} embedded birthDate={babyBirthDate} sex={babySex} />
+      </BabyCollapsibleSection>
+    )
+  }
+
   // 並びの方針（片手・夜間・記録の速さ）:
   // 1. 日付（今日か過去日か）→ 計測中の授乳 → 最終授乳と次の目安 → 記録の釦 → その日の数
   //    → タイムライン。記録に要る情報と釦を最初の 1 画面に集める
@@ -1487,6 +1560,8 @@ export function BabyDashboard({
         )}
       </BabySummaryBar>
 
+      {childId&&<HomeTools months={months} childId={childId} choice={homeFocus.choice} onChoose={homeFocus.choose}/>}
+
       {/* 前回この端末で見てから（C4）。記録された事実だけ。何も無ければ描かぬ */}
       {isToday && !handoffDismissed && (
         <BabyHandoffSummary
@@ -1529,72 +1604,7 @@ export function BabyDashboard({
         isToday={isToday}
       />
 
-      {/* 朝/夜の体温（訴え③）。読む配列は選択日の logs（週窓の weeklyLogs ではない —
-          週窓の外の過去日を開いた時に静かに空になるため）。isToday ゲートの**外**に
-          置き、過去日は閲覧のみ（記録ボタンはカード側で今日限定に出し分ける）。 */}
-      <HomeFoldFrame
-        title="体温"
-        summary={temperatureSummary}
-        icon={<Thermometer size={20} />}
-        open={folds.isOpen("temperature") || dateNavStatus === "error"}
-        onOpenChange={(o) => folds.setOpen("temperature", o)}
-      >
-        <BabyTemperatureCard
-          logs={visibleLogs}
-          date={selectedDate}
-          isToday={isToday}
-          status={dateNavStatus}
-          onEdit={handleEdit}
-          onCreate={handleCreateTemperature}
-        />
-      </HomeFoldFrame>
-
-      {/* その日の育児日記（1日1本・ぴよログ流）。全文を常時表示する。
-          /baby/diary への導線はセクションヘッダの「すべて」に集約（旧 Link カード廃止）。 */}
-      <BabyDailyDiary
-        diary={visibleDiary}
-        isToday={isToday}
-        loading={!diaryReady && !diaryFailed}
-        failed={diaryFailed}
-        onRetry={retryDiary}
-        hasDraft={diaryDraftExists}
-        folded={!folds.isOpen("diary")}
-        onFoldChange={(f) => folds.setOpen("diary", !f)}
-        onEdit={() => {
-          // 取得中は開かぬ（前の日の本文を新しい日の下書きにせぬ）。ボタンも隠しておるが、
-          // 二重の防御（レビュー P2-4）
-          if (!diaryReady) return
-          setDiaryKey((k) => k + 1)
-          setDiaryEditOpen(true)
-        }}
-      />
-
-      {/* 週の傾向と成長曲線は畳む（必要な時に開く）。窓の契約（表示 7 日・取得 8 日・
-          平均は昨日まで）は中身の BabyWeeklySummary が従来どおり持つ */}
-      <BabyCollapsibleSection
-        title="週間サマリー"
-        summary={weeklyHeadline}
-        icon={<BarChart3 size={20} />}
-        open={folds.isOpen("weekly")}
-        onOpenChange={(o) => folds.setOpen("weekly", o)}
-      >
-        <BabyWeeklySummary
-          days={weeklySummary}
-          diaperBreakdown={weeklyDiaperBreakdown}
-          average={weeklyAverage}
-          embedded
-        />
-      </BabyCollapsibleSection>
-
-      <BabyCollapsibleSection
-        title="成長の記録"
-        summary={growthLatestSummary(growthSeries)}
-        icon={<TrendingUp size={20} />}
-        open={folds.isOpen("growth")}
-        onOpenChange={(o) => folds.setOpen("growth", o)}
-      >
-        <GrowthChartSection series={growthSeries} embedded birthDate={babyBirthDate} sex={babySex} />
-      </BabyCollapsibleSection>
+      {homeDetailOrder(months,homeFocus.choice).map(id=><Fragment key={id}>{detailPanels[id]}</Fragment>)}
 
       {/* 再マウント用の key は兄弟（BabyLogFormSheet）と名前空間を分ける。どちらも
           0 から数える数値ゆえ、素の数値だと値が揃った瞬間に重複 key になり、React が
