@@ -64,7 +64,7 @@ Phase 1: lint、型、3515 Vitest、production build、4本のstrict検出器が
 
 ローカルPostgreSQL 17（UTF-8・UTC）+ pgTAP 1.3.4で、全migrationの初期構築と27 SQLスイートを確認。
 この試験はAuth/Storageの最小schemaを使い、GoTrue・PostgREST・Realtime・pg_cron・Pushは含まない。
-新しい17 DB項目は、候補の上限・再利用・再送・ロールバック・種別/本人/世帯/承認/anonを検証。
+新しい18 DB項目は、候補の上限・再利用・再送・ロールバック・種別/本人/世帯/承認/anonを検証。
 Supabase CLIの全スタック試験、追加Playwrightの実行状態は配送時の検証結果を参照。
 
 ### 導入・停止・ロールバック

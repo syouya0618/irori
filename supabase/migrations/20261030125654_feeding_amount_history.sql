@@ -1,14 +1,13 @@
 -- Only committed input writes count. No backfill from another person's old logs.
 CREATE SCHEMA IF NOT EXISTS irori_private;
 REVOKE ALL ON SCHEMA irori_private FROM PUBLIC, anon, authenticated;
-CREATE SEQUENCE irori_private.feeding_amount_use_seq;
 
 CREATE TABLE public.feeding_amount_history (
   user_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   household_id uuid NOT NULL REFERENCES public.households(id) ON DELETE CASCADE,
   feeding_type text NOT NULL CHECK (feeding_type IN ('bottle', 'pumped', 'solid')),
   amount_ml smallint NOT NULL CHECK (amount_ml BETWEEN 0 AND 999),
-  use_order bigint NOT NULL DEFAULT nextval('irori_private.feeding_amount_use_seq'),
+  use_order bigint NOT NULL,
   PRIMARY KEY (user_id, household_id, feeding_type, amount_ml)
 );
 ALTER TABLE public.feeding_amount_history ENABLE ROW LEVEL SECURITY;
@@ -24,7 +23,7 @@ CREATE POLICY feeding_amount_history_select ON public.feeding_amount_history
 
 CREATE FUNCTION irori_private.remember_feeding_amount() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
-DECLARE actor uuid := auth.uid();
+DECLARE actor uuid := auth.uid(); next_order bigint;
 BEGIN
   IF NEW.log_type::text <> 'feeding'
     OR NEW.feeding_type::text NOT IN ('bottle', 'pumped', 'solid')
@@ -40,10 +39,14 @@ BEGIN
   -- Serialize a user's MRU so concurrent devices cannot retain six candidates.
   PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
     actor::text || ':' || NEW.household_id::text || ':' || NEW.feeding_type::text, 0));
-  INSERT INTO public.feeding_amount_history(user_id, household_id, feeding_type, amount_ml)
-    VALUES (actor, NEW.household_id, NEW.feeding_type::text, NEW.amount_ml)
+  -- Recency is local to this scope; do not expose other households' activity via a global sequence.
+  SELECT coalesce(max(h.use_order), 0) + 1 INTO next_order
+    FROM public.feeding_amount_history h
+    WHERE h.user_id = actor AND h.household_id = NEW.household_id AND h.feeding_type = NEW.feeding_type::text;
+  INSERT INTO public.feeding_amount_history(user_id, household_id, feeding_type, amount_ml, use_order)
+    VALUES (actor, NEW.household_id, NEW.feeding_type::text, NEW.amount_ml, next_order)
     ON CONFLICT (user_id, household_id, feeding_type, amount_ml)
-    DO UPDATE SET use_order = nextval('irori_private.feeding_amount_use_seq');
+    DO UPDATE SET use_order = EXCLUDED.use_order;
   DELETE FROM public.feeding_amount_history h
     WHERE h.user_id = actor AND h.household_id = NEW.household_id AND h.feeding_type = NEW.feeding_type::text
     AND h.amount_ml NOT IN (

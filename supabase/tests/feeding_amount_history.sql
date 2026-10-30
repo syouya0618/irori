@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(17);
+SELECT plan(18);
 INSERT INTO public.households(id,name) VALUES
  ('a0000000-0000-4000-8000-000000000001','household-a'),
  ('b0000000-0000-4000-8000-000000000001','household-b');
@@ -40,6 +40,7 @@ SELECT results_eq('SELECT amount_ml::int FROM public.feeding_amount_history ORDE
 INSERT INTO public.baby_logs(household_id,logged_by,log_type,feeding_type,amount_ml)
  VALUES('a0000000-0000-4000-8000-000000000001','a0000000-0000-4000-8000-000000000002','feeding','pumped',90);
 SELECT is((SELECT amount_ml::int FROM public.feeding_amount_history WHERE feeding_type='pumped'),90,'record kinds are isolated');
+SELECT is((SELECT use_order FROM public.feeding_amount_history WHERE feeding_type='pumped'),1::bigint,'recency counters do not expose activity outside this personal record-kind scope');
 SELECT is((SELECT count(*) FROM public.feeding_amount_history WHERE feeding_type='bottle'),5::bigint,'pumped does not evict bottle');
 SELECT throws_ok($$DELETE FROM public.feeding_amount_history$$,'42501',NULL,'client cannot fabricate usage with direct writes');
 SELECT set_config('request.jwt.claims','{"sub":"a0000000-0000-4000-8000-000000000003","role":"authenticated"}',true);
