@@ -64,6 +64,10 @@ export type GoogleSyncErrorKind =
 export interface Database {
   public: {
     Tables: {
+      news_preferences:{Row:{user_id:string;region_key:string|null;enabled:boolean;enabled_from:string;updated_at:string};Insert:never;Update:never;Relationships:[]}
+      news_articles:{Row:{region_key:string;id:string;title:string;url:string;published_at:string;first_seen_at:string;min_months:number|null;max_months:number|null};Insert:{region_key:string;id:string;title:string;url:string;published_at:string;min_months?:number|null;max_months?:number|null};Update:never;Relationships:[]}
+      news_source_runs:{Row:{region_key:string;claimed_at:string;last_success_at:string|null};Insert:never;Update:{last_success_at?:string};Relationships:[]}
+      news_deliveries:{Row:{id:string;recipient_id:string;household_id:string;region_key:string;day:string;subscription_id:string|null;article_ids:string[];sent_at:string|null;accepted_at:string|null;skipped_at:string|null};Insert:never;Update:{sent_at?:string|null;accepted_at?:string|null;skipped_at?:string|null};Relationships:[]}
       custom_fields: {
         Row:{id:string;household_id:string;label:string;value_type:"number"|"boolean"|"text"|"datetime"|"choice";options:Json;archived:boolean;updated_at:string;created_at:string}
         Insert:never
@@ -809,6 +813,11 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
+      news_source_status:{Args:Record<string,never>;Returns:string|null}
+      save_news_preferences:{Args:{p_region:string|null;p_enabled:boolean;p_version:string|null};Returns:Json}
+      claim_news_source:{Args:{p_region:string;p_now:string};Returns:boolean}
+      prepare_news_deliveries:{Args:{p_now:string};Returns:number}
+      claim_news_delivery:{Args:{p_id:string;p_now:string};Returns:Json}
       save_custom_field:{Args:{p_id:string;p_version:string|null;p_label:string;p_type:string;p_options:Json;p_archived:boolean};Returns:Json}
       save_custom_record:{Args:{p_id:string;p_child:string;p_version:string|null;p_field:string;p_value:Json;p_logged_at:string;p_memo:string|null;p_voided:boolean};Returns:Json}
       export_child_records:{Args:{p_child:string;p_from?:string|null;p_to?:string|null};Returns:Json}

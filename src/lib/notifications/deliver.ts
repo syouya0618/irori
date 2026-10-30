@@ -69,6 +69,7 @@ import {
 import { findLastNursing } from "@/lib/domain/baby-feeding-interval"
 import { buildFeedingNotification, dueFeedingReminder, isFeedingReminderMinutes } from "./feeding-rules"
 import type { PushSendOptions } from "./send-push"
+import { deliverRegionalNews } from "./deliver-news"
 import { deliverFeedbackNotifications } from "./deliver-feedback"
 
 export interface DeliveryRunResult {
@@ -278,6 +279,14 @@ export async function deliverDueNotifications(
       console.error("[cron-notify] 要望の知らせの配信に失敗（予定の通知とは独立）", {
         message: err instanceof Error ? err.message : String(err),
       })
+    }
+
+    // News is last and isolated: a feed/parser/queue failure cannot stop feeding or calendar delivery.
+    try {
+      await deliverRegionalNews(supabase,{now,vapid,sendPush:deps.sendPush,loadSubscriptions:loadSubscriptionRows,settleSubscription:settleSubscriptionAfterSend},counters)
+    } catch {
+      counters.failed += 1
+      console.error("[cron-notify] news phase failed independently")
     }
 
     if (enumerationFailed) throw enumerationFailure

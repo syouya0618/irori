@@ -11,3 +11,7 @@ The MIT license covers irori's code. It does not assert ownership of third-party
 - Bundled file: `src/lib/data/japan-growth-2023.json`. Transcribed numerical values for seven percentiles, by sex, weight (kg) and length/height (cm). irori selected published bins from one month to under 78 months and renders rectangles/steps. Other neonatal/day-specific values are not included. No interpolation, unknown values, z-score conversion or percentile diagnosis is inferred.
 - UI attribution: the agency's survey is linked and irori's processing is identified. No agency endorsement is implied. This population reference does not correct gestational age or replace medical assessment. Users choose the child's recorded sex and birth date; unknown settings suppress the reference.
 - Reference changes must be reviewed against the official tables and terms, with version, numeric fixtures and attribution updated together.
+
+## Official municipal RSS (runtime only)
+
+Source catalog: [Sapporo RSS guide](https://www.city.sapporo.jp/koho/hp/rss/index.html) and [Yokohama RSS guide](https://www.city.yokohama.lg.jp/aboutweb/usage/rss.html), checked 2026-10-31. irori acts as a private RSS reader: it stores the headline, official URL and source date, links to the publisher and does not fetch/reproduce article bodies or images. No actual articles are bundled with the code or test fixtures. Publisher rights remain with the publisher. There is no claim of MIT ownership over externally fetched content. Feed availability and terms must be rechecked when adding/changing sources.
