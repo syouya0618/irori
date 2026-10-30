@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useChildScope } from "@/components/baby/child-scope"
 
 import { useEffect, useRef, useState } from "react"
@@ -453,6 +454,7 @@ export function ExportCard() {
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
+        <Link href={`/baby/custom${childScope?.id?`?child=${childScope.id}`:""}#export`} className="mb-4 flex min-h-11 items-center text-sm text-primary">睡眠・予防接種・健診・カスタム記録のJSON</Link>
         <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
           <li>PDF: 小児科の受診で見せる集計（3ヶ月まで）</li>
           <li>JSON: 全項目の機械可読な書き出し（バックアップや他のアプリ向け）</li>

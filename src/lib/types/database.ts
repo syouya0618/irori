@@ -64,6 +64,18 @@ export type GoogleSyncErrorKind =
 export interface Database {
   public: {
     Tables: {
+      custom_fields: {
+        Row:{id:string;household_id:string;label:string;value_type:"number"|"boolean"|"text"|"datetime"|"choice";options:Json;archived:boolean;updated_at:string;created_at:string}
+        Insert:never
+        Update:never
+        Relationships:[]
+      }
+      custom_records: {
+        Row:{id:string;household_id:string;child_id:string;field_id:string;field_label:string;value_type:"number"|"boolean"|"text"|"datetime"|"choice";field_options:Json;value:Json;logged_at:string;memo:string|null;voided:boolean;created_by:string|null;updated_at:string;created_at:string;search_text:string}
+        Insert:never
+        Update:never
+        Relationships:[]
+      }
       medical_records: {
         Row: { id:string;household_id:string;child_id:string;kind:"vaccination"|"checkup";title:string;dose:number|null;status:"planned"|"completed"|"cancelled";scheduled_date:string;completed_date:string|null;memo:string|null;remind:boolean;source_key:string;created_by:string|null;updated_at:string;created_at:string }
         Insert: never
@@ -797,6 +809,9 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
+      save_custom_field:{Args:{p_id:string;p_version:string|null;p_label:string;p_type:string;p_options:Json;p_archived:boolean};Returns:Json}
+      save_custom_record:{Args:{p_id:string;p_child:string;p_version:string|null;p_field:string;p_value:Json;p_logged_at:string;p_memo:string|null;p_voided:boolean};Returns:Json}
+      export_child_records:{Args:{p_child:string;p_from?:string|null;p_to?:string|null};Returns:Json}
       save_medical_record: { Args:{p_id:string;p_child:string;p_version:string|null;p_value:Json};Returns:Json }
       start_sleep: { Args: { p_id: string; p_child: string; p_start?: string | null; p_end?: string | null; p_memo?: string | null }; Returns: Json }
       stop_sleep: { Args: { p_id: string; p_child: string; p_version: string; p_stop_id: string; p_end?: string | null }; Returns: Json }
