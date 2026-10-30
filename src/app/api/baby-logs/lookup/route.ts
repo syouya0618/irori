@@ -1,4 +1,4 @@
-import { getAuthContext } from "@/lib/supabase/auth-context"
+import { getBabyAuthContext } from "@/lib/supabase/child-context"
 // 拒否理由 → HTTP status は書き出し・PDF と同じ 1 表（401 はログインし直せば直る時だけ）
 import { AUTH_DENIAL_HTTP_STATUS } from "@/lib/auth/auth-denial-status"
 import { logSupabaseError } from "@/lib/supabase/log-error"
@@ -18,7 +18,7 @@ export async function GET(request: Request) {
   const ids = parseLookupIds(new URL(request.url).searchParams.getAll("id"))
   if (!ids) return new Response("Invalid id", { status: 400 })
 
-  const result = await getAuthContext()
+  const result = await getBabyAuthContext(new URL(request.url).searchParams.get("child") ?? undefined)
   if (result.error !== null) {
     return new Response(result.error, { status: AUTH_DENIAL_HTTP_STATUS[result.reason] })
   }

@@ -1,5 +1,7 @@
 "use client"
 
+import { useChildScope } from "./child-scope"
+
 import { useEffect, useState, useTransition } from "react"
 import {
   Sheet,
@@ -89,6 +91,8 @@ export function BabyDiaryEditSheet({
   onSaved,
   owner = null,
 }: BabyDiaryEditSheetProps) {
+  const childScope = useChildScope()
+  const childId = childScope?.id
   const [content, setContent] = useState(initialContent)
   // 書いている日は開いた時点で固定する（親は開くたびに key で作り直す）。開いている最中に
   // 親の選択日が動いても（日跨ぎの自動追従など）、本文は開いた日のもの — prop をそのまま
@@ -170,7 +174,7 @@ export function BabyDiaryEditSheet({
   function handleSave() {
     startTransition(async () => {
       try {
-        const result = await upsertBabyDiary(targetDate, content, expectedUpdatedAt)
+        const result = await upsertBabyDiary(targetDate, content, expectedUpdatedAt, ...(childId ? [childId] as const : []))
         if (result.conflict) {
           // 下書き（content）には触れない。版を最新へ進め、相手の本文を見せる。
           setConflict(result.conflict)

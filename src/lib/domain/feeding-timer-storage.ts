@@ -17,6 +17,7 @@ export const MAX_TIMER_AGE_MS = 2 * 60 * 60 * 1000
 export type PersistedBreastSide = "breast_left" | "breast_right"
 
 export interface PersistedTimerState {
+  childId?: string
   startedAt: string // ISO
   /** 現在吸わせている側。旧形式から復元できるようキー名は据え置く */
   feedingType: PersistedBreastSide
@@ -58,6 +59,7 @@ export interface PersistedFeedingSubmission {
 }
 
 export interface PersistedFeedingPayload {
+  childId?: string
   feedingType: "breast"
   breastLeftCount: number
   breastRightCount: number
@@ -126,13 +128,14 @@ export function parsePersistedSubmission(value: unknown): PersistedFeedingSubmis
         : { durationSec: p.durationSec as number }),
       ...(typeof p.loggedAt === "string" ? { loggedAt: p.loggedAt } : {}),
       clientId: p.clientId,
+      ...(typeof p.childId === "string" ? { childId: p.childId } : {}),
     },
   }
 }
 
-export function readPersistedTimer(): PersistedTimerState | null {
+export function readPersistedTimer(childId?: string): PersistedTimerState | null {
   try {
-    const raw = localStorage.getItem(FEEDING_TIMER_STORAGE_KEY)
+    const raw = localStorage.getItem(childId ? `${FEEDING_TIMER_STORAGE_KEY}:${childId}` : FEEDING_TIMER_STORAGE_KEY)
     if (raw === null) return null
     const parsed: unknown = JSON.parse(raw)
     if (typeof parsed !== "object" || parsed === null) return null
@@ -160,7 +163,7 @@ export function readPersistedTimer(): PersistedTimerState | null {
 
 export function writePersistedTimer(state: PersistedTimerState): boolean {
   try {
-    localStorage.setItem(FEEDING_TIMER_STORAGE_KEY, JSON.stringify(state))
+    localStorage.setItem(state.childId ? `${FEEDING_TIMER_STORAGE_KEY}:${state.childId}` : FEEDING_TIMER_STORAGE_KEY, JSON.stringify(state))
     return true
   } catch (err) {
     // 容量不足・プライベートモード等。計測は画面上では続くが、リロードで消える。
@@ -172,9 +175,9 @@ export function writePersistedTimer(state: PersistedTimerState): boolean {
   }
 }
 
-export function clearPersistedTimer(): void {
+export function clearPersistedTimer(childId?: string): void {
   try {
-    localStorage.removeItem(FEEDING_TIMER_STORAGE_KEY)
+    localStorage.removeItem(childId ? `${FEEDING_TIMER_STORAGE_KEY}:${childId}` : FEEDING_TIMER_STORAGE_KEY)
   } catch {
     // 読めぬ・消せぬ環境では残っていても害は無い（復元時に捨てられる）
   }
@@ -209,7 +212,7 @@ export function belongsToUser(
  */
 export function summarizePersistedTimer(
   state: PersistedTimerState | null,
-  owner: { userId: string; householdId: string },
+  owner: { userId: string; householdId: string; childId?: string },
   nowMs: number,
 ): {
   startedAt: string
@@ -231,8 +234,27 @@ export function summarizePersistedTimer(
 
 export function belongsToOwner(
   state: PersistedTimerState,
-  owner: { userId: string; householdId: string },
+  owner: { userId: string; householdId: string; childId?: string },
 ): boolean {
-  if (!belongsToUser(state, owner.userId)) return false
+  if (!belongsToUser(state, owner.userId) || state.childId !== owner.childId) return false
   return state.householdId === undefined || state.householdId === owner.householdId
+}
+
+/** Child timers share the existing account/household cleanup boundary. */
+export function purgeChildTimers(owner?: { userId: string; householdId: string }): void {
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (!key.startsWith(FEEDING_TIMER_STORAGE_KEY + ":")) continue
+      const state = JSON.parse(localStorage.getItem(key) ?? "null") as PersistedTimerState | null
+      if (!owner || !state || state.userId !== owner.userId || state.householdId !== owner.householdId) localStorage.removeItem(key)
+    }
+  } catch { /* unavailable storage is reported by the existing account guard */ }
+}
+
+export function ownedChildTimerIds(owner: { userId: string; householdId: string }): string[] {
+  try {
+    return Object.keys(localStorage).filter(k => k.startsWith(FEEDING_TIMER_STORAGE_KEY + ":"))
+      .map(k => k.slice(FEEDING_TIMER_STORAGE_KEY.length + 1))
+      .filter(id => { const s = readPersistedTimer(id); return s?.userId === owner.userId && s.householdId === owner.householdId })
+  } catch { return [] }
 }

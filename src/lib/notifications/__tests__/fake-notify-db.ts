@@ -20,6 +20,7 @@ import type { Database } from "@/lib/types/database"
 type Row = Record<string, unknown>
 
 export interface FakeNotifyDb {
+  children: Row[]
   households: Row[]
   baby_logs: Row[]
   profiles: Row[]
@@ -39,6 +40,7 @@ export interface FakeNotifyDb {
 
 export function emptyNotifyDb(): FakeNotifyDb {
   return {
+    children: [],
     households: [],
     baby_logs: [],
     profiles: [],

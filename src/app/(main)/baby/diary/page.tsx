@@ -1,6 +1,7 @@
 import Link from "next/link"
 import { ArrowLeft } from "lucide-react"
-import { getAuthContext } from "@/lib/supabase/auth-context"
+import { getChildContext } from "@/lib/supabase/child-context"
+import { ChildScopeProvider } from "@/components/baby/child-scope"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { BabyDiaryView } from "@/components/baby/baby-diary-view"
 import { DIARY_PAGE_SIZE } from "@/lib/domain/baby-diary"
@@ -9,9 +10,7 @@ import { DIARY_PAGE_SIZE } from "@/lib/domain/baby-diary"
 const BABY_DIARY_COLUMNS = "id, diary_date, content, updated_at"
 
 export default async function BabyDiaryPage() {
-  const result = await getAuthContext()
-  if (result.error !== null) return null
-  const { supabase, householdId, userId } = result.context
+  const { supabase, householdId, userId, child } = await getChildContext()
 
   // 育児日記（1日1本）を日付降順で1ページ目のみ取得。
   // ページネーション掟: diary_date は UNIQUE(household_id, diary_date) ゆえ
@@ -44,7 +43,7 @@ export default async function BabyDiaryPage() {
         <h1 className="text-lg font-semibold">育児日記</h1>
       </div>
 
-      <BabyDiaryView initialDiaries={diaries ?? []} householdId={householdId} userId={userId} />
+      <ChildScopeProvider key={child.id} scope={{ id: child.id, isLegacy: child.is_legacy }}><BabyDiaryView initialDiaries={diaries ?? []} householdId={householdId} userId={userId} /></ChildScopeProvider>
     </div>
   )
 }

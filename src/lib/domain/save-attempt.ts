@@ -25,6 +25,7 @@ export type SaveAttemptPhase = "sending" | "unknown" | "rejected" | "conflict"
 
 /** 送信スナップショットの持ち主。別の利用者・世帯の端末保存は表示も送信もせぬ。 */
 export interface SaveOwner {
+  childId?: string
   userId: string
   householdId: string
 }

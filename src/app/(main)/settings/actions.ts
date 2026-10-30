@@ -1,6 +1,7 @@
 "use server"
 
 import { redirect, unstable_rethrow } from "next/navigation"
+import { isClientId } from "@/lib/utils/client-id"
 import { revalidatePath } from "next/cache"
 import type { AuthError } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/server"
@@ -128,6 +129,8 @@ export async function updateDefaultPage(page: string) {
 }
 
 export async function updateBabyProfile(formData: FormData) {
+  const childId = formData.get("child_id")
+  if (childId !== null && (typeof childId !== "string" || !isClientId(childId))) return { error: "子どもの指定が不正です" }
   const babyName = formData.get("baby_name")
   const babyBirthDate = formData.get("baby_birth_date")
   const feedingIntervalRaw = formData.get("feeding_interval_min")
@@ -166,15 +169,15 @@ export async function updateBabyProfile(formData: FormData) {
   const { supabase, householdId } = result.context
 
   // 0 行更新を「成功」と偽らない（別世帯・RLS 拒否は 0 行マッチになる）。
-  const { data, error } = await supabase
-    .from("households")
-    .update({
-      baby_name: babyName.trim() || null,
-      baby_birth_date: birthDateValue,
-      feeding_interval_min: feedingIntervalValue,
-    })
-    .eq("id", householdId)
-    .select("id")
+  const write = async () => {
+    if (childId) {
+      const { data, error } = await supabase.from("children").update({ name: babyName.trim(), birth_date: birthDateValue, feeding_interval_min: feedingIntervalValue }).eq("id", childId).eq("household_id", householdId).select("id")
+      return { data, error }
+    }
+    const { data, error } = await supabase.from("households").update({ baby_name: babyName.trim() || null, baby_birth_date: birthDateValue, feeding_interval_min: feedingIntervalValue }).eq("id", householdId).select("id")
+    return { data, error }
+  }
+  const { data, error } = await write()
 
   if (error) {
     logSupabaseError("settings", "baby profile update failed", error, {

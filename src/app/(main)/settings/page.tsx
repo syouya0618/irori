@@ -1,3 +1,5 @@
+import { getChildContext } from "@/lib/supabase/child-context"
+import { ChildScopeProvider } from "@/components/baby/child-scope"
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
 import { getProfileForRequest } from "@/lib/supabase/profile-for-request"
@@ -294,7 +296,9 @@ export default async function SettingsPage({
   // 同じ画面の中で「3分前」と「4分前」が混ざりうる）。
   const now = new Date()
 
+  const childContext = await getChildContext()
   return (
+    <ChildScopeProvider key={childContext.child.id} scope={{ id: childContext.child.id, isLegacy: childContext.child.is_legacy }}>
     <SettingsContent
       profile={{
         id: profile.id,
@@ -321,10 +325,10 @@ export default async function SettingsPage({
       babyProfile={
         household
           ? {
-              name: household.baby_name ?? null,
-              birthDate: household.baby_birth_date ?? null,
+              name: childContext.child.name || null,
+              birthDate: childContext.child.birth_date,
               feedingIntervalMin:
-                household.feeding_interval_min ?? FEEDING_INTERVAL_DEFAULT,
+                childContext.child.feeding_interval_min ?? FEEDING_INTERVAL_DEFAULT,
             }
           : null
       }
@@ -374,5 +378,6 @@ export default async function SettingsPage({
         now,
       })}
     />
+    </ChildScopeProvider>
   )
 }

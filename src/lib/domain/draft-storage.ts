@@ -21,6 +21,7 @@ export const DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000
 export const DRAFT_MAX_CHARS = 20_000
 
 export interface DraftOwner {
+  childId?: string
   userId: string
   householdId: string
 }
@@ -75,13 +76,13 @@ function targetKey(target: DraftTarget): string {
 }
 
 export function draftStorageKey(owner: DraftOwner, target: DraftTarget): string {
-  return `${DRAFT_KEY_PREFIX}${owner.userId}:${owner.householdId}:${targetKey(target)}`
+  return `${DRAFT_KEY_PREFIX}${owner.userId}:${owner.householdId}:${owner.childId ? `child:${owner.childId}:` : ""}${targetKey(target)}`
 }
 
 function sameOwner(a: unknown, b: DraftOwner): boolean {
   if (typeof a !== "object" || a === null) return false
   const o = a as Record<string, unknown>
-  return o.userId === b.userId && o.householdId === b.householdId
+  return o.userId === b.userId && o.householdId === b.householdId && o.childId === b.childId
 }
 
 function sameTarget(a: unknown, b: DraftTarget): boolean {

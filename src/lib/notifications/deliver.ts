@@ -1287,7 +1287,7 @@ async function deliverFeedingReminders(
     .map((p) => [p.user_id, p.feeding_reminder_minutes as number]))
   if (!leads.size) return
   const { data: members, error: memberError } = await supabase.from("profiles")
-    .select("id, household_id").in("id", [...leads.keys()]).eq("is_approved", true)
+    .select("id, household_id").in("id", [...leads.keys()]).eq("is_approved", true).neq("role", "viewer")
     .not("household_id", "is", null)
   if (memberError) throw memberError
   for (const householdId of new Set((members ?? []).map((m) => m.household_id))) {
@@ -1297,24 +1297,22 @@ async function deliverFeedingReminders(
       const { rows: subscriptions, error: subError } = await loadSubscriptionRows(supabase, memberIds)
       if (subError) throw subError
       if (!subscriptions.length) continue
-      const [logResult, householdResult] = await Promise.all([
-        supabase.from("baby_logs").select("id, logged_at, log_type, feeding_type")
-          .eq("household_id", householdId).eq("log_type", "feeding")
-          .or("feeding_type.is.null,feeding_type.neq.pumped")
-          .order("logged_at", { ascending: false }).order("id", { ascending: false }).limit(1),
-        supabase.from("households").select("feeding_interval_min").eq("id", householdId).maybeSingle(),
-      ])
-      const { data: logs, error: logError } = logResult
-      const { data: household, error: householdError } = householdResult
+      const { data: children, error: childError } = await supabase.from("children")
+        .select("id, feeding_interval_min").eq("household_id", householdId)
+      if (childError) throw childError
+      for (const child of children ?? []) {
+      const { data: logs, error: logError } = await supabase.from("baby_logs").select("id, logged_at, log_type, feeding_type")
+        .eq("household_id", householdId).eq("child_id", child.id).eq("log_type", "feeding")
+        .or("feeding_type.is.null,feeding_type.neq.pumped")
+        .order("logged_at", { ascending: false }).order("id", { ascending: false }).limit(1)
       if (logError) throw logError
-      if (householdError) throw householdError
       const log = findLastNursing(logs ?? [])
-      if (!log || !household) continue
+      if (!log) continue
       const byId = new Map(subscriptions.map((s) => [s.id, s]))
       for (const subscription of subscriptions) {
         const now = deps.now()
         const lead = leads.get(subscription.user_id)
-        const due = dueFeedingReminder(log.logged_at, household.feeding_interval_min, lead, now)
+        const due = dueFeedingReminder(log.logged_at, child.feeding_interval_min, lead, now)
         if (!due || lead === undefined) continue
         const { data: id, error: enqueueError } = await supabase.rpc("enqueue_feeding_delivery", {
           p_household_id: householdId, p_log_id: log.id, p_subscription_id: subscription.id,
@@ -1327,18 +1325,19 @@ async function deliverFeedingReminders(
           id, event_key: log.id, subscription_id: subscription.id,
           scheduled_at: due.scheduledAt, dedupe_day: dedupeDayOf(due.scheduledAt),
         }
-        await claimAndSend(supabase, delivery, buildFeedingNotification(log.logged_at, due.targetIso),
+        await claimAndSend(supabase, delivery, buildFeedingNotification(log.logged_at, due.targetIso, child.id),
           byId, now.toISOString(), vapid, deps, counters, householdId, {
             ttlSeconds: due.ttlSeconds,
             claim: async () => {
               const { data: claimed, error: claimError } = await supabase.rpc("claim_feeding_delivery", {
-                p_delivery_id: id, p_logged_at: log.logged_at, p_interval: household.feeding_interval_min,
+                p_delivery_id: id, p_logged_at: log.logged_at, p_interval: child.feeding_interval_min,
                 p_lead: lead, p_scheduled_at: due.scheduledAt,
               })
               if (claimError) throw claimError
               return claimed === true
             },
           })
+      }
       }
     } catch (error) {
       counters.failed += 1

@@ -1,5 +1,7 @@
 "use client"
 
+import { useChildScope } from "./child-scope"
+
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
@@ -280,8 +282,10 @@ export function BabyDashboard({
   members = [],
   initialLoadErrors = {},
 }: BabyDashboardProps) {
+  const childScope = useChildScope()
+  const childId = childScope?.id
   // 端末に残すもの（下書き・面の開閉・前回の確認の印）の持ち主
-  const owner = useMemo<DraftOwner>(() => ({ userId, householdId }), [userId, householdId])
+  const owner = useMemo<DraftOwner>(() => ({ userId, householdId, ...(childScope && !childScope.isLegacy ? { childId } : {}) }), [userId, householdId, childId, childScope])
   const folds = useHomeFolds(owner)
   // 範囲ごとの最新の確認（C1）。初回描画の失敗は最初から「確認できません」
   // 時刻は応答を受け取った瞬間の端末の時計（freshness.ts の既定）。描画中には読まぬ
@@ -301,7 +305,7 @@ export function BabyDashboard({
   const [lastSavedId, setLastSavedId] = useState<string | null>(null)
   // いつものミルク量。日付を選び直しても（過去日はクイック記録を出さぬ）持ち続けるよう、
   // クイック記録ではなく常に居るダッシュボードが持つ
-  const bottleDefault = useBottleDefault(householdId, initialBottleDefault)
+  const bottleDefault = useBottleDefault(householdId, initialBottleDefault, childId)
   // 記録者の表示（機能 A）。一人の世帯では null（出さぬ）。退出済みの id は「家族」。
   const recorderLabel = useMemo(() => {
     if (!shouldShowRecorder(members)) return null
@@ -379,8 +383,8 @@ export function BabyDashboard({
   // どおり。端末保存に失敗した環境でチップが 1 分で消える欠陥の修正。レビュー P3-7）。
   useEffect(() => {
     const fromStorage: RunningTimer | null = summarizePersistedTimer(
-      readPersistedTimer(),
-      { userId, householdId },
+      readPersistedTimer(childScope?.isLegacy ? undefined : childId),
+      { userId, householdId, ...(childScope && !childScope.isLegacy ? { childId } : {}) },
       now.getTime(),
     )
     const reported = timerReportedRef.current
@@ -393,7 +397,7 @@ export function BabyDashboard({
             }
           : null),
     )
-  }, [userId, householdId, now])
+  }, [userId, householdId, now, childId, childScope])
 
   // 「今日」は時計（now）から導く。引数なしの todayJstString() は React Compiler が
   // 依存の無い値とみなしてマウント時に一度だけ評価し凍結する（コンパイル出力で確認）—
@@ -568,7 +572,7 @@ export function BabyDashboard({
 
   // Realtime subscription
   useEffect(() => {
-    const supabase = createClient()
+    const supabase = createClient(childId)
     const isRelevantToCurrentWeek = (log: BabyLogData) => {
       const logDate = toJstDateString(log.logged_at)
       return (
@@ -583,7 +587,7 @@ export function BabyDashboard({
           event: "*",
           schema: "public",
           table: "baby_logs",
-          filter: `household_id=eq.${householdId}`,
+          filter: childId ? `child_id=eq.${childId}` : `household_id=eq.${householdId}`,
         },
         (payload) => {
           logRealtimeEvent("baby_logs", payload)
@@ -592,6 +596,7 @@ export function BabyDashboard({
           const inFlight = resyncInFlightRef.current
           if (payload.eventType === "INSERT") {
             const newLog = payload.new as BabyLogData
+            if (childId && newLog.child_id !== childId) return
             // 手元で消した行の遅れた通知（removedIdsRef の注記）。消した版より新しい版は作り直された行ゆえ通す
             if (removedIdsRef.current.has(newLog.id)) {
               if (!isNewerThanRemoved(newLog.updated_at, removedIdsRef.current.get(newLog.id))) return
@@ -624,6 +629,7 @@ export function BabyDashboard({
             })
           } else if (payload.eventType === "UPDATE") {
             const updatedLog = payload.new as BabyLogData
+            if (childId && updatedLog.child_id !== childId) return
             // 手元で消した行の遅れた通知（removedIdsRef の注記）。編集の保存・衝突の応答は
             // applyUpdatedLog へ直に入るゆえ、更新の経路ではここ（Realtime の入口）でだけ見る。
             // ⚠️ UPDATE は版が新しくても控えを外さぬ: 他端末が消した行（alreadyDeleted）の控えは画面が
@@ -657,7 +663,7 @@ export function BabyDashboard({
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [householdId, applyUpdatedLog])
+  }, [householdId, childId, applyUpdatedLog])
 
   // 育児日記（1日1本）の Realtime 購読（issue #155）。baby_logs とは別 channel で
   // 分離し、購読ブロックの blast radius を最小化する。
@@ -665,7 +671,7 @@ export function BabyDashboard({
   // PK のみで配信されない（migration 20260723000001 / calendar_events と同制約）。
   // DELETE（配偶者の空保存）は date-nav refetch と下の visibilitychange refetch で回収する。
   useEffect(() => {
-    const supabase = createClient()
+    const supabase = createClient(childId)
     const channel = supabase
       .channel("baby_diaries")
       .on(
@@ -674,7 +680,7 @@ export function BabyDashboard({
           event: "*",
           schema: "public",
           table: "baby_diaries",
-          filter: `household_id=eq.${householdId}`,
+          filter: childId ? `child_id=eq.${childId}` : `household_id=eq.${householdId}`,
         },
         (payload) => {
           logRealtimeEvent("baby_diaries", payload)
@@ -683,6 +689,7 @@ export function BabyDashboard({
             payload.eventType === "UPDATE"
           ) {
             const next = payload.new as BabyDiaryData
+            if (childId && next.child_id !== childId) return
             // 選択日と一致する日記だけ反映する（selectedDate は deps 外のため ref 読み）。
             // diary_date は DATE 列で Realtime は "YYYY-MM-DD" を配信するが、万一
             // 時刻付き（"...T00:00:00"）で来ても guard が silent 全滅しないよう
@@ -705,7 +712,7 @@ export function BabyDashboard({
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [householdId])
+  }, [householdId, childId])
 
   // タブ復帰時に選択日の日記を再取得し、DELETE 非配信（配偶者の空保存）を回収する
   // （calendar use-month-events と同流儀。issue #91/#92/#155）。
@@ -716,7 +723,7 @@ export function BabyDashboard({
       const context = { householdId, date }
       void (async () => {
         try {
-          const supabase = createClient()
+          const supabase = createClient(childId)
           // anon の 0 行（data: null）を「配偶者が消した」と取り違えて本文を消さない
           // （hasUsableSession。logs の再取得と同じ失敗類型）。
           if (!(await hasUsableSession(supabase, "diary visibility refetch", context))) {
@@ -747,7 +754,7 @@ export function BabyDashboard({
           })
         }
       })()
-    }, [householdId]),
+    }, [householdId, childId]),
   )
 
   /**
@@ -794,7 +801,7 @@ export function BabyDashboard({
 
     const logContext = { householdId, date, today: todayYmd }
     try {
-      const supabase = createClient()
+      const supabase = createClient(childId)
       // anon の 0 行を真値として描かない（hasUsableSession）。取得前に確かめ、anon の
       // 問い合わせ自体を出さない。待つ間に次の世代へ替わっていたら黙って退く。
       const sessionOk = await hasUsableSession(supabase, "logs resync", logContext)
@@ -937,7 +944,7 @@ export function BabyDashboard({
     } finally {
       if (resyncInFlightRef.current === inFlight) resyncInFlightRef.current = null
     }
-  }, [householdId, markRange])
+  }, [householdId, childId, markRange])
 
   useEffect(() => {
     resyncLogsRef.current = resyncLogs
@@ -977,7 +984,7 @@ export function BabyDashboard({
       initialDateRef.current = "" // allow re-fetch if user navigates away and back
       return
     }
-    const supabase = createClient()
+    const supabase = createClient(childId)
     const abortController = new AbortController()
 
     // 選択日の窓は初回描画・取り直しと同じ組み立て（baby-log-queries.ts）
@@ -1041,7 +1048,7 @@ export function BabyDashboard({
     return () => {
       abortController.abort()
     }
-  }, [selectedDate, householdId, dateNavRetry, markRange])
+  }, [selectedDate, householdId, childId, dateNavRetry, markRange])
 
   // 表示用の logs と、日付ナビの取得状態（P2-10）。取得済みの日と選択日が一致する時だけ
   // 行を見せる。違う間は取得中（失敗した日なら失敗）で、前の日の行を新しい見出しの下に

@@ -1,5 +1,7 @@
 "use client"
 
+import { useChildScope } from "@/components/baby/child-scope"
+
 import { useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
@@ -69,10 +71,12 @@ export function BabyProfileCard({
 }
 
 function BabyProfileForm({ initialProfile }: { initialProfile: BabyProfile }) {
+  const childScope = useChildScope()
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
 
   const handleSave = (formData: FormData) => {
+    if (childScope) formData.set("child_id", childScope.id)
     startTransition(async () => {
       try {
         const result = await updateBabyProfile(formData)

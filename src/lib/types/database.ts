@@ -64,8 +64,15 @@ export type GoogleSyncErrorKind =
 export interface Database {
   public: {
     Tables: {
+      children: {
+        Row: { id: string; household_id: string; name: string; birth_date: string | null; sex: string | null; is_legacy: boolean; feeding_interval_min: number; bottle_default_ml: number | null; created_at: string; updated_at: string }
+        Insert: { id?: string; household_id: string; name: string; birth_date?: string | null; sex?: string | null; is_legacy?: boolean; feeding_interval_min?: number; bottle_default_ml?: number | null }
+        Update: { name?: string; birth_date?: string | null; sex?: string | null; feeding_interval_min?: number; bottle_default_ml?: number | null }
+        Relationships: []
+      }
+
       feeding_amount_history: {
-        Row: { user_id: string; household_id: string; feeding_type: string; amount_ml: number; use_order: number }
+        Row: { user_id: string; household_id: string; child_id: string; feeding_type: string; amount_ml: number; use_order: number }
         Insert: never
         Update: never
         Relationships: []
@@ -168,6 +175,7 @@ export interface Database {
       }
       baby_logs: {
         Row: {
+          child_id: string
           id: string
           household_id: string
           log_type: BabyLogType
@@ -198,6 +206,7 @@ export interface Database {
           updated_at: string
         }
         Insert: {
+          child_id?: string | null
           id?: string
           household_id: string
           log_type: BabyLogType
@@ -220,6 +229,7 @@ export interface Database {
           memo?: string | null
         }
         Update: {
+          child_id?: string | null
           log_type?: BabyLogType
           logged_at?: string
           feeding_type?: FeedingType | null
@@ -242,6 +252,7 @@ export interface Database {
       }
       baby_diaries: {
         Row: {
+          child_id: string
           id: string
           household_id: string
           /** JST の暦日 "YYYY-MM-DD"（1世帯・1日につき1本、UNIQUE） */
@@ -252,6 +263,7 @@ export interface Database {
           updated_at: string
         }
         Insert: {
+          child_id?: string | null
           id?: string
           household_id: string
           diary_date: string
@@ -259,6 +271,7 @@ export interface Database {
           updated_by?: string | null
         }
         Update: {
+          child_id?: string | null
           content?: string
           updated_by?: string | null
         }
@@ -266,6 +279,7 @@ export interface Database {
       }
       calendar_events: {
         Row: {
+          child_id: string | null
           id: string
           household_id: string
           title: string
@@ -308,6 +322,7 @@ export interface Database {
           updated_at: string
         }
         Insert: {
+          child_id?: string | null
           id?: string
           household_id: string
           title: string
@@ -333,6 +348,7 @@ export interface Database {
           created_by?: string | null
         }
         Update: {
+          child_id?: string | null
           title?: string
           memo?: string | null
           is_all_day?: boolean

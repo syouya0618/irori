@@ -35,14 +35,15 @@ describe("baby/page → いつものミルク量の配線", () => {
 
   it("量は共有の問い合わせ（selectBottleDefault）で読み、読み方は decodeBottleDefault に任せる", () => {
     const code = pageCode()
-    expect(code).toContain("selectBottleDefault(supabase, householdId)")
+    expect(code).toContain("selectBottleDefault(supabase, householdId, undefined, child.id)")
     expect(code).toContain("decodeBottleDefault(bottleDefaultResult)")
     expect(dashboardProps()).toContain("initialBottleDefault={bottleDefault}")
   })
 
-  it("赤子の名前・授乳間隔の select へ bottle_default_ml を混ぜぬ（migration 前の DB で巻き添えにせぬ）", () => {
+  it("プロフィールは子どものコンテキストから取得し、量を子どもで指定する", () => {
     const code = pageCode()
-    expect(code).toContain('.select("baby_name, baby_birth_date, feeding_interval_min")')
-    expect(code).not.toMatch(/\.select\("[^"]*bottle_default_ml[^"]*"\)/)
+    expect(code).toContain("await getChildContext(")
+    expect(code).toContain("babyName={child.name || null}")
+    expect(code).not.toContain('.from("households")')
   })
 })

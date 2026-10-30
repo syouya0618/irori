@@ -1,5 +1,7 @@
 "use client"
 
+import { useChildScope } from "@/components/baby/child-scope"
+
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { FileDown, Download, FileJson, FileSpreadsheet, Loader2, X } from "lucide-react"
@@ -196,6 +198,7 @@ function rangeLabel(from: string, to: string): string {
  * 同じ範囲の続きを次のファイルとして取る（全件と偽らぬ）。
  */
 export function ExportCard() {
+  const childScope = useChildScope()
   const [period, setPeriod] = useState<Period>("1week")
   const [downloading, setDownloading] = useState<Kind | null>(null)
   const [chain, setChain] = useState<ExportChain | null>(null)
@@ -226,7 +229,8 @@ export function ExportCard() {
 
   const handleDownload = async (kind: Kind, continueChain: ExportChain | null = null) => {
     const noun = NOUNS[kind]
-    const url = urlFor(kind, period, continueChain)
+    const baseUrl = urlFor(kind, period, continueChain)
+    const url = baseUrl + (childScope ? `&child=${encodeURIComponent(childScope.id)}` : "")
     const controller = new AbortController()
     controllerRef.current = controller
     abortReasonRef.current = null

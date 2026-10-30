@@ -6,8 +6,8 @@ import { createClient } from "@/lib/supabase/client"
 type Amounts = { scope: string; status: "loading" | "ready" | "error"; values: number[] }
 
 /** DB-confirmed, personal MRU. Never optimistically remember an attempted save. */
-export function useFeedingAmounts(open: boolean, userId: string, householdId: string | undefined, type: string) {
-  const scope = `${userId}:${householdId}:${type}`
+export function useFeedingAmounts(open: boolean, userId: string, householdId: string | undefined, type: string, childId?: string) {
+  const scope = `${userId}:${householdId}:${childId}:${type}`
   const enabled = open && !!householdId && ["bottle", "pumped", "solid"].includes(type)
   const [result, setResult] = useState<Amounts>({ scope: "", status: "loading", values: [] })
   useEffect(() => {
@@ -20,7 +20,7 @@ export function useFeedingAmounts(open: boolean, userId: string, householdId: st
     }, 8_000)
     void (async () => {
       try {
-        const supabase = createClient()
+        const supabase = createClient(childId)
         const { data: claims, error: authError } = await supabase.auth.getClaims()
         if (controller.signal.aborted) return
         if (authError || claims?.claims.sub !== userId) throw new Error("session unavailable")
@@ -38,7 +38,7 @@ export function useFeedingAmounts(open: boolean, userId: string, householdId: st
       } finally { clearTimeout(timeout) }
     })()
     return () => { disposed = true; clearTimeout(timeout); controller.abort() }
-  }, [enabled, scope, userId, householdId, type])
+  }, [enabled, scope, userId, householdId, type, childId])
   if (!enabled) return { status: "ready" as const, values: [] }
   return result.scope === scope ? result : { status: "loading" as const, values: [] }
 }

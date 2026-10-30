@@ -8,6 +8,7 @@ import { chromium } from "@playwright/test"
 
 const uid = "00000000-0000-4000-8000-000000000001"
 const hid = "00000000-0000-4000-8000-000000000010"
+const cid = "00000000-0000-4000-8000-000000000020"
 const now = new Date()
 const user = { id: uid, aud: "authenticated", role: "authenticated", email: "user-a@example.invalid", app_metadata: {}, user_metadata: {}, created_at: now.toISOString() }
 // Deliberately unsigned fixture token. Only the isolated fake Auth service accepts it.
@@ -31,9 +32,10 @@ const api = createServer(async (req, res) => {
   if (url.pathname === "/auth/v1/user") data = user
   if (url.pathname.endsWith("/profiles")) data = [profile]
   if (url.pathname.endsWith("/households")) data = [household]
+  if (url.pathname.endsWith("/children")) data = [{ id: cid, household_id: hid, name: household.baby_name, birth_date: household.baby_birth_date, sex: null, is_legacy: true, feeding_interval_min: 180, bottle_default_ml: null, created_at: now.toISOString() }]
   if (url.pathname.endsWith("/baby_logs")) {
     data = Array.from({ length: rowCount }, (_, i) => ({
-      id: `00000000-0000-4000-8001-${String(i + 1).padStart(12, "0")}`, household_id: hid, logged_by: uid,
+      id: `00000000-0000-4000-8001-${String(i + 1).padStart(12, "0")}`, household_id: hid, child_id: cid, logged_by: uid,
       log_type: "feeding", feeding_type: "bottle", amount_ml: 80, duration_min: null, duration_sec: null,
       breast_left_sec: null, breast_right_sec: null, breast_left_count: null, breast_right_count: null, breast_start_side: null,
       diaper_type: null, poop_amount: null, temperature: null, weight_g: null, height_cm: null, memo: null,
@@ -80,7 +82,7 @@ try {
       await action()
       await page.waitForURL(`**${path}`)
       await page.getByRole("navigation", { name: "メインナビゲーション" }).waitFor()
-      if (path === "/baby") await page.getByText("テスト児A1", { exact: true }).waitFor()
+      if (path === "/baby") await page.locator("span").filter({ hasText: /^テスト児A1$/ }).first().waitFor()
       if (path === "/calendar") await page.getByRole("button", { name: "前の月", exact: true }).waitFor()
       if (path === "/settings") await page.getByRole("heading", { name: "設定", exact: true }).waitFor()
       await page.waitForTimeout(100)

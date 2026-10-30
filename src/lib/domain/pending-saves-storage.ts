@@ -142,6 +142,7 @@ function parseOne(value: unknown): PendingSave | null {
   if (typeof payload !== "object" || payload === null) return null
   // 送信内容の id と記録の id は同じでなければならぬ（食い違えば別の操作の内容を送りうる）
   if (payload.clientId !== v.clientId) return null
+  if (owner.childId !== undefined && (typeof owner.childId !== "string" || !isClientId(owner.childId) || payload.childId !== owner.childId)) return null
   if (typeof v.summary !== "string") return null
   if (typeof v.firstAttemptAt !== "string" || Number.isNaN(new Date(v.firstAttemptAt).getTime())) {
     return null
@@ -150,7 +151,7 @@ function parseOne(value: unknown): PendingSave | null {
   return {
     schemaVersion: PENDING_SAVE_SCHEMA_VERSION,
     clientId: v.clientId,
-    owner: { userId: owner.userId, householdId: owner.householdId },
+    owner: { userId: owner.userId, householdId: owner.householdId, ...(typeof owner.childId === "string" ? { childId: owner.childId } : {}) },
     action: v.action as PendingSaveAction,
     payload,
     summary: v.summary,
@@ -233,7 +234,7 @@ function writeOne(entry: PendingSave): boolean {
 }
 
 function owns(p: PendingSave, owner: SaveOwner): boolean {
-  return p.owner.userId === owner.userId && p.owner.householdId === owner.householdId
+  return p.owner.userId === owner.userId && p.owner.householdId === owner.householdId && p.owner.childId === owner.childId
 }
 
 /** 今の持ち主の、期限内の応答不明の操作（古い順）。 */
@@ -314,4 +315,8 @@ export function purgePendingSavesNotOwnedBy(owner: SaveOwner): void {
   } catch {
     // 保存領域が読めぬ時も、読む側の持ち主判定は必ず効く。
   }
+}
+
+export function countHouseholdPendingSaves(owner: SaveOwner, nowMs: number = Date.now()): number {
+  return (readAll(nowMs) ?? []).filter(p => p.owner.userId === owner.userId && p.owner.householdId === owner.householdId).length
 }

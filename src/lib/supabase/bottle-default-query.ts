@@ -18,10 +18,11 @@ export function selectBottleDefault(
   supabase: SupabaseClient<Database>,
   householdId: string,
   signal?: AbortSignal,
+  childId?: string,
 ) {
   const query = supabase
-    .from("households")
+    .from(childId ? "children" : "households")
     .select("bottle_default_ml")
-    .eq("id", householdId)
+    .eq("id", childId ?? householdId)
   return (signal ? query.abortSignal(signal) : query).maybeSingle()
 }

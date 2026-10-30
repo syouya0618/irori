@@ -80,6 +80,7 @@ export interface BottleDefaultController {
 export function useBottleDefault(
   householdId: string,
   initial: BottleDefaultState,
+  childId?: string,
 ): BottleDefaultController {
   const [state, setState] = useState<BottleDefaultState>(initial)
   // 取り直しの結果を「今の表示」と比べるため（変わった時だけ知らせる）。描画には使わぬ
@@ -135,7 +136,7 @@ export function useBottleDefault(
     }
     const run = async (): Promise<BottleDefaultState | null> => {
       try {
-        const supabase = createClient()
+        const supabase = createClient(childId)
         const { data: sessionData, error: sessionError } = await untilAborted(
           supabase.auth.getSession(),
           controller.signal,
@@ -155,7 +156,7 @@ export function useBottleDefault(
           return null
         }
         const result = await untilAborted(
-          selectBottleDefault(supabase, householdId, controller.signal),
+          selectBottleDefault(supabase, householdId, controller.signal, childId),
           controller.signal,
         )
         if (superseded()) return onAborted()
@@ -198,7 +199,7 @@ export function useBottleDefault(
     const promise = run()
     inFlightRef.current = { generation, promise }
     return promise
-  }, [householdId, commit])
+  }, [householdId, childId, commit])
 
   // マウント時に 1 回取り直し、unmount で in-flight を止める（離脱後の setState を走らせぬ）
   useEffect(() => {

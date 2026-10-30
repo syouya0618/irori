@@ -1,5 +1,7 @@
+import { selectChildProfile } from "@/lib/supabase/child-profile-query"
 import type { PostgrestError } from "@supabase/supabase-js"
-import { getAuthContext, type AuthContext } from "@/lib/supabase/auth-context"
+import { getBabyAuthContext } from "@/lib/supabase/child-context"
+import type { AuthContext } from "@/lib/supabase/auth-context"
 // 401 はログインし直せば直る時だけ（受診当日に待てば直る障害でログアウトへ誘導せぬ）
 import { AUTH_DENIAL_HTTP_STATUS } from "@/lib/auth/auth-denial-status"
 import { logSupabaseError } from "@/lib/supabase/log-error"
@@ -118,7 +120,7 @@ function getStartDate(period: ValidPeriod, today: string): string {
 }
 
 export async function GET(request: Request) {
-  const result = await getAuthContext()
+  const result = await getBabyAuthContext(new URL(request.url).searchParams.get("child") ?? undefined)
   if (result.error !== null) {
     // lookup-failed の真因は getAuthContext が構造化ログに残し済み。
     return new Response(result.error, {
@@ -140,11 +142,7 @@ export async function GET(request: Request) {
 
   // データ取得（並列）。baby_logs は max_rows を跨ぐためページ取得する（fetchReportLogs）。
   const [{ data: household, error: householdError }, logsResult] = await Promise.all([
-    supabase
-      .from("households")
-      .select("baby_name, baby_birth_date")
-      .eq("id", householdId)
-      .single(),
+    selectChildProfile(supabase, householdId, new URL(request.url).searchParams.get("child") ?? undefined),
     fetchReportLogs(
       supabase,
       householdId,

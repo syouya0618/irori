@@ -1,5 +1,5 @@
-import { readPersistedTimer, summarizePersistedTimer } from "@/lib/domain/feeding-timer-storage"
-import { listPendingSaves } from "@/lib/domain/pending-saves-storage"
+import { ownedChildTimerIds, readPersistedTimer, summarizePersistedTimer } from "@/lib/domain/feeding-timer-storage"
+import { countHouseholdPendingSaves, listPendingSaves } from "@/lib/domain/pending-saves-storage"
 import { countOwnedDrafts } from "@/lib/domain/draft-storage"
 import {
   listCalendarPendingCreates,
@@ -46,7 +46,8 @@ function canReadStorage(): boolean {
 
 export function summarizeLocalWork(owner: SaveOwner, nowMs: number = Date.now()): LocalWorkSummary {
   const storageReadable = canReadStorage()
-  const timer = summarizePersistedTimer(readPersistedTimer(), owner, nowMs)
+  const childIds = ownedChildTimerIds(owner)
+  const timer = summarizePersistedTimer(readPersistedTimer(owner.childId), owner, nowMs) ?? childIds.map(childId => summarizePersistedTimer(readPersistedTimer(childId), { ...owner, childId }, nowMs)).find(Boolean)
   const storedCreates = listCalendarPendingCreates(owner, nowMs)
   const storedIds = new Set(storedCreates.map((entry) => entry.clientId))
   const memoryCreates = listMemoryOnlyCalendarCreates(owner).filter((entry) => !storedIds.has(entry.clientId))
@@ -54,7 +55,7 @@ export function summarizeLocalWork(owner: SaveOwner, nowMs: number = Date.now())
   return {
     storageReadable,
     timer: timer ? { pendingSave: timer.pendingSave, stale: timer.stale } : null,
-    pendingSaves: listPendingSaves(owner, nowMs).length,
+    pendingSaves: owner.childId ? listPendingSaves(owner, nowMs).length : countHouseholdPendingSaves(owner, nowMs),
     calendarCreates: creates.filter((e) => e.status !== "rejected").length,
     calendarCreatesRejected: creates.filter((e) => e.status === "rejected").length,
     calendarCreatesMemoryOnly: memoryCreates.length,
