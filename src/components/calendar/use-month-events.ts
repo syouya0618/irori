@@ -28,6 +28,8 @@ export const MONTH_FETCH_TIMEOUT_MS = 10_000
 
 /** カレンダー UI が扱うイベント全体。CalendarEventLite を包含する。 */
 export interface CalendarEventRecord extends CalendarEventLite {
+  child_id?: string | null
+  medical_record_id?: string | null
   memo: string | null
   end_at: string | null
   source: CalendarEventSource

@@ -1,4 +1,5 @@
 "use client"
+import { purgeOtherRecordRequests } from "@/lib/domain/record-requests"
 
 import { purgeOtherSleepRequests } from "@/lib/domain/sleep-pending"
 import { useEffect } from "react"
@@ -64,6 +65,7 @@ export function CacheUserGuard({ userId, householdId }: { userId: string; househ
     purgeCalendarPendingCreatesNotOwnedBy(owner)
     purgeOwnerScopedKeys([HOME_FOLD_KEY_PREFIX, HANDOFF_KEY_PREFIX, HANDOFF_EVENTS_KEY_PREFIX], owner)
     purgeOtherSleepRequests(owner)
+    purgeOtherRecordRequests(owner)
     purgeChildTimers(owner)
     const timer = readPersistedTimer()
     if (timer && !belongsToOwner(timer, owner)) clearPersistedTimer()

@@ -719,3 +719,5 @@ describe("作成ごとの控え: 無関係な作成・破棄・成功・拒否�
     expect(screen.queryByRole("region", { name: "予定の追加の確認" })).toBeNull()
   })
 })
+
+vi.mock("next/navigation",()=>({useRouter:()=>({push:vi.fn()})}))

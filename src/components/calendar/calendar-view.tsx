@@ -1,5 +1,6 @@
 "use client"
 
+import { useRouter } from "next/navigation"
 import { useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react"
 import {
@@ -188,6 +189,7 @@ export function CalendarView({
   })
   const [pending, startTransition] = useTransition()
   const [sheetOpen, setSheetOpen] = useState(false)
+  const router = useRouter()
   const [editing, setEditing] = useState<CalendarEventRecord | null>(null)
   // 保存の往復中の予定 id（一覧に「保存中」を出す。作成の楽観行は id の prefix で分かる）
   const [savingIds, setSavingIds] = useState<ReadonlySet<string>>(() => new Set())
@@ -321,6 +323,7 @@ export function CalendarView({
   }
 
   const openEvent = (event: CalendarEventRecord) => {
+    if(event.medical_record_id){ router.push(`/baby/medical?child=${encodeURIComponent(event.child_id??"")}`);return }
     setEditing(event)
     setSheetDraft(null)
     setStaleDraft(null)

@@ -64,6 +64,12 @@ export type GoogleSyncErrorKind =
 export interface Database {
   public: {
     Tables: {
+      medical_records: {
+        Row: { id:string;household_id:string;child_id:string;kind:"vaccination"|"checkup";title:string;dose:number|null;status:"planned"|"completed"|"cancelled";scheduled_date:string;completed_date:string|null;memo:string|null;remind:boolean;source_key:string;created_by:string|null;updated_at:string;created_at:string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       sleep_sessions: {
         Row: { id: string; household_id: string; child_id: string; started_at: string; ended_at: string | null; started_by: string | null; ended_by: string | null; memo: string | null; voided: boolean; updated_at: string; created_at: string }
         Insert: never
@@ -331,6 +337,7 @@ export interface Database {
            * ⚠️ 生成列ゆえ **書けぬ** → `Insert` / `Update` には出しておらぬ。
            */
           event_uid: string
+          medical_record_id?: string | null
           created_by: string | null
           created_at: string
           updated_at: string
@@ -790,6 +797,7 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
+      save_medical_record: { Args:{p_id:string;p_child:string;p_version:string|null;p_value:Json};Returns:Json }
       start_sleep: { Args: { p_id: string; p_child: string; p_start?: string | null; p_end?: string | null; p_memo?: string | null }; Returns: Json }
       stop_sleep: { Args: { p_id: string; p_child: string; p_version: string; p_stop_id: string; p_end?: string | null }; Returns: Json }
       edit_sleep: { Args: { p_id: string; p_child: string; p_version: string; p_start: string; p_end: string; p_memo?: string | null; p_voided?: boolean }; Returns: Json }
