@@ -170,6 +170,7 @@ export default async function BabyPage({
       lastNursingFallback={lastNursingData ?? null}
       babyName={child.name || null}
       babyBirthDate={child.birth_date}
+      babySex={child.sex==="male"||child.sex==="female"?child.sex:null}
       feedingIntervalMin={
         child.feeding_interval_min ?? FEEDING_INTERVAL_DEFAULT
       }

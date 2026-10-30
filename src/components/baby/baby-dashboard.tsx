@@ -229,6 +229,7 @@ interface BabyDashboardProps {
    */
   lastNursingFallback: BabyLogData | null
   babyName: string | null
+  babySex?: "male" | "female" | null
   babyBirthDate: string | null
   /** 授乳間隔（分）。次の授乳の目安の算出に使う（設定で変更可能） */
   feedingIntervalMin: number
@@ -276,6 +277,7 @@ export function BabyDashboard({
   lastNursingFallback,
   babyName,
   babyBirthDate,
+  babySex,
   feedingIntervalMin,
   initialBottleDefault,
   initialUpcomingEvents = [],
@@ -1591,7 +1593,7 @@ export function BabyDashboard({
         open={folds.isOpen("growth")}
         onOpenChange={(o) => folds.setOpen("growth", o)}
       >
-        <GrowthChartSection series={growthSeries} embedded />
+        <GrowthChartSection series={growthSeries} embedded birthDate={babyBirthDate} sex={babySex} />
       </BabyCollapsibleSection>
 
       {/* 再マウント用の key は兄弟（BabyLogFormSheet）と名前空間を分ける。どちらも
