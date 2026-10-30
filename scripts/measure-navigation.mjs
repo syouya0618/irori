@@ -114,7 +114,8 @@ try {
     await context.close()
   }
   const result = { method: "local production build; synthetic HTTP fixtures; includes 100ms settle; SW blocked; not DB/Auth/Realtime proof", results }
-  if (process.argv[2]) writeFileSync(process.argv[2], JSON.stringify(result, null, 2) + "\n")
+  const outputPath = process.argv.slice(2).find(arg => !arg.startsWith("--"))
+  if (outputPath) writeFileSync(outputPath, JSON.stringify(result, null, 2) + "\n")
   console.log(JSON.stringify(result, null, 2))
 } finally {
   await browser?.close()
