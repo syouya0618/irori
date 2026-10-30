@@ -94,6 +94,21 @@ try {
     await sample("back", () => page.goBack(), "/settings")
     // A hard settings load also renders the layout; SPA navigation reuses it.
     await sample("cold-settings", () => page.goto("http://127.0.0.1:55438/settings"), "/settings")
+    if (process.argv.includes("--check-phase2")) {
+      const toggle = page.getByRole("button", { name: "更新履歴を見る" })
+      if (await toggle.getAttribute("aria-expanded") !== "false") throw new Error("history must start closed")
+      await toggle.click()
+      await page.getByRole("heading", { name: "2026年10月28日の更新" }).waitFor()
+      await toggle.click()
+      if (await toggle.getAttribute("aria-expanded") !== "false") throw new Error("history did not close")
+      await page.goto("http://127.0.0.1:55438/baby")
+      await page.getByRole("main").getByRole("button", { name: "搾乳", exact: true }).click()
+      const sheet = page.locator('[data-slot="sheet-content"][data-open]')
+      await sheet.getByText("保存した量がここに表示されます").waitFor()
+      if (await sheet.getByRole("button", { name: "10", exact: true }).count()) throw new Error("invented candidate")
+      await sheet.getByLabel("量 (ml)").fill("120")
+      if (await sheet.getByLabel("量 (ml)").inputValue() !== "120") throw new Error("direct amount entry failed")
+    }
     await context.close()
   }
   const result = { method: "local production build; synthetic HTTP fixtures; includes 100ms settle; SW blocked; not DB/Auth/Realtime proof", results }

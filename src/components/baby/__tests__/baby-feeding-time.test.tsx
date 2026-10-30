@@ -236,7 +236,7 @@ describe("クイック記録したミルクを編集しても、記録時刻は�
     const shownBefore = row.textContent!.match(/\d\d:\d\d/)![0]
 
     fireEvent.click(row)
-    fireEvent.click(await screen.findByRole("button", { name: "100" }))
+    fireEvent.change(await screen.findByLabelText("量 (ml)"), { target: { value: "100" } })
     fireEvent.click(screen.getByRole("button", { name: "更新する" }))
     await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalledTimes(1))
     // 時刻に触れておらぬゆえ loggedAt は送らぬ（既存の秒精度の契約）
@@ -284,7 +284,7 @@ describe("クイック記録したミルクを編集しても、記録時刻は�
 
     answerUpdateFromDb(dbRow())
     fireEvent.click(milkRow())
-    fireEvent.click(await screen.findByRole("button", { name: "100" }))
+    fireEvent.change(await screen.findByLabelText("量 (ml)"), { target: { value: "100" } })
     fireEvent.click(screen.getByRole("button", { name: "更新する" }))
     await waitFor(() => expect(mockedUpdateLog).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(screen.queryByRole("button", { name: "更新する" })).toBeNull())

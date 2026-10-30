@@ -47,3 +47,64 @@ SPA遷移ではlayoutを再利用するため、この変更による呼出し�
 
 Phase 1: lint、型、3515 Vitest、production build、4本のstrict検出器が成功。
 権限・実端末・本番の検証をこの結果で代用しない。
+
+## Phase 2
+
+`feeding_amount_history` は本人・世帯・授乳種別ごとのMRU（最大5件）。過去ログからの導出では、
+他人の記録を編集した人や入力の使用順を正しく復元できないため、小さな履歴表を選択。
+`baby_logs` のAFTERトリガが同じトランザクションで記憶する。再送拒否・ロールバックで候補は増えず、
+並行端末はトランザクションadvisory lockで直列化する。候補はブラウザで成功を推定して追加しない。
+不正な量を整数へ丸めず、直接入力は維持。「いつもの量」と過去の記録は変更しない。
+履歴表へのクライアント書込みは権限で拒否。新規関数は非公開schema、空のsearch_path、明示schema。
+初期候補なし。migration前は候補取得失敗を表示し、手入力を使える。
+
+更新履歴は設定の最後のボタンで開閉。表示対象はmainで公開済みの変更だけ。
+今回のDraftの変更はCHANGELOGに記録し、アプリ内の公開履歴には加えない。
+公開を確認できた従来の履歴のみを移設し、merge状態だけから新しい公開履歴を作らない。
+
+ローカルPostgreSQL 17（UTF-8・UTC）+ pgTAP 1.3.4で、全migrationの初期構築と27 SQLスイートを確認。
+この試験はAuth/Storageの最小schemaを使い、GoTrue・PostgREST・Realtime・pg_cron・Pushは含まない。
+新しい17 DB項目は、候補の上限・再利用・再送・ロールバック・種別/本人/世帯/承認/anonを検証。
+Supabase CLIの全スタック試験、追加Playwrightの実行状態は配送時の検証結果を参照。
+
+### 導入・停止・ロールバック
+
+- 新しい環境変数・有料サービス・必須依存はない。通常のSupabase migration適用で追加表とトリガを作る。
+- ローカルのmigration適用は確認済み。本番への適用はしていない。
+- 機能を停止する場合は旧アプリへ戻せる。追加表は残してよく、過去のbaby_logsを書き換える必要はない。
+- トリガ自体を止める場合のSQLは `DROP TRIGGER remember_feeding_amount ON public.baby_logs;`。
+  実行は対象DBを確認した運用者が行う。履歴表や育児ログのDROP/DELETEは不要。
+- 新しい関数の空search_pathと明示schemaは[Supabase公式のDatabase functions](https://supabase.com/docs/guides/database/functions)に沿う。
+
+## 未完了と再開地点
+
+Phase 3〜5は未実装。複数世帯・期限付き閲覧・複数児への公開要件が満たされたとは判断しない。
+
+| 順序 | 残る実装 | 次に閉じるゲート |
+|---|---|---|
+| 3 | 対象児・項目別・期限/取消を持つ閲覧権限、ownerの管理画面 | 実ロールでCRUD/RPC、export、Realtime/Push、端末キャッシュを分離試験 |
+| 4 | 任意地域の公式フィード、重複排除、アプリ内一覧、JST8時の案内 | 既存通知を遅らせない失敗境界、timeout、配信済み管理、AIなしの試験 |
+| 5A | childrenのexpand/backfill、選択、全読書き経路のchild_id | 既存ログの全件対応、旧版PWAの再送先とタイマー/下書きの持ち主 |
+| 5B〜F | 健診/接種、睡眠、許諾済み成長帯、カスタム項目、年齢別ホーム | 各機能の保存契約・RLS・権利確認・実ブラウザの受入 |
+
+Phase 3の対象児権限には5Aのデータモデルが必要。次の実装ではchildrenのexpand/backfillを
+先に共通基盤として検証し、旧形式の書込みを移行元の児へ固定する。選択中の児へ暗黙に付け替えない。
+その後、child_idを明示した保存/再送と共有経路を同じレビュー単位で接続する。
+新しい共有画面はネットワーク必須とし、期限切れの共有情報をオフラインsnapshotで再表示しない。
+母子データや健康情報の移行・閲覧境界を未検証のまま大きなmigrationへまとめない。
+
+## ローカル検証と配送境界
+
+最終source: lint、型検査、227 Vitestファイル/3522テスト、production build、4本のstrict検出器が成功。
+実PostgreSQLの27 pgTAPファイルが成功。12件同時書込みでも12ログと最新5候補を確認。
+production buildの合成HTTP画面で、390pxの更新履歴開閉・初回候補なし・直接入力をChromeで確認。
+このブラウザ確認は実Auth/DBを結んだE2Eではない。
+
+Supabase全スタック/追加Playwright E2E、GitHub CI/CodeQL、実端末、ProductionはNOT_RUN。
+ローカルからDocker/SSH socketを使わない境界を守り、実Supabase経路の代わりに偽成功を置かない。
+既存の実Authを使うE2Eには新しい候補履歴の試験を追加し、時刻保存試験は固定候補ではなく直接入力へ更新した。
+
+配送はGitHub確認済みnoreplyのローカルコミットまで。利用可能なGitHub connectorは
+commit author/committerを指定できず、実メールを公開しない契約を事前に保証できない。
+資格情報ストアやSSH agent経由へ切り替えず、push/PRは未実施として扱う。
+Secret Scanning / Push Protectionの有効状態は取得できなかった（NOT_AVAILABLE）。

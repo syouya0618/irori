@@ -75,6 +75,7 @@ import { readPersistedTimer, summarizePersistedTimer } from "@/lib/domain/feedin
 import { toastOfflineError } from "@/lib/utils/offline-error"
 import { noteServerActionFailure, STALE_CLIENT_ACTION_MESSAGE } from "@/lib/pwa/app-version"
 import { useDraft } from "@/lib/hooks/use-draft"
+import { useFeedingAmounts } from "@/lib/hooks/use-feeding-amounts"
 import { DRAFT_RETENTION_NOTE } from "@/lib/domain/draft-storage"
 import type {
   BabyLogType,
@@ -171,15 +172,12 @@ function resolveBreastCounts(
   return { left: clampBreastCount(left), right: clampBreastCount(right) }
 }
 
-// 搾乳・ミルク等の量をワンタップで入れるプリセット（10mL刻み・10〜100mL）。
-// これらは近道であって上限ではない。100mL を超える量は下の自由入力で記録できる。
-const AMOUNT_PRESETS_ML = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
-
 // 「量 (ml)」入力を DB CHECK（0〜999）と整合する number|null へ正規化する。
-// falsy 衝突（0ml を null 扱いしない）を避けるため Number.isFinite で判定する。
+// 0mlを保ち、小数・範囲外・部分的にしか読めない値を丸めない。
 function parseAmountMl(raw: string): number | null {
-  const n = parseInt(raw, 10)
-  return Number.isFinite(n) && n >= 0 ? n : null
+  if (!/^\d+$/.test(raw.trim())) return null
+  const n = Number(raw)
+  return Number.isInteger(n) && n >= 0 && n <= 999 ? n : null
 }
 
 interface BabyLogFormSheetProps {
@@ -418,6 +416,15 @@ export function BabyLogFormSheet({
 
   const isCreateMode = !log && !!createLogType
   const logType = log?.log_type ?? createLogType
+  const recentAmounts = useFeedingAmounts(open && logType === "feeding", userId, householdId, feedingType)
+
+  function validateAmountInput(): boolean {
+    if (logType === "feeding" && allowsAmount(feedingType) && amountMl.trim() !== "" && parseAmountMl(amountMl) === null) {
+      toast.error("量は0〜999mlの整数で入力してください")
+      return false
+    }
+    return true
+  }
 
   function handleSave() {
     if (isCreateMode) {
@@ -484,6 +491,7 @@ export function BabyLogFormSheet({
   }
 
   function handleCreate() {
+    if (!validateAmountInput()) return
     // 送った内容（結果が分からぬ時に持ち主付きで端末へ残すため、await の前に決める）
     let sent: {
       action: PendingSaveAction
@@ -794,6 +802,7 @@ export function BabyLogFormSheet({
 
   function handleUpdate() {
     if (!log) return
+    if (!validateAmountInput()) return
 
     startTransition(async () => {
       try {
@@ -1263,10 +1272,11 @@ export function BabyLogFormSheet({
               {allowsAmount(feedingType) && (
                 <div className="space-y-1.5">
                   <Label htmlFor="amount-ml">量 (ml)</Label>
-                  {/* ワンタップ用プリセット（10〜100mL）。押すと下の入力欄に反映され、
-                      100mL 超は入力欄で直接指定できる。 */}
+                  {recentAmounts.status === "loading" && <p role="status" className="text-xs text-muted-foreground">以前の量を読み込んでいます…</p>}
+                  {recentAmounts.status === "error" && <p role="status" className="text-xs text-muted-foreground">以前の量を取得できませんでした。直接入力できます。</p>}
+                  {recentAmounts.status === "ready" && recentAmounts.values.length === 0 && <p className="text-xs text-muted-foreground">保存した量がここに表示されます</p>}
                   <div className="grid grid-cols-5 gap-1.5">
-                    {AMOUNT_PRESETS_ML.map((ml) => {
+                    {recentAmounts.values.map((ml) => {
                       const active = amountMl === String(ml)
                       return (
                         <button

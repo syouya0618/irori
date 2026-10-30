@@ -64,6 +64,12 @@ export type GoogleSyncErrorKind =
 export interface Database {
   public: {
     Tables: {
+      feeding_amount_history: {
+        Row: { user_id: string; household_id: string; feeding_type: string; amount_ml: number; use_order: number }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       households: {
         Row: {
           id: string

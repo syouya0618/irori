@@ -29,7 +29,7 @@
 
 ### Web（Next.js）
 
-- Next.js 16.3 App Router
+- Next.js 16.4.3 App Router
 - React 19.2
 - TypeScript
 - Tailwind CSS v4
