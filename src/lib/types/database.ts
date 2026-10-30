@@ -64,6 +64,12 @@ export type GoogleSyncErrorKind =
 export interface Database {
   public: {
     Tables: {
+      child_shares: {
+        Row: { id: string; household_id: string; child_id: string; invitation_id: string; viewer_id: string | null; allow_daily: boolean; allow_diary: boolean; allow_health: boolean; allow_custom: boolean; expires_at: string | null; revoked_at: string | null; created_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       children: {
         Row: { id: string; household_id: string; name: string; birth_date: string | null; sex: string | null; is_legacy: boolean; feeding_interval_min: number; bottle_default_ml: number | null; created_at: string; updated_at: string }
         Insert: { id?: string; household_id: string; name: string; birth_date?: string | null; sex?: string | null; is_legacy?: boolean; feeding_interval_min?: number; bottle_default_ml?: number | null }
@@ -145,6 +151,7 @@ export interface Database {
       }
       invitations: {
         Row: {
+          purpose: "member" | "child_share"
           id: string
           household_id: string
           invited_by: string
@@ -776,6 +783,12 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
+      create_child_share: { Args: { p_child_id: string; p_daily: boolean; p_diary: boolean; p_health: boolean; p_custom: boolean; p_until?: string | null }; Returns: Json }
+      accept_child_share: { Args: { p_token: string }; Returns: string }
+      revoke_child_share: { Args: { p_share_id: string }; Returns: boolean }
+      list_child_shares: { Args: { p_owned?: boolean }; Returns: Json }
+      shared_child_snapshot: { Args: { p_share_id: string }; Returns: Json }
+
       enqueue_feeding_delivery: {
         Args: { p_household_id: string; p_log_id: string; p_subscription_id: string; p_scheduled_at: string }
         Returns: string | null

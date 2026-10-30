@@ -156,6 +156,8 @@ export interface FakeNotifySupabase {
 export function createFakeNotifySupabase(
   db: FakeNotifyDb = emptyNotifyDb(),
 ): FakeNotifySupabase {
+  // Older fixtures omit these columns; represent approved member rows unless explicitly overridden.
+  for (const p of db.profiles) { if (p.role === undefined) p.role="member";if(p.is_approved === undefined)p.is_approved=true }
   const records: QueryRecord[] = []
   const failures: Array<{
     table: keyof FakeNotifyDb

@@ -298,7 +298,7 @@ export default async function SettingsPage({
 
   const childContext = await getChildContext()
   return (
-    <ChildScopeProvider key={childContext.child.id} scope={{ id: childContext.child.id, isLegacy: childContext.child.is_legacy }}>
+    <ChildScopeProvider key={childContext.child.id} scope={{ id: childContext.child.id, isLegacy: childContext.child.is_legacy, updatedAt: childContext.child.updated_at }}>
     <SettingsContent
       profile={{
         id: profile.id,

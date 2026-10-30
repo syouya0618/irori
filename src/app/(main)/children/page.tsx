@@ -10,5 +10,6 @@ export default async function ChildrenPage() {
     <p className="text-sm text-muted-foreground">記録といつものミルク量は子どもごとに分かれます。過去の記録はそのまま残ります。</p>
     {children.map(c => <ChildEditor key={c.id} child={c} />)}
     <ChildEditor />
+    <Link href="/children/sharing" className="flex min-h-11 items-center text-primary">閲覧共有を管理する</Link>
   </div>
 }

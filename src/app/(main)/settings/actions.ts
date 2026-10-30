@@ -1,6 +1,7 @@
 "use server"
 
 import { redirect, unstable_rethrow } from "next/navigation"
+import { isTimestamptzText } from "@/lib/domain/timestamptz-text"
 import { isClientId } from "@/lib/utils/client-id"
 import { revalidatePath } from "next/cache"
 import type { AuthError } from "@supabase/supabase-js"
@@ -131,6 +132,8 @@ export async function updateDefaultPage(page: string) {
 export async function updateBabyProfile(formData: FormData) {
   const childId = formData.get("child_id")
   if (childId !== null && (typeof childId !== "string" || !isClientId(childId))) return { error: "子どもの指定が不正です" }
+  const version = formData.get("child_version")
+  if (childId && !isTimestamptzText(version)) return { error: "最新の子どもの情報を読み込んでから保存してください" }
   const babyName = formData.get("baby_name")
   const babyBirthDate = formData.get("baby_birth_date")
   const feedingIntervalRaw = formData.get("feeding_interval_min")
@@ -171,7 +174,7 @@ export async function updateBabyProfile(formData: FormData) {
   // 0 行更新を「成功」と偽らない（別世帯・RLS 拒否は 0 行マッチになる）。
   const write = async () => {
     if (childId) {
-      const { data, error } = await supabase.from("children").update({ name: babyName.trim(), birth_date: birthDateValue, feeding_interval_min: feedingIntervalValue }).eq("id", childId).eq("household_id", householdId).select("id")
+      const { data, error } = await supabase.from("children").update({ name: babyName.trim(), birth_date: birthDateValue, feeding_interval_min: feedingIntervalValue }).eq("id", childId).eq("household_id", householdId).eq("updated_at",version as string).select("id,updated_at")
       return { data, error }
     }
     const { data, error } = await supabase.from("households").update({ baby_name: babyName.trim() || null, baby_birth_date: birthDateValue, feeding_interval_min: feedingIntervalValue }).eq("id", householdId).select("id")
@@ -196,7 +199,7 @@ export async function updateBabyProfile(formData: FormData) {
     return { error: "赤ちゃん情報の更新に失敗しました" }
   }
 
-  return { success: true }
+  return { success: true, ...("updated_at" in data[0] && typeof data[0].updated_at === "string" ? { updatedAt: data[0].updated_at } : {}) }
 }
 
 const SIGN_OUT_ERROR =

@@ -375,6 +375,7 @@ async function collectDigestHouseholdIds(supabase: Client): Promise<string[]> {
   const { data: members, error: memberError } = await supabase
     .from("profiles")
     .select("household_id")
+    .eq("is_approved", true).neq("role", "viewer")
     .in("id", userIds)
   if (memberError) {
     logSupabaseError(
@@ -505,6 +506,7 @@ async function loadSubscriptions(
   const { data: members, error: memberError } = await supabase
     .from("profiles")
     .select("id")
+    .eq("is_approved", true).neq("role", "viewer")
     .eq("household_id", householdId)
   if (memberError) {
     logSupabaseError("cron-notify", "世帯メンバーの取得に失敗", memberError, {

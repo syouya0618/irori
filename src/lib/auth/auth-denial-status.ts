@@ -17,11 +17,13 @@ export type AuthDenialReason =
   | "unauthenticated"
   | "not-approved"
   | "no-household"
+  | "shared-only"
   | "lookup-failed"
 
 export const AUTH_DENIAL_HTTP_STATUS: Record<AuthDenialReason, number> = {
   unauthenticated: 401,
   "not-approved": 403,
   "no-household": 403,
+  "shared-only": 403,
   "lookup-failed": 503,
 }

@@ -80,6 +80,9 @@ export const getAuthContext = cache(
     if (profile.is_approved === false)
       return { error: "承認待ちです", reason: "not-approved", context: null }
 
+    if (profile.role === "viewer")
+      return { error: "共有画面から閲覧してください", reason: "shared-only", context: null }
+
     if (!profile.household_id)
       return { error: "世帯が設定されていません", reason: "no-household", context: null }
 

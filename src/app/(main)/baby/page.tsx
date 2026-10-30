@@ -152,7 +152,7 @@ export default async function BabyPage({
     // 持ち主・世帯・着地日ごとに作り直す（key）。別の持ち主の画面の状態を持ち越さぬ。
     // `/baby?date=…` から `/baby` へ戻った時に同じ segment の
     // component が残ると、useState(initialDate) の選択日が着地日のまま居座る
-    <ChildScopeProvider key={child.id} scope={{ id: child.id, isLegacy: child.is_legacy }}>
+    <ChildScopeProvider key={child.id} scope={{ id: child.id, isLegacy: child.is_legacy, updatedAt: child.updated_at }}>
     <ChildPicker childrenList={children} selectedId={child.id} />
     <BabyDashboard
       key={`${userId}:${householdId}:${child.id}:${selectedDate}`}

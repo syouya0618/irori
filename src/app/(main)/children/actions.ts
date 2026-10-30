@@ -3,6 +3,7 @@
 import { cookies } from "next/headers"
 import { revalidatePath } from "next/cache"
 import { getAuthContext } from "@/lib/supabase/auth-context"
+import { isTimestamptzText } from "@/lib/domain/timestamptz-text"
 import { isClientId } from "@/lib/utils/client-id"
 
 export async function selectChild(id: string) {
@@ -24,19 +25,21 @@ export async function saveChild(form: FormData) {
   const birthDate = String(form.get("birth_date") ?? "")
   const id = String(form.get("id") ?? "")
   const sex = String(form.get("sex") ?? "")
+  const version = String(form.get("version") ?? "")
+  if (id && !isTimestamptzText(version)) return { error: "再読み込みして子どもの最新情報を確認してください" }
   if (!name || name.length > 100 || (id && !isClientId(id)) || !["", "female", "male"].includes(sex)) return { error: "入力を確認してください" }
   if (birthDate && (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate) || Number.isNaN(Date.parse(birthDate + "T00:00:00Z")) || new Date(birthDate + "T00:00:00Z").toISOString().slice(0,10) !== birthDate)) return { error: "生年月日を確認してください" }
   const values = { name, birth_date: birthDate || null, sex: sex || null }
   const write = async () => {
     if (id) {
-      const { data, error } = await auth.context.supabase.from("children").update(values).eq("id",id).eq("household_id",auth.context.householdId).select("id")
+      const { data, error } = await auth.context.supabase.from("children").update(values).eq("id",id).eq("household_id",auth.context.householdId).eq("updated_at",version).select("id,updated_at")
       return { data, error }
     }
-    const { data, error } = await auth.context.supabase.from("children").insert({ ...values, household_id: auth.context.householdId }).select("id")
+    const { data, error } = await auth.context.supabase.from("children").insert({ ...values, household_id: auth.context.householdId }).select("id,updated_at")
     return { data, error }
   }
   const { data, error } = await write()
   if (error || !data?.length) return { error: "保存できませんでした。入力は残っています" }
   revalidatePath("/", "layout")
-  return { success: true }
+  return { success: true, updatedAt: data[0].updated_at }
 }

@@ -66,6 +66,11 @@ describe("授乳通知の実配信経路（DBの認可/競合はpgTAPと実Postg
     expect((await s.run()).sent).toBe(1)
     expect(s.rpc.mock.calls[0][1].p_log_id).toBe("log1")
   })
+  it("閲覧専用者と承認取消された利用者には送らない", async () => {
+    const s = setup();s.db.profiles[0].role="viewer"
+    expect((await s.run()).sent).toBe(0)
+    expect(s.sendPush).not.toHaveBeenCalled()
+  })
   it("兄弟の新しい授乳で別の子の通知を消さない", async () => {
     const s = setup()
     s.db.children.push({ id: "child2", household_id: "h1", feeding_interval_min: 180 })

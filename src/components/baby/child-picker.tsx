@@ -24,14 +24,16 @@ export function ChildPicker({ childrenList, selectedId }: { childrenList: Child[
 }
 
 export function ChildEditor({ child }: { child?: Child }) {
+  const [version,setVersion] = useState(child?.updated_at ?? "")
   const [pending, start] = useTransition()
   const [message, setMessage] = useState("")
   return <form className="glass flex flex-col gap-3 rounded-2xl p-4 shadow-lg shadow-black/[0.04]" onSubmit={e => {
     e.preventDefault(); const data = new FormData(e.currentTarget)
-    start(async () => { try { const { saveChild } = await import("@/app/(main)/children/actions"); const r = await saveChild(data); setMessage(r.error ?? "保存しました") } catch { setMessage("保存結果を確認できませんでした。再読み込みして確認してください") } })
+    start(async () => { try { const { saveChild } = await import("@/app/(main)/children/actions"); const r = await saveChild(data); setMessage(r.error ?? "保存しました");if(r.updatedAt)setVersion(r.updatedAt) } catch { setMessage("保存結果を確認できませんでした。再読み込みして確認してください") } })
   }}>
     <h2 className="font-semibold">{child ? "子どもの編集" : "子どもの追加"}</h2>
     <input type="hidden" name="id" value={child?.id ?? ""} />
+    <input type="hidden" name="version" value={version} />
     <label>呼び名<input name="name" required maxLength={100} defaultValue={child?.name} className="mt-1 min-h-11 w-full rounded-xl border px-3" /></label>
     <label>生年月日（任意）<input type="date" name="birth_date" defaultValue={child?.birth_date ?? ""} className="mt-1 min-h-11 w-full rounded-xl border px-3" /></label>
     <label>成長基準で使う性別（任意）<select name="sex" defaultValue={child?.sex ?? ""} className="mt-1 min-h-11 w-full rounded-xl border px-3"><option value="">未設定</option><option value="female">女児</option><option value="male">男児</option></select></label>

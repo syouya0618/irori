@@ -43,7 +43,7 @@ export default async function BabyDiaryPage() {
         <h1 className="text-lg font-semibold">育児日記</h1>
       </div>
 
-      <ChildScopeProvider key={child.id} scope={{ id: child.id, isLegacy: child.is_legacy }}><BabyDiaryView initialDiaries={diaries ?? []} householdId={householdId} userId={userId} /></ChildScopeProvider>
+      <ChildScopeProvider key={child.id} scope={{ id: child.id, isLegacy: child.is_legacy, updatedAt: child.updated_at }}><BabyDiaryView initialDiaries={diaries ?? []} householdId={householdId} userId={userId} /></ChildScopeProvider>
     </div>
   )
 }

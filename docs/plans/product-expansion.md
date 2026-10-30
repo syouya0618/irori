@@ -140,3 +140,32 @@ native PostgreSQL17 + pgTAP1.3.4の全28ファイル成功。新しい22項目�
 
 Aローカルゲート: 228 Vitestファイル/3526テスト、lint警告0、TypeScript、production build、strict4本が通過。
 390pxの合成HTTPブラウザの表示/履歴開閉/量の直接入力は通過。実Supabase E2EとCIはNOT_RUN。
+
+## 継続 B: 閲覧専用・期限付き共有
+
+- 既存invitationsへpurposeを追加し、child_share招待を通常の世帯参加RPCで受けられないようにする。
+  memberが共有招待を通常招待へ書き換える経路もRLSで拒否する。
+- 子ども・日常/日記/健康/カスタムの個別許可・閲覧期限・取消をchild_sharesに保存。
+  生テーブルのauthenticated/anon権限は撤去し、明示的に許可したRPCだけが読む。
+- 共有受諾は世帯所属を付与しない。既存の別世帯の所属は維持し、所属なしの人だけviewerになる。
+  app_operatorsであることは育児データの権限にならない。
+- get_my_household_idは未承認とviewerへNULLを返す。既存の匿名RLS評価のためanonのEXECUTEは保つが、
+  未認証で返せる世帯はない。共有viewerの通常Action/APIはshared-only（403）で拒む。
+- 閲覧は明示したフィールドと期間/件数上限だけ。日常の自由記述メモや記録者のIDは返さない。
+  毎回の承認・対象・期限・取消・招待者の権限をサーバで確認する。既存Pushもviewer/未承認を宛先から外す。
+- 共有ページのRSCは記録を含まず、APIはprivate/no-store。SWは共有document/RSC/APIを保存しない。
+  表示はオンライン確認から最大15秒の有効窓、通信往復時間を差し引く。非表示/オフライン/ページ退避で
+  私的DOMも直ちに隠し、古い応答を破棄する。取消後の表示反映は次の確認またはこの窓の満了まで。
+  以前に閲覧・保存された内容の遠隔消去は保証しない。
+- 共用端末のshared layoutにも既存CacheUserGuardを接続し、以前の利用者の世帯snapshotを利用させない。
+- 子どものプロフィール編集にも更新版を固定し、古い画面の保存を0行として拒む。
+  児別SDKはブラウザ内だけ同じ児で再利用し、SSRの認証クライアントは共有しない。
+
+B検証: 全29 pgTAPファイル成功（共有35項目、児スコープ24項目）。共有の11 unitでは
+通信断・ページ退避・失効窓・遅い応答・不正レスポンスを検証。実Supabase/Playwrightの
+共有E2Eは追加したがNOT_RUN。native DBはAuth/Storageのshimであり、実Auth/Realtimeの証明ではない。
+RLSは[Supabase公式ガイド](https://supabase.com/docs/guides/database/postgres/row-level-security)を参照。
+
+新しいクラウド契約/必須envはない。通常のmigrationを一度適用してからコードを公開する。
+停止時は共有UIを止めても、生データ権限を復元してはならない。RLS/GRANTと拒否契約は維持する。
+Cの睡眠/健診等の共有データは、その機能の導入時に同じ個別許可へ接続する（現時点の未実装を共有成功としない）。

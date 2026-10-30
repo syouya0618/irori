@@ -32,6 +32,7 @@ export default async function MainLayout({
     }
     // 遷移先は proxy の分岐と一致させる（層をまたぐ判定の食い違いは無限
     // リダイレクトを生む）。proxy も未承認を /pending-approval へ送る。
+    if (reason === "shared-only") redirect("/shared")
     if (reason === "not-approved") redirect("/pending-approval")
     redirect(reason === "no-household" ? "/setup" : "/login")
   }

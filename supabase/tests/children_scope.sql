@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(22);
+SELECT plan(24);
 INSERT INTO public.households(id,name,baby_name,baby_birth_date,bottle_default_ml) VALUES
  ('c0000000-0000-4000-8000-000000000001','synthetic household A','synthetic child A1','2026-01-01',120),
  ('c0000000-0000-4000-8000-000000000002','synthetic household B','synthetic child B1',NULL,NULL);
@@ -31,6 +31,11 @@ SELECT throws_ok($$INSERT INTO public.baby_logs(household_id,child_id,logged_by,
  SELECT 'c0000000-0000-4000-8000-000000000002','c0000000-0000-4000-8000-000000000004','c0000000-0000-4000-8000-000000000003','memo','denied'$$,'42501',NULL,'other household write denied');
 UPDATE public.children SET bottle_default_ml=75 WHERE id='c0000000-0000-4000-8000-000000000004';
 SELECT is((SELECT bottle_default_ml::int FROM public.households WHERE id='c0000000-0000-4000-8000-000000000001'),120,'sibling default leaves legacy household unchanged');
+SELECT set_config('irori_test.child_version',(SELECT updated_at::text FROM children WHERE id='c0000000-0000-4000-8000-000000000004'),true);
+UPDATE children SET name='synthetic newer child name' WHERE id='c0000000-0000-4000-8000-000000000004';
+WITH changed AS (UPDATE children SET name='stale edit' WHERE id='c0000000-0000-4000-8000-000000000004' AND updated_at=current_setting('irori_test.child_version')::timestamptz RETURNING id)
+ SELECT is((SELECT count(*) FROM changed),0::bigint,'stale profile version cannot overwrite a newer edit');
+SELECT is((SELECT name FROM children WHERE id='c0000000-0000-4000-8000-000000000004'),'synthetic newer child name','newer child profile survives stale save');
 SELECT set_config('request.headers','{}',true);
 SELECT is((SELECT count(*) FROM public.baby_logs),1::bigint,'legacy read excludes sibling logs');
 SELECT results_eq('SELECT amount_ml::int FROM public.feeding_amount_history',ARRAY[120],'legacy candidates preserved');

@@ -2,7 +2,7 @@
 
 import { createContext, useContext } from "react"
 
-export type ChildScope = { id: string; isLegacy: boolean }
+export type ChildScope = { id: string; isLegacy: boolean; updatedAt?: string }
 const Context = createContext<ChildScope | null>(null)
 export function ChildScopeProvider({ scope, children }: { scope: ChildScope; children: React.ReactNode }) {
   return <Context value={scope}>{children}</Context>
