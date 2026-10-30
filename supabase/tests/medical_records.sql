@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(22);
+SELECT plan(23);
 INSERT INTO households(id,name)VALUES('e3000000-0000-4000-8000-000000000001','synthetic medical A'),('e3000000-0000-4000-8000-000000000002','synthetic medical B');
 INSERT INTO auth.users(id,email)VALUES('e3000000-0000-4000-8000-000000000003','medical-a@example.invalid'),('e3000000-0000-4000-8000-000000000004','medical-b@example.invalid');
 UPDATE profiles SET household_id='e3000000-0000-4000-8000-000000000001',is_approved=true,role='owner' WHERE id='e3000000-0000-4000-8000-000000000003';
@@ -20,6 +20,8 @@ SELECT is((SELECT count(*) FROM event_reminders),1::bigint,'replay leaves one re
 SELECT throws_ok($$DELETE FROM event_reminders WHERE event_uid='e3000000-0000-4000-8000-000000000006'$$,'42501',NULL,'linked reminder cannot drift from medical record');
 SELECT throws_ok($$UPDATE event_reminders SET remind_kind='minutes',remind_minutes_before=30 WHERE event_uid='e3000000-0000-4000-8000-000000000006'$$,'42501',NULL,'linked reminder cannot be independently rescheduled');
 
+INSERT INTO calendar_events(id,household_id,title,is_all_day,start_date,end_date,source,created_by)VALUES('e3000000-0000-4000-8000-000000000009','e3000000-0000-4000-8000-000000000001','synthetic ordinary event',true,current_date+3,current_date+3,'native','e3000000-0000-4000-8000-000000000003');
+SELECT throws_ok($$UPDATE event_reminders SET event_uid='e3000000-0000-4000-8000-000000000009' WHERE event_uid='e3000000-0000-4000-8000-000000000006'$$,'42501',NULL,'linked reminder cannot escape by moving to an ordinary event');
 SELECT throws_ok($$UPDATE medical_records SET title='bypass'$$,'42501',NULL,'no direct update grant');
 SELECT throws_ok($$DELETE FROM medical_records$$,'42501',NULL,'history cannot be deleted directly');
 SELECT throws_ok($$UPDATE calendar_events SET title='bypass' WHERE medical_record_id IS NOT NULL$$,'42501',NULL,'linked calendar cannot drift from medical record');
