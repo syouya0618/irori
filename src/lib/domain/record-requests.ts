@@ -4,9 +4,10 @@ import type { SaveOwner } from "./save-attempt"
 import { isMedicalRequest } from "./medical"
 import { isCustomRequest } from "./custom-records"
 import { isValidYmd } from "@/lib/utils/date-jst"
+import { recordRequestKey, removeRecordRequestKeys } from "./record-request-key"
 export const RECORD_REQUEST_PREFIX="irori:record-request:v1:"
 export type RecordRequest={schema:1;id:string;owner:SaveOwner&{childId:string};kind:"medical"|"custom"|"child";payload:Record<string,unknown>}
-const key=(r:RecordRequest)=>`${RECORD_REQUEST_PREFIX}${r.owner.userId}:${r.owner.householdId}:${r.owner.childId}:${r.id}`
+const key=(r:Pick<RecordRequest,"id"|"owner">)=>`${RECORD_REQUEST_PREFIX}${r.owner.userId}:${r.owner.householdId}:${r.owner.childId}:${r.id}`
 /** Reconstruct each supported replay body; never persist an arbitrary object graph. */
 function snapshot(v: unknown): RecordRequest | null {
  if (!isRecord(v) || v.schema !== 1 || !isClientId(v.id) || !isRecord(v.owner) || !isRecord(v.payload)) return null
@@ -39,20 +40,127 @@ function snapshot(v: unknown): RecordRequest | null {
  return { schema: 1, id: v.id, owner: { userId: o.userId, householdId: o.householdId, childId: o.childId },
   kind: v.kind as RecordRequest["kind"], payload }
 }
-export function listRecordRequests(owner:SaveOwner,kind?:RecordRequest["kind"]):RecordRequest[]{
- try{const out:RecordRequest[]=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(!k?.startsWith(RECORD_REQUEST_PREFIX))continue;let v:RecordRequest|null;try{v=snapshot(JSON.parse(localStorage.getItem(k)??"null"))}catch{continue}if(v&&key(v)===k&&v.owner.userId===owner.userId&&v.owner.householdId===owner.householdId&&(!owner.childId||v.owner.childId===owner.childId)&&(!kind||v.kind===kind))out.push(v)}return out}catch{return []}
+const ACTIVE_OWNER = "irori:record-request-owner:v1"
+const FENCE = "irori:record-request-write:v1:"
+const ownerKey = (owner: SaveOwner) => JSON.stringify([owner.userId, owner.householdId])
+type SealedRequest = Pick<RecordRequest, "id" | "owner"> & { schema: 2; encoding: "aes-gcm-v1"; iv: string; ciphertext: string }
+function metadata(r: RecordRequest) { return { schema: 2 as const, id: r.id, owner: r.owner, encoding: "aes-gcm-v1" as const } }
+function encrypted(v: unknown): v is SealedRequest {
+ if (!isRecord(v) || v.schema !== 2 || v.encoding !== "aes-gcm-v1" || !isClientId(v.id) || !isRecord(v.owner)) return false
+ return typeof v.owner.userId === "string" && !!v.owner.userId && typeof v.owner.householdId === "string" && !!v.owner.householdId && isClientId(v.owner.childId) &&
+  typeof v.iv === "string" && v.iv.length === 16 && typeof v.ciphertext === "string" && v.ciphertext.length <= 1_000_000
 }
-export function storeRecordRequest(r:RecordRequest):boolean{try{const value=snapshot(r);if(!value)return false;const k=key(value);if(localStorage.getItem(k)===null)localStorage.setItem(k,JSON.stringify(value));return true}catch{return false}}
-export function removeRecordRequest(r:RecordRequest){try{localStorage.removeItem(key(r))}catch{}}
+function bytes(value: string) { return Uint8Array.from(atob(value), c => c.charCodeAt(0)) }
+function base64(value: Uint8Array) { return btoa(Array.from(value, n => String.fromCharCode(n)).join("")) }
+function epoch(owner: SaveOwner): string | null {
+ const current = localStorage.getItem(ACTIVE_OWNER)
+ if (current !== null) return JSON.parse(current).owner === ownerKey(owner) ? current : null
+ const next = JSON.stringify({ owner: ownerKey(owner), epoch: crypto.randomUUID() })
+ localStorage.setItem(ACTIVE_OWNER, next)
+ return next
+}
+function scopedKeys(owner: SaveOwner): string[] {
+ const prefix = `${RECORD_REQUEST_PREFIX}${owner.userId}:${owner.householdId}:${owner.childId ? `${owner.childId}:` : ""}`
+ return Object.keys(localStorage).filter(k => k.startsWith(prefix))
+}
+async function unseal(value: unknown, k: string): Promise<RecordRequest | null> {
+ if (!encrypted(value) || key(value) !== k) return null
+ const wrappingKey = await recordRequestKey(ownerKey(value.owner), false)
+ const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes(value.iv), additionalData: new TextEncoder().encode(k) }, wrappingKey, bytes(value.ciphertext))
+ const restored = snapshot(JSON.parse(new TextDecoder().decode(plain)))
+ return restored && key(restored) === k ? restored : null
+}
+async function seal(value: RecordRequest, previous: string | null, started: string): Promise<boolean> {
+ const k = key(value), fence = FENCE + k
+ const token = localStorage.getItem(fence) ?? crypto.randomUUID()
+ localStorage.setItem(fence, token)
+ try {
+  const wrappingKey = await recordRequestKey(ownerKey(value.owner), true)
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(k) }, wrappingKey, new TextEncoder().encode(JSON.stringify(value)))
+  // No await between these checks and the commit: first-write wins across tabs.
+  // Removal/account switching cancels a late write instead of resurrecting it.
+  if (localStorage.getItem(ACTIVE_OWNER) !== started || localStorage.getItem(fence) !== token || localStorage.getItem(k) !== previous) return false
+  const encoded = JSON.stringify({ ...metadata(value), iv: base64(iv), ciphertext: base64(new Uint8Array(ciphertext)) })
+  localStorage.setItem(k, encoded)
+  return localStorage.getItem(k) === encoded
+ } finally { if (localStorage.getItem(fence) === token) localStorage.removeItem(fence) }
+}
+/** Decrypt/migrate before enabling new operations. Failure never means an empty queue. */
+export async function readRecordRequests(owner: SaveOwner, kind?: RecordRequest["kind"]): Promise<{ items: RecordRequest[]; unreadable: number }> {
+ const items: RecordRequest[] = []; let unreadable = 0
+ try {
+  const keys = scopedKeys(owner)
+  if (!keys.length) return { items, unreadable }
+  const started = epoch(owner)
+  if (!started) return { items, unreadable: countRecordRequests(owner) }
+  for (const k of keys) {
+   const raw = localStorage.getItem(k)
+   if (raw === null) continue
+   try {
+    const parsed: unknown = JSON.parse(raw)
+    let value = snapshot(parsed)
+    if (value && key(value) === k) {
+     // Keep legacy bytes until the key transaction and encrypted write succeed.
+     if (!await seal(value, raw, started)) {
+      if (localStorage.getItem(ACTIVE_OWNER) !== started || localStorage.getItem(k) === null) continue
+      // Another tab may have migrated the same immutable body while we awaited
+      // crypto. Verify its completed ciphertext instead of reporting corruption.
+      value = await unseal(JSON.parse(localStorage.getItem(k) ?? "null"), k)
+     }
+    } else value = await unseal(parsed, k)
+    if (localStorage.getItem(ACTIVE_OWNER) !== started || localStorage.getItem(k) === null) continue
+    if (!value || key(value) !== k) { unreadable++; continue }
+    if (!kind || value.kind === kind) items.push(value)
+   } catch { unreadable++ }
+  }
+  return { items, unreadable }
+ } catch { return { items: [], unreadable: 1 } }
+}
+export async function listRecordRequests(owner: SaveOwner, kind?: RecordRequest["kind"]): Promise<RecordRequest[]> { return (await readRecordRequests(owner, kind)).items }
+export async function storeRecordRequest(r: RecordRequest): Promise<boolean> {
+ try {
+  const value = snapshot(r) // Freeze a fresh primitive-only body before the first await.
+  if (!value) return false
+  const started = epoch(value.owner)
+  if (!started) return false
+  const raw = localStorage.getItem(key(value))
+  if (raw !== null) return !!await unseal(JSON.parse(raw), key(value))
+  return await seal(value, null, started)
+ } catch { return false }
+}
+export function removeRecordRequest(r: RecordRequest) { try { localStorage.removeItem(FENCE + key(r)); localStorage.removeItem(key(r)) } catch {} }
 /** Owner cleanup must still recognize older schema-1 bodies that cannot be replayed now. */
 function envelopeOwner(v:unknown):SaveOwner|null{
  if(!isRecord(v)||v.schema!==1||!isClientId(v.id)||(v.kind!=="medical"&&v.kind!=="custom"&&v.kind!=="child")||!isRecord(v.owner)||typeof v.owner.userId!=="string"||typeof v.owner.householdId!=="string"||!isClientId(v.owner.childId)||!isRecord(v.payload)||v.payload.childId!==v.owner.childId)return null
  return {userId:v.owner.userId,householdId:v.owner.householdId,childId:v.owner.childId}
 }
-export function purgeOtherRecordRequests(owner:SaveOwner){try{for(const k of Object.keys(localStorage)){if(!k.startsWith(RECORD_REQUEST_PREFIX))continue;let v:SaveOwner|null;try{v=envelopeOwner(JSON.parse(localStorage.getItem(k)??"null"))}catch{continue}if(v&&(v.userId!==owner.userId||v.householdId!==owner.householdId))localStorage.removeItem(k)}}catch{}}
+export async function purgeOtherRecordRequests(owner: SaveOwner) {
+ try {
+  const removedOwners = new Map<string, SaveOwner>()
+  const current = localStorage.getItem(ACTIVE_OWNER)
+  if (!current || JSON.parse(current).owner !== ownerKey(owner)) localStorage.setItem(ACTIVE_OWNER, JSON.stringify({ owner: ownerKey(owner), epoch: crypto.randomUUID() }))
+  const started = localStorage.getItem(ACTIVE_OWNER)
+  for (const k of Object.keys(localStorage)) {
+   if (!k.startsWith(RECORD_REQUEST_PREFIX)) continue
+   let value: unknown; try { value = JSON.parse(localStorage.getItem(k) ?? "null") } catch { continue }
+   const other = encrypted(value) ? value.owner : envelopeOwner(value)
+   if (other && ownerKey(other) !== ownerKey(owner)) { localStorage.removeItem(FENCE + k); localStorage.removeItem(k); removedOwners.set(ownerKey(other), other) }
+  }
+  // A future envelope may still need the old owner's wrapping key. Preserve it
+  // whenever any opaque request remains in that owner/household namespace.
+  const removable = [...removedOwners].filter(([, previous]) => scopedKeys({ userId: previous.userId, householdId: previous.householdId }).length === 0).map(([key]) => key)
+  await removeRecordRequestKeys(removable, previousKey => {
+   const previous = removedOwners.get(previousKey)
+   return localStorage.getItem(ACTIVE_OWNER) === started && !!previous && scopedKeys({ userId: previous.userId, householdId: previous.householdId }).length === 0
+  })
+ } catch { /* Reads remain owner-scoped even when cleanup is unavailable. */ }
+}
 /** Unknown envelopes remain intact and block another create in their owner scope. */
 export function unreadableRecordCount(owner:SaveOwner):number{
  try{let count=0;const prefix=`${RECORD_REQUEST_PREFIX}${owner.userId}:${owner.householdId}:${owner.childId?`${owner.childId}:`:""}`
-  for(const k of Object.keys(localStorage)){if(!k.startsWith(prefix))continue;try{const value=snapshot(JSON.parse(localStorage.getItem(k)??"null"));if(!value||key(value)!==k)count++}catch{count++}}return count
+  for(const k of Object.keys(localStorage)){if(!k.startsWith(prefix))continue;try{const parsed:unknown=JSON.parse(localStorage.getItem(k)??"null");const value=snapshot(parsed);if(encrypted(parsed)){if(key(parsed)!==k)count++}else if(!value||key(value)!==k)count++}catch{count++}}return count
  }catch{return 1}
 }
+/** Opaque conservative count for update/logout; never requires a usable decryption key. */
+export function countRecordRequests(owner: SaveOwner): number { try { return scopedKeys(owner).length } catch { return 1 } }

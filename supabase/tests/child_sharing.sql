@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(35);
+SELECT plan(38);
 INSERT INTO public.households(id,name,baby_name) VALUES
  ('d1000000-0000-4000-8000-000000000001','synthetic share household A','synthetic share child A1'),
  ('d1000000-0000-4000-8000-000000000002','synthetic share household B','synthetic share child B1');
@@ -44,6 +44,7 @@ SELECT is((SELECT jsonb_array_length(shared_child_snapshot((value->>'id')::uuid)
 SELECT is((SELECT jsonb_array_length(shared_child_snapshot((value->>'id')::uuid)->'health') FROM share_fixture),0,'medical data is not implicitly shared');
 SELECT is((SELECT jsonb_array_length(shared_child_snapshot((value->>'id')::uuid)->'diary') FROM share_fixture),0,'diary is not implicitly shared');
 SELECT ok((SELECT NOT (shared_child_snapshot((value->>'id')::uuid)->'daily'->0 ? 'memo') FROM share_fixture),'free-form feeding memo omitted');
+SELECT is((SELECT (shared_child_snapshot((value->>'id')::uuid)->>'valid_for_ms')::integer FROM share_fixture),15000,'a distant expiry uses the 15 second online lease');
 SELECT is((SELECT count(*) FROM baby_logs),0::bigint,'viewer cannot query raw logs');
 SELECT throws_ok($$INSERT INTO baby_logs(household_id,logged_by,log_type,memo) VALUES('d1000000-0000-4000-8000-000000000001',auth.uid(),'memo','denied')$$,'42501',NULL,'viewer write denied');
 SELECT throws_ok($$SELECT revoke_child_share((SELECT (value->>'id')::uuid FROM share_fixture))$$,'42501',NULL,'viewer cannot revoke as owner');
@@ -63,6 +64,11 @@ SELECT accept_child_share((SELECT value->>'token' FROM share_fixture));
 SELECT is((SELECT jsonb_array_length(shared_child_snapshot((value->>'id')::uuid)->'health') FROM share_fixture),1,'explicit health permission has a positive control');
 SELECT is((SELECT jsonb_array_length(shared_child_snapshot((value->>'id')::uuid)->'diary') FROM share_fixture),1,'explicit diary permission has a positive control');
 SELECT is((SELECT jsonb_array_length(shared_child_snapshot((value->>'id')::uuid)->'daily') FROM share_fixture),0,'unselected daily category is omitted');
+SELECT is((SELECT (shared_child_snapshot((value->>'id')::uuid)->>'valid_for_ms')::integer FROM share_fixture),15000,'an unbounded share has a positive 15 second online lease');
+RESET ROLE;
+UPDATE child_shares SET expires_at=clock_timestamp()+interval '2 seconds' WHERE id=(SELECT (value->>'id')::uuid FROM share_fixture);
+SET LOCAL ROLE authenticated;
+SELECT ok((SELECT (shared_child_snapshot((value->>'id')::uuid)->>'valid_for_ms')::integer BETWEEN 1 AND 2000 FROM share_fixture),'near expiry shortens the lease instead of extending authorization');
 RESET ROLE;
 UPDATE child_shares SET created_at=now()-interval '2 days',expires_at=now()-interval '1 day' WHERE id=(SELECT (value->>'id')::uuid FROM share_fixture);
 SET LOCAL ROLE authenticated;

@@ -4,7 +4,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { saveMedical } from "@/app/(main)/baby/medical/actions"
 import { isMedicalRequest,MEDICAL_SOURCES,type MedicalRecord,type MedicalRequest } from "@/lib/domain/medical"
-import { unreadableRecordCount,listRecordRequests,storeRecordRequest,removeRecordRequest,type RecordRequest } from "@/lib/domain/record-requests"
+import { readRecordRequests,storeRecordRequest,removeRecordRequest,type RecordRequest } from "@/lib/domain/record-requests"
 import type { SaveOwner } from "@/lib/domain/save-attempt"
 import { newClientId } from "@/lib/utils/client-id"
 const input="mt-1 min-h-11 w-full rounded-xl border bg-background px-3"
@@ -15,13 +15,14 @@ export function MedicalView({owner,childName,records,truncated}:{owner:SaveOwner
  const [pending,setPending]=useState<RecordRequest[]>([]),[ready,setReady]=useState(false),[message,setMessage]=useState("")
  const [saving,start]=useTransition(),[query,setQuery]=useState("")
  const scope=useRef(owner)
- useEffect(()=>{alive.current=true;Promise.resolve().then(()=>{if(alive.current){setPending(listRecordRequests(scope.current,"medical"));setUnreadable(unreadableRecordCount(scope.current)>0);setReady(true)}});return()=>{alive.current=false}},[])
+ useEffect(()=>{alive.current=true;void readRecordRequests(scope.current,"medical").then(result=>{if(alive.current){setPending(result.items);setUnreadable(result.unreadable>0);setReady(true)}});return()=>{alive.current=false}},[])
  function send(p:RecordRequest,retry=false){
   if(saving)return
   if(!isMedicalRequest(p.payload)||p.payload.childId!==owner.childId){setMessage("端末の控えを確認できません。保存済みの記録と照合してください");return}
   const request=p.payload
   setPending(prev=>[p,...prev.filter(v=>v.id!==p.id)])
   start(async()=>{try{
+   if(!retry){const stored=await storeRecordRequest(p);if(!alive.current)return;setStorageOk(stored)}
    const r=await saveMedical(request);if(!alive.current)return
    if(r.status){setFormEpoch(v=>v+1);removeRecordRequest(p);setPending(prev=>prev.filter(v=>v.id!==p.id));setEditing(null);setMessage(r.status==="conflict"?"別の端末が更新しました。読み直した内容を確認してください":"保存しました");router.refresh()}
    else if(r.failure==="rejected"&&!retry){removeRecordRequest(p);setPending(prev=>prev.filter(v=>v.id!==p.id));setMessage(r.error)}
@@ -39,11 +40,8 @@ export function MedicalView({owner,childName,records,truncated}:{owner:SaveOwner
    const f=new FormData(e.currentTarget),kind=f.get("kind")==="checkup"?"checkup":"vaccination",status=String(f.get("status")) as MedicalRecord["status"]
    const request:MedicalRequest={id:editing?.id??newClientId(),childId:owner.childId,version:editing?.updated_at??null,value:{kind,title:String(f.get("title")??"").trim(),dose:kind==="vaccination"&&f.get("dose")?Number(f.get("dose")):null,status,scheduled_date:String(f.get("date")),completed_date:status==="completed"?String(f.get("completed")):null,memo:String(f.get("memo")??"").trim()||null,remind:f.get("remind")==="on",source_key:MEDICAL_SOURCES[kind].key}}
    if(!isMedicalRequest(request)){setMessage("日付・回数・入力内容を確認してください");return}
-   // Persist only a new, validated form body. Restored retries use send without
-   // ever rewriting the original immutable envelope back to browser storage.
+   // send attempts encrypted persistence before the first network write.
    const entry:RecordRequest={schema:1,id:newClientId(),owner,kind:"medical",payload:request}
-   const stored=storeRecordRequest(entry);setStorageOk(stored)
-   if(!stored)setMessage("端末に控えを残せていません。結果を確認するまでページを閉じないでください")
    send(entry)
   }}><h2 className="font-semibold">{editing?"記録を編集":"予定・実績を追加"}</h2>
    <label>種別<select name="kind" defaultValue={editing?.kind??"vaccination"} className={input} disabled={blocked}><option value="vaccination">予防接種</option><option value="checkup">乳幼児健診</option></select></label>

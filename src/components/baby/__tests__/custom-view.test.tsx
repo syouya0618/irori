@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import "@/lib/domain/__tests__/record-request-test-keys"
 import { act,cleanup,fireEvent,render,screen,waitFor } from "@testing-library/react"
 import { afterEach,beforeEach,expect,it,vi } from "vitest"
 import { CustomView } from "../custom-view"
@@ -16,5 +17,5 @@ it("restores a frozen typed custom record after an ambiguous response",async()=>
  await waitFor(()=>expect(screen.getByRole("button",{name:"記録を保存"})).toBeEnabled());fireEvent.change(screen.getByLabelText("値",{exact:true}),{target:{value:"0"}});fireEvent.click(screen.getByRole("button",{name:"記録を保存"}))
  await waitFor(()=>expect(screen.getByRole("status")).toHaveTextContent("保存結果を確認できません"));const frozen=vi.mocked(saveCustom).mock.calls[0][0];expect(frozen).toMatchObject({childId:owner.childId,value:0});first.unmount()
  render(view());await screen.findByRole("button",{name:"保存結果を同じ操作で確認"});vi.mocked(saveCustom).mockResolvedValueOnce({status:"replayed"});await act(async()=>fireEvent.click(screen.getByRole("button",{name:"保存結果を同じ操作で確認"})))
- expect(vi.mocked(saveCustom).mock.calls[1][0]).toEqual(frozen);expect(listRecordRequests(owner)).toEqual([])
+ expect(vi.mocked(saveCustom).mock.calls[1][0]).toEqual(frozen);expect(await listRecordRequests(owner)).toEqual([])
 })

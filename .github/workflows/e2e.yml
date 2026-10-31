@@ -15,6 +15,9 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Browser compatibility checks load the exact pre-encryption bundle.
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v6
         # version は package.json の `packageManager` フィールドから自動取得する
@@ -85,6 +88,10 @@ jobs:
 
       - name: Install Playwright Chromium and WebKit
         run: pnpm exec playwright install chromium webkit --with-deps
+
+      - name: Test encrypted replay storage in Chromium and WebKit
+        # Synthetic browser profiles only; all requests are fulfilled locally.
+        run: node scripts/test-record-request-browser.mjs
 
       - name: Run Playwright tests
         env:

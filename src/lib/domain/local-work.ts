@@ -1,4 +1,4 @@
-import { listRecordRequests,unreadableRecordCount } from "./record-requests"
+import { countRecordRequests,unreadableRecordCount } from "./record-requests"
 import { listPendingSleep } from "@/lib/domain/sleep-pending"
 import { ownedChildTimerIds, readPersistedTimer, summarizePersistedTimer } from "@/lib/domain/feeding-timer-storage"
 import { countHouseholdPendingSaves, listPendingSaves } from "@/lib/domain/pending-saves-storage"
@@ -61,7 +61,7 @@ export function summarizeLocalWork(owner: SaveOwner, nowMs: number = Date.now())
     storageReadable,
     ...(unreadable?{unreadableSaves:true}:{}),
     timer: timer ? { pendingSave: timer.pendingSave, stale: timer.stale } : null,
-    pendingSaves: (owner.childId ? listPendingSaves(owner, nowMs).length : countHouseholdPendingSaves(owner, nowMs)) + sleep.items.length + listRecordRequests(owner).length,
+    pendingSaves: (owner.childId ? listPendingSaves(owner, nowMs).length : countHouseholdPendingSaves(owner, nowMs)) + sleep.items.length + countRecordRequests(owner),
     calendarCreates: creates.filter((e) => e.status !== "rejected").length,
     calendarCreatesRejected: creates.filter((e) => e.status === "rejected").length,
     calendarCreatesMemoryOnly: memoryCreates.length,

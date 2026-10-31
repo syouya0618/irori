@@ -5,16 +5,16 @@ import { saveChild } from "@/app/(main)/children/actions"
 import type { Database } from "@/lib/types/database"
 import type { SaveOwner } from "@/lib/domain/save-attempt"
 import { isClientId } from "@/lib/utils/client-id"
-import { unreadableRecordCount,listRecordRequests,storeRecordRequest,removeRecordRequest,type RecordRequest } from "@/lib/domain/record-requests"
+import { readRecordRequests,storeRecordRequest,removeRecordRequest,type RecordRequest } from "@/lib/domain/record-requests"
 type Child=Database["public"]["Tables"]["children"]["Row"]
 export function ChildEditor({child,owner,createId}:{child?:Child;owner?:SaveOwner;createId?:string}){
  const [storageOk,setStorageOk]=useState(true),[unreadable,setUnreadable]=useState(false)
  const router=useRouter(),alive=useRef(true),scope=useRef(owner)
  const [version,setVersion]=useState(child?.updated_at??""),[saving,start]=useTransition(),[message,setMessage]=useState(""),[pending,setPending]=useState<RecordRequest[]>([]),[ready,setReady]=useState(!!child),[epoch,setEpoch]=useState(0)
- useEffect(()=>{alive.current=true;Promise.resolve().then(()=>{if(alive.current){if(scope.current){setPending(listRecordRequests(scope.current,"child"));setUnreadable(unreadableRecordCount(scope.current)>0)}setReady(true)}});return()=>{alive.current=false}},[])
+ useEffect(()=>{alive.current=true;const load=async()=>{const result=scope.current?await readRecordRequests(scope.current,"child"):{items:[],unreadable:0};if(alive.current){setPending(result.items);setUnreadable(result.unreadable>0);setReady(true)}};void load();return()=>{alive.current=false}},[])
  function send(form:FormData,entry?:RecordRequest,retry=false){
   start(async()=>{try{
-   if(entry){if(!retry){const stored=storeRecordRequest(entry);setStorageOk(stored);if(!stored)setMessage("端末に控えを残せていません。結果確認までページを閉じないでください")}setPending(prev=>[entry,...prev.filter(p=>p.id!==entry.id)])}
+   if(entry){if(!retry){const stored=await storeRecordRequest(entry);if(!alive.current)return;setStorageOk(stored);if(!stored)setMessage("端末に控えを残せていません。結果確認までページを閉じないでください")}setPending(prev=>[entry,...prev.filter(p=>p.id!==entry.id)])}
    const result=await saveChild(form);if(!alive.current)return
    if(result.success||result.conflict){if(entry){removeRecordRequest(entry);setPending(prev=>prev.filter(p=>p.id!==entry.id))}if(result.updatedAt)setVersion(result.updatedAt);if(!child)setEpoch(v=>v+1);setMessage(result.conflict?result.error??"最新情報を確認してください":"保存しました");router.refresh()}
    else if(result.failure==="rejected"&&!retry){if(entry){removeRecordRequest(entry);setPending(prev=>prev.filter(p=>p.id!==entry.id))}setMessage(result.error??"入力を確認してください")}

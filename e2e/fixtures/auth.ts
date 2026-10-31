@@ -50,6 +50,7 @@ function formatSupabaseError(error: {
 }
 
 let cachedAdminClient: SupabaseClient | null = null
+const createdFixtureUsers = new Set<string>()
 
 /** service_role キーで動く管理クライアント（RLS バイパス）。 */
 export function adminClient(): SupabaseClient {
@@ -64,6 +65,8 @@ export function adminClient(): SupabaseClient {
       ".env.e2e に NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY がありません。`pnpm e2e:env` を再実行してください。"
     )
   }
+
+  if (url !== "http://127.0.0.1:54321") throw new Error("E2E admin operations require the disposable loopback Supabase stack")
 
   cachedAdminClient = createClient(url, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -89,6 +92,7 @@ async function createAuthUser(email: string): Promise<string> {
       `createUser failed for ${email}: ${formatSupabaseError(error)}`
     )
   }
+  createdFixtureUsers.add(data.user.id)
   return data.user.id
 }
 
@@ -155,43 +159,38 @@ export async function createUnapprovedUser(email: string): Promise<E2eUser> {
   return { id: userId, email }
 }
 
-/**
- * テストユーザーと（あれば）世帯を削除する。best-effort:
- * クリーンアップ失敗でテスト自体は落とさない（console.warn のみ）。
+/** Delete only users created by this worker, on the disposable loopback stack.
+ * Fail teardown on an inconsistent cleanup; a green run must not hide orphan data.
  */
-export async function cleanupUser(
-  userId: string,
-  householdId?: string
-): Promise<void> {
+export async function cleanupUser(userId: string, householdId?: string): Promise<void> {
+  if (!createdFixtureUsers.has(userId)) throw new Error("cleanup requires this worker's synthetic fixture user")
   const admin = adminClient()
-  try {
-    if (householdId) {
-      // Synthetic test household only. Respect the expansion tables' history-preserving FKs.
-      // Linked calendar rows must be removed before medical records; record snapshots before definitions.
-      for(const table of ["news_deliveries","news_batches","calendar_events","medical_records","custom_records","custom_fields"] as const){
-        const {error}=await admin.from(table).delete().eq("household_id",householdId)
-        if(error)console.warn(`[e2e cleanup] scoped ${table} delete failed: ${formatSupabaseError(error)}`)
-      }
-      const { error: householdError } = await admin
-        .from("households")
-        .delete()
-        .eq("id", householdId)
-      if (householdError) {
-        console.warn(
-          `[e2e cleanup] households delete failed (${householdId}): ${formatSupabaseError(householdError)}`
-        )
-      }
-    }
-
-    const { error: deleteError } = await admin.auth.admin.deleteUser(userId)
-    if (deleteError) {
-      console.warn(
-        `[e2e cleanup] deleteUser failed (${userId}): ${formatSupabaseError(deleteError)}`
-      )
-    }
-  } catch (err) {
-    console.warn(`[e2e cleanup] unexpected error (${userId}):`, err)
+  const checked = (operation: string, error: Parameters<typeof formatSupabaseError>[0]) => {
+    if (error) throw new Error(`[e2e cleanup] ${operation}: ${formatSupabaseError(error)}`)
   }
+  if (householdId) {
+    const { data, error: ownerError } = await admin.from("profiles").select("household_id,role").eq("id", userId).single()
+    checked("verify household owner", ownerError)
+    if (data?.household_id !== householdId || data?.role !== "owner") throw new Error("cleanup cannot delete another fixture owner's household")
+    for (const table of ["news_deliveries", "news_batches", "calendar_events", "medical_records", "custom_records", "custom_fields"] as const) {
+      const { error } = await admin.from(table).delete().eq("household_id", householdId)
+      checked(`scoped ${table} delete`, error)
+    }
+    const { error } = await admin.from("households").delete().eq("id", householdId)
+    checked("household delete", error)
+  }
+  // A secondary family member is removed before the primary owner's fixture.
+  // These NO ACTION FKs otherwise turn Auth deletion into an opaque HTTP 500.
+  const { error: logError } = await admin.from("baby_logs").delete().eq("logged_by", userId)
+  checked("user log delete", logError)
+  const { error: inviteError } = await admin.from("invitations").update({ accepted_by: null }).eq("accepted_by", userId)
+  checked("accepted invitation detach", inviteError)
+  const { error } = await admin.auth.admin.deleteUser(userId)
+  checked("Auth user delete", error)
+  const { data: remaining, error: profileError } = await admin.from("profiles").select("id").eq("id", userId).maybeSingle()
+  checked("profile cleanup verification", profileError)
+  if (remaining) throw new Error("fixture profile remained after Auth deletion")
+  createdFixtureUsers.delete(userId)
 }
 
 interface MailpitSearchMessage {
@@ -286,6 +285,7 @@ export async function loginViaMagicLink(
 ): Promise<void> {
   await page.goto("/login")
   await page.getByLabel("メールアドレス").fill(email)
+  await expect(page.getByLabel("メールアドレス")).toHaveValue(email)
 
   const sentAtMs = Date.now()
   await page.getByRole("button", { name: "マジックリンクを送信" }).click()

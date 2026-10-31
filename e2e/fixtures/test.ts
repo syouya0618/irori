@@ -38,13 +38,14 @@ export const test = base.extend<E2eFixtures>({
     await use(uniqueEmail(testInfo.workerIndex))
   },
 
-  approvedUser: async ({ email }, use) => {
+  approvedUser: async ({ email, page }, use) => {
     const user = await createApprovedUser(email)
 
     await use(user)
 
-    // teardown: テスト中に世帯を作成していれば世帯ごと削除する。
-    // cleanup は best-effort（失敗してもテスト結果に影響させない）。
+    // Stop page polling before removing the synthetic Auth/DB fixture.
+    await page.close()
+    // Teardown failures are test failures; never hide inconsistent cleanup.
     let householdId: string | undefined
     try {
       const { data, error } = await adminClient()

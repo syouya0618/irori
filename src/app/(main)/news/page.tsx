@@ -16,7 +16,7 @@ export default async function NewsPage({searchParams}:{searchParams:Promise<{all
  ]);if(error||se)throw new Error("ニュースを取得できませんでした");return {articles:data??[],lastSuccess:typeof status==="string"?status:null}}
  const {articles,lastSuccess}=await read(),visible=all?articles:articles.filter(a=>relevantNews(a,months))
  return <div className="flex flex-col gap-4 px-4 py-8"><Link href="/baby" className="flex min-h-11 items-center text-primary">育児へ戻る</Link><h1 className="text-lg font-semibold">地域の子育てニュース</h1>
-  <NewsPreferences key={pref?.updated_at??"new"} region={pref?.region_key??null} enabled={pref?.enabled??false} version={pref?.updated_at??null}/>
+  <NewsPreferences region={pref?.region_key??null} enabled={pref?.enabled??false} version={pref?.updated_at??null}/>
   <Link href="/settings" className="min-h-11 py-3 text-sm text-primary">端末の通知設定</Link>
   {region&&<><p className="text-sm"><a className="underline" href={region.guide} target="_blank" rel="noreferrer">出典: {region.publisher} 公式RSS</a></p><p className="text-xs text-muted-foreground">{lastSuccess?`最終取得: ${toJstDateString(lastSuccess)}（日本時間）`:"まだ取得していません。次の朝の取得を待ってください。"}{lastSuccess&&Date.parse(lastSuccess)<now.getTime()-25*3600000?" 更新を確認できていません。自治体の公式サイトも確認してください。":""}</p>
    <Link className="min-h-11 py-3 text-sm text-primary" href={all?"/news":"/news?all=1"}>{all?"子どもの年齢に合わせて表示":"年齢の絞り込みを外す"}</Link>

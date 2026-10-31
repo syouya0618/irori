@@ -4,7 +4,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { saveCustom } from "@/app/(main)/baby/custom/actions"
 import { CUSTOM_LABELS,CUSTOM_TYPES,displayCustomValue,isCustomRequest,type CustomField,type CustomRecord,type CustomRequest } from "@/lib/domain/custom-records"
-import { unreadableRecordCount,listRecordRequests,removeRecordRequest,storeRecordRequest,type RecordRequest } from "@/lib/domain/record-requests"
+import { readRecordRequests,removeRecordRequest,storeRecordRequest,type RecordRequest } from "@/lib/domain/record-requests"
 import type { SaveOwner } from "@/lib/domain/save-attempt"
 import { newClientId } from "@/lib/utils/client-id"
 import { formatJstTimeInput,formatTimeJst,jstWallClockToIso,toJstDateString } from "@/lib/utils/date-jst"
@@ -17,13 +17,13 @@ export function CustomView({owner,childName,fields,fieldsTruncated,records,hasMo
  const router=useRouter(),alive=useRef(true),scope=useRef(owner)
  const [pending,setPending]=useState<RecordRequest[]>([]),[ready,setReady]=useState(false),[message,setMessage]=useState(""),[saving,start]=useTransition()
  const [editing,setEditing]=useState<CustomRecord|null>(null),[editingField,setEditingField]=useState<CustomField|null>(null),[type,setType]=useState<CustomField["value_type"]>("number"),[selected,setSelected]=useState(fields.find(f=>!f.archived)?.id??"")
- useEffect(()=>{alive.current=true;Promise.resolve().then(()=>{if(alive.current){setPending(listRecordRequests(scope.current,"custom"));setUnreadable(unreadableRecordCount(scope.current)>0);setReady(true)}});return()=>{alive.current=false}},[])
+ useEffect(()=>{alive.current=true;void readRecordRequests(scope.current,"custom").then(result=>{if(alive.current){setPending(result.items);setUnreadable(result.unreadable>0);setReady(true)}});return()=>{alive.current=false}},[])
  function send(p:RecordRequest,retry=false){
   if(saving)return
   if(!isCustomRequest(p.payload)||p.payload.childId!==owner.childId){setMessage("端末の控えを確認できません。保存済み一覧と照合してください");return}
   const request=p.payload
   start(async()=>{try{
-   if(!retry){const stored=storeRecordRequest(p);setStorageOk(stored);if(!stored)setMessage("端末に控えを残せていません。保存結果を確認するまでページを閉じないでください")}
+   if(!retry){const stored=await storeRecordRequest(p);if(!alive.current)return;setStorageOk(stored);if(!stored)setMessage("端末に控えを残せていません。保存結果を確認するまでページを閉じないでください")}
    setPending(prev=>[p,...prev.filter(v=>v.id!==p.id)])
    const r=await saveCustom(request);if(!alive.current)return
    if(r.status){setFormEpoch(v=>v+1);removeRecordRequest(p);setPending(prev=>prev.filter(v=>v.id!==p.id));setEditing(null);setEditingField(null);if(request.operation==="field"&&!request.archived)setSelected(request.id);setMessage(r.status==="conflict"?"別の端末が更新しました。読み直した内容を確認してください":"保存しました");router.refresh()}

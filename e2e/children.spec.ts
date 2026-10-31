@@ -19,7 +19,7 @@ test("子どもを追加して切り替えても記録・量候補・いつも�
   const { error: historyError } = await db.from("feeding_amount_history").insert({ user_id: approvedUser.id, household_id: profile.household_id, child_id: original.id, feeding_type: "pumped", amount_ml: 120, use_order: 1 })
   if (historyError) throw historyError
   await page.goto("/children")
-  const add = page.locator("form").filter({ has: page.getByRole("heading",{ name: "子どもの追加" }) })
+  const add = page.locator("section").filter({ has: page.getByRole("heading",{ name: "子どもの追加", exact: true }) })
   await add.getByLabel("呼び名").fill("synthetic child A2")
   await add.getByRole("button",{ name: "保存する" }).click()
   await expect(add.getByRole("status")).toHaveText("保存しました")
