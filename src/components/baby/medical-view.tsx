@@ -20,8 +20,8 @@ export function MedicalView({owner,childName,records,truncated}:{owner:SaveOwner
   if(saving)return
   if(!isMedicalRequest(p.payload)||p.payload.childId!==owner.childId){setMessage("端末の控えを確認できません。保存済みの記録と照合してください");return}
   const request=p.payload
+  setPending(prev=>[p,...prev.filter(v=>v.id!==p.id)])
   start(async()=>{try{
-   setPending(prev=>[p,...prev.filter(v=>v.id!==p.id)])
    const r=await saveMedical(request);if(!alive.current)return
    if(r.status){setFormEpoch(v=>v+1);removeRecordRequest(p);setPending(prev=>prev.filter(v=>v.id!==p.id));setEditing(null);setMessage(r.status==="conflict"?"別の端末が更新しました。読み直した内容を確認してください":"保存しました");router.refresh()}
    else if(r.failure==="rejected"&&!retry){removeRecordRequest(p);setPending(prev=>prev.filter(v=>v.id!==p.id));setMessage(r.error)}
