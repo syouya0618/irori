@@ -4,7 +4,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { saveCustom } from "@/app/(main)/baby/custom/actions"
 import { CUSTOM_LABELS,CUSTOM_TYPES,displayCustomValue,isCustomRequest,type CustomField,type CustomRecord,type CustomRequest } from "@/lib/domain/custom-records"
-import { listRecordRequests,removeRecordRequest,storeRecordRequest,type RecordRequest } from "@/lib/domain/record-requests"
+import { unreadableRecordCount,listRecordRequests,removeRecordRequest,storeRecordRequest,type RecordRequest } from "@/lib/domain/record-requests"
 import type { SaveOwner } from "@/lib/domain/save-attempt"
 import { newClientId } from "@/lib/utils/client-id"
 import { formatJstTimeInput,formatTimeJst,jstWallClockToIso,toJstDateString } from "@/lib/utils/date-jst"
@@ -12,31 +12,34 @@ const input="mt-1 min-h-11 w-full rounded-xl border bg-background px-3",button="
 const wall=(iso:string)=>`${toJstDateString(iso)}T${formatJstTimeInput(iso)}`
 function fromWall(v:string){return jstWallClockToIso(v.slice(0,10),v.slice(11,16))}
 export function CustomView({owner,childName,fields,fieldsTruncated,records,hasMore,query,fieldFilter,page,nowIso}:{owner:SaveOwner&{childId:string};childName:string;fields:CustomField[];fieldsTruncated:boolean;records:CustomRecord[];hasMore:boolean;query:string;fieldFilter:string;page:number;nowIso:string}){
+ const [formEpoch,setFormEpoch]=useState(0)
+ const [storageOk,setStorageOk]=useState(true),[unreadable,setUnreadable]=useState(false)
  const router=useRouter(),alive=useRef(true),scope=useRef(owner)
  const [pending,setPending]=useState<RecordRequest[]>([]),[ready,setReady]=useState(false),[message,setMessage]=useState(""),[saving,start]=useTransition()
  const [editing,setEditing]=useState<CustomRecord|null>(null),[editingField,setEditingField]=useState<CustomField|null>(null),[type,setType]=useState<CustomField["value_type"]>("number"),[selected,setSelected]=useState(fields.find(f=>!f.archived)?.id??"")
- useEffect(()=>{alive.current=true;Promise.resolve().then(()=>{if(alive.current){setPending(listRecordRequests(scope.current,"custom"));setReady(true)}});return()=>{alive.current=false}},[])
+ useEffect(()=>{alive.current=true;Promise.resolve().then(()=>{if(alive.current){setPending(listRecordRequests(scope.current,"custom"));setUnreadable(unreadableRecordCount(scope.current)>0);setReady(true)}});return()=>{alive.current=false}},[])
  function send(p:RecordRequest,retry=false){
   if(saving)return
   if(!isCustomRequest(p.payload)||p.payload.childId!==owner.childId){setMessage("端末の控えを確認できません。保存済み一覧と照合してください");return}
   const request=p.payload
   start(async()=>{try{
-   if(!retry&&!storeRecordRequest(p))setMessage("端末に控えを残せていません。保存結果を確認するまでページを閉じないでください")
+   if(!retry){const stored=storeRecordRequest(p);setStorageOk(stored);if(!stored)setMessage("端末に控えを残せていません。保存結果を確認するまでページを閉じないでください")}
    setPending(prev=>[p,...prev.filter(v=>v.id!==p.id)])
    const r=await saveCustom(request);if(!alive.current)return
-   if(r.status){removeRecordRequest(p);setPending(prev=>prev.filter(v=>v.id!==p.id));setEditing(null);setEditingField(null);if(request.operation==="field"&&!request.archived)setSelected(request.id);setMessage(r.status==="conflict"?"別の端末が更新しました。読み直した内容を確認してください":"保存しました");router.refresh()}
+   if(r.status){setFormEpoch(v=>v+1);removeRecordRequest(p);setPending(prev=>prev.filter(v=>v.id!==p.id));setEditing(null);setEditingField(null);if(request.operation==="field"&&!request.archived)setSelected(request.id);setMessage(r.status==="conflict"?"別の端末が更新しました。読み直した内容を確認してください":"保存しました");router.refresh()}
    else if(r.failure==="rejected"&&!retry){removeRecordRequest(p);setPending(prev=>prev.filter(v=>v.id!==p.id));setMessage(r.error)}
    else setMessage("保存結果を確認できません。同じ操作で確認し直してください")
   }catch{if(alive.current)setMessage("保存結果を確認できません。同じ操作で確認し直してください")}})
  }
  function submit(request:CustomRequest){if(!isCustomRequest(request)){setMessage("項目・値・日時を確認してください");return}send({schema:1,id:newClientId(),owner,kind:"custom",payload:request})}
- const blocked=!ready||saving||pending.length>0
+ const blocked=!ready||saving||pending.length>0||unreadable
  const definition=editing?{id:editing.field_id,label:editing.field_label,value_type:editing.value_type,options:editing.field_options}:fields.find(f=>f.id===selected&&!f.archived)
  const options=definition&&Array.isArray(definition.options)?definition.options.filter((x):x is string=>typeof x==="string"):[]
  const href=(n:number)=>`/baby/custom?${new URLSearchParams({child:owner.childId,q:query,field:fieldFilter,page:String(n)})}`
  return <div className="flex flex-col gap-4 px-4 py-8"><Link href="/baby" className="flex min-h-11 items-center text-primary">育児へ戻る</Link><h1 className="text-lg font-semibold">{childName||"子ども"}のカスタム記録</h1>
+  {unreadable&&<p role="alert">端末の控えを読めないため、新しい保存を止めています。元の版で保存結果を確認してください。</p>}{!storageOk&&pending.length>0&&<p role="alert">控えを端末に残せていません。このページを閉じる前に保存結果を確認してください。</p>}
   {message&&<p role="status">{message}</p>}{pending.map(p=><button key={p.id} className={button} disabled={saving} onClick={()=>send(p,true)}>保存結果を同じ操作で確認</button>)}
-  <form key={editing?.id??"new-record"} className="glass flex flex-col gap-3 rounded-2xl p-4" onSubmit={e=>{
+  <form key={`${editing?.id??"new-record"}:${formEpoch}`} className="glass flex flex-col gap-3 rounded-2xl p-4" onSubmit={e=>{
    e.preventDefault();if(blocked||!definition)return
    const f=new FormData(e.currentTarget),raw=String(f.get("value")??"")
    try{submit({operation:"record",id:editing?.id??newClientId(),childId:owner.childId,version:editing?.updated_at??null,fieldId:definition.id,value:definition.value_type==="number"?Number(raw):definition.value_type==="boolean"?raw==="true":definition.value_type==="datetime"?fromWall(raw):raw,loggedAt:fromWall(String(f.get("at"))),memo:String(f.get("memo")??"").trim()||null,voided:f.get("voided")==="on"})}catch{setMessage("日時・値を確認してください")}
@@ -49,7 +52,7 @@ export function CustomView({owner,childName,fields,fieldsTruncated,records,hasMo
    <button disabled={blocked||!definition} className={`${button} bg-primary text-primary-foreground`}>記録を保存</button>{editing&&<button type="button" className={button} onClick={()=>setEditing(null)}>編集を閉じる</button>}
   </form>
   <details className="glass rounded-2xl p-4"><summary className="min-h-11">世帯の項目を管理</summary><p className="text-sm text-muted-foreground">項目は世帯共通。型・選択肢の変更は新しい項目で行います。廃止しても過去の記録は残ります。</p>
-   <form key={editingField?.id??"new-field"} className="my-3 flex flex-col gap-3" onSubmit={e=>{
+   <form key={`${editingField?.id??"new-field"}:${formEpoch}`} className="my-3 flex flex-col gap-3" onSubmit={e=>{
     e.preventDefault();if(blocked)return;const f=new FormData(e.currentTarget)
     submit({operation:"field",id:editingField?.id??newClientId(),childId:owner.childId,version:editingField?.updated_at??null,label:String(f.get("label")??"").trim(),type:editingField?.value_type??type,options:editingField?(Array.isArray(editingField.options)?editingField.options.filter((v):v is string=>typeof v==="string"):[]):type==="choice"?String(f.get("options")??"").split(/\r?\n/).map(s=>s.trim()).filter(Boolean):[],archived:f.get("archived")==="on"})
    }}><label>項目名<input name="label" required maxLength={80} className={input} disabled={blocked} defaultValue={editingField?.label??""}/></label>

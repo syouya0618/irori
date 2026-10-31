@@ -1,4 +1,4 @@
-import { listRecordRequests } from "./record-requests"
+import { listRecordRequests,unreadableRecordCount } from "./record-requests"
 import { listPendingSleep } from "@/lib/domain/sleep-pending"
 import { ownedChildTimerIds, readPersistedTimer, summarizePersistedTimer } from "@/lib/domain/feeding-timer-storage"
 import { countHouseholdPendingSaves, listPendingSaves } from "@/lib/domain/pending-saves-storage"
@@ -22,6 +22,7 @@ import type { SaveOwner } from "@/lib/domain/save-attempt"
  * 判定できぬことを「何もない」と言い換えぬよう、`storageReadable` を併せて返す。
  */
 export interface LocalWorkSummary {
+  unreadableSaves?: boolean
   storageReadable: boolean
   /** 授乳の計測（走行中・停め忘れ・保存を確認中） */
   timer: { pendingSave: boolean; stale: boolean } | null
@@ -48,6 +49,8 @@ function canReadStorage(): boolean {
 
 export function summarizeLocalWork(owner: SaveOwner, nowMs: number = Date.now()): LocalWorkSummary {
   const storageReadable = canReadStorage()
+  const sleep = listPendingSleep(owner)
+  const unreadable = sleep.unreadable || unreadableRecordCount(owner)>0
   const childIds = ownedChildTimerIds(owner)
   const timer = summarizePersistedTimer(readPersistedTimer(owner.childId), owner, nowMs) ?? childIds.map(childId => summarizePersistedTimer(readPersistedTimer(childId), { ...owner, childId }, nowMs)).find(Boolean)
   const storedCreates = listCalendarPendingCreates(owner, nowMs)
@@ -56,8 +59,9 @@ export function summarizeLocalWork(owner: SaveOwner, nowMs: number = Date.now())
   const creates = [...storedCreates, ...memoryCreates]
   return {
     storageReadable,
+    ...(unreadable?{unreadableSaves:true}:{}),
     timer: timer ? { pendingSave: timer.pendingSave, stale: timer.stale } : null,
-    pendingSaves: (owner.childId ? listPendingSaves(owner, nowMs).length : countHouseholdPendingSaves(owner, nowMs)) + listPendingSleep(owner).items.length + listRecordRequests(owner).length,
+    pendingSaves: (owner.childId ? listPendingSaves(owner, nowMs).length : countHouseholdPendingSaves(owner, nowMs)) + sleep.items.length + listRecordRequests(owner).length,
     calendarCreates: creates.filter((e) => e.status !== "rejected").length,
     calendarCreatesRejected: creates.filter((e) => e.status === "rejected").length,
     calendarCreatesMemoryOnly: memoryCreates.length,
@@ -68,6 +72,7 @@ export function summarizeLocalWork(owner: SaveOwner, nowMs: number = Date.now())
 /** 要約が空でないか（更新の自動再読込を止める条件）。 */
 export function hasLocalWork(summary: LocalWorkSummary): boolean {
   return (
+    summary.unreadableSaves === true ||
     summary.timer !== null ||
     summary.pendingSaves > 0 ||
     summary.calendarCreates > 0 ||
@@ -79,6 +84,7 @@ export function hasLocalWork(summary: LocalWorkSummary): boolean {
 /** 利用者向けの一文（ログアウト・更新の確認）。無ければ null。 */
 export function describeLocalWork(summary: LocalWorkSummary): string | null {
   const parts: string[] = []
+  if(summary.unreadableSaves)parts.push("読み取れない保存控え（元の版で確認が必要）")
   if (summary.timer) {
     parts.push(summary.timer.pendingSave ? "保存を確認中の授乳" : "授乳の計測")
   }

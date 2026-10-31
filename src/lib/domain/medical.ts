@@ -5,8 +5,8 @@ import { isValidYmd } from "@/lib/utils/date-jst"
 import { isTimestamptzText } from "./timestamptz-text"
 export type MedicalRecord=Database["public"]["Tables"]["medical_records"]["Row"]
 export const MEDICAL_SOURCES={
- vaccination:{key:"jihs-2026-10-01",version:"2026-10-01",title:"国立健康危機管理研究機構 予防接種スケジュール",url:"https://id-info.jihs.go.jp/immunization/schedule/index.html"},
- checkup:{key:"cfa-checkup-2026-07-23",version:"2026-07-23 確認資料",title:"こども家庭庁 乳幼児健診",url:"https://www.cfa.go.jp/policies/boshihoken/nyuyojikenshin"},
+ vaccination:{key:"jihs-2026-10-01",version:"2026-10-01",title:"国立健康危機管理研究機構 予防接種スケジュール",url:"https://id-info.jihs.go.jp/immunization/schedule/index.html",documentUrl:"https://id-info.jihs.go.jp/immunization/schedule/2026/20261001_full.pdf",checkedAt:"2026-10-31"},
+ checkup:{key:"cfa-checkup-2026-07-23",version:"健診案内ページ・2026-10-31確認",title:"こども家庭庁 乳幼児健診",url:"https://www.cfa.go.jp/policies/boshihoken/nyuyojikenshin",documentUrl:"https://www.cfa.go.jp/policies/boshihoken/nyuyojikenshin",checkedAt:"2026-10-31"},
 } as const
 export type MedicalValue=Pick<MedicalRecord,"kind"|"title"|"dose"|"status"|"scheduled_date"|"completed_date"|"memo"|"remind"|"source_key">
 export type MedicalRequest={id:string;childId:string;version:string|null;value:MedicalValue}

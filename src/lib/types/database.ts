@@ -64,6 +64,7 @@ export type GoogleSyncErrorKind =
 export interface Database {
   public: {
     Tables: {
+      news_batches:{Row:{user_id:string;day:string;household_id:string;region_key:string;article_ids:string[]};Insert:never;Update:never;Relationships:[]}
       news_preferences:{Row:{user_id:string;region_key:string|null;enabled:boolean;enabled_from:string;updated_at:string};Insert:never;Update:never;Relationships:[]}
       news_articles:{Row:{region_key:string;id:string;title:string;url:string;published_at:string;first_seen_at:string;min_months:number|null;max_months:number|null};Insert:{region_key:string;id:string;title:string;url:string;published_at:string;min_months?:number|null;max_months?:number|null};Update:never;Relationships:[]}
       news_source_runs:{Row:{region_key:string;claimed_at:string;last_success_at:string|null};Insert:never;Update:{last_success_at?:string};Relationships:[]}

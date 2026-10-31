@@ -22,3 +22,12 @@ it("restores an ambiguous medical operation with the same id, child, date and ve
  await act(async()=>fireEvent.click(screen.getByRole("button",{name:"保存結果を同じ操作で確認"})))
  expect(vi.mocked(saveMedical).mock.calls[1][0]).toEqual(frozen);expect(listRecordRequests(owner)).toEqual([])
 })
+
+it("keeps the memory-only warning visible when a failed persistence is followed by an unknown save",async()=>{
+ const spy=vi.spyOn(Storage.prototype,"setItem").mockImplementation(()=>{throw new Error("synthetic unavailable storage")})
+ try{
+  vi.mocked(saveMedical).mockResolvedValueOnce({error:"synthetic unknown",failure:"unknown"});render(view());await waitFor(()=>expect(screen.getByRole("button",{name:"保存する"})).toBeEnabled())
+  fireEvent.change(screen.getByLabelText("名称",{exact:true}),{target:{value:"synthetic vaccine"}});fireEvent.change(screen.getByLabelText("予定日",{exact:true}),{target:{value:"2026-01-01"}});fireEvent.click(screen.getByRole("button",{name:"保存する"}))
+  await waitFor(()=>expect(screen.getByRole("status")).toHaveTextContent("保存結果を確認できません"));expect(screen.getByRole("alert")).toHaveTextContent("控えを端末に残せていません")
+ }finally{spy.mockRestore()}
+})

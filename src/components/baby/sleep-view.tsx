@@ -14,6 +14,8 @@ import { formatTimeJst,formatJstTimeInput,jstWallClockToIso,shiftYmd,toJstDateSt
 const input="mt-1 min-h-11 w-full rounded-xl border px-3"
 const button="min-h-11 rounded-xl bg-primary px-4 text-primary-foreground disabled:opacity-50"
 export function SleepView({owner,childName,initialSessions,initialActive,feedings,truncated=false}:{owner:SaveOwner&{childId:string};childName:string;initialSessions:SleepSession[];initialActive:SleepSession|null;feedings:BabyLogData[];truncated?:boolean}){
+ const [formEpoch,setFormEpoch]=useState(0)
+ const [storageOk,setStorageOk]=useState(true),[unreadable,setUnreadable]=useState(false)
  const router=useRouter(),alive=useRef(true)
  const [localSessions,setLocalSessions]=useState<SleepSession[]>([])
  const sessions=useMemo(()=>mergeSleepSessions([...initialSessions,...(initialActive?[initialActive]:[])],localSessions).filter(s=>s.child_id===owner.childId),[initialSessions,initialActive,localSessions,owner.childId])
@@ -28,7 +30,7 @@ export function SleepView({owner,childName,initialSessions,initialActive,feeding
  useEffect(()=>{alive.current=true;Promise.resolve().then(()=>{
   if(!alive.current)return
   const result=listPendingSleep(ownerRef.current);setPending(result.items.map(p=>({...p,phase:"unknown"})))
-  if(result.unreadable)setMessage("端末の控えをすべて読めませんでした。記録一覧で保存状況を確認してください")
+  setUnreadable(result.unreadable);if(result.unreadable)setMessage("端末の控えをすべて読めませんでした。記録一覧で保存状況を確認してください")
   setReady(true)
  });return()=>{alive.current=false}},[])
  const now=useNow(60000)
@@ -39,13 +41,13 @@ export function SleepView({owner,childName,initialSessions,initialActive,feeding
   if(saving)return
   start(async()=>{
    const stored=putPendingSleep({...p,phase:"sending"},retry)
-   if(!stored)setMessage("この端末に控えを残せていません。このページを閉じる前に保存結果を確認してください")
+   setStorageOk(stored);if(!stored){setMessage("この端末に控えを残せていません。このページを閉じる前に保存結果を確認してください")}
    setPending(prev=>[p,...prev.filter(x=>x.nonce!==p.nonce)])
    try{
     const result=await saveSleep(p.request)
     if(!alive.current)return
     if(result.result){
-     apply(result.result.session);removePendingSleep(p);setPending(prev=>prev.filter(x=>x.nonce!==p.nonce));setEditing(null)
+     setFormEpoch(v=>v+1);apply(result.result.session);removePendingSleep(p);setPending(prev=>prev.filter(x=>x.nonce!==p.nonce));setEditing(null)
      setMessage(result.result.status==="conflict"?"別の端末の睡眠記録が先に保存されています。表示された内容を確認してください":"保存しました")
      router.refresh();return
     }
@@ -58,9 +60,10 @@ export function SleepView({owner,childName,initialSessions,initialActive,feeding
   })
  }
  function begin(request:SleepRequest){const nonce=request.kind==="start"?request.id:request.kind==="stop"?request.stopId:newClientId();send({schemaVersion:1,nonce,owner,request,phase:"sending",createdAt:new Date().toISOString()})}
- const blocked=!ready||saving||pending.length>0
+ const blocked=!ready||saving||pending.length>0||unreadable
  const events=[...sessions.filter(s=>!s.voided).map(s=>({id:s.id,at:s.started_at,text:`睡眠 ${formatTimeJst(s.started_at)}〜${s.ended_at?formatTimeJst(s.ended_at):"計測中"}`})),...feedings.map(f=>({id:f.id,at:f.logged_at,text:`授乳 ${formatTimeJst(f.logged_at)}${f.amount_ml!==null?`・${f.amount_ml}ml`:""}`}))].sort((a,b)=>b.at.localeCompare(a.at)).slice(0,100)
  return <div className="flex flex-col gap-4 px-4 pt-8 pb-8"><Link href="/baby" className="flex min-h-11 items-center text-primary">育児へ戻る</Link><h1 className="text-lg font-semibold">{childName||"子ども"}の睡眠</h1>
+  {!storageOk&&pending.length>0&&<p role="alert" className="text-sm">控えを端末に残せていません。このページを閉じる前に保存結果を確認してください。</p>}
   {message&&<p role="status" className="text-sm">{message}</p>}
   {pending.map(p=><div key={p.nonce} className="glass flex flex-col gap-2 rounded-2xl p-4"><p className="text-sm">保存を確認中の睡眠（{p.request.kind==="stop"?"停止":p.request.kind==="edit"?"編集":"開始・追加"}）</p><button disabled={saving} className={button} onClick={()=>send(p,true)}>同じ操作を確認する</button></div>)}
   <section className="glass flex flex-col gap-3 rounded-2xl p-4 shadow-lg shadow-black/[0.04]"><h2 className="font-semibold">睡眠タイマー</h2>
@@ -69,7 +72,7 @@ export function SleepView({owner,childName,initialSessions,initialActive,feeding
    {active?<button disabled={blocked} className={button} onClick={()=>begin({kind:"stop",id:active.id,childId:owner.childId,version:active.updated_at,stopId:newClientId()})}>起きた・停止して記録</button>:<button disabled={blocked} className={button} onClick={()=>begin({kind:"start",id:newClientId(),childId:owner.childId})}>寝た・計測を開始</button>}
    <button disabled={saving} className="min-h-11 rounded-xl border px-4" onClick={()=>router.refresh()}>他の端末の状態を読み込む</button>
   </section>
-  <form key={editing?.id??"new"} className="glass flex flex-col gap-3 rounded-2xl p-4 shadow-lg shadow-black/[0.04]" onSubmit={e=>{
+  <form key={`${editing?.id??"new"}:${formEpoch}`} className="glass flex flex-col gap-3 rounded-2xl p-4 shadow-lg shadow-black/[0.04]" onSubmit={e=>{
    e.preventDefault();if(blocked)return
    const form=new FormData(e.currentTarget)
    try{
