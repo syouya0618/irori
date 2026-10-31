@@ -2,9 +2,33 @@
 
 本番適用・merge は対象外。合成データだけで検証し、フェーズごとに配送可能な単位を残す。
 
+## 継続実装の到達点（2026-10-31）
+
+A〜Dの機能はローカルで実装・統合済み。Eは主要遷移の改善を5回ずつの比較で確認したが、低速回線の初回表示は改善していない。全体の本番公開・merge判定はNO。実Supabase E2E、CI/CodeQL、実端末と本番適用を未実行のまま完了扱いにしない。
+
+| 区分 | 実装 | 実行済みの証拠 | 残る境界 |
+|---|---|---|---|
+| A | 複数児・既存児移行・児別候補/既定量・下書き/再送の分離 | 旧値hash保持、児スコープpgTAP、兄弟各12並行保存 | 既存環境のbackup/実Auth/旧PWA受入 |
+| B | 対象児・情報区分・期限・取消付き共有、online確認 | RLS/RPC/GRANT、失効窓と遅延応答unit | 実端末の取消・offline・cache確認 |
+| C | 睡眠、接種/健診、成長帯、独自項目/検索/export、年齢別ホーム | 各機能unit/pgTAP、12接続の睡眠競合、合成UI | 実Supabase/端末・実通知 |
+| D | 任意の公式RSS・一覧・年齢目安・朝8時の分離配信 | parser/既存通知回帰unit、pgTAP、12接続のqueue/claim | live RSS収集・cron・Push |
+| E | リクエスト内取得共有・並列化・Suspense・遅延ロード・pending反応 | 各条件5回、計125操作/版の[性能比較](../performance/product-expansion-20261031.md) | 低速初回・実DB/端末/PWA性能 |
+
+統合runtimeのゲートは251 Vitestファイル/3593テスト、lint警告0、TypeScript、production build、strict4本、全33 pgTAPファイルが成功。native PostgreSQL17/pgTAP1.3.4はAuth/Storageの最小shimを使い、GoTrue/PostgREST/Realtime/pg_cronを含まない。Chromeの合成HTTP画面は390px/1280pxの主要画面・成長帯、別利用者3組の並行リクエスト分離、page error 0を確認した。実保存E2Eの代用ではない。
+
+睡眠は12同時開始/停止が各1 saved・11 conflictで1行。量候補は兄弟合計24同時書込みで各12ログ・各最新5候補。ニュースは12同時prepareで1キュー、12同時claimで1取得・11拒否。providerは呼んでいない。
+
+新規クラウド契約・必須envは増やさない。RSSには既存lockfile内の`xmldoc`を明示依存として使う。通常のmigrationで初期構築する。設定手順はREADME、権利と加工はTHIRD_PARTY_DATA.md、通知の停止/unknown制約はnotify-cron runbookに集約する。
+
+子ども追加の応答不明は固定ID・世帯・送信内容を端末へ保持し、明示的な再確認まで別作成を止める。睡眠・医療・独自記録も同じ入力/版の確認を守る。解読不能/未知版の保存控えを勝手に捨てず、持ち主の新規書込みと自動更新を止める。端末保存不可の知らせは結果表示で上書きしない。
+
+子ども別のserver clientはリクエスト内だけで再利用する。従来児以外はRESTの児selectorをRealtimeのRLS評価へ渡せないため、可視・online時の30秒再取得も行う。実Realtimeでの反映は未検証。既存のルートキャッシュTTLと認証強度を変えない。
+
+以下のPhase 1/2と中間ゲートの件数は履歴であり、統合後の証拠と混同しない。
+
 ## 順序と移行境界
 
-1. 既存Phase 1〜2を保持（性能の目的は未達）。
+1. 既存Phase 1〜2を保持（当時の性能目的は未達。統合後の再測定は下記）。
 2. A: childrenのexpand/backfill/validate/cutover。
 3. B: 子ども・情報区分別の共有。
 4. C: 健診/接種、睡眠、成長参照、カスタム記録、年齢別表示。
@@ -14,7 +38,7 @@
 旧版PWAの再送、保存結果不明、子どもの切替、共有取消後のキャッシュが移行の重点。
 削除や推測による過去データ補完は行わない。参照データは権利を確認するまで同梱しない。
 
-## Phase 1
+## Phase 1（継続前の記録）
 
 `getProfileForRequest`（React.cache）をlayoutと設定ページで共用。リクエスト内だけで
 本人プロフィールを再利用する。既存Link/loading/並列取得、キャッシュTTL、再接続時の再取得は維持。
@@ -49,7 +73,7 @@ SPA遷移ではlayoutを再利用するため、この変更による呼出し�
 Phase 1: lint、型、3515 Vitest、production build、4本のstrict検出器が成功。
 権限・実端末・本番の検証をこの結果で代用しない。
 
-## Phase 2
+## Phase 2（継続前の記録）
 
 `feeding_amount_history` は本人・世帯・授乳種別ごとのMRU（最大5件）。過去ログからの導出では、
 他人の記録を編集した人や入力の使用順を正しく復元できないため、小さな履歴表を選択。
@@ -77,7 +101,7 @@ Supabase CLIの全スタック試験、追加Playwrightの実行状態は配送�
   実行は対象DBを確認した運用者が行う。履歴表や育児ログのDROP/DELETEは不要。
 - 新しい関数の空search_pathと明示schemaは[Supabase公式のDatabase functions](https://supabase.com/docs/guides/database/functions)に沿う。
 
-## 未完了と再開地点
+## 継続前の未完了と再開地点（履歴）
 
 以下は前回時点の未完了一覧。継続実装のA以降を下段へ追記する。公開要件が満たされたとは判断しない。
 
@@ -94,7 +118,7 @@ Phase 3の対象児権限には5Aのデータモデルが必要。次の実装�
 新しい共有画面はネットワーク必須とし、期限切れの共有情報をオフラインsnapshotで再表示しない。
 母子データや健康情報の移行・閲覧境界を未検証のまま大きなmigrationへまとめない。
 
-## ローカル検証と配送境界
+## 継続前のローカル検証と配送境界（履歴）
 
 最終source: lint、型検査、227 Vitestファイル/3522テスト、production build、4本のstrict検出器が成功。
 実PostgreSQLの27 pgTAPファイルが成功。12件同時書込みでも12ログと最新5候補を確認。
@@ -168,7 +192,7 @@ RLSは[Supabase公式ガイド](https://supabase.com/docs/guides/database/postgr
 
 新しいクラウド契約/必須envはない。通常のmigrationを一度適用してからコードを公開する。
 停止時は共有UIを止めても、生データ権限を復元してはならない。RLS/GRANTと拒否契約は維持する。
-Cの睡眠/健診等の共有データは、その機能の導入時に同じ個別許可へ接続する（現時点の未実装を共有成功としない）。
+Cの睡眠/健診/独自記録は、後続migrationで同じ個別許可へ接続済み。実Auth/DB/端末を結ぶ受入は未実行。
 
 ### 睡眠の永続タイマー
 
