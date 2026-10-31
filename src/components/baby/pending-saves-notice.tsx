@@ -1,5 +1,6 @@
 "use client"
 
+
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Loader2, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
@@ -84,8 +85,8 @@ export function PendingSavesNotice({ owner, onConfirmed, knownLogIds }: PendingS
   })
 
   const reload = useCallback(() => {
-    setItems(listPendingSaves({ userId, householdId }).filter((p) => isAwaitingConfirmation(p)))
-  }, [userId, householdId])
+    setItems(listPendingSaves(owner).filter((p) => isAwaitingConfirmation(p)))
+  }, [owner])
 
   const confirm = useCallback(
     (log: BabyLogData) => {
@@ -99,7 +100,7 @@ export function PendingSavesNotice({ owner, onConfirmed, knownLogIds }: PendingS
   /** 端末に残した操作が DB に在るかを読む（書かぬ）。見つかったものを記録済みとして畳む。 */
   const reconcile = useCallback(
     async (opts: { announce: boolean }) => {
-      const pending = listPendingSaves({ userId, householdId }).filter((p) => isAwaitingConfirmation(p))
+      const pending = listPendingSaves(owner).filter((p) => isAwaitingConfirmation(p))
       if (pending.length === 0) return
       lookupAbortRef.current?.abort()
       const controller = new AbortController()
@@ -107,7 +108,7 @@ export function PendingSavesNotice({ owner, onConfirmed, knownLogIds }: PendingS
       setChecking(true)
       const outcome = await lookupBabyLogs(
         pending.map((p) => p.clientId),
-        { signal: controller.signal },
+        { signal: controller.signal, ...(owner.childId ? { childId: owner.childId } : {}) },
       )
       if (lookupAbortRef.current === controller) lookupAbortRef.current = null
       setChecking(false)
@@ -134,7 +135,7 @@ export function PendingSavesNotice({ owner, onConfirmed, knownLogIds }: PendingS
         }
       }
     },
-    [userId, householdId, confirm],
+    [confirm, owner],
   )
 
   // 開いた時・画面へ戻った時に読みで照合する（自動の書込みはせぬ）。別タブの変更も拾う
@@ -145,7 +146,7 @@ export function PendingSavesNotice({ owner, onConfirmed, knownLogIds }: PendingS
     const scheduleGraceRecheck = () => {
       if (graceTimer) clearTimeout(graceTimer)
       graceTimer = null
-      const at = nextVisibilityChangeAt(listPendingSaves({ userId, householdId }))
+      const at = nextVisibilityChangeAt(listPendingSaves(owner))
       if (at === null) return
       graceTimer = setTimeout(() => {
         reload()
@@ -179,7 +180,7 @@ export function PendingSavesNotice({ owner, onConfirmed, knownLogIds }: PendingS
       window.removeEventListener(PENDING_SAVES_CHANGED_EVENT, refresh)
       lookupAbortRef.current?.abort()
     }
-  }, [reload, reconcile, userId, householdId])
+  }, [reload, reconcile, userId, householdId, owner])
 
   // 再取得・Realtime で同じ id の行が画面に入ったら記録済み（確定行は画面が既に持つ）
   useEffect(() => {

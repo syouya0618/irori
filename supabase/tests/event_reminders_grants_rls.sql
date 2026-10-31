@@ -252,8 +252,9 @@ SELECT set_eq(
   $$,
   ARRAY['trg_calendar_events_updated_at',
         'trg_calendar_events_sync_remind_at_ins',
-        'trg_calendar_events_sync_remind_at_upd'],
-  'A-13a: calendar_events のトリガは既存 1 本 + 通知追随 2 本'
+        'trg_calendar_events_sync_remind_at_upd',
+        'guard_medical_calendar'],
+  'A-13a: calendar_events のトリガは既存 1 本 + 通知追随 2 本 + 医療記録保護 1 本'
 );
 SELECT ok(
   EXISTS (

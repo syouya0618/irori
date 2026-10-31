@@ -166,6 +166,12 @@ export async function cleanupUser(
   const admin = adminClient()
   try {
     if (householdId) {
+      // Synthetic test household only. Respect the expansion tables' history-preserving FKs.
+      // Linked calendar rows must be removed before medical records; record snapshots before definitions.
+      for(const table of ["news_deliveries","news_batches","calendar_events","medical_records","custom_records","custom_fields"] as const){
+        const {error}=await admin.from(table).delete().eq("household_id",householdId)
+        if(error)console.warn(`[e2e cleanup] scoped ${table} delete failed: ${formatSupabaseError(error)}`)
+      }
       const { error: householdError } = await admin
         .from("households")
         .delete()

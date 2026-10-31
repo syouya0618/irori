@@ -1,5 +1,7 @@
 "use client"
 
+import { useChildScope } from "./child-scope"
+
 import { useState, useEffect, useMemo, useRef } from "react"
 import { BookOpen, Loader2, PenLine } from "lucide-react"
 import { toast } from "sonner"
@@ -42,9 +44,11 @@ export function BabyDiaryView({
   householdId,
   userId,
 }: BabyDiaryViewProps) {
+  const childScope = useChildScope()
+  const childId = childScope?.id
   const draftOwner = useMemo(
-    () => (userId ? { userId, householdId } : null),
-    [userId, householdId],
+    () => (userId ? { userId, householdId, ...(childScope && !childScope.isLegacy ? { childId } : {}) } : null),
+    [userId, householdId, childId, childScope],
   )
   const [diaries, setDiaries] = useState<BabyDiaryData[]>(initialDiaries)
   // 「もっと見る」押下ごとに増やして追ページ取得の useEffect を発火させるトークン。
@@ -69,7 +73,7 @@ export function BabyDiaryView({
   useEffect(() => {
     if (loadToken === 0) return
 
-    const supabase = createClient()
+    const supabase = createClient(childId)
     const abortController = new AbortController()
     const offset = offsetRef.current
 
@@ -108,7 +112,7 @@ export function BabyDiaryView({
     return () => {
       abortController.abort()
     }
-  }, [loadToken, householdId])
+  }, [loadToken, householdId, childId])
 
   const openEdit = (date: string, diary: BabyDiaryData | null) => {
     setEditDate(date)

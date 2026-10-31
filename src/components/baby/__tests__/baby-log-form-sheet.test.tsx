@@ -28,12 +28,17 @@ const mockedDeleteLog = vi.mocked(deleteLog)
 const mockedRecordFeeding = vi.mocked(recordFeeding)
 const mockedRecordMemo = vi.mocked(recordMemo)
 const mockedToast = vi.mocked(toast)
+const remembered = vi.hoisted(() => ({ values: [] as number[] }))
+vi.mock("@/lib/hooks/use-feeding-amounts", () => ({
+  useFeedingAmounts: () => ({ status: "ready", values: remembered.values }),
+}))
 
 /** 編集を開いた時点の行の版（PostgREST の表記）。保存は必ずこの版を第 3 引数で送る（P2-07）。 */
 const LOG_VERSION = "2026-07-18T03:00:00.123456+00:00"
 
 beforeEach(() => {
   vi.clearAllMocks()
+  remembered.values = []
 })
 afterEach(cleanup)
 
@@ -65,6 +70,13 @@ function bottleFeedingLog(overrides: Partial<BabyLogData> = {}): BabyLogData {
 }
 
 describe("BabyLogFormSheet の amountMl 0ml falsy 衝突", () => {
+  it.each(["1.5", "1000", "-1"])("量 %s を丸めたり空欄として保存しない", async (value) => {
+    render(<BabyLogFormSheet userId="u1" open onOpenChange={() => {}} log={bottleFeedingLog()} />)
+    fireEvent.change(screen.getByLabelText("量 (ml)"), { target: { value } })
+    fireEvent.click(screen.getByRole("button", { name: "更新する" }))
+    expect(mockedUpdateLog).not.toHaveBeenCalled()
+    expect(mockedToast.error).toHaveBeenCalledWith("量は0〜999mlの整数で入力してください")
+  })
   it("量に「0」を入力して更新すると amountMl: 0 が updateLog に渡る", async () => {
     mockedUpdateLog.mockResolvedValue({ error: null })
     render(
@@ -103,7 +115,7 @@ describe("BabyLogFormSheet の amountMl 0ml falsy 衝突", () => {
 })
 
 describe("BabyLogFormSheet の搾乳（pumped）作成 + 量プリセット", () => {
-  it("搾乳を create モードで開くと量プリセット（10〜100）が並ぶ", () => {
+  it("初回は固定の推奨量を並べない", () => {
     render(
       <BabyLogFormSheet
         userId="u1"
@@ -114,15 +126,16 @@ describe("BabyLogFormSheet の搾乳（pumped）作成 + 量プリセット", ()
         createFeedingType="pumped"
       />,
     )
-    // 10刻み・10〜100mL の 10 個のプリセット
     for (const ml of [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]) {
       expect(
-        screen.getByRole("button", { name: String(ml) }),
-      ).toBeInTheDocument()
+        screen.queryByRole("button", { name: String(ml) }),
+      ).not.toBeInTheDocument()
     }
+    expect(screen.getByText("保存した量がここに表示されます")).toBeInTheDocument()
   })
 
   it("プリセットを押すと量入力欄に反映され、記録で recordFeeding に pumped + amountMl が渡る", async () => {
+    remembered.values = [60, 120]
     mockedRecordFeeding.mockResolvedValue({ error: null, id: "feed-1" })
     render(
       <BabyLogFormSheet

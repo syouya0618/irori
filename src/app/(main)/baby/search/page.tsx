@@ -1,6 +1,6 @@
 import Link from "next/link"
 import { ArrowLeft } from "lucide-react"
-import { getAuthContext } from "@/lib/supabase/auth-context"
+import { getChildContext } from "@/lib/supabase/child-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { BabySearchForm } from "@/components/baby/baby-search-form"
 import { BabySearchResults } from "@/components/baby/baby-search-results"
@@ -32,9 +32,7 @@ export default async function BabySearchPage({
 }: {
   searchParams: Promise<SearchParamsInput>
 }) {
-  const result = await getAuthContext()
-  if (result.error !== null) return null
-  const { supabase, householdId } = result.context
+  const { supabase, householdId } = await getChildContext()
 
   const today = todayJstString()
   const query = parseBabySearchParams(await searchParams, today)

@@ -1,0 +1,1911 @@
+{
+  "date": "2026-10-31",
+  "beforeSource": "dce3c550fb768f05ef23afb4a0a6a159850a5ade",
+  "afterSource": "c546863907e42d1b45c1dbaebce48ab3bf1f112e",
+  "afterRuntimeManifestSha256": "f45c3e8de08015c0eab98a811bb732d3bb426194ce1397394d4048a099470992",
+  "runtimeManifestDefinition": "SHA-256 of git ls-tree -r REF -- src public package.json pnpm-lock.yaml next.config.ts",
+  "rawEvidenceSha256": {
+    "before": "f88a2e73b6ff0aa1b7692f7099cae1def6b0997a3ea59b951d0659c4b08598e6",
+    "after": "6edcf86344e4aa9eee132fbd5c1b303de0dd1db4edf94ea538c0fadb52460103"
+  },
+  "method": {
+    "app": "local production Next.js 16.4.3 / React 19.2.8",
+    "viewport": "Chrome 390x844, ja-JP, Asia/Tokyo",
+    "data": "synthetic HTTP/Auth fixtures only; 30 records, 800 records, four children, slow network",
+    "network": "app 127.0.0.1:55438; API 127.0.0.1:55439; other browser requests aborted; Service Worker blocked",
+    "slow": "150 ms browser RTT, 128 KiB/s download, 64 KiB/s upload; 200 ms per fixture API response",
+    "samples": "five fresh browser contexts per scenario; one application server process per version; 125 operations per version",
+    "tapToReady": "pointerdown to first animation frame with the target route and meaningful DOM; no Playwright polling time",
+    "feedback": "first animation frame exposing pending/current navigation state; child-switch value is not a general navigation response metric",
+    "automationContent": "Playwright operation and wait completion plus two frames; includes automation polling and is not pure human latency",
+    "cold": "cold-start is a fresh browser context; cold-settings is hard navigation within that warmed context; server process is already running",
+    "serverApi": "fixture request span/sum/count through post-render quiescence, including background work; not real DB or critical-path duration",
+    "p95": "nearest rank; the maximum of only five observations; not a production tail estimate",
+    "vitals": "TTFB/FCP captured on hard navigations; early LCP snapshots are not treated as final LCP",
+    "baselineTool": "same frame-observer measurement logic; final tool additionally rejects environment files and requires owned server readiness",
+    "limits": [
+      "No actual Supabase Auth, PostgREST, Realtime, PWA, Push or physical device acceptance",
+      "No claim of improved slow-network cold start",
+      "800-row fixture is not a PostgreSQL volume/load benchmark"
+    ]
+  },
+  "groups": [
+    {
+      "scenario": "normal",
+      "operation": "cold-start",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 150,
+          "p95": 279
+        },
+        "ttfbMs": {
+          "median": 11.4,
+          "p95": 93.5
+        },
+        "fcpMs": {
+          "median": 52,
+          "p95": 164
+        },
+        "serverApiSpanMs": {
+          "median": 155,
+          "p95": 261
+        },
+        "serverApiSumMs": {
+          "median": 41,
+          "p95": 53
+        },
+        "serverApiRequests": {
+          "median": 35,
+          "p95": 35
+        },
+        "browserApiSpanMs": {
+          "median": 6,
+          "p95": 7
+        },
+        "browserApiRequests": {
+          "median": 7,
+          "p95": 7
+        }
+      },
+      "after": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 150,
+          "p95": 243
+        },
+        "ttfbMs": {
+          "median": 10.4,
+          "p95": 87.6
+        },
+        "fcpMs": {
+          "median": 52,
+          "p95": 160
+        },
+        "serverApiSpanMs": {
+          "median": 134,
+          "p95": 231
+        },
+        "serverApiSumMs": {
+          "median": 35,
+          "p95": 36
+        },
+        "serverApiRequests": {
+          "median": 26,
+          "p95": 26
+        },
+        "browserApiSpanMs": {
+          "median": 6,
+          "p95": 7
+        },
+        "browserApiRequests": {
+          "median": 7,
+          "p95": 7
+        }
+      }
+    },
+    {
+      "scenario": "normal",
+      "operation": "baby-calendar",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": {
+          "median": 328.6,
+          "p95": 332.8
+        },
+        "feedbackMs": {
+          "median": 48.3,
+          "p95": 49.4
+        },
+        "automationContentMs": {
+          "median": 855,
+          "p95": 857
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 21,
+          "p95": 23
+        },
+        "serverApiSumMs": {
+          "median": 12,
+          "p95": 13
+        },
+        "serverApiRequests": {
+          "median": 9,
+          "p95": 9
+        },
+        "browserApiSpanMs": {
+          "median": 442,
+          "p95": 465
+        },
+        "browserApiRequests": {
+          "median": 2,
+          "p95": 2
+        }
+      },
+      "after": {
+        "tapToReadyMs": {
+          "median": 51.2,
+          "p95": 64
+        },
+        "feedbackMs": {
+          "median": 31.9,
+          "p95": 38.8
+        },
+        "automationContentMs": {
+          "median": 107,
+          "p95": 107
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 10,
+          "p95": 14
+        },
+        "serverApiSumMs": {
+          "median": 9,
+          "p95": 10
+        },
+        "serverApiRequests": {
+          "median": 7,
+          "p95": 7
+        },
+        "browserApiSpanMs": {
+          "median": 1,
+          "p95": 1
+        },
+        "browserApiRequests": {
+          "median": 1,
+          "p95": 1
+        }
+      }
+    },
+    {
+      "scenario": "normal",
+      "operation": "calendar-settings",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": {
+          "median": 329.2,
+          "p95": 332.2
+        },
+        "feedbackMs": {
+          "median": 30.9,
+          "p95": 32.6
+        },
+        "automationContentMs": {
+          "median": 858,
+          "p95": 875
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 321,
+          "p95": 324
+        },
+        "serverApiSumMs": {
+          "median": 18,
+          "p95": 24
+        },
+        "serverApiRequests": {
+          "median": 15,
+          "p95": 15
+        },
+        "browserApiSpanMs": {
+          "median": 1,
+          "p95": 2
+        },
+        "browserApiRequests": {
+          "median": 1,
+          "p95": 1
+        }
+      },
+      "after": {
+        "tapToReadyMs": {
+          "median": 50.3,
+          "p95": 53.9
+        },
+        "feedbackMs": {
+          "median": 13,
+          "p95": 13.9
+        },
+        "automationContentMs": {
+          "median": 108,
+          "p95": 109
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 53,
+          "p95": 57
+        },
+        "serverApiSumMs": {
+          "median": 16,
+          "p95": 22
+        },
+        "serverApiRequests": {
+          "median": 15,
+          "p95": 15
+        },
+        "browserApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiRequests": {
+          "median": 0,
+          "p95": 0
+        }
+      }
+    },
+    {
+      "scenario": "normal",
+      "operation": "settings-baby",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": {
+          "median": 33.4,
+          "p95": 33.9
+        },
+        "feedbackMs": {
+          "median": 33.4,
+          "p95": 33.9
+        },
+        "automationContentMs": {
+          "median": 76,
+          "p95": 78
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "serverApiSumMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "serverApiRequests": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiSpanMs": {
+          "median": 2,
+          "p95": 2
+        },
+        "browserApiRequests": {
+          "median": 6,
+          "p95": 6
+        }
+      },
+      "after": {
+        "tapToReadyMs": {
+          "median": 30.6,
+          "p95": 33.5
+        },
+        "feedbackMs": {
+          "median": 13.6,
+          "p95": 14.1
+        },
+        "automationContentMs": {
+          "median": 91,
+          "p95": 93
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "serverApiSumMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "serverApiRequests": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiSpanMs": {
+          "median": 83,
+          "p95": 95
+        },
+        "browserApiRequests": {
+          "median": 7,
+          "p95": 7
+        }
+      }
+    },
+    {
+      "scenario": "normal",
+      "operation": "back",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 42,
+          "p95": 45
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 3,
+          "p95": 3
+        },
+        "serverApiSumMs": {
+          "median": 2,
+          "p95": 3
+        },
+        "serverApiRequests": {
+          "median": 2,
+          "p95": 2
+        },
+        "browserApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiRequests": {
+          "median": 0,
+          "p95": 0
+        }
+      },
+      "after": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 42,
+          "p95": 43
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 2,
+          "p95": 3
+        },
+        "serverApiSumMs": {
+          "median": 2,
+          "p95": 2
+        },
+        "serverApiRequests": {
+          "median": 2,
+          "p95": 2
+        },
+        "browserApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiRequests": {
+          "median": 0,
+          "p95": 0
+        }
+      }
+    },
+    {
+      "scenario": "normal",
+      "operation": "cold-settings",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 107,
+          "p95": 127
+        },
+        "ttfbMs": {
+          "median": 16.7,
+          "p95": 21.7
+        },
+        "fcpMs": {
+          "median": 56,
+          "p95": 80
+        },
+        "serverApiSpanMs": {
+          "median": 74,
+          "p95": 86
+        },
+        "serverApiSumMs": {
+          "median": 27,
+          "p95": 30
+        },
+        "serverApiRequests": {
+          "median": 25,
+          "p95": 25
+        },
+        "browserApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiRequests": {
+          "median": 0,
+          "p95": 0
+        }
+      },
+      "after": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 110,
+          "p95": 112
+        },
+        "ttfbMs": {
+          "median": 16.7,
+          "p95": 27.7
+        },
+        "fcpMs": {
+          "median": 60,
+          "p95": 60
+        },
+        "serverApiSpanMs": {
+          "median": 74,
+          "p95": 78
+        },
+        "serverApiSumMs": {
+          "median": 17,
+          "p95": 25
+        },
+        "serverApiRequests": {
+          "median": 17,
+          "p95": 17
+        },
+        "browserApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiRequests": {
+          "median": 0,
+          "p95": 0
+        }
+      }
+    },
+    {
+      "scenario": "many-records",
+      "operation": "cold-start",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 484,
+          "p95": 488
+        },
+        "ttfbMs": {
+          "median": 9.7,
+          "p95": 10.8
+        },
+        "fcpMs": {
+          "median": 92,
+          "p95": 96
+        },
+        "serverApiSpanMs": {
+          "median": 499,
+          "p95": 506
+        },
+        "serverApiSumMs": {
+          "median": 80,
+          "p95": 99
+        },
+        "serverApiRequests": {
+          "median": 35,
+          "p95": 35
+        },
+        "browserApiSpanMs": {
+          "median": 13,
+          "p95": 14
+        },
+        "browserApiRequests": {
+          "median": 7,
+          "p95": 7
+        }
+      },
+      "after": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 464,
+          "p95": 470
+        },
+        "ttfbMs": {
+          "median": 9.5,
+          "p95": 10.6
+        },
+        "fcpMs": {
+          "median": 88,
+          "p95": 96
+        },
+        "serverApiSpanMs": {
+          "median": 466,
+          "p95": 471
+        },
+        "serverApiSumMs": {
+          "median": 53,
+          "p95": 61
+        },
+        "serverApiRequests": {
+          "median": 26,
+          "p95": 26
+        },
+        "browserApiSpanMs": {
+          "median": 13,
+          "p95": 13
+        },
+        "browserApiRequests": {
+          "median": 7,
+          "p95": 7
+        }
+      }
+    },
+    {
+      "scenario": "many-records",
+      "operation": "baby-calendar",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": {
+          "median": 332.1,
+          "p95": 336
+        },
+        "feedbackMs": {
+          "median": 53.2,
+          "p95": 58.4
+        },
+        "automationContentMs": {
+          "median": 385,
+          "p95": 389
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 28,
+          "p95": 29
+        },
+        "serverApiSumMs": {
+          "median": 11,
+          "p95": 12
+        },
+        "serverApiRequests": {
+          "median": 9,
+          "p95": 9
+        },
+        "browserApiSpanMs": {
+          "median": 2,
+          "p95": 2
+        },
+        "browserApiRequests": {
+          "median": 1,
+          "p95": 1
+        }
+      },
+      "after": {
+        "tapToReadyMs": {
+          "median": 56.4,
+          "p95": 66.4
+        },
+        "feedbackMs": {
+          "median": 32.6,
+          "p95": 33
+        },
+        "automationContentMs": {
+          "median": 123,
+          "p95": 129
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 10,
+          "p95": 10
+        },
+        "serverApiSumMs": {
+          "median": 10,
+          "p95": 10
+        },
+        "serverApiRequests": {
+          "median": 7,
+          "p95": 7
+        },
+        "browserApiSpanMs": {
+          "median": 1,
+          "p95": 2
+        },
+        "browserApiRequests": {
+          "median": 1,
+          "p95": 1
+        }
+      }
+    },
+    {
+      "scenario": "many-records",
+      "operation": "calendar-settings",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": {
+          "median": 330.4,
+          "p95": 331.9
+        },
+        "feedbackMs": {
+          "median": 32.3,
+          "p95": 34.6
+        },
+        "automationContentMs": {
+          "median": 842,
+          "p95": 845
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 323,
+          "p95": 323
+        },
+        "serverApiSumMs": {
+          "median": 21,
+          "p95": 22
+        },
+        "serverApiRequests": {
+          "median": 15,
+          "p95": 15
+        },
+        "browserApiSpanMs": {
+          "median": 561,
+          "p95": 563
+        },
+        "browserApiRequests": {
+          "median": 2,
+          "p95": 2
+        }
+      },
+      "after": {
+        "tapToReadyMs": {
+          "median": 48.1,
+          "p95": 50.3
+        },
+        "feedbackMs": {
+          "median": 13.3,
+          "p95": 14.7
+        },
+        "automationContentMs": {
+          "median": 108,
+          "p95": 109
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 48,
+          "p95": 50
+        },
+        "serverApiSumMs": {
+          "median": 20,
+          "p95": 26
+        },
+        "serverApiRequests": {
+          "median": 15,
+          "p95": 15
+        },
+        "browserApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiRequests": {
+          "median": 0,
+          "p95": 0
+        }
+      }
+    },
+    {
+      "scenario": "many-records",
+      "operation": "settings-baby",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": {
+          "median": 59.4,
+          "p95": 66.8
+        },
+        "feedbackMs": {
+          "median": 59.3,
+          "p95": 66.8
+        },
+        "automationContentMs": {
+          "median": 109,
+          "p95": 124
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "serverApiSumMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "serverApiRequests": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiSpanMs": {
+          "median": 9,
+          "p95": 11
+        },
+        "browserApiRequests": {
+          "median": 6,
+          "p95": 6
+        }
+      },
+      "after": {
+        "tapToReadyMs": {
+          "median": 63.3,
+          "p95": 64.7
+        },
+        "feedbackMs": {
+          "median": 14.5,
+          "p95": 14.9
+        },
+        "automationContentMs": {
+          "median": 126,
+          "p95": 127
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "serverApiSumMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "serverApiRequests": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiSpanMs": {
+          "median": 45,
+          "p95": 65
+        },
+        "browserApiRequests": {
+          "median": 7,
+          "p95": 7
+        }
+      }
+    },
+    {
+      "scenario": "many-records",
+      "operation": "back",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 55,
+          "p95": 57
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 3,
+          "p95": 3
+        },
+        "serverApiSumMs": {
+          "median": 2,
+          "p95": 3
+        },
+        "serverApiRequests": {
+          "median": 2,
+          "p95": 2
+        },
+        "browserApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiRequests": {
+          "median": 0,
+          "p95": 0
+        }
+      },
+      "after": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 56,
+          "p95": 58
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 4,
+          "p95": 4
+        },
+        "serverApiSumMs": {
+          "median": 3,
+          "p95": 3
+        },
+        "serverApiRequests": {
+          "median": 2,
+          "p95": 2
+        },
+        "browserApiSpanMs": {
+          "median": 2,
+          "p95": 2
+        },
+        "browserApiRequests": {
+          "median": 1,
+          "p95": 1
+        }
+      }
+    },
+    {
+      "scenario": "many-records",
+      "operation": "cold-settings",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 109,
+          "p95": 111
+        },
+        "ttfbMs": {
+          "median": 15.4,
+          "p95": 19.4
+        },
+        "fcpMs": {
+          "median": 52,
+          "p95": 60
+        },
+        "serverApiSpanMs": {
+          "median": 74,
+          "p95": 79
+        },
+        "serverApiSumMs": {
+          "median": 29,
+          "p95": 32
+        },
+        "serverApiRequests": {
+          "median": 25,
+          "p95": 25
+        },
+        "browserApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiRequests": {
+          "median": 0,
+          "p95": 0
+        }
+      },
+      "after": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 93,
+          "p95": 95
+        },
+        "ttfbMs": {
+          "median": 14.9,
+          "p95": 16.2
+        },
+        "fcpMs": {
+          "median": 48,
+          "p95": 48
+        },
+        "serverApiSpanMs": {
+          "median": 64,
+          "p95": 66
+        },
+        "serverApiSumMs": {
+          "median": 22,
+          "p95": 26
+        },
+        "serverApiRequests": {
+          "median": 17,
+          "p95": 17
+        },
+        "browserApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiRequests": {
+          "median": 0,
+          "p95": 0
+        }
+      }
+    },
+    {
+      "scenario": "multiple-children",
+      "operation": "cold-start",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 148,
+          "p95": 162
+        },
+        "ttfbMs": {
+          "median": 9.5,
+          "p95": 10.6
+        },
+        "fcpMs": {
+          "median": 48,
+          "p95": 52
+        },
+        "serverApiSpanMs": {
+          "median": 151,
+          "p95": 157
+        },
+        "serverApiSumMs": {
+          "median": 40,
+          "p95": 44
+        },
+        "serverApiRequests": {
+          "median": 35,
+          "p95": 35
+        },
+        "browserApiSpanMs": {
+          "median": 6,
+          "p95": 7
+        },
+        "browserApiRequests": {
+          "median": 7,
+          "p95": 7
+        }
+      },
+      "after": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 149,
+          "p95": 150
+        },
+        "ttfbMs": {
+          "median": 9.5,
+          "p95": 12.1
+        },
+        "fcpMs": {
+          "median": 52,
+          "p95": 52
+        },
+        "serverApiSpanMs": {
+          "median": 129,
+          "p95": 131
+        },
+        "serverApiSumMs": {
+          "median": 29,
+          "p95": 32
+        },
+        "serverApiRequests": {
+          "median": 26,
+          "p95": 26
+        },
+        "browserApiSpanMs": {
+          "median": 6,
+          "p95": 7
+        },
+        "browserApiRequests": {
+          "median": 7,
+          "p95": 7
+        }
+      }
+    },
+    {
+      "scenario": "multiple-children",
+      "operation": "baby-calendar",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": {
+          "median": 331.2,
+          "p95": 332.5
+        },
+        "feedbackMs": {
+          "median": 50,
+          "p95": 50.3
+        },
+        "automationContentMs": {
+          "median": 842,
+          "p95": 857
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 23,
+          "p95": 24
+        },
+        "serverApiSumMs": {
+          "median": 11,
+          "p95": 12
+        },
+        "serverApiRequests": {
+          "median": 9,
+          "p95": 9
+        },
+        "browserApiSpanMs": {
+          "median": 445,
+          "p95": 460
+        },
+        "browserApiRequests": {
+          "median": 2,
+          "p95": 2
+        }
+      },
+      "after": {
+        "tapToReadyMs": {
+          "median": 49,
+          "p95": 61.9
+        },
+        "feedbackMs": {
+          "median": 29.6,
+          "p95": 30.1
+        },
+        "automationContentMs": {
+          "median": 107,
+          "p95": 109
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 11,
+          "p95": 11
+        },
+        "serverApiSumMs": {
+          "median": 10,
+          "p95": 10
+        },
+        "serverApiRequests": {
+          "median": 7,
+          "p95": 7
+        },
+        "browserApiSpanMs": {
+          "median": 1,
+          "p95": 1
+        },
+        "browserApiRequests": {
+          "median": 1,
+          "p95": 1
+        }
+      }
+    },
+    {
+      "scenario": "multiple-children",
+      "operation": "calendar-settings",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": {
+          "median": 330,
+          "p95": 331.6
+        },
+        "feedbackMs": {
+          "median": 31.1,
+          "p95": 31.3
+        },
+        "automationContentMs": {
+          "median": 840,
+          "p95": 844
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 321,
+          "p95": 325
+        },
+        "serverApiSumMs": {
+          "median": 21,
+          "p95": 22
+        },
+        "serverApiRequests": {
+          "median": 15,
+          "p95": 15
+        },
+        "browserApiSpanMs": {
+          "median": 2,
+          "p95": 572
+        },
+        "browserApiRequests": {
+          "median": 1,
+          "p95": 2
+        }
+      },
+      "after": {
+        "tapToReadyMs": {
+          "median": 49.7,
+          "p95": 51.7
+        },
+        "feedbackMs": {
+          "median": 13.3,
+          "p95": 14.1
+        },
+        "automationContentMs": {
+          "median": 109,
+          "p95": 110
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 51,
+          "p95": 55
+        },
+        "serverApiSumMs": {
+          "median": 17,
+          "p95": 23
+        },
+        "serverApiRequests": {
+          "median": 15,
+          "p95": 15
+        },
+        "browserApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiRequests": {
+          "median": 0,
+          "p95": 0
+        }
+      }
+    },
+    {
+      "scenario": "multiple-children",
+      "operation": "settings-baby",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": {
+          "median": 33.2,
+          "p95": 35.5
+        },
+        "feedbackMs": {
+          "median": 33,
+          "p95": 35.5
+        },
+        "automationContentMs": {
+          "median": 76,
+          "p95": 80
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "serverApiSumMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "serverApiRequests": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiSpanMs": {
+          "median": 3,
+          "p95": 3
+        },
+        "browserApiRequests": {
+          "median": 6,
+          "p95": 6
+        }
+      },
+      "after": {
+        "tapToReadyMs": {
+          "median": 30.9,
+          "p95": 32.3
+        },
+        "feedbackMs": {
+          "median": 13.1,
+          "p95": 14.7
+        },
+        "automationContentMs": {
+          "median": 91,
+          "p95": 94
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "serverApiSumMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "serverApiRequests": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiSpanMs": {
+          "median": 76,
+          "p95": 81
+        },
+        "browserApiRequests": {
+          "median": 7,
+          "p95": 7
+        }
+      }
+    },
+    {
+      "scenario": "multiple-children",
+      "operation": "back",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 45,
+          "p95": 57
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 3,
+          "p95": 3
+        },
+        "serverApiSumMs": {
+          "median": 3,
+          "p95": 3
+        },
+        "serverApiRequests": {
+          "median": 2,
+          "p95": 2
+        },
+        "browserApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiRequests": {
+          "median": 0,
+          "p95": 0
+        }
+      },
+      "after": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 43,
+          "p95": 44
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 3,
+          "p95": 3
+        },
+        "serverApiSumMs": {
+          "median": 2,
+          "p95": 2
+        },
+        "serverApiRequests": {
+          "median": 2,
+          "p95": 2
+        },
+        "browserApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiRequests": {
+          "median": 0,
+          "p95": 0
+        }
+      }
+    },
+    {
+      "scenario": "multiple-children",
+      "operation": "cold-settings",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 92,
+          "p95": 110
+        },
+        "ttfbMs": {
+          "median": 12.2,
+          "p95": 21.6
+        },
+        "fcpMs": {
+          "median": 48,
+          "p95": 60
+        },
+        "serverApiSpanMs": {
+          "median": 70,
+          "p95": 87
+        },
+        "serverApiSumMs": {
+          "median": 24,
+          "p95": 40
+        },
+        "serverApiRequests": {
+          "median": 25,
+          "p95": 25
+        },
+        "browserApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiRequests": {
+          "median": 0,
+          "p95": 0
+        }
+      },
+      "after": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 106,
+          "p95": 111
+        },
+        "ttfbMs": {
+          "median": 15.8,
+          "p95": 18.2
+        },
+        "fcpMs": {
+          "median": 56,
+          "p95": 60
+        },
+        "serverApiSpanMs": {
+          "median": 71,
+          "p95": 72
+        },
+        "serverApiSumMs": {
+          "median": 14,
+          "p95": 16
+        },
+        "serverApiRequests": {
+          "median": 17,
+          "p95": 17
+        },
+        "browserApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiRequests": {
+          "median": 0,
+          "p95": 0
+        }
+      }
+    },
+    {
+      "scenario": "multiple-children",
+      "operation": "switch-child",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": {
+          "median": 42.8,
+          "p95": 44.7
+        },
+        "feedbackMs": {
+          "median": 0.7,
+          "p95": 0.7
+        },
+        "automationContentMs": {
+          "median": 113,
+          "p95": 114
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 25,
+          "p95": 26
+        },
+        "serverApiSumMs": {
+          "median": 45,
+          "p95": 61
+        },
+        "serverApiRequests": {
+          "median": 45,
+          "p95": 45
+        },
+        "browserApiSpanMs": {
+          "median": 2,
+          "p95": 3
+        },
+        "browserApiRequests": {
+          "median": 7,
+          "p95": 7
+        }
+      },
+      "after": {
+        "tapToReadyMs": {
+          "median": 43.9,
+          "p95": 45.3
+        },
+        "feedbackMs": {
+          "median": 0.8,
+          "p95": 0.9
+        },
+        "automationContentMs": {
+          "median": 112,
+          "p95": 113
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 26,
+          "p95": 32
+        },
+        "serverApiSumMs": {
+          "median": 40,
+          "p95": 51
+        },
+        "serverApiRequests": {
+          "median": 42,
+          "p95": 42
+        },
+        "browserApiSpanMs": {
+          "median": 3,
+          "p95": 6
+        },
+        "browserApiRequests": {
+          "median": 7,
+          "p95": 7
+        }
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "operation": "cold-start",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 4771,
+          "p95": 4786
+        },
+        "ttfbMs": {
+          "median": 821.6,
+          "p95": 830.3
+        },
+        "fcpMs": {
+          "median": 1524,
+          "p95": 1528
+        },
+        "serverApiSpanMs": {
+          "median": 5611,
+          "p95": 5622
+        },
+        "serverApiSumMs": {
+          "median": 7060,
+          "p95": 7075
+        },
+        "serverApiRequests": {
+          "median": 35,
+          "p95": 35
+        },
+        "browserApiSpanMs": {
+          "median": 207,
+          "p95": 207
+        },
+        "browserApiRequests": {
+          "median": 7,
+          "p95": 7
+        }
+      },
+      "after": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 4785,
+          "p95": 4818
+        },
+        "ttfbMs": {
+          "median": 821.8,
+          "p95": 828.8
+        },
+        "fcpMs": {
+          "median": 1544,
+          "p95": 1580
+        },
+        "serverApiSpanMs": {
+          "median": 5623,
+          "p95": 5649
+        },
+        "serverApiSumMs": {
+          "median": 5242,
+          "p95": 5258
+        },
+        "serverApiRequests": {
+          "median": 26,
+          "p95": 26
+        },
+        "browserApiSpanMs": {
+          "median": 208,
+          "p95": 209
+        },
+        "browserApiRequests": {
+          "median": 7,
+          "p95": 7
+        }
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "operation": "baby-calendar",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": {
+          "median": 1694.7,
+          "p95": 1707.3
+        },
+        "feedbackMs": {
+          "median": 44.5,
+          "p95": 48.7
+        },
+        "automationContentMs": {
+          "median": 1856,
+          "p95": 1858
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 1017,
+          "p95": 1022
+        },
+        "serverApiSumMs": {
+          "median": 1814,
+          "p95": 1818
+        },
+        "serverApiRequests": {
+          "median": 9,
+          "p95": 9
+        },
+        "browserApiSpanMs": {
+          "median": 1760,
+          "p95": 1790
+        },
+        "browserApiRequests": {
+          "median": 2,
+          "p95": 2
+        }
+      },
+      "after": {
+        "tapToReadyMs": {
+          "median": 1686.4,
+          "p95": 1697.3
+        },
+        "feedbackMs": {
+          "median": 29.3,
+          "p95": 37.8
+        },
+        "automationContentMs": {
+          "median": 1741,
+          "p95": 1752
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 1020,
+          "p95": 1021
+        },
+        "serverApiSumMs": {
+          "median": 1413,
+          "p95": 1416
+        },
+        "serverApiRequests": {
+          "median": 7,
+          "p95": 7
+        },
+        "browserApiSpanMs": {
+          "median": 1771,
+          "p95": 1779
+        },
+        "browserApiRequests": {
+          "median": 2,
+          "p95": 2
+        }
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "operation": "calendar-settings",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": {
+          "median": 1697.8,
+          "p95": 1713.6
+        },
+        "feedbackMs": {
+          "median": 30.3,
+          "p95": 31.1
+        },
+        "automationContentMs": {
+          "median": 1872,
+          "p95": 1891
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 2109,
+          "p95": 2121
+        },
+        "serverApiSumMs": {
+          "median": 3016,
+          "p95": 3021
+        },
+        "serverApiRequests": {
+          "median": 15,
+          "p95": 15
+        },
+        "browserApiSpanMs": {
+          "median": 760,
+          "p95": 784
+        },
+        "browserApiRequests": {
+          "median": 2,
+          "p95": 2
+        }
+      },
+      "after": {
+        "tapToReadyMs": {
+          "median": 1512,
+          "p95": 1525.2
+        },
+        "feedbackMs": {
+          "median": 11.9,
+          "p95": 14.4
+        },
+        "automationContentMs": {
+          "median": 1572,
+          "p95": 1589
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 1915,
+          "p95": 1931
+        },
+        "serverApiSumMs": {
+          "median": 3019,
+          "p95": 3025
+        },
+        "serverApiRequests": {
+          "median": 15,
+          "p95": 15
+        },
+        "browserApiSpanMs": {
+          "median": 769,
+          "p95": 784
+        },
+        "browserApiRequests": {
+          "median": 2,
+          "p95": 2
+        }
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "operation": "settings-baby",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": {
+          "median": 31.4,
+          "p95": 47.3
+        },
+        "feedbackMs": {
+          "median": 31.4,
+          "p95": 47.3
+        },
+        "automationContentMs": {
+          "median": 102,
+          "p95": 102
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "serverApiSumMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "serverApiRequests": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiSpanMs": {
+          "median": 203,
+          "p95": 205
+        },
+        "browserApiRequests": {
+          "median": 6,
+          "p95": 6
+        }
+      },
+      "after": {
+        "tapToReadyMs": {
+          "median": 29.6,
+          "p95": 33.2
+        },
+        "feedbackMs": {
+          "median": 10.5,
+          "p95": 14.1
+        },
+        "automationContentMs": {
+          "median": 97,
+          "p95": 101
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "serverApiSumMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "serverApiRequests": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiSpanMs": {
+          "median": 203,
+          "p95": 204
+        },
+        "browserApiRequests": {
+          "median": 6,
+          "p95": 6
+        }
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "operation": "back",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 44,
+          "p95": 58
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 404,
+          "p95": 407
+        },
+        "serverApiSumMs": {
+          "median": 402,
+          "p95": 405
+        },
+        "serverApiRequests": {
+          "median": 2,
+          "p95": 2
+        },
+        "browserApiSpanMs": {
+          "median": 200,
+          "p95": 202
+        },
+        "browserApiRequests": {
+          "median": 1,
+          "p95": 1
+        }
+      },
+      "after": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 41,
+          "p95": 55
+        },
+        "ttfbMs": null,
+        "fcpMs": null,
+        "serverApiSpanMs": {
+          "median": 405,
+          "p95": 407
+        },
+        "serverApiSumMs": {
+          "median": 403,
+          "p95": 404
+        },
+        "serverApiRequests": {
+          "median": 2,
+          "p95": 2
+        },
+        "browserApiSpanMs": {
+          "median": 202,
+          "p95": 203
+        },
+        "browserApiRequests": {
+          "median": 1,
+          "p95": 1
+        }
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "operation": "cold-settings",
+      "nPerVersion": 5,
+      "before": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 4217,
+          "p95": 4244
+        },
+        "ttfbMs": {
+          "median": 826.1,
+          "p95": 827.9
+        },
+        "fcpMs": {
+          "median": 1516,
+          "p95": 1544
+        },
+        "serverApiSpanMs": {
+          "median": 5030,
+          "p95": 5058
+        },
+        "serverApiSumMs": {
+          "median": 5030,
+          "p95": 5035
+        },
+        "serverApiRequests": {
+          "median": 25,
+          "p95": 25
+        },
+        "browserApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiRequests": {
+          "median": 0,
+          "p95": 0
+        }
+      },
+      "after": {
+        "tapToReadyMs": null,
+        "feedbackMs": null,
+        "automationContentMs": {
+          "median": 4291,
+          "p95": 4294
+        },
+        "ttfbMs": {
+          "median": 828.7,
+          "p95": 835.1
+        },
+        "fcpMs": {
+          "median": 1552,
+          "p95": 1556
+        },
+        "serverApiSpanMs": {
+          "median": 4661,
+          "p95": 4667
+        },
+        "serverApiSumMs": {
+          "median": 3429,
+          "p95": 3448
+        },
+        "serverApiRequests": {
+          "median": 17,
+          "p95": 17
+        },
+        "browserApiSpanMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "browserApiRequests": {
+          "median": 0,
+          "p95": 0
+        }
+      }
+    }
+  ]
+}

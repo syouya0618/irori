@@ -1,5 +1,7 @@
 "use client"
 
+import { useChildScope } from "./child-scope"
+
 import { useState, useTransition } from "react"
 import {
   Sheet,
@@ -75,6 +77,7 @@ import { readPersistedTimer, summarizePersistedTimer } from "@/lib/domain/feedin
 import { toastOfflineError } from "@/lib/utils/offline-error"
 import { noteServerActionFailure, STALE_CLIENT_ACTION_MESSAGE } from "@/lib/pwa/app-version"
 import { useDraft } from "@/lib/hooks/use-draft"
+import { useFeedingAmounts } from "@/lib/hooks/use-feeding-amounts"
 import { DRAFT_RETENTION_NOTE } from "@/lib/domain/draft-storage"
 import type {
   BabyLogType,
@@ -171,15 +174,12 @@ function resolveBreastCounts(
   return { left: clampBreastCount(left), right: clampBreastCount(right) }
 }
 
-// 搾乳・ミルク等の量をワンタップで入れるプリセット（10mL刻み・10〜100mL）。
-// これらは近道であって上限ではない。100mL を超える量は下の自由入力で記録できる。
-const AMOUNT_PRESETS_ML = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
-
 // 「量 (ml)」入力を DB CHECK（0〜999）と整合する number|null へ正規化する。
-// falsy 衝突（0ml を null 扱いしない）を避けるため Number.isFinite で判定する。
+// 0mlを保ち、小数・範囲外・部分的にしか読めない値を丸めない。
 function parseAmountMl(raw: string): number | null {
-  const n = parseInt(raw, 10)
-  return Number.isFinite(n) && n >= 0 ? n : null
+  if (!/^\d+$/.test(raw.trim())) return null
+  const n = Number(raw)
+  return Number.isInteger(n) && n >= 0 && n <= 999 ? n : null
 }
 
 interface BabyLogFormSheetProps {
@@ -277,6 +277,8 @@ export function BabyLogFormSheet({
   onLogRemoved,
   onReloadLog,
 }: BabyLogFormSheetProps) {
+  const childScope = useChildScope()
+  const childId = childScope?.id
   const [isPending, startTransition] = useTransition()
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   // 編集を始めた時点の行の版（P2-07）。保存はこの版でしか書けぬ — 開いている間に家族が
@@ -373,7 +375,7 @@ export function BabyLogFormSheet({
   // メモの端末下書き（2026-10-27 テーマ B: 長文メモ）。持ち主・対象（新規は種別、編集は記録の id）・
   // 開いた時点の版つき。保存成功・削除・明示の破棄でこの対象だけを消す
   const memoDraft = useDraft<string>({
-    owner: householdId ? { userId, householdId } : null,
+    owner: householdId ? { userId, householdId, ...(childScope && !childScope.isLegacy ? { childId } : {}) } : null,
     target: log
       ? { kind: "baby-log-memo", id: log.id }
       : { kind: "baby-log-new", scope: createLogType ?? "" },
@@ -418,6 +420,15 @@ export function BabyLogFormSheet({
 
   const isCreateMode = !log && !!createLogType
   const logType = log?.log_type ?? createLogType
+  const recentAmounts = useFeedingAmounts(open && logType === "feeding", userId, householdId, feedingType, childId)
+
+  function validateAmountInput(): boolean {
+    if (logType === "feeding" && allowsAmount(feedingType) && amountMl.trim() !== "" && parseAmountMl(amountMl) === null) {
+      toast.error("量は0〜999mlの整数で入力してください")
+      return false
+    }
+    return true
+  }
 
   function handleSave() {
     if (isCreateMode) {
@@ -447,7 +458,7 @@ export function BabyLogFormSheet({
     if (!householdId || !createLogType) return []
     const action = CREATE_ACTION_OF[createLogType]
     if (!action) return []
-    const owner = { userId, householdId }
+    const owner = { userId, householdId, ...(childScope && !childScope.isLegacy ? { childId } : {}) }
     const items: OtherPendingItem[] = listPendingSaves(owner)
       .filter((p) => p.clientId !== clientId && p.action === action)
       .map((p: PendingSave) => ({
@@ -461,7 +472,7 @@ export function BabyLogFormSheet({
     // 入らぬ）。停止の保存が結果不明のまま残っておれば、手動の授乳の記録にも同じ確認を出す
     // （独立レビュー v8rc2 TIMER-UNKNOWN-NOT-IN-SHEET-GUARD）
     if (createLogType === "feeding") {
-      const timer = readPersistedTimer()
+      const timer = readPersistedTimer(childScope?.isLegacy ? undefined : childId)
       const summary = summarizePersistedTimer(timer, owner, Date.now())
       if (timer?.submission && summary?.pendingSave && timer.submission.payload.clientId !== clientId) {
         items.push({
@@ -484,6 +495,7 @@ export function BabyLogFormSheet({
   }
 
   function handleCreate() {
+    if (!validateAmountInput()) return
     // 送った内容（結果が分からぬ時に持ち主付きで端末へ残すため、await の前に決める）
     let sent: {
       action: PendingSaveAction
@@ -535,6 +547,7 @@ export function BabyLogFormSheet({
             // 開始側は母乳サイクルのみ（それ以外はサーバが拒否する契約ゆえ null）
             const startSide = feedingType === "breast" ? breastStartSide : null
             const payload = {
+              ...(childId ? { childId } : {}),
               feedingType,
               amountMl: amt,
               breastLeftCount: counts?.left ?? null,
@@ -576,6 +589,7 @@ export function BabyLogFormSheet({
             // 時刻を見える形で持つ。量は poop / both の時だけ（CHECK のミラー）
             const amount = allowsPoopAmount(diaperType) ? poopAmount : null
             const payload = {
+              ...(childId ? { childId } : {}),
               diaperType,
               poopAmount: amount,
               loggedAt,
@@ -608,6 +622,7 @@ export function BabyLogFormSheet({
               return
             }
             const payload = {
+              ...(childId ? { childId } : {}),
               temperature: temp,
               loggedAt,
               memo: memo || undefined,
@@ -635,6 +650,7 @@ export function BabyLogFormSheet({
               return
             }
             const payload = {
+              ...(childId ? { childId } : {}),
               weightG: w,
               heightCm: h,
               loggedAt,
@@ -661,7 +677,8 @@ export function BabyLogFormSheet({
               toast.error("メモを入力してください")
               return
             }
-            const payload = { memo: memo.trim(), loggedAt, clientId }
+            const payload = {
+              ...(childId ? { childId } : {}), memo: memo.trim(), loggedAt, clientId }
             // 要約にメモの本文は入れぬ（端末に残る一覧は種別だけで足りる）
             sent = { action: "recordMemo", payload, summary: "メモ" }
             result = await sendTracked(sent, () => recordMemoAction(payload))
@@ -763,7 +780,7 @@ export function BabyLogFormSheet({
     phase: "sending" | "unknown",
   ): boolean {
     if (!entry || !householdId) return false
-    const owner = { userId, householdId }
+    const owner = { userId, householdId, ...(childScope && !childScope.isLegacy ? { childId } : {}) }
     const existing = listPendingSaves(owner).find((p) => p.clientId === clientId)
     return putPendingSave({
       schemaVersion: PENDING_SAVE_SCHEMA_VERSION,
@@ -794,6 +811,7 @@ export function BabyLogFormSheet({
 
   function handleUpdate() {
     if (!log) return
+    if (!validateAmountInput()) return
 
     startTransition(async () => {
       try {
@@ -922,7 +940,7 @@ export function BabyLogFormSheet({
           toast.error(STALE_SCREEN_SAVE_ERROR)
           return
         }
-        const result = await updateLog(log.id, updates, expectedUpdatedAt)
+        const result = await updateLog(log.id, updates, expectedUpdatedAt, ...(childId ? [childId] as const : []))
         if (result.conflict) {
           // 入力（各 state）には触れぬ。背後の画面を最新へ揃え、シートで衝突を見せる。
           setConflict(result.conflict)
@@ -967,7 +985,7 @@ export function BabyLogFormSheet({
           toast.error(STALE_SCREEN_SAVE_ERROR)
           return
         }
-        const result = await deleteLog(log.id, expectedUpdatedAt)
+        const result = await deleteLog(log.id, expectedUpdatedAt, ...(childId ? [childId] as const : []))
         if (result.conflict) {
           // 保存の衝突と同じ見せ方: 入力には触れず、確認を閉じ、背後の画面を最新へ揃え、
           // 最新の内容で編集し直す導線（onReloadLog）を出す。行は画面から外さぬ（消えておらぬ）
@@ -1263,10 +1281,11 @@ export function BabyLogFormSheet({
               {allowsAmount(feedingType) && (
                 <div className="space-y-1.5">
                   <Label htmlFor="amount-ml">量 (ml)</Label>
-                  {/* ワンタップ用プリセット（10〜100mL）。押すと下の入力欄に反映され、
-                      100mL 超は入力欄で直接指定できる。 */}
+                  {recentAmounts.status === "loading" && <p role="status" className="text-xs text-muted-foreground">以前の量を読み込んでいます…</p>}
+                  {recentAmounts.status === "error" && <p role="status" className="text-xs text-muted-foreground">以前の量を取得できませんでした。直接入力できます。</p>}
+                  {recentAmounts.status === "ready" && recentAmounts.values.length === 0 && <p className="text-xs text-muted-foreground">保存した量がここに表示されます</p>}
                   <div className="grid grid-cols-5 gap-1.5">
-                    {AMOUNT_PRESETS_ML.map((ml) => {
+                    {recentAmounts.values.map((ml) => {
                       const active = amountMl === String(ml)
                       return (
                         <button

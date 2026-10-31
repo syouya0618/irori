@@ -1,5 +1,7 @@
 "use client"
 
+import { useChildScope } from "./child-scope"
+
 import { useEffect, useId, useRef, useState, useTransition } from "react"
 import {
   Thermometer,
@@ -361,6 +363,8 @@ export function BabyQuickActions({
   externalRecordSeq,
   bottleDefault,
 }: BabyQuickActionsProps) {
+  const childScope = useChildScope()
+  const childId = childScope?.id
   const [isPending, startTransition] = useTransition()
   /**
    * いつものミルク量のシート。開くたびに key を進めて作り直す（入力・保存中・エラーの
@@ -441,7 +445,7 @@ export function BabyQuickActions({
    * 消失に化ける）。期限内の再タップだけを再試行とみなす。
    */
   const retryIdRef = useRef<PendingRetryId | null>(null)
-  const owner: SaveOwner | null = householdId ? { userId, householdId } : null
+  const owner: SaveOwner | null = householdId ? { userId, householdId, ...(childScope && !childScope.isLegacy ? { childId } : {}) } : null
   function clientIdFor(key: string): PendingRetryId {
     return resolveRetryClientId(retryIdRef, key, owner)
   }
@@ -683,7 +687,7 @@ export function BabyQuickActions({
     setBusyKey("undo")
     startTransition(async () => {
       try {
-        const result = await deleteLog(logId, createdVersion)
+        const result = await deleteLog(logId, createdVersion, ...(childId ? [childId] as const : []))
         if (result.conflict) {
           // 消えておらぬゆえ画面から外さず、最新版へ揃える。「取り消しました」とは偽らぬ
           onLogUpdated?.(result.conflict.current)
@@ -910,6 +914,7 @@ export function BabyQuickActions({
     // 期限と一覧の目印にだけ使う
     const firstAttemptAt = new Date(at).toISOString()
     const payload = {
+              ...(childId ? { childId } : {}),
       feedingType,
       clientId,
       ...(amountMl !== null && { amountMl }),
@@ -975,7 +980,8 @@ export function BabyQuickActions({
     const summary = formatDiaperSummary(diaperType, poopAmount)
     // 記録時刻は送らず DB の受信時刻（授乳と同じ理由。N3）
     const firstAttemptAt = new Date(at).toISOString()
-    const payload = { diaperType, poopAmount, clientId }
+    const payload = {
+              ...(childId ? { childId } : {}), diaperType, poopAmount, clientId }
     const entry: PendingEntry = {
       clientId,
       action: "recordDiaper",

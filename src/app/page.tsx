@@ -31,7 +31,7 @@ export default async function Home() {
 
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("default_page")
+    .select("default_page, role")
     .eq("id", userId)
     .single()
 
@@ -41,5 +41,5 @@ export default async function Home() {
     })
   }
 
-  redirect(`/${resolveDefaultPage(profile?.default_page)}`)
+  redirect(profile?.role === "viewer" ? "/shared" : `/${resolveDefaultPage(profile?.default_page)}`)
 }

@@ -43,7 +43,7 @@ describe("baby/page → ?date= と世帯員の配線", () => {
   it("searchParams を受け取り、着地日は baby-link の resolveBabyDate で決める（綴りをここで書かぬ）", () => {
     const code = pageCode()
     expect(code).toContain("searchParams")
-    expect(code).toContain("resolveBabyDate(await searchParams")
+    expect(code).toContain("resolveBabyDate(params")
     expect(code).not.toMatch(/searchParams\.date|\["date"\]/)
   })
 
@@ -52,7 +52,7 @@ describe("baby/page → ?date= と世帯員の配線", () => {
     expect(props).toContain("initialDate={selectedDate}")
     // 持ち主・世帯・着地日ごとに作り直す: 別の持ち主の状態を持ち越さず、`/baby?date=…` から `/baby` へ戻っても選択日が
     // 着地日のまま居座らぬ（レビュー P3）
-    expect(props).toContain("key={`${userId}:${householdId}:${selectedDate}`}")
+    expect(props).toContain("key={`${userId}:${householdId}:${child.id}:${selectedDate}`}")
     const code = pageCode()
     expect(code).toContain('.eq("diary_date", selectedDate)')
     // 選択日の窓は baby-log-queries.ts の 1 実装（取り直しと同じ組み立て）。窓そのものは

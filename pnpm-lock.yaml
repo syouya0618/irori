@@ -53,6 +53,9 @@ importers:
       web-push:
         specifier: ^3.6.7
         version: 3.6.7
+      xmldoc:
+        specifier: 2.0.3
+        version: 2.0.3
     devDependencies:
       '@axe-core/playwright':
         specifier: 4.13.0

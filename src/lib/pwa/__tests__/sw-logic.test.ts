@@ -193,6 +193,12 @@ const abs = (path: string) => new URL(path, ORIGIN).href
 describe("sw.js __TEST_HOOKS__", () => {
   const hooks = loadSw()
 
+  it("共有はdocument・RSC・APIのいずれもオフライン保存へ流さない", () => {
+    expect(hooks.classifyRequest(makeReq(abs("/shared/synthetic-share"), { mode: "navigate" }), ORIGIN)).toBe("nav-passthrough")
+    expect(hooks.classifyRequest(makeReq(abs("/shared/synthetic-share?_rsc=x"), { headers: { RSC: "1" } }), ORIGIN)).toBeNull()
+    expect(hooks.classifyRequest(makeReq(abs("/api/shared/synthetic-share")), ORIGIN)).toBeNull()
+  })
+
   it("APP_PAGES / PRECACHE_URLS / CACHE_NAMES が期待値で公開されている", () => {
     expect(hooks.APP_PAGES).toEqual(["/baby", "/calendar", "/settings"])
     expect(hooks.PRECACHE_URLS).toContain("/offline")

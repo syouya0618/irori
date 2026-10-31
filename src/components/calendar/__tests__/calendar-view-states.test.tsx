@@ -460,3 +460,5 @@ describe("一覧は意味を文字で示す", () => {
     expect(within(list).queryByText(/日目/)).not.toBeInTheDocument()
   })
 })
+
+vi.mock("next/navigation",()=>({useRouter:()=>({push:vi.fn()})}))

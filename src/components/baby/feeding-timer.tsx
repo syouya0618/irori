@@ -1,5 +1,7 @@
 "use client"
 
+import { useChildScope } from "./child-scope"
+
 import { useState, useEffect, useRef } from "react"
 import {
   Sheet,
@@ -403,6 +405,8 @@ function OwnedFeedingTimer({
   onLogRecorded,
   onRunningChange,
 }: FeedingTimerProps) {
+  const childScope = useChildScope()
+  const childId = childScope?.id
   const [cycle, setCycle] = useState<CycleState>(() =>
     seedCycle(normalizeSide(initialFeedingType), new Date().toISOString()),
   )
@@ -508,12 +512,12 @@ function OwnedFeedingTimer({
     const clientId = clientIdRef.current ?? newClientId()
     clientIdRef.current = clientId
     const ok = writePersistedTimer(
-      toPersistedState(at, next, {
+      { ...toPersistedState(at, next, {
         userId,
         householdId,
         clientId,
         submission: submissionRef.current,
-      }),
+      }), ...(childScope && !childScope.isLegacy ? { childId } : {}) },
     )
     if (!ok && !persistWarnedRef.current) {
       persistWarnedRef.current = true
@@ -546,7 +550,7 @@ function OwnedFeedingTimer({
     setManualRightMin(startSide === "breast_right" ? DEFAULT_MANUAL_MINUTES : 0)
     setManualRightSec(0)
 
-    const saved = readPersistedTimer()
+    const saved = readPersistedTimer(childScope?.isLegacy ? undefined : childId)
     if (!saved && persistWarnedRef.current && startedAtRef.current && cycleRef.current) {
       // 端末保存が効かぬ環境（容量不足・プライベートモード）で閉じて開き直した。
       // 手元の計測がそのまま真値ゆえ、新しいタイマーで上書きせぬ（「閉じても計測は
@@ -562,11 +566,11 @@ function OwnedFeedingTimer({
       return
     }
     if (saved) {
-      if (!belongsToOwner(saved, { userId, householdId })) {
+      if (!belongsToOwner(saved, { userId, householdId, ...(childScope && !childScope.isLegacy ? { childId } : {}) })) {
         // 別の利用者・世帯の計測（P3-08）。名義を変えて記録せぬよう捨てて始め直す。
         // 本文は見せぬ（他人の記録）。ログには事実だけ残す
         console.warn("[feeding-timer] 別の利用者・世帯の計測が端末に残っていたため破棄した")
-        clearPersistedTimer()
+        clearPersistedTimer(childScope?.isLegacy ? undefined : childId)
       } else {
         const savedTime = new Date(saved.startedAt)
         const restored = restoreCycle(saved)
@@ -727,6 +731,7 @@ function OwnedFeedingTimer({
     const clientId = clientIdRef.current ?? newClientId()
     clientIdRef.current = clientId
     const payload: PersistedFeedingPayload = {
+      ...(childId ? { childId } : {}),
       feedingType: "breast",
       breastLeftCount: leftCount,
       breastRightCount: rightCount,
@@ -873,7 +878,7 @@ function OwnedFeedingTimer({
     const controller = new AbortController()
     lookupAbortRef.current = controller
     setLookup("checking")
-    const outcome = await lookupBabyLogs([target.payload.clientId], { signal: controller.signal })
+    const outcome = await lookupBabyLogs([target.payload.clientId], { signal: controller.signal, childId })
     if (lookupAbortRef.current === controller) lookupAbortRef.current = null
     if (!activeRef.current || outcome.status === "cancelled") return
     // 照合の間に確定・破棄されておれば、その結果を優先する
@@ -920,7 +925,7 @@ function OwnedFeedingTimer({
     // 明示する（無言だと「記録されていない」と誤解して再タップし、二重記録になる）。
     onLogRecorded?.(log)
 
-    clearPersistedTimer()
+    clearPersistedTimer(childScope?.isLegacy ? undefined : childId)
     clientIdRef.current = null
     keptOriginRef.current = null
     setSubmission(null)
@@ -1109,7 +1114,7 @@ function OwnedFeedingTimer({
 
   /** 計測を記録せずに捨てて閉じる（確認済みの破棄と、誤って開いた直後の取り消し）。 */
   function discardTimer(message: string) {
-    clearPersistedTimer()
+    clearPersistedTimer(childScope?.isLegacy ? undefined : childId)
     clientIdRef.current = null
     keptOriginRef.current = null
     setSubmission(null)

@@ -11,6 +11,7 @@ describe("AUTH_DENIAL_HTTP_STATUS", () => {
       unauthenticated: 401,
       "not-approved": 403,
       "no-household": 403,
+      "shared-only": 403,
       "lookup-failed": 503,
     })
   })

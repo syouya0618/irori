@@ -5,14 +5,14 @@
 Advisor、あなたへ。これは世帯単位の育児記録・予定 PWA で、要は Liquid Glass の一貫した手触り、世帯データの分離、そして「訓練データの記憶で Next.js を書かない」ことだ。全履歴を読み、**通常のレビューに加えて**、判断を特に次の3軸で重く点検せよ:
 
 1. **Liquid Glass デザインの一貫性を崩していないか** ― `glass` カード/warm orange/`transition-colors` のみ/44px タッチ/絵文字は使わない。独自スタイルや `transition-all` を持ち込んでいれば、止めよ。
-2. **世帯（household）単位のデータ分離を破っていないか** ― RLS は SELECT/INSERT/UPDATE/DELETE 分離（FOR ALL 禁止）、SECURITY DEFINER は `SET search_path=public`。分離を緩めていれば、止めよ。
+2. **世帯（household）単位のデータ分離を破っていないか** ― RLS は SELECT/INSERT/UPDATE/DELETE 分離（FOR ALL 禁止）、SECURITY DEFINER は固定の `search_path`（新規は `SET search_path=''` と明示schemaを優先）。分離を緩めていれば、止めよ。
 3. **現行 Next.js 16 / React 19 の実APIに忠実か** ― 記憶で書かず `node_modules/next/dist/docs/` を読んだか（error.tsx の `retry`、form auto-reset 無効化 等）。記憶ベースの古いAPIで書いていれば、止めよ。
 
 衝突したら本質を優先せよ。指摘は短く。**3軸に該当せずとも本質を損なう判断を見れば遠慮なく指摘せよ。**
 
 ## Tech Stack
 
-- **Framework**: Next.js 16.3.4 (App Router)
+- **Framework**: Next.js 16.4.3 (App Router)
 - **React**: 19.2
 - **Tailwind CSS**: v4
 - **UI**: shadcn/ui + Liquid Glass design system
@@ -72,7 +72,7 @@ src/
 ### irori 固有
 
 - **pdfmake 0.3.x: `setFonts()` はモジュールスコープで1回のみ**: リクエストごとに呼ぶと並行リクエストで競合リスク
-- **SECURITY DEFINER 関数には `SET search_path = public` 必須**: `auth.users` トリガーから呼ばれると `search_path=auth` で狂う
+- **SECURITY DEFINER 関数は固定の search_path 必須。新規は `SET search_path = ''` と全オブジェクトのschema明示を優先**: `auth.users` トリガーから呼ばれると `search_path=auth` で狂う
 - **`ALTER TYPE ADD VALUE` と CHECK 制約は別マイグレーションに分離**: 同一トランザクション内で新 ENUM 値を CHECK 制約で参照すると `unsafe use of new value` エラー
 - **授乳行（log_type='feeding'）の `logged_at` は「開始時刻」セマンティクス**: タイマー（startedAt 送信）・手動入力（「記録する」の押下時刻。授乳時間ぶん遡らせない。停め忘れは保存済みの startedAt。押下時刻は**端末の時計で作らず**サーバ時刻のサンプルで推定する — 2026-10-28 N3、下の「記録時刻はサーバの時計で確定」。推定できぬ時だけ時刻を送らず DB の `now()`＝押下を受け取った時刻にする。手動入力では押下＝開始ゆえ開始の意味は保たれ、その旨を利用者へ伝える）・編集シート（ラベル「開始時刻」）の全書込経路で開始に揃える契約。過去行は backfill（`20260726100003`）で統一済み。**新しい書込経路を足すときは必ず開始時刻を送ること** — 送らねば DB の `now()`（＝終了時刻）が入り、同じ列に2つの意味が無音で混在して事後判別できなくなる（かつて併走していた Flutter 版がこれに未追随のまま廃止された）
 - **育児ログ・日記・予定の編集は「開いた時点の `updated_at`」を版に送る楽観的排他（P2-07 / P1-06）**: サーバは id・世帯・版を条件にした 1 本の UPDATE で書き、0 行は読み直して衝突・削除済み・冪等の成功を分ける。版は**表記の文字列のまま**運ぶ（`new Date()` を通すとマイクロ秒が落ちて以後の保存が全て衝突する）。**編集の経路を足すときは必ず版を送ること** — 送らねば Server Action（`updateLog` 等）が「画面が古い」で止める（無条件の上書きへは倒さぬ）。**この守りはアプリの層だけ**で、RLS は版を見ぬ — Server Action を通らぬ書込（PostgREST を直に叩く別のクライアント等）を足すなら、同じ条件を自前で持たせよ。楽観 append の行も作成の応答の版を持つ（`buildOptimisticLog` の `updatedAt` は省略不可）。育児ログの編集シートに、衝突の後の「上書きして保存」を置くな — 全項目を開いた時点の値から送るため、家族が直した項目まで巻き戻る（本文 1 欄の日記は上書きが意図どおりゆえ置いてある）

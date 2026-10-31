@@ -7,6 +7,7 @@ import type {
 } from "./database"
 
 export interface BabyLogData {
+  child_id?: string
   id: string
   log_type: BabyLogType
   logged_at: string
@@ -63,6 +64,7 @@ export interface BabyLogData {
 
 /** 育児日記（1世帯・1日1本、baby_diaries）。SELECT で使う実データ形。 */
 export interface BabyDiaryData {
+  child_id?: string
   id: string
   diary_date: string
   content: string

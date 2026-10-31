@@ -1,9 +1,13 @@
+import { PercentileChart } from "./percentile-chart"
+import { GROWTH_REFERENCE,type GrowthSex } from "@/lib/domain/growth-reference"
 import { TrendingUp } from "lucide-react"
 import { LineChart, type LineChartPoint } from "./line-chart"
 import { daysBetweenYmd } from "@/lib/utils/date-jst"
 import type { GrowthSeries, GrowthPoint } from "@/lib/domain/baby-log-aggregation"
 
 interface GrowthChartSectionProps {
+  birthDate?: string | null
+  sex?: GrowthSex | null
   series: GrowthSeries
   /** 畳み込みの中に置く形（見出しとガラスの枠は外側が持つ） */
   embedded?: boolean
@@ -86,19 +90,12 @@ function RecentMeasurements({
  * 畳んだ見出しに出す最新値の要約（「最新 5.15kg・57cm」）。記録が無ければ案内文。
  * 形式は下のグラフの見出しと同じ formatKg / formatCm に揃える。
  */
-export function growthLatestSummary(series: GrowthSeries): string {
-  const w = series.weight.at(-1)?.value ?? null
-  const h = series.height.at(-1)?.value ?? null
-  const parts = [
-    w !== null ? formatKg(w) : null,
-    h !== null ? formatCm(h) : null,
-  ].filter(Boolean)
-  return parts.length > 0 ? `最新 ${parts.join("・")}` : "体重・身長の測定はまだありません"
-}
+export { growthLatestSummary } from "@/lib/domain/growth-summary"
 
 export function GrowthChartSection({
   series,
   embedded = false,
+  birthDate,sex,
 }: GrowthChartSectionProps) {
   const hasData = series.weight.length > 0 || series.height.length > 0
 
@@ -133,12 +130,12 @@ export function GrowthChartSection({
                 {latestWeight !== null ? formatKg(latestWeight) : "---"}
               </span>
             </div>
-            <LineChart
+            {birthDate&&sex?<PercentileChart points={series.weight} birthDate={birthDate} sex={sex} measure="weightKg" label="体重"/>:<LineChart
               ariaLabel="体重の推移"
               data={toChartPoints(series.weight)}
               lineColorClassName="text-primary"
               valueFormatter={formatKg}
-            />
+            />}
             <RecentMeasurements points={series.weight} format={formatKg} label="体重" />
           </div>
 
@@ -149,16 +146,17 @@ export function GrowthChartSection({
                 {latestHeight !== null ? formatCm(latestHeight) : "---"}
               </span>
             </div>
-            <LineChart
+            {birthDate&&sex?<PercentileChart points={series.height} birthDate={birthDate} sex={sex} measure="heightCm" label="身長"/>:<LineChart
               ariaLabel="身長の推移"
               data={toChartPoints(series.height)}
               lineColorClassName="text-sky-500"
               valueFormatter={formatCm}
-            />
+            />}
             <RecentMeasurements points={series.height} format={formatCm} label="身長" />
           </div>
         </div>
       )}
+      {hasData&&<p className="text-xs leading-relaxed text-muted-foreground">{!birthDate||!sex?"基準帯の表示には子どもの生年月日・性別が必要です。":"暦月齢の集団分布で、早産の修正月齢や診断を表しません。"} <a href={GROWTH_REFERENCE.url} target="_blank" rel="noreferrer" className="underline">出典: {GROWTH_REFERENCE.source}</a>（{GROWTH_REFERENCE.published}公表）をiroriで加工。公表区分の値を表示し、補間は行いません。</p>}
     </section>
   )
 }

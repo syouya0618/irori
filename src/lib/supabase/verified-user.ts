@@ -1,3 +1,4 @@
+import { cache } from "react"
 import type { AuthError } from "@supabase/supabase-js"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 
@@ -65,12 +66,15 @@ export interface VerifiedUser {
  * ルーティング判定に使うのは userId のみ。email は画面表示用の付随情報で、
  * 認可の根拠には使わないこと。
  */
+// Share the same verification only for the same request-local SDK instance. No timed/global auth cache.
+const claimsForClient = cache((supabase:ClaimsCapableClient)=>supabase.auth.getClaims())
+
 export async function getVerifiedUser(
   supabase: ClaimsCapableClient,
   scope: string,
 ): Promise<VerifiedUser | null> {
   try {
-    const { data, error } = await supabase.auth.getClaims()
+    const { data, error } = await claimsForClient(supabase)
     if (error) {
       // セッション無しは { data: null, error: null } で来るためログしない。
       // ここに来るのは署名不正・期限切れ・JWKS 取得失敗など本物の異常のみ。

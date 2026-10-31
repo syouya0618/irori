@@ -29,7 +29,7 @@
 
 ### Web（Next.js）
 
-- Next.js 16.3 App Router
+- Next.js 16.4.3 App Router
 - React 19.2
 - TypeScript
 - Tailwind CSS v4
@@ -92,3 +92,13 @@ pnpm e2e:env && pnpm e2e:build && pnpm e2e
 - [デザインシステム](./docs/DESIGN_SYSTEM.md)
 - 運用 runbook: [承認](./docs/runbooks/approvals.md) / [通知 cron](./docs/runbooks/notify-cron.md) / [締め出し時のログイン](./docs/runbooks/locked-out.md)
 - [本番品質化の監査と台帳（2026-10）](./docs/plans/production-readiness-2026-10.md)
+
+## 製品拡張の初期構築
+
+複数児、子ども別の閲覧共有、睡眠、予防接種・健診、成長基準帯、世帯の独自項目、年齢別ホーム、任意の地域ニュースを同じNext.js / pnpm / Supabase構成で使えます。追加のクラウド契約・AI APIは不要です。
+
+専用のローカルSupabaseを起動できる環境では `supabase start` → `supabase db reset` でmigrationを一括適用します。`db reset` はローカルの使い捨て環境専用です。既存環境への適用はバックアップを確認してmigration履歴に一度ずつ追加し、SQLを手作業で再実行しないでください。既存1児データの移行・アプリの戻し方は [拡張計画](docs/plans/product-expansion.md) を参照してください。
+
+地域ニュースは `/news` で任意設定。初期対応は公式RSSを確認済みの札幌市・横浜市です。取得と朝8時の通知は [既存の通知cron](docs/runbooks/notify-cron.md) を再利用します。Push環境変数が未設定なら通知を実行しません。地域未設定では配信元への取得を行いません。対応地域以外の住所入力・位置情報・外部AIは使いません。
+
+機能テストは合成データだけで行います。`pnpm test:run` と `supabase test db`、専用の合成Supabaseを用意したうえで `pnpm e2e` を実行してください。環境制限で実行できない項目は未実行として扱います。成長統計の出典・加工内容・利用条件は [第三者データ](THIRD_PARTY_DATA.md) に記載しています。

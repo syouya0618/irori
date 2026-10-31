@@ -20,7 +20,7 @@ import { useEffect, useRef } from "react"
  * `useCallback` を付け忘れても再購読が暴れない（毎レンダーで addEventListener /
  * removeEventListener が走らない）ようにするため。
  */
-export function useVisibilityRefetch(cb: () => void): void {
+export function useVisibilityRefetch(cb: () => void, pollMs?: number): void {
   const cbRef = useRef(cb)
   useEffect(() => {
     cbRef.current = cb
@@ -33,11 +33,13 @@ export function useVisibilityRefetch(cb: () => void): void {
       if (document.visibilityState !== "visible") return
       cbRef.current()
     }
+    const interval = pollMs && pollMs > 0 ? setInterval(() => { if(navigator.onLine !== false)onVisible() },pollMs) : undefined
     document.addEventListener("visibilitychange", onVisible)
     window.addEventListener("focus", onVisible)
     return () => {
+      clearInterval(interval)
       document.removeEventListener("visibilitychange", onVisible)
       window.removeEventListener("focus", onVisible)
     }
-  }, [])
+  }, [pollMs])
 }

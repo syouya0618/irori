@@ -1,8 +1,8 @@
 "use client"
 
-import Link from "next/link"
+import Link, { useLinkStatus } from "next/link"
 import { usePathname } from "next/navigation"
-import { Baby, CalendarDays, Settings } from "lucide-react"
+import { Baby, CalendarDays, Settings, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 /**
@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils"
  * 入る画面ゆえ、開いている間も「設定」を現在地として示す（どのタブも現在地でない画面を作らぬ）。
  */
 const tabs = [
-  { href: "/baby", label: "育児", icon: Baby, also: [] },
+  { href: "/baby", label: "育児", icon: Baby, also: ["/children", "/news"] },
   { href: "/calendar", label: "予定", icon: CalendarDays, also: [] },
   { href: "/settings", label: "設定", icon: Settings, also: ["/feedback"] },
 ] as const
@@ -32,6 +32,12 @@ function isUnder(pathname: string, base: string): boolean {
  *   `--tw-outline-style: none` を立て、`focus-visible:outline-2` はその変数を読むゆえ、
  *   同居させると focus 中も輪郭が none に解決する（独立レビューで見つかった退行）
  */
+function NavigationHint() {
+  const { pending } = useLinkStatus()
+  if(!pending)return null
+  return <i data-navigation-pending="true" className="absolute right-2 top-2"><Loader2 size={12} aria-hidden="true" className="animate-spin motion-reduce:animate-none"/><span role="status" className="sr-only">移動中</span></i>
+}
+
 export function BottomNav() {
   const pathname = usePathname()
 
@@ -49,8 +55,10 @@ export function BottomNav() {
             <Link
               key={href}
               href={href}
+              // Avoid duplicate partial-shell authorization requests; keep the approved route TTL.
+              prefetch={false}
               className={cn(
-                "flex flex-1 flex-col items-center justify-center gap-0.5 rounded-lg transition-colors duration-200 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary",
+                "relative flex flex-1 flex-col items-center justify-center gap-0.5 rounded-lg transition-colors duration-200 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary",
                 isActive
                   ? "text-primary"
                   : "text-muted-foreground hover:text-foreground"
@@ -77,6 +85,7 @@ export function BottomNav() {
               >
                 {label}
               </span>
+              <NavigationHint />
             </Link>
           )
         })}

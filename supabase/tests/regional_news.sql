@@ -1,0 +1,93 @@
+BEGIN;
+SELECT no_plan();
+INSERT INTO households(id,name)VALUES('e5000000-0000-4000-8000-000000000001','synthetic news A'),('e5000000-0000-4000-8000-000000000002','synthetic news B');
+INSERT INTO auth.users(id,email)VALUES('e5000000-0000-4000-8000-000000000003','news-a@example.invalid'),('e5000000-0000-4000-8000-000000000004','news-b@example.invalid');
+UPDATE profiles SET household_id='e5000000-0000-4000-8000-000000000001',is_approved=true,role='owner' WHERE id='e5000000-0000-4000-8000-000000000003';
+UPDATE profiles SET household_id='e5000000-0000-4000-8000-000000000002',is_approved=true WHERE id='e5000000-0000-4000-8000-000000000004';
+CREATE TEMP TABLE news_clock AS SELECT (((clock_timestamp() AT TIME ZONE 'Asia/Tokyo')::date+1)::text||'T08:00:00+09:00')::timestamptz AS at;
+UPDATE children SET birth_date=(SELECT (at AT TIME ZONE 'Asia/Tokyo')::date-interval '3 months' FROM news_clock)WHERE household_id='e5000000-0000-4000-8000-000000000001';
+CREATE TEMP TABLE np(value jsonb);GRANT ALL ON np TO authenticated;
+GRANT SELECT ON news_clock TO authenticated,service_role;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims','{"sub":"e5000000-0000-4000-8000-000000000003","role":"authenticated"}',true);
+INSERT INTO np SELECT save_news_preferences('sapporo',true,NULL);
+SELECT is((SELECT value->>'status' FROM np),'saved','optional region and notification enabled explicitly');
+SELECT is((SELECT count(*) FROM news_preferences),1::bigint,'only own preference visible');
+SELECT throws_ok($$UPDATE news_preferences SET enabled=false$$,'42501',NULL,'no direct update grant');
+SELECT throws_ok($$SELECT save_news_preferences('arbitrary-host',true,NULL)$$,'22023',NULL,'arbitrary feed/region rejected');
+SELECT is((save_news_preferences('yokohama',true,'2020-01-01')->>'status'),'conflict','stale preference cannot overwrite');
+-- Supautils' EXECUTE-denied error path can SIGSEGV before pgTAP catches 42501
+-- (supabase/postgres#2112, supabase/supautils#214). Check effective privileges,
+-- including PUBLIC/inherited grants, without invoking a deliberately revoked RPC.
+-- Keep the service-role execution/eligibility tests below; no implementation grant changes.
+SELECT is(has_function_privilege(r.name,f.signature,'EXECUTE'),r.allowed,
+ r.name || CASE WHEN r.allowed THEN ' can execute ' ELSE ' cannot execute ' END || f.signature)
+FROM (VALUES ('anon',false),('authenticated',false),('service_role',true)) AS r(name,allowed)
+CROSS JOIN (VALUES ('public.prepare_news_deliveries(timestamptz)'),
+ ('public.claim_news_source(text,timestamptz)'),('public.claim_news_delivery(uuid,timestamptz)')) AS f(signature);
+SELECT throws_ok($$SELECT * FROM news_deliveries$$,'42501',NULL,'delivery queue is private');
+SELECT throws_ok($$SELECT * FROM news_receipts$$,'42501',NULL,'per-user article receipts are private');
+SELECT set_config('request.jwt.claims','{"sub":"e5000000-0000-4000-8000-000000000004","role":"authenticated"}',true);
+SELECT is((SELECT count(*) FROM news_preferences),0::bigint,'another household cannot read preferences');
+SELECT is((save_news_preferences('yokohama',false,NULL)->>'status'),'saved','news can be read without opting in to Push');
+RESET ROLE;
+INSERT INTO push_subscriptions(id,user_id,endpoint,p256dh,auth)VALUES
+ ('e5000000-0000-4000-8000-000000000005','e5000000-0000-4000-8000-000000000003','https://fcm.googleapis.com/synthetic-news-a','fixture-key','fixture-auth'),
+ ('e5000000-0000-4000-8000-000000000006','e5000000-0000-4000-8000-000000000004','https://fcm.googleapis.com/synthetic-news-b','fixture-key','fixture-auth');
+SET LOCAL ROLE service_role;
+SELECT is(prepare_news_deliveries((SELECT at FROM news_clock)),0,'no articles means no notification');
+SELECT ok(claim_news_source('sapporo',(SELECT at FROM news_clock)),'one source collector claims lease');
+SELECT ok(NOT claim_news_source('sapporo',(SELECT at FROM news_clock)),'another collector cannot duplicate the same fetch');
+SELECT ok(claim_news_source('sapporo',(SELECT at+interval '5 minutes' FROM news_clock)),'source retry allowed after five minutes');
+RESET ROLE;
+INSERT INTO news_articles(region_key,id,title,url,published_at,min_months,max_months) SELECT 'sapporo',repeat('a',64),'synthetic infant article','https://www.city.sapporo.jp/synthetic/infant.html',at-interval '1 hour',0,11 FROM news_clock;
+INSERT INTO news_articles(region_key,id,title,url,published_at,min_months,max_months) SELECT 'sapporo',repeat('b',64),'synthetic school article','https://www.city.sapporo.jp/synthetic/school.html',at-interval '1 hour',72,215 FROM news_clock;
+INSERT INTO news_articles(region_key,id,title,url,published_at) SELECT 'yokohama',repeat('c',64),'synthetic other region','https://www.city.yokohama.lg.jp/synthetic/news.html',at-interval '1 hour' FROM news_clock;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims','{"sub":"e5000000-0000-4000-8000-000000000003","role":"authenticated"}',true);
+SELECT is((SELECT count(*) FROM news_articles),2::bigint,'only selected official region is readable');
+SELECT throws_ok($$INSERT INTO news_articles(region_key,id,title,url,published_at)VALUES('sapporo',repeat('f',64),'injection','https://www.city.sapporo.jp/synthetic/inject.html',now())$$,'42501',NULL,'client cannot inject RSS articles');
+RESET ROLE;
+SET LOCAL ROLE service_role;
+SELECT is(prepare_news_deliveries((SELECT at-interval '1 minute' FROM news_clock)),0,'never queues before JST08:00');
+SELECT is(prepare_news_deliveries((SELECT at FROM news_clock)),1,'one relevant new article creates one recipient/device delivery');
+SELECT is(prepare_news_deliveries((SELECT at+interval '5 minutes' FROM news_clock)),0,'same-day retry does not duplicate');
+SELECT is((SELECT cardinality(article_ids) FROM news_deliveries),1,'age-inappropriate school item is excluded');
+SELECT is((SELECT article_ids[1] FROM news_deliveries),repeat('a',64),'foreign region and OFF users never mix');
+SELECT ok(claim_news_delivery((SELECT id FROM news_deliveries),(SELECT at FROM news_clock)) IS NOT NULL,'live eligible delivery claims');
+SELECT ok(claim_news_delivery((SELECT id FROM news_deliveries),(SELECT at FROM news_clock)) IS NULL,'second claim cannot send again');
+SELECT is(prepare_news_deliveries((SELECT at+interval '1 day' FROM news_clock)),0,'seen article does not become new again tomorrow');
+RESET ROLE;
+-- Prepare another synthetic day/article; then revoke before claim.
+INSERT INTO news_articles(region_key,id,title,url,published_at) SELECT 'sapporo',repeat('d',64),'synthetic next article','https://www.city.sapporo.jp/synthetic/next.html',at+interval '1 day'-interval '1 hour' FROM news_clock;
+SET LOCAL ROLE service_role;
+SELECT is(prepare_news_deliveries((SELECT at+interval '1 day' FROM news_clock)),1,'genuinely new article may queue on the next day');
+RESET ROLE;
+UPDATE news_preferences SET enabled=false WHERE user_id='e5000000-0000-4000-8000-000000000003';
+SET LOCAL ROLE service_role;
+SELECT ok(claim_news_delivery((SELECT id FROM news_deliveries WHERE sent_at IS NULL),(SELECT at+interval '1 day' FROM news_clock)) IS NULL,'OFF before claim prevents sending');
+SELECT is((SELECT count(*) FROM news_deliveries WHERE skipped_at IS NOT NULL),1::bigint,'revoked queue is closed');
+RESET ROLE;
+UPDATE news_preferences SET enabled=true WHERE user_id='e5000000-0000-4000-8000-000000000003';
+UPDATE news_deliveries SET skipped_at=NULL WHERE sent_at IS NULL;
+UPDATE profiles SET household_id='e5000000-0000-4000-8000-000000000002' WHERE id='e5000000-0000-4000-8000-000000000003';
+SET LOCAL ROLE service_role;
+SELECT ok(claim_news_delivery((SELECT id FROM news_deliveries WHERE sent_at IS NULL),(SELECT at+interval '1 day' FROM news_clock)) IS NULL,'household change after preparation refuses the old household Push');
+RESET ROLE;
+UPDATE profiles SET household_id='e5000000-0000-4000-8000-000000000001' WHERE id='e5000000-0000-4000-8000-000000000003';
+UPDATE news_deliveries SET skipped_at=NULL WHERE sent_at IS NULL;
+SET LOCAL ROLE service_role;
+SELECT ok(claim_news_delivery((SELECT id FROM news_deliveries WHERE sent_at IS NULL),(SELECT at+interval '1 day 15 minutes' FROM news_clock)) IS NULL,'JST08:15 and later refuse stale news');
+RESET ROLE;
+UPDATE profiles SET role='viewer' WHERE id='e5000000-0000-4000-8000-000000000003';
+SET LOCAL ROLE service_role;
+SELECT is(prepare_news_deliveries((SELECT at+interval '2 days' FROM news_clock)),0,'shared viewer cannot receive family news Push');
+RESET ROLE;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims','{"sub":"e5000000-0000-4000-8000-000000000003","role":"authenticated"}',true);
+SELECT is((SELECT count(*) FROM news_articles),0::bigint,'viewer cannot enter ordinary family news');
+SELECT throws_ok($$SELECT save_news_preferences('sapporo',true,NULL)$$,'42501',NULL,'viewer cannot change family news preference');
+RESET ROLE;
+SELECT ok(NOT has_function_privilege('anon','public.save_news_preferences(text,boolean,timestamptz)','EXECUTE'),'anonymous preference write denied');
+SELECT ok(NOT has_function_privilege('authenticated','public.claim_news_delivery(uuid,timestamptz)','EXECUTE'),'claim is service-only');
+SELECT * FROM finish();ROLLBACK;

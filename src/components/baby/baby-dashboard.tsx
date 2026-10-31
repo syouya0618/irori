@@ -1,5 +1,7 @@
 "use client"
 
+import { useChildScope } from "./child-scope"
+
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
@@ -25,10 +27,9 @@ import {
 } from "@/lib/domain/feeding-timer-storage"
 import { BarChart3, Thermometer, TrendingUp } from "lucide-react"
 import { BabyWeeklySummary } from "./weekly-summary/baby-weekly-summary"
-import {
-  GrowthChartSection,
-  growthLatestSummary,
-} from "./charts/growth-chart-section"
+import dynamic from "next/dynamic"
+import { growthLatestSummary } from "@/lib/domain/growth-summary"
+const GrowthChartSection = dynamic(()=>import("./charts/growth-chart-section").then(m=>m.GrowthChartSection),{loading:()=> <p className="py-4 text-xs text-muted-foreground">グラフを読み込み中</p>})
 import {
   BabyCollapsibleSection,
   HomeFoldFrame,
@@ -58,6 +59,10 @@ import {
 } from "@/lib/domain/handoff"
 import { UpcomingEventsCard } from "@/components/calendar/upcoming-events-card"
 import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
+import { HomeTools,useHomeFocus } from "./home-tools"
+import { homeDetailOrder } from "@/lib/domain/home-priority"
+import { ageMonthsAt } from "@/lib/domain/child-age"
+import { Fragment } from "react"
 import { useNow } from "@/lib/hooks/use-now"
 import { useVisibilityRefetch } from "@/lib/hooks/use-visibility-refetch"
 import { useBottleDefault } from "@/lib/hooks/use-bottle-default"
@@ -227,6 +232,7 @@ interface BabyDashboardProps {
    */
   lastNursingFallback: BabyLogData | null
   babyName: string | null
+  babySex?: "male" | "female" | null
   babyBirthDate: string | null
   /** 授乳間隔（分）。次の授乳の目安の算出に使う（設定で変更可能） */
   feedingIntervalMin: number
@@ -274,15 +280,19 @@ export function BabyDashboard({
   lastNursingFallback,
   babyName,
   babyBirthDate,
+  babySex,
   feedingIntervalMin,
   initialBottleDefault,
   initialUpcomingEvents = [],
   members = [],
   initialLoadErrors = {},
 }: BabyDashboardProps) {
+  const childScope = useChildScope()
+  const childId = childScope?.id
   // 端末に残すもの（下書き・面の開閉・前回の確認の印）の持ち主
-  const owner = useMemo<DraftOwner>(() => ({ userId, householdId }), [userId, householdId])
+  const owner = useMemo<DraftOwner>(() => ({ userId, householdId, ...(childScope && !childScope.isLegacy ? { childId } : {}) }), [userId, householdId, childId, childScope])
   const folds = useHomeFolds(owner)
+  const [growthOpened,setGrowthOpened] = useState(false)
   // 範囲ごとの最新の確認（C1）。初回描画の失敗は最初から「確認できません」
   // 時刻は応答を受け取った瞬間の端末の時計（freshness.ts の既定）。描画中には読まぬ
   const [freshness, setFreshness] = useState<HomeFreshness>(() =>
@@ -301,7 +311,7 @@ export function BabyDashboard({
   const [lastSavedId, setLastSavedId] = useState<string | null>(null)
   // いつものミルク量。日付を選び直しても（過去日はクイック記録を出さぬ）持ち続けるよう、
   // クイック記録ではなく常に居るダッシュボードが持つ
-  const bottleDefault = useBottleDefault(householdId, initialBottleDefault)
+  const bottleDefault = useBottleDefault(householdId, initialBottleDefault, childId)
   // 記録者の表示（機能 A）。一人の世帯では null（出さぬ）。退出済みの id は「家族」。
   const recorderLabel = useMemo(() => {
     if (!shouldShowRecorder(members)) return null
@@ -379,8 +389,8 @@ export function BabyDashboard({
   // どおり。端末保存に失敗した環境でチップが 1 分で消える欠陥の修正。レビュー P3-7）。
   useEffect(() => {
     const fromStorage: RunningTimer | null = summarizePersistedTimer(
-      readPersistedTimer(),
-      { userId, householdId },
+      readPersistedTimer(childScope?.isLegacy ? undefined : childId),
+      { userId, householdId, ...(childScope && !childScope.isLegacy ? { childId } : {}) },
       now.getTime(),
     )
     const reported = timerReportedRef.current
@@ -393,7 +403,7 @@ export function BabyDashboard({
             }
           : null),
     )
-  }, [userId, householdId, now])
+  }, [userId, householdId, now, childId, childScope])
 
   // 「今日」は時計（now）から導く。引数なしの todayJstString() は React Compiler が
   // 依存の無い値とみなしてマウント時に一度だけ評価し凍結する（コンパイル出力で確認）—
@@ -401,6 +411,8 @@ export function BabyDashboard({
   // 選択日に属さぬと判定されてタイムラインから消える。now をキーにすれば毎分追従する。
   // 回帰の番人: __tests__/today-clock-contract.test.ts（vitest は Compiler を通さぬ）
   const today = todayJstString(now)
+  const homeFocus = useHomeFocus({userId,householdId,childId:childId??"legacy"})
+  const months = ageMonthsAt(babyBirthDate,today)
 
   // 開いたまま日を跨いだ瞬間の調整（描画中の state 調整 — effect にすると isToday=false の
   // 中間状態が commit され、予定カード等が一瞬外れる）。
@@ -568,7 +580,7 @@ export function BabyDashboard({
 
   // Realtime subscription
   useEffect(() => {
-    const supabase = createClient()
+    const supabase = createClient(childId)
     const isRelevantToCurrentWeek = (log: BabyLogData) => {
       const logDate = toJstDateString(log.logged_at)
       return (
@@ -583,7 +595,7 @@ export function BabyDashboard({
           event: "*",
           schema: "public",
           table: "baby_logs",
-          filter: `household_id=eq.${householdId}`,
+          filter: childId ? `child_id=eq.${childId}` : `household_id=eq.${householdId}`,
         },
         (payload) => {
           logRealtimeEvent("baby_logs", payload)
@@ -592,6 +604,7 @@ export function BabyDashboard({
           const inFlight = resyncInFlightRef.current
           if (payload.eventType === "INSERT") {
             const newLog = payload.new as BabyLogData
+            if (childId && newLog.child_id !== childId) return
             // 手元で消した行の遅れた通知（removedIdsRef の注記）。消した版より新しい版は作り直された行ゆえ通す
             if (removedIdsRef.current.has(newLog.id)) {
               if (!isNewerThanRemoved(newLog.updated_at, removedIdsRef.current.get(newLog.id))) return
@@ -624,6 +637,7 @@ export function BabyDashboard({
             })
           } else if (payload.eventType === "UPDATE") {
             const updatedLog = payload.new as BabyLogData
+            if (childId && updatedLog.child_id !== childId) return
             // 手元で消した行の遅れた通知（removedIdsRef の注記）。編集の保存・衝突の応答は
             // applyUpdatedLog へ直に入るゆえ、更新の経路ではここ（Realtime の入口）でだけ見る。
             // ⚠️ UPDATE は版が新しくても控えを外さぬ: 他端末が消した行（alreadyDeleted）の控えは画面が
@@ -657,7 +671,7 @@ export function BabyDashboard({
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [householdId, applyUpdatedLog])
+  }, [householdId, childId, applyUpdatedLog])
 
   // 育児日記（1日1本）の Realtime 購読（issue #155）。baby_logs とは別 channel で
   // 分離し、購読ブロックの blast radius を最小化する。
@@ -665,7 +679,7 @@ export function BabyDashboard({
   // PK のみで配信されない（migration 20260723000001 / calendar_events と同制約）。
   // DELETE（配偶者の空保存）は date-nav refetch と下の visibilitychange refetch で回収する。
   useEffect(() => {
-    const supabase = createClient()
+    const supabase = createClient(childId)
     const channel = supabase
       .channel("baby_diaries")
       .on(
@@ -674,7 +688,7 @@ export function BabyDashboard({
           event: "*",
           schema: "public",
           table: "baby_diaries",
-          filter: `household_id=eq.${householdId}`,
+          filter: childId ? `child_id=eq.${childId}` : `household_id=eq.${householdId}`,
         },
         (payload) => {
           logRealtimeEvent("baby_diaries", payload)
@@ -683,6 +697,7 @@ export function BabyDashboard({
             payload.eventType === "UPDATE"
           ) {
             const next = payload.new as BabyDiaryData
+            if (childId && next.child_id !== childId) return
             // 選択日と一致する日記だけ反映する（selectedDate は deps 外のため ref 読み）。
             // diary_date は DATE 列で Realtime は "YYYY-MM-DD" を配信するが、万一
             // 時刻付き（"...T00:00:00"）で来ても guard が silent 全滅しないよう
@@ -705,7 +720,7 @@ export function BabyDashboard({
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [householdId])
+  }, [householdId, childId])
 
   // タブ復帰時に選択日の日記を再取得し、DELETE 非配信（配偶者の空保存）を回収する
   // （calendar use-month-events と同流儀。issue #91/#92/#155）。
@@ -716,7 +731,7 @@ export function BabyDashboard({
       const context = { householdId, date }
       void (async () => {
         try {
-          const supabase = createClient()
+          const supabase = createClient(childId)
           // anon の 0 行（data: null）を「配偶者が消した」と取り違えて本文を消さない
           // （hasUsableSession。logs の再取得と同じ失敗類型）。
           if (!(await hasUsableSession(supabase, "diary visibility refetch", context))) {
@@ -747,7 +762,7 @@ export function BabyDashboard({
           })
         }
       })()
-    }, [householdId]),
+    }, [householdId, childId]),
   )
 
   /**
@@ -794,7 +809,7 @@ export function BabyDashboard({
 
     const logContext = { householdId, date, today: todayYmd }
     try {
-      const supabase = createClient()
+      const supabase = createClient(childId)
       // anon の 0 行を真値として描かない（hasUsableSession）。取得前に確かめ、anon の
       // 問い合わせ自体を出さない。待つ間に次の世代へ替わっていたら黙って退く。
       const sessionOk = await hasUsableSession(supabase, "logs resync", logContext)
@@ -937,7 +952,7 @@ export function BabyDashboard({
     } finally {
       if (resyncInFlightRef.current === inFlight) resyncInFlightRef.current = null
     }
-  }, [householdId, markRange])
+  }, [householdId, childId, markRange])
 
   useEffect(() => {
     resyncLogsRef.current = resyncLogs
@@ -961,6 +976,7 @@ export function BabyDashboard({
     useCallback(() => {
       void resyncLogs()
     }, [resyncLogs]),
+    childScope && !childScope.isLegacy ? 30000 : undefined,
   )
 
   // unmount で in-flight の再取得を止める（離脱後の setState を走らせない）。
@@ -977,7 +993,7 @@ export function BabyDashboard({
       initialDateRef.current = "" // allow re-fetch if user navigates away and back
       return
     }
-    const supabase = createClient()
+    const supabase = createClient(childId)
     const abortController = new AbortController()
 
     // 選択日の窓は初回描画・取り直しと同じ組み立て（baby-log-queries.ts）
@@ -1041,7 +1057,7 @@ export function BabyDashboard({
     return () => {
       abortController.abort()
     }
-  }, [selectedDate, householdId, dateNavRetry, markRange])
+  }, [selectedDate, householdId, childId, dateNavRetry, markRange])
 
   // 表示用の logs と、日付ナビの取得状態（P2-10）。取得済みの日と選択日が一致する時だけ
   // 行を見せる。違う間は取得中（失敗した日なら失敗）で、前の日の行を新しい見出しの下に
@@ -1399,6 +1415,73 @@ export function BabyDashboard({
     return `最新 ${latest.temperature}℃`
   })()
 
+  const detailPanels = {
+    temperature: (
+      <HomeFoldFrame
+        title="体温"
+        summary={temperatureSummary}
+        icon={<Thermometer size={20} />}
+        open={folds.isOpen("temperature") || dateNavStatus === "error"}
+        onOpenChange={(o) => folds.setOpen("temperature", o)}
+      >
+        <BabyTemperatureCard
+          logs={visibleLogs}
+          date={selectedDate}
+          isToday={isToday}
+          status={dateNavStatus}
+          onEdit={handleEdit}
+          onCreate={handleCreateTemperature}
+        />
+      </HomeFoldFrame>
+    ),
+    diary: (
+      <BabyDailyDiary
+        diary={visibleDiary}
+        isToday={isToday}
+        loading={!diaryReady && !diaryFailed}
+        failed={diaryFailed}
+        onRetry={retryDiary}
+        hasDraft={diaryDraftExists}
+        folded={!folds.isOpen("diary")}
+        onFoldChange={(f) => folds.setOpen("diary", !f)}
+        onEdit={() => {
+          // 取得中は開かぬ（前の日の本文を新しい日の下書きにせぬ）。ボタンも隠しておるが、
+          // 二重の防御（レビュー P2-4）
+          if (!diaryReady) return
+          setDiaryKey((k) => k + 1)
+          setDiaryEditOpen(true)
+        }}
+      />
+    ),
+    weekly: (
+      <BabyCollapsibleSection
+        title="週間サマリー"
+        summary={weeklyHeadline}
+        icon={<BarChart3 size={20} />}
+        open={folds.isOpen("weekly")}
+        onOpenChange={(o) => folds.setOpen("weekly", o)}
+      >
+        <BabyWeeklySummary
+          days={weeklySummary}
+          diaperBreakdown={weeklyDiaperBreakdown}
+          average={weeklyAverage}
+          embedded
+        />
+      </BabyCollapsibleSection>
+    ),
+    growth: (
+      <BabyCollapsibleSection
+        title="成長の記録"
+        summary={growthLatestSummary(growthSeries)}
+        icon={<TrendingUp size={20} />}
+        open={folds.isOpen("growth")}
+        onOpenChange={(o) => { if(o)setGrowthOpened(true);folds.setOpen("growth", o) }}
+      >
+        {folds.isOpen("growth")||growthOpened ? <GrowthChartSection series={growthSeries} embedded birthDate={babyBirthDate} sex={babySex} /> : <p className="text-xs text-muted-foreground">{growthSeries.weight.length||growthSeries.height.length?"開くと成長のグラフを表示します":"成長記録を追加すると、体重・身長の曲線が表示されます"}</p>}
+      </BabyCollapsibleSection>
+    )
+  }
+
   // 並びの方針（片手・夜間・記録の速さ）:
   // 1. 日付（今日か過去日か）→ 計測中の授乳 → 最終授乳と次の目安 → 記録の釦 → その日の数
   //    → タイムライン。記録に要る情報と釦を最初の 1 画面に集める
@@ -1478,6 +1561,8 @@ export function BabyDashboard({
         )}
       </BabySummaryBar>
 
+      {childId&&<HomeTools months={months} childId={childId} choice={homeFocus.choice} onChoose={homeFocus.choose}/>}
+
       {/* 前回この端末で見てから（C4）。記録された事実だけ。何も無ければ描かぬ */}
       {isToday && !handoffDismissed && (
         <BabyHandoffSummary
@@ -1520,72 +1605,7 @@ export function BabyDashboard({
         isToday={isToday}
       />
 
-      {/* 朝/夜の体温（訴え③）。読む配列は選択日の logs（週窓の weeklyLogs ではない —
-          週窓の外の過去日を開いた時に静かに空になるため）。isToday ゲートの**外**に
-          置き、過去日は閲覧のみ（記録ボタンはカード側で今日限定に出し分ける）。 */}
-      <HomeFoldFrame
-        title="体温"
-        summary={temperatureSummary}
-        icon={<Thermometer size={20} />}
-        open={folds.isOpen("temperature") || dateNavStatus === "error"}
-        onOpenChange={(o) => folds.setOpen("temperature", o)}
-      >
-        <BabyTemperatureCard
-          logs={visibleLogs}
-          date={selectedDate}
-          isToday={isToday}
-          status={dateNavStatus}
-          onEdit={handleEdit}
-          onCreate={handleCreateTemperature}
-        />
-      </HomeFoldFrame>
-
-      {/* その日の育児日記（1日1本・ぴよログ流）。全文を常時表示する。
-          /baby/diary への導線はセクションヘッダの「すべて」に集約（旧 Link カード廃止）。 */}
-      <BabyDailyDiary
-        diary={visibleDiary}
-        isToday={isToday}
-        loading={!diaryReady && !diaryFailed}
-        failed={diaryFailed}
-        onRetry={retryDiary}
-        hasDraft={diaryDraftExists}
-        folded={!folds.isOpen("diary")}
-        onFoldChange={(f) => folds.setOpen("diary", !f)}
-        onEdit={() => {
-          // 取得中は開かぬ（前の日の本文を新しい日の下書きにせぬ）。ボタンも隠しておるが、
-          // 二重の防御（レビュー P2-4）
-          if (!diaryReady) return
-          setDiaryKey((k) => k + 1)
-          setDiaryEditOpen(true)
-        }}
-      />
-
-      {/* 週の傾向と成長曲線は畳む（必要な時に開く）。窓の契約（表示 7 日・取得 8 日・
-          平均は昨日まで）は中身の BabyWeeklySummary が従来どおり持つ */}
-      <BabyCollapsibleSection
-        title="週間サマリー"
-        summary={weeklyHeadline}
-        icon={<BarChart3 size={20} />}
-        open={folds.isOpen("weekly")}
-        onOpenChange={(o) => folds.setOpen("weekly", o)}
-      >
-        <BabyWeeklySummary
-          days={weeklySummary}
-          diaperBreakdown={weeklyDiaperBreakdown}
-          average={weeklyAverage}
-          embedded
-        />
-      </BabyCollapsibleSection>
-
-      <BabyCollapsibleSection
-        title="成長の記録"
-        summary={growthLatestSummary(growthSeries)}
-        icon={<TrendingUp size={20} />}
-        open={folds.isOpen("growth")}
-        onOpenChange={(o) => folds.setOpen("growth", o)}
-      >
-        <GrowthChartSection series={growthSeries} embedded />
-      </BabyCollapsibleSection>
+      {homeDetailOrder(months,homeFocus.choice).map(id=><Fragment key={id}>{detailPanels[id]}</Fragment>)}
 
       {/* 再マウント用の key は兄弟（BabyLogFormSheet）と名前空間を分ける。どちらも
           0 から数える数値ゆえ、素の数値だと値が揃った瞬間に重複 key になり、React が

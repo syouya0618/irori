@@ -1,5 +1,7 @@
 "use client"
+import { purgeOtherRecordRequests } from "@/lib/domain/record-requests"
 
+import { purgeOtherSleepRequests } from "@/lib/domain/sleep-pending"
 import { useEffect } from "react"
 import {
   purgeHouseholdCaches,
@@ -10,6 +12,7 @@ import {
   belongsToOwner,
   clearPersistedTimer,
   readPersistedTimer,
+  purgeChildTimers,
 } from "@/lib/domain/feeding-timer-storage"
 import { purgeDraftsNotOwnedBy } from "@/lib/domain/draft-storage"
 import { purgePendingSavesNotOwnedBy } from "@/lib/domain/pending-saves-storage"
@@ -61,6 +64,9 @@ export function CacheUserGuard({ userId, householdId }: { userId: string; househ
     purgePendingSavesNotOwnedBy(owner)
     purgeCalendarPendingCreatesNotOwnedBy(owner)
     purgeOwnerScopedKeys([HOME_FOLD_KEY_PREFIX, HANDOFF_KEY_PREFIX, HANDOFF_EVENTS_KEY_PREFIX], owner)
+    purgeOtherSleepRequests(owner)
+    purgeOtherRecordRequests(owner)
+    purgeChildTimers(owner)
     const timer = readPersistedTimer()
     if (timer && !belongsToOwner(timer, owner)) clearPersistedTimer()
   }, [userId, householdId])
@@ -82,6 +88,7 @@ export function CacheUserGuard({ userId, householdId }: { userId: string; househ
         // 前の利用者の授乳タイマーが端末に残っておれば消す（P3-08。タイマー側の持ち主
         // 判定と二重の防御 — 旧形式の保存は持ち主を持たぬため、ここでしか消えぬ）
         clearPersistedTimer()
+        purgeChildTimers()
         // purgeHouseholdCaches は reject しない (破棄を確かめられたかを boolean で返す)。
         // 持ち主の記録を先に消してから破棄する
         purged = await purgeHouseholdCaches()

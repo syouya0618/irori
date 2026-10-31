@@ -49,6 +49,13 @@ jobs:
         # (-x の有効値は `supabase start --help` 参照。analytics = Logflare)
         run: supabase start -x studio,imgproxy,edge-runtime,vector,analytics
 
+      - name: Record isolated database runtime
+        # Only this job's disposable local DB. Never inspect container Env/auth keys.
+        run: |
+          docker inspect --format 'image={{.Config.Image}} image_id={{.Image}}' supabase_db_irori
+          docker image inspect --format 'digests={{json .RepoDigests}}' "$(docker inspect --format '{{.Image}}' supabase_db_irori)"
+          docker exec supabase_db_irori psql -X -U postgres -d postgres -c "SELECT version(); SELECT name, setting FROM pg_settings WHERE name IN ('session_preload_libraries', 'supautils.hint_roles');"
+
       - name: Run pgTAP database tests (RLS/CHECK 回帰)
         # supabase start がマイグレーション適用済みの DB に対し supabase/tests/*.sql を
         # pgTAP で実行する(pgtap 拡張は supabase test db が自動投入)。E2E はブラウザ経路で
@@ -96,3 +103,11 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+
+      - name: Inspect isolated database failure
+        if: failure()
+        # Keep the primary test failure. Capture crash/OOM/recovery metadata only,
+        # excluding SQL statement bodies and the container environment.
+        run: |
+          docker inspect --format 'image={{.Config.Image}} image_id={{.Image}} oom_killed={{.State.OOMKilled}} exit_code={{.State.ExitCode}}' supabase_db_irori || true
+          docker logs --tail 300 supabase_db_irori 2>&1 | grep -E 'terminated by signal|Segmentation fault|terminating any other active server|all server processes terminated|reinitializing|database system|PANIC:|FATAL:.*recovery|out of memory' || true

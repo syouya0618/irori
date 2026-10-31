@@ -1414,7 +1414,10 @@ describe("upsertBabyDiary（育児日記・1日1本・updated_at を版とする
       return q
     }
 
-    const from = vi.fn(() => ({
+    const from = vi.fn((table?: string) => table === "children" ? (() => {
+      const q = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: { id: "legacy-child" }, error: null }) }
+      return q
+    })() : ({
       select: () => builder("select").select(),
       upsert: (row: Record<string, unknown>, opts?: Record<string, unknown>) =>
         builder("upsert", row, opts),

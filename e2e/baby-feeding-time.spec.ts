@@ -218,7 +218,7 @@ test("ミルクの記録時刻: 量だけの更新で変わらず、日付だけ
   // ── 3. 行 A: 量だけを入れて更新 → logged_at は一字も変わらぬ ─────────
   await openOverlay(rowAt(hmA), page.getByRole("heading", { name: "授乳を編集" }))
   await expect(openSheet.getByLabel("開始時刻")).toHaveValue(hmA)
-  await openSheet.getByRole("button", { name: "100", exact: true }).click()
+  await openSheet.getByLabel("量 (ml)").fill("100")
   await submitOpenSheet(page, openSheet)
   const amountOnly = await waitForRow(rowA.id, (r) => r.amount_ml === 100)
   // 送っておらぬ列は DB の値のまま（HH:mm 丸めで秒・マイクロ秒を落とさぬ）
