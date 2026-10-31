@@ -16,7 +16,15 @@ SELECT is((SELECT count(*) FROM news_preferences),1::bigint,'only own preference
 SELECT throws_ok($$UPDATE news_preferences SET enabled=false$$,'42501',NULL,'no direct update grant');
 SELECT throws_ok($$SELECT save_news_preferences('arbitrary-host',true,NULL)$$,'22023',NULL,'arbitrary feed/region rejected');
 SELECT is((save_news_preferences('yokohama',true,'2020-01-01')->>'status'),'conflict','stale preference cannot overwrite');
-SELECT throws_ok($$SELECT prepare_news_deliveries(now())$$,'42501',NULL,'authenticated cannot prepare');
+-- Supautils' EXECUTE-denied error path can SIGSEGV before pgTAP catches 42501
+-- (supabase/postgres#2112, supabase/supautils#214). Check effective privileges,
+-- including PUBLIC/inherited grants, without invoking a deliberately revoked RPC.
+-- Keep the service-role execution/eligibility tests below; no implementation grant changes.
+SELECT is(has_function_privilege(r.name,f.signature,'EXECUTE'),r.allowed,
+ r.name || CASE WHEN r.allowed THEN ' can execute ' ELSE ' cannot execute ' END || f.signature)
+FROM (VALUES ('anon',false),('authenticated',false),('service_role',true)) AS r(name,allowed)
+CROSS JOIN (VALUES ('public.prepare_news_deliveries(timestamptz)'),
+ ('public.claim_news_source(text,timestamptz)'),('public.claim_news_delivery(uuid,timestamptz)')) AS f(signature);
 SELECT throws_ok($$SELECT * FROM news_deliveries$$,'42501',NULL,'delivery queue is private');
 SELECT throws_ok($$SELECT * FROM news_receipts$$,'42501',NULL,'per-user article receipts are private');
 SELECT set_config('request.jwt.claims','{"sub":"e5000000-0000-4000-8000-000000000004","role":"authenticated"}',true);
