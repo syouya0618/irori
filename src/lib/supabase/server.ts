@@ -1,8 +1,9 @@
+import { cache } from "react"
 import { createServerClient } from "@supabase/ssr"
 import { cookies } from "next/headers"
 import type { Database } from "@/lib/types/database"
 
-export async function createClient(childId?: string) {
+async function makeClient(childId?: string) {
   const cookieStore = await cookies()
 
   return createServerClient<Database>(
@@ -28,3 +29,6 @@ export async function createClient(childId?: string) {
     }
   )
 }
+
+/** React.cache is request-local in RSC; never a process-wide SDK singleton. Child headers remain immutable. */
+export const createClient = cache(makeClient)

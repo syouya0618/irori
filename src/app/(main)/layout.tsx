@@ -1,3 +1,5 @@
+import { Suspense } from "react"
+import { MainLoading } from "@/components/common/main-loading"
 import { LocalWebVitals } from "@/components/common/local-web-vitals"
 import { redirect } from "next/navigation"
 import { getAuthContext } from "@/lib/supabase/auth-context"
@@ -53,7 +55,7 @@ export default async function MainLayout({
       {/* pb-nav = ナビの高さ + safe-area（globals.css の --bottom-nav-h）。以前の pb-20（80px）は
           ナビの実高さ（55px + iPhone の 34px = 89px）と独立に決まっており、各ページの pb-8 が
           偶然それを埋めておった。殻の側で契約として確保する */}
-      <main className="mx-auto max-w-lg pb-nav">{children}</main>
+      <main className="mx-auto max-w-lg pb-nav"><Suspense fallback={<MainLoading/>}>{children}</Suspense></main>
       <BottomNav />
       <LocalWebVitals />
       {/* 初回ユーザーに使い方ツアーを表示（既読は localStorage 判定・自己 gating） */}
