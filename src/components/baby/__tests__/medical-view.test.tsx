@@ -10,6 +10,8 @@ const owner={userId:"synthetic-user",householdId:"synthetic-household",childId:"
 const view=()=> <MedicalView owner={owner} childName="synthetic child" records={[]} truncated={false}/>
 beforeEach(()=>{localStorage.clear();vi.resetAllMocks()});afterEach(cleanup)
 it("restores an ambiguous medical operation with the same id, child, date and version",async()=>{
+ const writes=vi.spyOn(Storage.prototype,"setItem")
+ try{
  vi.mocked(saveMedical).mockRejectedValueOnce(new Error("synthetic lost response"))
  const first=render(view());await waitFor(()=>expect(screen.getByRole("button",{name:"保存する"})).toBeEnabled())
  fireEvent.change(screen.getByLabelText("名称",{exact:true}),{target:{value:"synthetic vaccine"}})
@@ -17,10 +19,15 @@ it("restores an ambiguous medical operation with the same id, child, date and ve
  fireEvent.click(screen.getByRole("button",{name:"保存する"}))
  await waitFor(()=>expect(screen.getByRole("status")).toHaveTextContent("保存結果を確認できません"))
  const frozen=vi.mocked(saveMedical).mock.calls[0][0];expect(listRecordRequests(owner)).toHaveLength(1)
+ expect(writes).toHaveBeenCalledTimes(1)
+ expect(writes.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(saveMedical).mock.invocationCallOrder[0])
+ writes.mockClear()
  first.unmount();render(view());await screen.findByRole("button",{name:"保存結果を同じ操作で確認"})
  vi.mocked(saveMedical).mockResolvedValueOnce({status:"replayed"})
  await act(async()=>fireEvent.click(screen.getByRole("button",{name:"保存結果を同じ操作で確認"})))
  expect(vi.mocked(saveMedical).mock.calls[1][0]).toEqual(frozen);expect(listRecordRequests(owner)).toEqual([])
+ expect(writes).not.toHaveBeenCalled()
+ }finally{writes.mockRestore()}
 })
 
 it("keeps the memory-only warning visible when a failed persistence is followed by an unknown save",async()=>{

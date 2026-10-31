@@ -21,7 +21,6 @@ export function MedicalView({owner,childName,records,truncated}:{owner:SaveOwner
   if(!isMedicalRequest(p.payload)||p.payload.childId!==owner.childId){setMessage("端末の控えを確認できません。保存済みの記録と照合してください");return}
   const request=p.payload
   start(async()=>{try{
-   if(!retry){const stored=storeRecordRequest(p);setStorageOk(stored);if(!stored)setMessage("端末に控えを残せていません。結果を確認するまでページを閉じないでください")}
    setPending(prev=>[p,...prev.filter(v=>v.id!==p.id)])
    const r=await saveMedical(request);if(!alive.current)return
    if(r.status){setFormEpoch(v=>v+1);removeRecordRequest(p);setPending(prev=>prev.filter(v=>v.id!==p.id));setEditing(null);setMessage(r.status==="conflict"?"別の端末が更新しました。読み直した内容を確認してください":"保存しました");router.refresh()}
@@ -40,7 +39,12 @@ export function MedicalView({owner,childName,records,truncated}:{owner:SaveOwner
    const f=new FormData(e.currentTarget),kind=f.get("kind")==="checkup"?"checkup":"vaccination",status=String(f.get("status")) as MedicalRecord["status"]
    const request:MedicalRequest={id:editing?.id??newClientId(),childId:owner.childId,version:editing?.updated_at??null,value:{kind,title:String(f.get("title")??"").trim(),dose:kind==="vaccination"&&f.get("dose")?Number(f.get("dose")):null,status,scheduled_date:String(f.get("date")),completed_date:status==="completed"?String(f.get("completed")):null,memo:String(f.get("memo")??"").trim()||null,remind:f.get("remind")==="on",source_key:MEDICAL_SOURCES[kind].key}}
    if(!isMedicalRequest(request)){setMessage("日付・回数・入力内容を確認してください");return}
-   send({schema:1,id:newClientId(),owner,kind:"medical",payload:request})
+   // Persist only a new, validated form body. Restored retries use send without
+   // ever rewriting the original immutable envelope back to browser storage.
+   const entry:RecordRequest={schema:1,id:newClientId(),owner,kind:"medical",payload:request}
+   const stored=storeRecordRequest(entry);setStorageOk(stored)
+   if(!stored)setMessage("端末に控えを残せていません。結果を確認するまでページを閉じないでください")
+   send(entry)
   }}><h2 className="font-semibold">{editing?"記録を編集":"予定・実績を追加"}</h2>
    <label>種別<select name="kind" defaultValue={editing?.kind??"vaccination"} className={input} disabled={blocked}><option value="vaccination">予防接種</option><option value="checkup">乳幼児健診</option></select></label>
    <label>名称<input name="title" required maxLength={100} defaultValue={editing?.title??""} disabled={blocked} className={input}/></label>
