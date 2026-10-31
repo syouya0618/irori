@@ -133,29 +133,43 @@ export function parsePersistedSubmission(value: unknown): PersistedFeedingSubmis
   }
 }
 
+/** Project both reads and writes: a typed assertion/spread must not retain unrelated secrets. */
+function timerSnapshot(value: unknown, recovering: boolean): PersistedTimerState | null {
+  if (typeof value !== "object" || value === null) return null
+  const s = value as Record<string, unknown>
+  if (typeof s.startedAt !== "string" || Number.isNaN(Date.parse(s.startedAt))) return null
+  if (s.feedingType !== "breast_left" && s.feedingType !== "breast_right") return null
+  // A malformed owner must never become an ownerless legacy timer by omission.
+  for (const k of ["userId", "householdId", "childId", "clientId"] as const) {
+    if (s[k] !== undefined && (typeof s[k] !== "string" || s[k].length === 0)) return null
+  }
+  const submission = s.submission === undefined ? null : parsePersistedSubmission(s.submission)
+  if (s.submission !== undefined && submission === null) {
+    if (!recovering) return null
+    // Preserve the previous recovery behavior for a damaged historical submission.
+    console.warn("[feeding-timer] 端末保存の送信内容が壊れていたため送信内容だけ捨てた")
+  }
+  return {
+    startedAt: s.startedAt,
+    feedingType: s.feedingType,
+    ...(typeof s.userId === "string" ? { userId: s.userId } : {}),
+    ...(typeof s.householdId === "string" ? { householdId: s.householdId } : {}),
+    ...(typeof s.childId === "string" ? { childId: s.childId } : {}),
+    ...(typeof s.clientId === "string" ? { clientId: s.clientId } : {}),
+    ...(isNonNegativeInt(s.leftCount) ? { leftCount: s.leftCount } : {}),
+    ...(isNonNegativeInt(s.rightCount) ? { rightCount: s.rightCount } : {}),
+    ...(isNonNegativeInt(s.leftSec) ? { leftSec: s.leftSec } : {}),
+    ...(isNonNegativeInt(s.rightSec) ? { rightSec: s.rightSec } : {}),
+    ...(typeof s.sideSince === "string" && Number.isFinite(Date.parse(s.sideSince)) ? { sideSince: s.sideSince } : {}),
+    ...(s.startSide === "breast_left" || s.startSide === "breast_right" ? { startSide: s.startSide } : {}),
+    ...(submission ? { submission } : {}),
+  }
+}
+
 export function readPersistedTimer(childId?: string): PersistedTimerState | null {
   try {
     const raw = localStorage.getItem(childId ? `${FEEDING_TIMER_STORAGE_KEY}:${childId}` : FEEDING_TIMER_STORAGE_KEY)
-    if (raw === null) return null
-    const parsed: unknown = JSON.parse(raw)
-    if (typeof parsed !== "object" || parsed === null) return null
-    const state = parsed as Partial<PersistedTimerState>
-    if (typeof state.startedAt !== "string") return null
-    if (Number.isNaN(new Date(state.startedAt).getTime())) return null
-    if (state.feedingType !== "breast_left" && state.feedingType !== "breast_right") {
-      return null
-    }
-    // 送信内容は形を確かめ直したものだけを残す（崩れておれば送信内容だけ捨て、計測は残す）
-    const { submission: rawSubmission, ...rest } = state
-    const submission =
-      rawSubmission === undefined ? null : parsePersistedSubmission(rawSubmission)
-    if (rawSubmission !== undefined && submission === null) {
-      console.warn("[feeding-timer] 端末保存の送信内容が壊れていたため送信内容だけ捨てた")
-    }
-    return {
-      ...(rest as PersistedTimerState),
-      ...(submission ? { submission } : {}),
-    }
+    return raw === null ? null : timerSnapshot(JSON.parse(raw), true)
   } catch {
     return null
   }
@@ -163,7 +177,9 @@ export function readPersistedTimer(childId?: string): PersistedTimerState | null
 
 export function writePersistedTimer(state: PersistedTimerState): boolean {
   try {
-    localStorage.setItem(state.childId ? `${FEEDING_TIMER_STORAGE_KEY}:${state.childId}` : FEEDING_TIMER_STORAGE_KEY, JSON.stringify(state))
+    const snapshot = timerSnapshot(state, false)
+    if (!snapshot) return false
+    localStorage.setItem(snapshot.childId ? `${FEEDING_TIMER_STORAGE_KEY}:${snapshot.childId}` : FEEDING_TIMER_STORAGE_KEY, JSON.stringify(snapshot))
     return true
   } catch (err) {
     // 容量不足・プライベートモード等。計測は画面上では続くが、リロードで消える。

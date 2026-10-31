@@ -15,7 +15,7 @@ export function isMedicalRequest(v:unknown):v is MedicalRequest{
  const x=v.value
  return (x.kind==="vaccination"||x.kind==="checkup")&&typeof x.title==="string"&&x.title.trim().length>0&&x.title.length<=100&&
   (x.dose===null||(Number.isInteger(x.dose)&&Number(x.dose)>=1&&Number(x.dose)<=30))&&(x.kind==="vaccination"||x.dose===null)&&
-  ["planned","completed","cancelled"].includes(String(x.status))&&typeof x.scheduled_date==="string"&&isValidYmd(x.scheduled_date)&&
+  (x.status==="planned"||x.status==="completed"||x.status==="cancelled")&&typeof x.scheduled_date==="string"&&isValidYmd(x.scheduled_date)&&
   (x.completed_date===null||(typeof x.completed_date==="string"&&isValidYmd(x.completed_date)))&&((x.status==="completed")===(x.completed_date!==null))&&
   (x.memo===null||(typeof x.memo==="string"&&x.memo.length<=1000))&&typeof x.remind==="boolean"&&x.source_key===MEDICAL_SOURCES[x.kind].key
 }

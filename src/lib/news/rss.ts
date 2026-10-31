@@ -11,7 +11,9 @@ export function parseNewsFeed(xml:string,region:NewsRegion,now:Date):ParsedNews[
  if(!["rss","rdf:RDF","RDF","feed"].includes(root.name))throw new Error("unsupported feed root")
  const out=new Map<string,ParsedNews>()
  for(const item of items.slice(0,200)){
-  const title=(item.childNamed("title")?.val??"").replace(/<[^>]*>/g,"").replace(/\s+/g," ").trim().slice(0,250)
+  // A headline is text, not sanitized HTML. Character-wise conversion also handles
+  // incomplete/nested tags after XML entity decoding without creating new delimiters.
+  const title=(item.childNamed("title")?.val??"").replace(/[<>]/g,c=>c==="<"?"＜":"＞").replace(/\s+/g," ").trim().slice(0,250)
   if(!title||/会計年度任用職員|職員募集|採用|入札|事業者募集/.test(title))continue
   const link=root.name==="feed"?(item.childrenNamed("link").find(l=>!l.attr.rel||l.attr.rel==="alternate")?.attr.href??""):(item.childNamed("link")?.val??"")
   const url=canonicalNewsUrl(link.trim(),region),rawDate=item.childNamed("pubDate")?.val??item.childNamed("dc:date")?.val??item.childNamed("published")?.val??item.childNamed("updated")?.val

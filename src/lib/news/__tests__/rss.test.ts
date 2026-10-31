@@ -5,6 +5,14 @@ const region=NEWS_REGIONS[0],now=new Date("2026-10-30T23:00:00Z")
 const item=(title="synthetic infant news",url="https://www.city.sapporo.jp/synthetic/a.html?utm_source=fixture",date="2026-10-30T21:00:00Z")=>`<item><title>${title}</title><link>${url}</link><dc:date>${date}</dc:date></item>`
 const rss=(content:string)=>`<rdf:RDF xmlns:dc="https://example.invalid/dc" xmlns:rdf="https://example.invalid/rdf">${content}</rdf:RDF>`
 describe("official RSS boundaries",()=>{
+ it("turns decoded tag delimiters into plain headline characters, including incomplete and nested forms",()=>{
+  for(const text of ['<![CDATA[<script]]>','&lt;script','&#60;script','<![CDATA[<<script>script>alert(1)</script>]]>','&amp;lt;script']){
+   const title=parseNewsFeed(rss(item(text)),region,now)[0].title
+   expect(title).not.toMatch(/[<>]/)
+  }
+  expect(parseNewsFeed(rss(item('<![CDATA[2歳 < 3歳 / 4歳 > 3歳]]>')),region,now)[0].title).toBe('2歳 ＜ 3歳 / 4歳 ＞ 3歳')
+  expect(parseNewsFeed(rss(item('子育て相談のお知らせ')),region,now)[0].title).toBe('子育て相談のお知らせ')
+ })
  it("keeps source/date and deduplicates normalized URLs; never fetches an article",()=>{
   const rows=parseNewsFeed(rss(item()+item("synthetic duplicate","https://www.city.sapporo.jp/synthetic/a.html")),region,now)
   expect(rows).toHaveLength(1);expect(rows[0]).toMatchObject({region_key:"sapporo",title:"synthetic infant news",url:"https://www.city.sapporo.jp/synthetic/a.html",published_at:"2026-10-30T21:00:00.000Z"});expect(rows[0].id).toMatch(/^[a-f0-9]{64}$/)
