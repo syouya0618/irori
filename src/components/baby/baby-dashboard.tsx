@@ -27,10 +27,9 @@ import {
 } from "@/lib/domain/feeding-timer-storage"
 import { BarChart3, Thermometer, TrendingUp } from "lucide-react"
 import { BabyWeeklySummary } from "./weekly-summary/baby-weekly-summary"
-import {
-  GrowthChartSection,
-  growthLatestSummary,
-} from "./charts/growth-chart-section"
+import dynamic from "next/dynamic"
+import { growthLatestSummary } from "@/lib/domain/growth-summary"
+const GrowthChartSection = dynamic(()=>import("./charts/growth-chart-section").then(m=>m.GrowthChartSection),{loading:()=> <p className="py-4 text-xs text-muted-foreground">グラフを読み込み中</p>})
 import {
   BabyCollapsibleSection,
   HomeFoldFrame,
@@ -293,6 +292,7 @@ export function BabyDashboard({
   // 端末に残すもの（下書き・面の開閉・前回の確認の印）の持ち主
   const owner = useMemo<DraftOwner>(() => ({ userId, householdId, ...(childScope && !childScope.isLegacy ? { childId } : {}) }), [userId, householdId, childId, childScope])
   const folds = useHomeFolds(owner)
+  const [growthOpened,setGrowthOpened] = useState(false)
   // 範囲ごとの最新の確認（C1）。初回描画の失敗は最初から「確認できません」
   // 時刻は応答を受け取った瞬間の端末の時計（freshness.ts の既定）。描画中には読まぬ
   const [freshness, setFreshness] = useState<HomeFreshness>(() =>
@@ -976,6 +976,7 @@ export function BabyDashboard({
     useCallback(() => {
       void resyncLogs()
     }, [resyncLogs]),
+    childScope && !childScope.isLegacy ? 30000 : undefined,
   )
 
   // unmount で in-flight の再取得を止める（離脱後の setState を走らせない）。
@@ -1474,9 +1475,9 @@ export function BabyDashboard({
         summary={growthLatestSummary(growthSeries)}
         icon={<TrendingUp size={20} />}
         open={folds.isOpen("growth")}
-        onOpenChange={(o) => folds.setOpen("growth", o)}
+        onOpenChange={(o) => { if(o)setGrowthOpened(true);folds.setOpen("growth", o) }}
       >
-        <GrowthChartSection series={growthSeries} embedded birthDate={babyBirthDate} sex={babySex} />
+        {folds.isOpen("growth")||growthOpened ? <GrowthChartSection series={growthSeries} embedded birthDate={babyBirthDate} sex={babySex} /> : <p className="text-xs text-muted-foreground">{growthSeries.weight.length||growthSeries.height.length?"開くと成長のグラフを表示します":"成長記録を追加すると、体重・身長の曲線が表示されます"}</p>}
       </BabyCollapsibleSection>
     )
   }

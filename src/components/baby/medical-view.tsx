@@ -28,7 +28,7 @@ export function MedicalView({owner,childName,records,truncated}:{owner:SaveOwner
   }catch{if(alive.current)setMessage("保存結果を確認できません。同じ操作で確認し直してください")}})
  }
  const blocked=!ready||saving||pending.length>0
- return <main className="flex flex-col gap-4 px-4 py-8"><Link href="/baby" className="flex min-h-11 items-center text-primary">育児へ戻る</Link><h1 className="text-lg font-semibold">{childName||"子ども"}の予防接種・健診</h1>
+ return <div className="flex flex-col gap-4 px-4 py-8"><Link href="/baby" className="flex min-h-11 items-center text-primary">育児へ戻る</Link><h1 className="text-lg font-semibold">{childName||"子ども"}の予防接種・健診</h1>
   <p className="text-sm text-muted-foreground">日程・接種の要否は医療機関や自治体へ確認してください。自動で接種時期や健康状態を判定しません。</p>
   <details className="rounded-xl border p-3"><summary className="min-h-11">公式資料と収録版</summary>{Object.values(MEDICAL_SOURCES).map(s=><p key={s.key} className="py-2 text-sm"><a className="underline" href={s.url} target="_blank" rel="noreferrer">{s.title}</a>（{s.version}）</p>)}</details>
   {message&&<p role="status">{message}</p>}{pending.map(p=><button key={p.id} disabled={saving} className="min-h-11 rounded-xl border px-3" onClick={()=>send(p,true)}>保存結果を同じ操作で確認</button>)}
@@ -53,5 +53,5 @@ export function MedicalView({owner,childName,records,truncated}:{owner:SaveOwner
   <label>名称・メモで検索<input className={input} value={query} onChange={e=>setQuery(e.target.value)}/></label>
   {truncated&&<p role="alert">直近500件のみの表示・検索です。全件の取得には追加記録のエクスポートを利用してください。</p>}
   <ul className="flex flex-col gap-3">{records.filter(r=>`${r.title} ${r.memo??""}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(r=><li key={r.id} className="glass flex flex-col gap-2 rounded-2xl p-4"><p>{r.scheduled_date} {r.title}{r.dose?` ${r.dose}回目`:""}</p><p className="text-sm">{r.status==="completed"?`完了 ${r.completed_date}`:r.status==="cancelled"?"取消":"予定"}</p>{r.memo&&<p className="whitespace-pre-wrap text-sm">{r.memo}</p>}<p className="text-xs text-muted-foreground">資料版: {r.source_key}</p><button disabled={blocked} className="min-h-11 rounded-xl border" onClick={()=>setEditing(r)}>予定・実績を編集</button></li>)}</ul>
- </main>
+ </div>
 }

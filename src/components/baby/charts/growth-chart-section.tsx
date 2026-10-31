@@ -90,15 +90,7 @@ function RecentMeasurements({
  * 畳んだ見出しに出す最新値の要約（「最新 5.15kg・57cm」）。記録が無ければ案内文。
  * 形式は下のグラフの見出しと同じ formatKg / formatCm に揃える。
  */
-export function growthLatestSummary(series: GrowthSeries): string {
-  const w = series.weight.at(-1)?.value ?? null
-  const h = series.height.at(-1)?.value ?? null
-  const parts = [
-    w !== null ? formatKg(w) : null,
-    h !== null ? formatCm(h) : null,
-  ].filter(Boolean)
-  return parts.length > 0 ? `最新 ${parts.join("・")}` : "体重・身長の測定はまだありません"
-}
+export { growthLatestSummary } from "@/lib/domain/growth-summary"
 
 export function GrowthChartSection({
   series,

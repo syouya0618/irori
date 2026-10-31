@@ -15,7 +15,7 @@ export default async function NewsPage({searchParams}:{searchParams:Promise<{all
   supabase.rpc("news_source_status"),
  ]);if(error||se)throw new Error("ニュースを取得できませんでした");return {articles:data??[],lastSuccess:typeof status==="string"?status:null}}
  const {articles,lastSuccess}=await read(),visible=all?articles:articles.filter(a=>relevantNews(a,months))
- return <main className="flex flex-col gap-4 px-4 py-8"><Link href="/baby" className="flex min-h-11 items-center text-primary">育児へ戻る</Link><h1 className="text-lg font-semibold">地域の子育てニュース</h1>
+ return <div className="flex flex-col gap-4 px-4 py-8"><Link href="/baby" className="flex min-h-11 items-center text-primary">育児へ戻る</Link><h1 className="text-lg font-semibold">地域の子育てニュース</h1>
   <NewsPreferences key={pref?.updated_at??"new"} region={pref?.region_key??null} enabled={pref?.enabled??false} version={pref?.updated_at??null}/>
   <Link href="/settings" className="min-h-11 py-3 text-sm text-primary">端末の通知設定</Link>
   {region&&<><p className="text-sm"><a className="underline" href={region.guide} target="_blank" rel="noreferrer">出典: {region.publisher} 公式RSS</a></p><p className="text-xs text-muted-foreground">{lastSuccess?`最終取得: ${toJstDateString(lastSuccess)}（日本時間）`:"まだ取得していません。次の朝の取得を待ってください。"}{lastSuccess&&Date.parse(lastSuccess)<now.getTime()-25*3600000?" 更新を確認できていません。自治体の公式サイトも確認してください。":""}</p>
@@ -24,5 +24,5 @@ export default async function NewsPage({searchParams}:{searchParams:Promise<{all
    {!visible.length&&lastSuccess&&<p>この範囲に新しい記事はありません。</p>}
    <ul className="flex flex-col gap-3">{visible.filter(a=>canonicalNewsUrl(a.url,region)!==null).map(a=><li key={a.id} className="glass rounded-2xl p-4"><p className="mb-2 text-xs text-muted-foreground">{toJstDateString(a.published_at)}・{region.publisher}</p><a href={a.url} target="_blank" rel="noreferrer" className="flex min-h-11 items-center text-sm underline">{a.title}</a></li>)}</ul>
   </>}
- </main>
+ </div>
 }

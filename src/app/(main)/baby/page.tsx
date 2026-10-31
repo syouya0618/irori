@@ -6,7 +6,6 @@ import { BabyDashboard } from "@/components/baby/baby-dashboard"
 import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
 import { FEEDING_INTERVAL_DEFAULT } from "@/lib/domain/baby-feeding-interval"
 import { decodeBottleDefault } from "@/lib/domain/bottle-default"
-import { selectBottleDefault } from "@/lib/supabase/bottle-default-query"
 import { resolveBabyDate, type BabySearchParams } from "@/lib/domain/baby-link"
 import { CALENDAR_EVENT_COLUMNS } from "@/lib/domain/calendar-event-columns"
 import {
@@ -50,7 +49,6 @@ export default async function BabyPage({
     { data: lastNursingData, error: lastNursingError },
     { data: upcomingEvents, error: upcomingError },
     { data: members, error: membersError },
-    bottleDefaultResult,
   ] = await Promise.all([
       selectBabyLogsOfDay(supabase, householdId, selectedDate),
       selectBabyLogsOfWeek(supabase, householdId, todayJst),
@@ -82,20 +80,13 @@ export default async function BabyPage({
         .from("profiles")
         .select("id, display_name")
         .eq("household_id", householdId),
-      // いつものミルク量（クイック記録の 1 タップの量）。上の households の select へ混ぜず
-      // 別に読む（混ぜると migration 前の DB で赤子の名前・授乳間隔まで落ちる。
-      // bottle-default-query.ts の注記）。未設定と取得失敗は decodeBottleDefault が分ける
-      selectBottleDefault(supabase, householdId, undefined, child.id),
     ])
 
+  // children is already required and validated by getChildContext. Reuse the same selected row.
+  const bottleDefaultResult = { data: child, error: null }
   const bottleDefault = decodeBottleDefault(bottleDefaultResult)
-  if (bottleDefaultResult.error) {
-    logSupabaseError("baby", "bottle default lookup failed", bottleDefaultResult.error, {
-      householdId,
-    })
-  } else if (bottleDefault.status === "error") {
-    // error 無しで読めぬ（行が見えぬ・範囲外の値）。量は出さず、画面は取得失敗として扱う
-    console.error("[baby] bottle default lookup returned no usable row", { householdId })
+  if (bottleDefault.status === "error") {
+    console.error("[baby] child bottle default returned no usable value", { householdId })
   }
 
   if (logsError) {

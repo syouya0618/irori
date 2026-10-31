@@ -487,8 +487,9 @@ describe("BabyDashboard / baby_logs の復帰時再取得（P1-04）", () => {
       logged_at: "2026-07-01T10:00:00+09:00",
     })
     await renderDashboard({ initialGrowthLogs: [growth] })
-    // 見出しの最新値と直近の一覧の両方に出る（1 つ以上）
-    expect(screen.getAllByText("5.2kg").length).toBeGreaterThan(0)
+    // Open the lazy chart before checking its actual values and subsequent deletion.
+    fireEvent.click(screen.getByRole("button",{name:/成長の記録/}))
+    expect((await screen.findAllByText("5.2kg")).length).toBeGreaterThan(0)
 
     await fireVisible()
     await resolveLatestResync({

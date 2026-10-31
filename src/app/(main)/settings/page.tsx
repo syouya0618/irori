@@ -128,6 +128,7 @@ export default async function SettingsPage({
     { data: lastDelivery, error: lastDeliveryError },
     { data: notificationPrefs, error: notificationPrefsError },
     feedbackUnseenUpdates,
+    childContext,
   ] = await Promise.all([
     supabase
       .from("households")
@@ -187,6 +188,7 @@ export default async function SettingsPage({
     // 要望・改善提案: 自分の要望への未読の更新（ヘルプのカードの件数）。
     // 読めなかった時は null（「0 件」と偽らぬ。関数がログを残す）。
     countMyUnseenFeedback(supabase, userId),
+    getChildContext(),
   ])
 
   // 受信箱の未読は運用者だと分かった後にだけ数える（運用者でなければ RLS が自分の行だけを
@@ -296,7 +298,6 @@ export default async function SettingsPage({
   // 同じ画面の中で「3分前」と「4分前」が混ざりうる）。
   const now = new Date()
 
-  const childContext = await getChildContext()
   return (
     <ChildScopeProvider key={childContext.child.id} scope={{ id: childContext.child.id, isLegacy: childContext.child.is_legacy, updatedAt: childContext.child.updated_at }}>
     <SettingsContent

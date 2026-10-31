@@ -1,3 +1,4 @@
+import { LocalWebVitals } from "@/components/common/local-web-vitals"
 import { redirect } from "next/navigation"
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { BottomNav } from "@/components/common/bottom-nav"
@@ -54,6 +55,7 @@ export default async function MainLayout({
           偶然それを埋めておった。殻の側で契約として確保する */}
       <main className="mx-auto max-w-lg pb-nav">{children}</main>
       <BottomNav />
+      <LocalWebVitals />
       {/* 初回ユーザーに使い方ツアーを表示（既読は localStorage 判定・自己 gating） */}
       <OnboardingTour />
     </div>

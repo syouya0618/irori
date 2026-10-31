@@ -34,7 +34,7 @@ export function CustomView({owner,childName,fields,fieldsTruncated,records,hasMo
  const definition=editing?{id:editing.field_id,label:editing.field_label,value_type:editing.value_type,options:editing.field_options}:fields.find(f=>f.id===selected&&!f.archived)
  const options=definition&&Array.isArray(definition.options)?definition.options.filter((x):x is string=>typeof x==="string"):[]
  const href=(n:number)=>`/baby/custom?${new URLSearchParams({child:owner.childId,q:query,field:fieldFilter,page:String(n)})}`
- return <main className="flex flex-col gap-4 px-4 py-8"><Link href="/baby" className="flex min-h-11 items-center text-primary">育児へ戻る</Link><h1 className="text-lg font-semibold">{childName||"子ども"}のカスタム記録</h1>
+ return <div className="flex flex-col gap-4 px-4 py-8"><Link href="/baby" className="flex min-h-11 items-center text-primary">育児へ戻る</Link><h1 className="text-lg font-semibold">{childName||"子ども"}のカスタム記録</h1>
   {message&&<p role="status">{message}</p>}{pending.map(p=><button key={p.id} className={button} disabled={saving} onClick={()=>send(p,true)}>保存結果を同じ操作で確認</button>)}
   <form key={editing?.id??"new-record"} className="glass flex flex-col gap-3 rounded-2xl p-4" onSubmit={e=>{
    e.preventDefault();if(blocked||!definition)return
@@ -65,5 +65,5 @@ export function CustomView({owner,childName,fields,fieldsTruncated,records,hasMo
   <ul className="flex flex-col gap-3">{records.map(r=><li key={r.id} className="glass flex flex-col gap-2 rounded-2xl p-4 text-sm"><p>{toJstDateString(r.logged_at)} {formatTimeJst(r.logged_at)} {r.field_label}{r.voided?"（除外）":""}</p><p className="break-all">{r.value_type==="datetime"?`${toJstDateString(String(r.value))} ${formatTimeJst(String(r.value))}`:displayCustomValue(r.value,r.value_type)}</p>{r.memo&&<p className="whitespace-pre-wrap">{r.memo}</p>}<button className={button} disabled={blocked} onClick={()=>setEditing(r)}>記録を編集</button></li>)}</ul>
   <nav className="flex justify-between">{page>0&&<Link className="min-h-11 p-3 text-primary" href={href(page-1)}>前の100件</Link>}{hasMore&&<Link className="min-h-11 p-3 text-primary" href={href(page+1)}>次の100件</Link>}</nav>
   <form id="export" action="/api/child-records-export" method="get" className="flex flex-col gap-3 rounded-2xl border p-4"><h2 className="font-semibold">追加記録のエクスポート</h2><p className="text-sm">この子どもの睡眠・予防接種・健診・カスタム記録をJSONで書き出します。除外・廃止後の履歴も含みます。既存の育児ログ・日記は設定画面から別途取得できます。</p><input type="hidden" name="child" value={owner.childId}/><label>開始日（任意）<input name="from" type="date" className={input}/></label><label>終了日（任意）<input name="to" type="date" className={input}/></label><button className={button}>追加記録のJSONを書き出す</button><p className="text-xs text-muted-foreground">1ファイルは同一時点の記録。2万件・約3.5MBを超える場合は期間を短くしてください。部分ファイルを全件として返しません。</p></form>
- </main>
+ </div>
 }
