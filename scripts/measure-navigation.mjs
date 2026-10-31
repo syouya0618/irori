@@ -2,8 +2,9 @@
 // Build with the synthetic loopback URL/key before running. No environment files or live providers are read.
 import { createServer } from "node:http"
 import { spawn,spawnSync } from "node:child_process"
-import { writeFileSync,existsSync,mkdirSync } from "node:fs"
+import { writeFileSync,existsSync,mkdirSync,readdirSync } from "node:fs"
 import { chromium } from "@playwright/test"
+if(readdirSync(".").some(name=>/^\.env(?:\.|$)/.test(name)))throw new Error("measurement requires a checkout without environment files")
 const args=process.argv.slice(2),output=args.find(a=>!a.startsWith("--")),trials=Number(args.find(a=>a.startsWith("--trials="))?.split("=")[1]??5)
 if(!Number.isInteger(trials)||trials<3||trials>20)throw new Error("use 3..20 trials")
 const source=spawnSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).stdout.trim()
@@ -44,11 +45,12 @@ const api=createServer(async(req,res)=>{
 await new Promise(resolve=>api.listen(55439,"127.0.0.1",resolve))
 const childEnv=Object.fromEntries(["PATH","HOME","TMPDIR","LANG"].filter(k=>process.env[k]).map(k=>[k,process.env[k]]))
 Object.assign(childEnv,{NEXT_PUBLIC_SUPABASE_URL:"http://127.0.0.1:55439",NEXT_PUBLIC_SUPABASE_ANON_KEY:"synthetic-public-key",NEXT_PUBLIC_APP_URL:"http://127.0.0.1:55438",NEXT_TELEMETRY_DISABLED:"1",TZ:"UTC"})
-const app=spawn("pnpm",["exec","next","start","-H","127.0.0.1","-p","55438"],{env:childEnv,stdio:"ignore"})
+const app=spawn("pnpm",["exec","next","start","-H","127.0.0.1","-p","55438"],{env:childEnv,stdio:["ignore","pipe","pipe"]})
+let readyOutput="";app.stdout.on("data",chunk=>{readyOutput=(readyOutput+chunk.toString()).slice(-2000)});app.stderr.on("data",()=>{})
 let browser
 const idle=async()=>{let quiet=0;for(let n=0;n<100;n++){await new Promise(r=>setTimeout(r,50));quiet=active===0?quiet+1:0;if(quiet>=2)return}throw new Error("fixture API did not settle")}
 try{
- for(let i=0;i<100;i++){try{if((await fetch("http://127.0.0.1:55438/login",{signal:AbortSignal.timeout(1500)})).ok)break}catch{}if(i===99)throw new Error("local server did not start");await new Promise(r=>setTimeout(r,200))}
+ for(let i=0;i<100;i++){if(app.exitCode!==null)throw new Error("owned local server exited before readiness");if(!readyOutput.includes("Ready in")){await new Promise(r=>setTimeout(r,200));continue}try{if((await fetch("http://127.0.0.1:55438/login",{signal:AbortSignal.timeout(1500)})).ok)break}catch{}if(i===99)throw new Error("local server did not start");await new Promise(r=>setTimeout(r,200))}
  const chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";browser=await chromium.launch(existsSync(chrome)?{executablePath:chrome}:{})
  const results=[],scenarios=[{name:"normal",latency:0,rows:30,children:1},{name:"many-records",latency:0,rows:800,children:1},{name:"multiple-children",latency:0,rows:30,children:4},{name:"slow-network",latency:200,rows:30,children:1,network:true}]
  for(const scenario of scenarios){latency=scenario.latency;rowCount=scenario.rows;childCount=scenario.children
