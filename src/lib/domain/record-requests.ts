@@ -1,4 +1,5 @@
 import { isRecord } from "./child-sharing"
+import { sha256 } from "@noble/hashes/sha2.js"
 import { isClientId } from "@/lib/utils/client-id"
 import type { SaveOwner } from "./save-attempt"
 import { isMedicalRequest } from "./medical"
@@ -52,10 +53,28 @@ function encrypted(v: unknown): v is SealedRequest {
 }
 function bytes(value: string) { return Uint8Array.from(atob(value), c => c.charCodeAt(0)) }
 function base64(value: Uint8Array) { return btoa(Array.from(value, n => String.fromCharCode(n)).join("")) }
-function epoch(owner: SaveOwner): string | null {
+function epoch(owner: SaveOwner, switchOwner = false): string | null {
+ // A stable pseudonym minimizes duplicate raw IDs; this is not authentication,
+ // encryption of every identifier, or protection against same-origin script.
+ // Keep owner selection synchronous, before crypto/IDB awaits. Async hashing
+ // would let a delayed previous-owner transition reactivate that owner.
+ const digest = sha256(new TextEncoder().encode("irori:record-request-owner:v2\0" + ownerKey(owner)))
+ const ownerHash = Array.from(digest, n => n.toString(16).padStart(2, "0")).join("")
  const current = localStorage.getItem(ACTIVE_OWNER)
- if (current !== null) return JSON.parse(current).owner === ownerKey(owner) ? current : null
- const next = JSON.stringify({ owner: ownerKey(owner), epoch: crypto.randomUUID() })
+ if (current !== null) {
+  const parsed: unknown = JSON.parse(current)
+  if (!isRecord(parsed) || !isClientId(parsed.epoch)) return null
+  if (parsed.schema === 2 && typeof parsed.ownerHash === "string" && /^[a-f0-9]{64}$/.test(parsed.ownerHash)) {
+   if (parsed.ownerHash === ownerHash) return current
+   if (!switchOwner) return null
+  } else if (parsed.schema === undefined && typeof parsed.owner === "string") {
+   // Migrate only the known legacy marker. Unknown control schemas stay intact.
+   const previous: unknown = JSON.parse(parsed.owner)
+   if (!Array.isArray(previous) || previous.length !== 2 || previous.some(v => typeof v !== "string" || !v)) return null
+   if (parsed.owner !== ownerKey(owner) && !switchOwner) return null
+  } else return null
+ }
+ const next = JSON.stringify({ schema: 2, ownerHash, epoch: crypto.randomUUID() })
  localStorage.setItem(ACTIVE_OWNER, next)
  return next
 }
@@ -138,9 +157,8 @@ function envelopeOwner(v:unknown):SaveOwner|null{
 export async function purgeOtherRecordRequests(owner: SaveOwner) {
  try {
   const removedOwners = new Map<string, SaveOwner>()
-  const current = localStorage.getItem(ACTIVE_OWNER)
-  if (!current || JSON.parse(current).owner !== ownerKey(owner)) localStorage.setItem(ACTIVE_OWNER, JSON.stringify({ owner: ownerKey(owner), epoch: crypto.randomUUID() }))
-  const started = localStorage.getItem(ACTIVE_OWNER)
+  const started = epoch(owner, true)
+  if (!started) return
   for (const k of Object.keys(localStorage)) {
    if (!k.startsWith(RECORD_REQUEST_PREFIX)) continue
    let value: unknown; try { value = JSON.parse(localStorage.getItem(k) ?? "null") } catch { continue }

@@ -9,6 +9,65 @@ const storageKey = `${RECORD_REQUEST_PREFIX}${owner.userId}:${owner.householdId}
 beforeEach(() => localStorage.clear())
 afterEach(() => vi.restoreAllMocks())
 
+const markerKey = "irori:record-request-owner:v1"
+it("minimizes the active-owner marker and keeps it stable across children and same-owner relogin", async () => {
+ expect(await storeRecordRequest(entry)).toBe(true)
+ const marker = localStorage.getItem(markerKey)!
+ expect(Object.keys(JSON.parse(marker)).sort()).toEqual(["epoch", "ownerHash", "schema"])
+ expect(JSON.parse(marker)).toMatchObject({ schema: 2, ownerHash: expect.stringMatching(/^[a-f0-9]{64}$/) })
+ for (const value of [owner.userId, owner.householdId, owner.childId, entry.id, "payload", "memo"]) expect(marker).not.toContain(value)
+ await purgeOtherRecordRequests({ ...owner, childId: entry.id })
+ expect(localStorage.getItem(markerKey)).toBe(marker)
+ expect(await readRecordRequests(owner)).toEqual({ items: [entry], unreadable: 0 })
+ removeRecordRequest(entry)
+ expect(localStorage.getItem(markerKey)).toBe(marker)
+ expect(await storeRecordRequest(entry)).toBe(true)
+})
+it("rewrites a known legacy owner marker without discarding immutable or future requests", async () => {
+ expect(await storeRecordRequest(entry)).toBe(true)
+ const raw = localStorage.getItem(storageKey)
+ const futureKey = storageKey + "-future"
+ localStorage.setItem(futureKey, '{"schema":99,"opaque":"synthetic future"}')
+ localStorage.setItem(markerKey, JSON.stringify({ owner: JSON.stringify([owner.userId, owner.householdId]), epoch: crypto.randomUUID() }))
+ expect(await readRecordRequests(owner)).toEqual({ items: [entry], unreadable: 1 })
+ expect(localStorage.getItem(markerKey)).not.toContain(owner.userId)
+ expect(localStorage.getItem(storageKey)).toBe(raw)
+ expect(localStorage.getItem(futureKey)).not.toBeNull()
+})
+it.each(['{"schema":99,"opaque":"future marker"}', '{"schema":2,"ownerHash":"invalid","epoch":"invalid"}', 'broken JSON'])("preserves an unknown or damaged owner marker and fails closed: %s", async marker => {
+ localStorage.setItem(markerKey, marker)
+ expect(await storeRecordRequest(entry)).toBe(false)
+ await purgeOtherRecordRequests(owner)
+ expect(localStorage.getItem(markerKey)).toBe(marker)
+ expect(localStorage.getItem(storageKey)).toBeNull()
+})
+it("cancels an in-flight write across A to B to A even when the owner fingerprint returns", async () => {
+ const original = keys.recordRequestKey
+ let release!: () => void
+ const blocked = new Promise<void>(resolve => { release = resolve })
+ vi.spyOn(keys, "recordRequestKey").mockImplementation(async (...args) => { await blocked; return original(...args) })
+ const pending = storeRecordRequest(entry)
+ const first = JSON.parse(localStorage.getItem(markerKey)!)
+ await purgeOtherRecordRequests({ ...owner, userId: "another-synthetic-user" })
+ await purgeOtherRecordRequests(owner)
+ const returned = JSON.parse(localStorage.getItem(markerKey)!)
+ expect(returned.ownerHash).toBe(first.ownerHash)
+ expect(returned.epoch).not.toBe(first.epoch)
+ release()
+ expect(await pending).toBe(false)
+ expect(localStorage.getItem(storageKey)).toBeNull()
+})
+it("selects the owner synchronously before async key work and matches standard SHA-256", async () => {
+ await purgeOtherRecordRequests(owner)
+ const marker = JSON.parse(localStorage.getItem(markerKey)!)
+ const expected = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("irori:record-request-owner:v2\0" + JSON.stringify([owner.userId, owner.householdId])))
+ expect(marker.ownerHash).toBe(Array.from(new Uint8Array(expected), n => n.toString(16).padStart(2, "0")).join(""))
+ const switched = purgeOtherRecordRequests({ ...owner, userId: "another-synthetic-user" })
+ expect(JSON.parse(localStorage.getItem(markerKey)!).ownerHash).not.toBe(marker.ownerHash)
+ await switched
+ expect(await storeRecordRequest(entry)).toBe(false)
+})
+
 it("persists only ciphertext while retaining exact operation, target, microsecond version and false", async () => {
  expect(await storeRecordRequest(entry)).toBe(true)
  const raw = localStorage.getItem(storageKey)!

@@ -8,6 +8,7 @@ const repo=fileURLToPath(new URL("..",import.meta.url))
 const require=createRequire(repo+"/package.json")
 const ts=require("typescript")
 const {chromium,webkit}=require("@playwright/test")
+const hashModules=path.join(path.dirname(require.resolve("@noble/hashes/sha2.js")),"esm")
 const origin="http://127.0.0.1:55438"
 const previousSource=execFileSync("git",["show","83bc267336db6c2199f1ffa0c5c737c03809aaec:src/lib/domain/record-requests.ts"],{cwd:repo,encoding:"utf8"})
 const results=[]
@@ -20,10 +21,15 @@ for(const [name,engine] of Object.entries({chromium,webkit})){
   if(new URL(route.request().url()).origin!==origin)throw Error("external network forbidden")
   const pathname=new URL(route.request().url()).pathname
   if(pathname==="/"){await route.fulfill({contentType:"text/html",body:"<!doctype html><title>synthetic storage lab</title>"});return}
+  if(/^\/vendor\/noble\/[a-z0-9_]+\.js$/.test(pathname)){
+   const code=readFileSync(path.join(hashModules,path.posix.basename(pathname)),"utf8").replaceAll("'@noble/hashes/crypto'","'/vendor/noble/crypto.js'")
+   await route.fulfill({contentType:"text/javascript",body:code});return
+  }
   if(!pathname.startsWith("/src/")||!pathname.endsWith(".js")||pathname.includes(".."))throw Error("unexpected module")
   const filename=repo+pathname.replace(/\.js$/,".ts")
   let code=ts.transpileModule(pathname==="/src/lib/domain/legacy-record-requests.js"?previousSource:readFileSync(filename,"utf8"),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText
   code=code.replace(/from\s*["']([^"']+)["']/g,(match,specifier)=>{
+   if(specifier.startsWith("@noble/hashes/"))return 'from "/vendor/noble/'+specifier.slice("@noble/hashes/".length).replace(/\.js$/,"")+'.js"'
    const url=specifier.startsWith("@/")?"/src/"+specifier.slice(2):path.posix.resolve(path.posix.dirname(pathname),specifier)
    return 'from "'+url.replace(/\.ts$/,"")+'.js"'
   })
@@ -47,13 +53,18 @@ for(const [name,engine] of Object.entries({chromium,webkit})){
   const checks=[]
   assert(await m.storeRecordRequest(request),"encrypt write")
   const raw=localStorage.getItem(k);assert(raw&&!raw.includes("synthetic-private")&&!raw.includes("2026-11-01")&&!raw.includes("vaccination"),"plaintext at rest")
+  const marker=localStorage.getItem("irori:record-request-owner:v1"),parsed=JSON.parse(marker)
+  assert(JSON.stringify(Object.keys(parsed).sort())===JSON.stringify(["epoch","ownerHash","schema"])&&parsed.schema===2&&/^[a-f0-9]{64}$/.test(parsed.ownerHash),"minimal owner marker")
+  for(const value of [owner.userId,owner.householdId,c,id,"payload","memo"])assert(!marker.includes(value),"raw owner marker")
+  const standard=await crypto.subtle.digest("SHA-256",new TextEncoder().encode("irori:record-request-owner:v2\0"+JSON.stringify([owner.userId,owner.householdId])))
+  assert(parsed.ownerHash===Array.from(new Uint8Array(standard),n=>n.toString(16).padStart(2,"0")).join(""),"standard owner fingerprint")
   assert(JSON.stringify((await m.listRecordRequests(owner))[0])===JSON.stringify(request),"roundtrip exact")
   const previous=await import("/src/lib/domain/legacy-record-requests.js")
   assert(previous.unreadableRecordCount(owner)===1&&previous.listRecordRequests(owner).length===0,"old bundle must block opaque encrypted request")
   await m.storeRecordRequest({...request,payload:{...request.payload,value:{...request.payload.value,title:"changed"}}})
   assert(localStorage.getItem(k)===raw,"first write immutable");checks.push("encrypted-first-write")
   window.fixtureRequest=request;window.fixtureKey=k;window.fixtureRaw=raw
-  checks.push("previous-bundle-blocks-new-envelope")
+  checks.push("previous-bundle-blocks-new-envelope","minimal-owner-marker")
   return checks
  })
  results.push({browser:name,checks:result})
@@ -69,13 +80,16 @@ for(const [name,engine] of Object.entries({chromium,webkit})){
   if(loaded.unreadable||loaded.items.length!==1||loaded.items[0].payload.value.memo!=="synthetic-private-memo")throw Error("restart restore")
   window.fixtureRequest=loaded.items[0];window.fixtureKey=m.RECORD_REQUEST_PREFIX+owner.userId+":"+owner.householdId+":"+owner.childId+":"+loaded.items[0].id
   window.fixtureRaw=localStorage.getItem(window.fixtureKey)
+  const marker=localStorage.getItem("irori:record-request-owner:v1")
+  await m.purgeOtherRecordRequests({...owner,childId:"e9000000-0000-4000-8000-000000000009"})
+  if(localStorage.getItem("irori:record-request-owner:v1")!==marker)throw Error("same-owner restart/child switch changed marker")
   const db=await new Promise((resolve,reject)=>{const r=indexedDB.open("irori-record-request-keys",1);r.onsuccess=()=>resolve(r.result);r.onerror=reject})
   const key=await new Promise((resolve,reject)=>{const tx=db.transaction("keys","readonly"),r=tx.objectStore("keys").get(JSON.stringify([owner.userId,owner.householdId]));r.onsuccess=()=>resolve(r.result);r.onerror=reject})
   if(key.extractable)throw Error("extractable key")
   let exported=false;try{await crypto.subtle.exportKey("raw",key);exported=true}catch{}
   if(exported)throw Error("key export")
   db.close()
-  return ["browser-restart-idb-key","key-nonextractable"]
+  return ["browser-restart-idb-key","key-nonextractable","same-owner-restart-marker"]
  })})
  results.push({browser:name,checks:await page.evaluate(async()=>{
   const m=await import("/src/lib/domain/record-requests.js"),request=window.fixtureRequest,k=window.fixtureKey
@@ -120,6 +134,7 @@ for(const [name,engine] of Object.entries({chromium,webkit})){
  })})
  await page.evaluate(async()=>{const m=await import("/src/lib/domain/record-requests.js");await m.purgeOtherRecordRequests({userId:"parallel-fixture",householdId:"parallel-household"})})
  const second=await context.newPage();await second.goto(origin)
+ await page.evaluate(()=>{localStorage.removeItem("irori:record-request-owner:v1")})
  const parallel=async(page,id)=>page.evaluate(async id=>{
   const m=await import("/src/lib/domain/record-requests.js"),c="e9000000-0000-4000-8000-000000000001"
   return m.storeRecordRequest({schema:1,id,owner:{userId:"parallel-fixture",householdId:"parallel-household",childId:c},kind:"custom",payload:{operation:"record",id,childId:c,version:null,fieldId:c,value:false,loggedAt:"2026-10-31T00:00:00Z",memo:null,voided:false}})
@@ -128,7 +143,7 @@ for(const [name,engine] of Object.entries({chromium,webkit})){
  if(!written.every(Boolean))throw Error("parallel writes")
  const restored=await page.evaluate(async()=>{const m=await import("/src/lib/domain/record-requests.js");return m.readRecordRequests({userId:"parallel-fixture",householdId:"parallel-household"})})
  if(restored.items.length!==2||restored.unreadable)throw Error("parallel key creation lost a ciphertext")
- results.push({browser:name,checks:["parallel-tabs-key-creation"]})
+ results.push({browser:name,checks:["parallel-tabs-key-creation","cold-owner-marker-initialization"]})
  results.push({browser:name,checks:await page.evaluate(async()=>{
   const m=await import("/src/lib/domain/record-requests.js"),owner={userId:"parallel-fixture",householdId:"parallel-household",childId:"e9000000-0000-4000-8000-000000000001"}
   const open=indexedDB.open.bind(indexedDB)
@@ -140,8 +155,8 @@ for(const [name,engine] of Object.entries({chromium,webkit})){
    return request
   }
   const stale=m.purgeOtherRecordRequests({userId:"other-fixture",householdId:"other-household"})
-  indexedDB.open=open
   await ready
+  indexedDB.open=open
   await m.purgeOtherRecordRequests(owner)
   const id="e9000000-0000-4000-8000-000000000007",c=owner.childId
   const entry={schema:1,id,owner,kind:"custom",payload:{operation:"record",id,childId:c,version:null,fieldId:c,value:false,loggedAt:"2026-10-31T00:00:00Z",memo:null,voided:false}}
@@ -155,6 +170,29 @@ for(const [name,engine] of Object.entries({chromium,webkit})){
   const migrated=await Promise.all([m.readRecordRequests(owner),m.readRecordRequests(owner)])
   if(migrated.some(r=>r.items.length!==1||r.unreadable))throw Error("parallel migration reported false corruption")
   return ["delayed-cleanup-returned-owner","parallel-legacy-readers"]
+ })})
+ results.push({browser:name,checks:await page.evaluate(async()=>{
+  const m=await import("/src/lib/domain/record-requests.js"),owner={userId:"parallel-fixture",householdId:"parallel-household",childId:"e9000000-0000-4000-8000-000000000001"}
+  const markerKey="irori:record-request-owner:v1",id="e9000000-0000-4000-8000-000000000007",k=m.RECORD_REQUEST_PREFIX+owner.userId+":"+owner.householdId+":"+owner.childId+":"+id
+  const before=localStorage.getItem(k)
+  localStorage.setItem(markerKey,JSON.stringify({owner:JSON.stringify([owner.userId,owner.householdId]),epoch:crypto.randomUUID()}))
+  const migrated=await m.readRecordRequests(owner)
+  if(migrated.items.length!==1||migrated.unreadable||localStorage.getItem(k)!==before||localStorage.getItem(markerKey).includes(owner.userId))throw Error("legacy marker migration")
+  const request=migrated.items[0],originalMarker=localStorage.getItem(markerKey)
+  const stale=m.purgeOtherRecordRequests({userId:"late-owner",householdId:"late-household"})
+  if(localStorage.getItem(markerKey)===originalMarker)throw Error("owner switch was deferred")
+  await m.purgeOtherRecordRequests(owner)
+  const marker=localStorage.getItem(markerKey)
+  await stale
+  if(localStorage.getItem(markerKey)!==marker)throw Error("late cleanup reactivated old owner")
+  if(!await m.storeRecordRequest(request))throw Error("owner return recovery")
+  const future='{"schema":99,"opaque":"synthetic future control"}'
+  localStorage.setItem(markerKey,future)
+  if(await m.storeRecordRequest(request))throw Error("unknown marker admitted write")
+  await m.purgeOtherRecordRequests(owner)
+  if(localStorage.getItem(markerKey)!==future)throw Error("unknown marker destroyed")
+  localStorage.setItem(markerKey,marker)
+  return ["legacy-marker-migration","synchronous-owner-transition","future-owner-marker-preserved"]
  })})
  await context.close();context=await engine.launchPersistentContext(profile);await configure(context);page=await context.newPage();await page.goto(origin)
  const afterRestart=await page.evaluate(async()=>{const m=await import("/src/lib/domain/record-requests.js");return m.readRecordRequests({userId:"parallel-fixture",householdId:"parallel-household"})})
