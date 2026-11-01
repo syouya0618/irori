@@ -61,3 +61,16 @@ AIなしでRSSを閲覧・更新できる。使う場合だけ `NEWS_AI_ENABLED=
 | 更新案内 | 設定最下部 → 更新履歴を見る | `release-notes.ts` |
 
 既存機能の実装を示す表であり、今回すべての操作経路を実Supabase・実機で再検証済みとする表ではない。
+
+## 今回の配送前確認
+
+- 開始点: `54bee950ddb40de57d3e985cbbef2aa670c8729c`。公開remote mainを取得し一致を確認。並行PR #249/#247/#246/#225/#204は変更していない。
+- 掛川の実parser smoke: 市19件・施設20件・居場所19件を採用（計58、地域内重複なし）。実HTTP/XML確認とは別に、全件の公式origin・地域・配信元対応を検査した。本文は保存していない。
+- 合成Chrome画面: 390/1280pxで掛川保存、一覧、年齢解除、更新cooldown、通知設定、再読込、札幌/横浜への切替を確認。実SupabaseのAuth/PostgREST/Realtime・iPhone/PWA実機の受入は未実行。
+- PostgreSQL 17 + pgTAP 1.3.4: Auth/Storage最小shim付き使い捨てDBで全55 migrationの新規導入、既存53本への合成設定・記事・収集履歴を追加したupgrade保持を確認。これは実Supabaseスタックの証明ではない。
+- 低速初回（同じwebpack build条件・Chrome390px・合成API200ms/回、5回）: mainの操作可能中央値5,083ms、範囲5,062〜5,970ms。遅延読込み案は5,792ms、範囲5,771〜5,880msへ悪化したため撤回。内容表示だけの5,034→4,966msを高速化実績としない。起動高速化は未達、取得待ちと初期JSの改善余地は残る。
+- 最終runtimeのローカル検証: lint・型検査・webpack production build・strict4本、258ファイル/3,658 Vitest、35 pgTAPファイル（941 assertions）、暗号化再送Chromium/WebKitが成功。最終buildでもニュース操作の合成Chrome試験を再確認した。DB時刻表現の1件は試験DBのUTC設定を補正して該当ファイルのみ再実行した。
+- 外部依存追加なし。任意AIは固定語彙による分類・短い抽出的要点に限定し、自由文の生成要約や年齢分類は実装していない。
+- GitHub connectorが利用不能なためpush/Draft PR・同一HEADのhosted CI/CodeQLは未実行。資格情報storeを直接読む方法へ切り替えない。
+
+配送時は、承認されたGitHub経路で `codex/irori-gap-closure-20261101` をpushし、main向けDraft PRを作る。自動Previewを無効にした本ブランチ設定を保持し、CI/E2EとCodeQLの最新HEAD判定を確認する。本番migration・merge・deployは別の承認範囲。

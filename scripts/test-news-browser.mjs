@@ -32,7 +32,7 @@ await new Promise(resolve=>api.listen(55439,"127.0.0.1",resolve))
 const env=Object.fromEntries(["PATH","HOME","TMPDIR","LANG"].filter(k=>process.env[k]).map(k=>[k,process.env[k]]))
 Object.assign(env,{NEXT_PUBLIC_SUPABASE_URL:"http://127.0.0.1:55439",NEXT_PUBLIC_SUPABASE_ANON_KEY:"synthetic-public-key",SUPABASE_SERVICE_ROLE_KEY:"synthetic-service-key",NEXT_PUBLIC_APP_URL:"http://127.0.0.1:55438",NEXT_TELEMETRY_DISABLED:"1",TZ:"UTC"})
 const app=spawn("pnpm",["exec","next","start","-H","127.0.0.1","-p","55438"],{env,stdio:["ignore","pipe","pipe"]})
-let browser
+let browser, currentPage
 try {
  await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error("server readiness deadline")),30000);app.once("exit",()=>reject(new Error("server exited")));app.stdout.on("data",b=>{if(b.toString().includes("Ready in")){clearTimeout(timer);resolve()}})})
  const chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -43,7 +43,8 @@ try {
   await context.route("**/*",route=>{const u=new URL(route.request().url());return u.hostname==="127.0.0.1"&&["55438","55439"].includes(u.port)?route.continue():route.abort()})
   const session={access_token:token,refresh_token:"synthetic",expires_at:Math.floor(Date.now()/1000)+7200,expires_in:7200,token_type:"bearer",user}
   await context.addCookies([{name:"sb-127-auth-token",value:`base64-${b64(session)}`,domain:"127.0.0.1",path:"/"}])
-  const page=await context.newPage();page.setDefaultTimeout(15000)
+  await context.addInitScript(()=>localStorage.setItem("irori:tour-seen:v1","1"))
+  const page=await context.newPage();currentPage=page;page.setDefaultTimeout(15000);page.on("pageerror",error=>console.error(error.message))
   await page.goto("http://127.0.0.1:55438/news")
   await expect(page.getByLabel("ニュースの地域")).toHaveValue("")
   await page.getByLabel("ニュースの地域").selectOption("kakegawa")
@@ -69,4 +70,4 @@ try {
  }
  if(claims!==6)throw new Error(`expected three cooldown claims per width, got ${claims}`)
  console.log("PASS synthetic news save/reload/filter/notification/region isolation/cooldown; widths 390,1280; no actual Supabase/RSS/device proof")
-} finally {await browser?.close();app.kill("SIGTERM");api.closeAllConnections();api.close()}
+} catch(error) { if(currentPage){console.error(await currentPage.locator("body").innerText());await currentPage.screenshot({path:`${output}/failure.png`,fullPage:true})}throw error } finally {await browser?.close();app.kill("SIGTERM");api.closeAllConnections();api.close()}
