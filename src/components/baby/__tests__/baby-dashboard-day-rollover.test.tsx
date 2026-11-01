@@ -320,7 +320,11 @@ describe("BabyDashboard / 開いたまま日を跨ぐ — 選択日の追従", (
   // 翌日として upsert し、記録シートは前日の行を新しい日のタイムラインへ前置きする。
   it("記録シートを開いておる最中は選択日を動かさぬ", async () => {
     render(<BabyDashboard {...defaultProps()} />)
-    fireEvent.click(screen.getByRole("button", { name: "搾乳" }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "搾乳" }))
+      // Resolve the on-demand editor inside act; the clock remains fixed for rollover.
+      await import("../baby-log-form-sheet")
+    })
     await flush()
     // fake timers 下では findBy の待機が進まぬゆえ、描画を流してから同期で引く
     expect(screen.getByRole("dialog")).toBeInTheDocument()
@@ -458,7 +462,11 @@ describe("BabyDashboard / 開いたまま日を跨ぐ — 最終授乳のフォ�
   it("開いたシートから前日として保存した授乳でも、「今日」へ戻った時に前へ進んでおる", async () => {
     mockedRecordFeeding.mockResolvedValue({ error: null, id: "pumped-2355" })
     render(<BabyDashboard {...defaultProps()} />)
-    fireEvent.click(screen.getByRole("button", { name: "搾乳" }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "搾乳" }))
+      // Resolve the on-demand editor inside act; the clock remains fixed for rollover.
+      await import("../baby-log-form-sheet")
+    })
     await flush()
     expect(screen.getByRole("dialog")).toBeInTheDocument()
 
@@ -494,7 +502,11 @@ describe("BabyDashboard / 日跨ぎと保存の競合", () => {
       }),
     )
     render(<BabyDashboard {...defaultProps({ initialLogs: [], initialWeeklyLogs: [] })} />)
-    fireEvent.click(screen.getByRole("button", { name: "搾乳" }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "搾乳" }))
+      // Resolve the on-demand editor inside act; the clock remains fixed for rollover.
+      await import("../baby-log-form-sheet")
+    })
     await flush()
     fireEvent.click(screen.getByRole("button", { name: "記録する" }))
     await flush()
@@ -579,7 +591,11 @@ describe("BabyDashboard / 日跨ぎのフォールバック取り直し — 保�
     const pending = holdFallback()
     mockedRecordFeeding.mockResolvedValue({ error: null, id: "pumped-2355" })
     render(<BabyDashboard {...defaultProps()} />)
-    fireEvent.click(screen.getByRole("button", { name: "搾乳" }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "搾乳" }))
+      // Resolve the on-demand editor inside act; the clock remains fixed for rollover.
+      await import("../baby-log-form-sheet")
+    })
     await flush()
 
     await crossMidnight()

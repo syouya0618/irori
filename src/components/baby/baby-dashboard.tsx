@@ -14,8 +14,6 @@ import { BabyQuickActions } from "./baby-quick-actions"
 import { BabyPastDayActions } from "./baby-past-day-actions"
 import { BabyTimeline } from "./baby-timeline"
 import { BabyDailyDiary } from "./baby-daily-diary"
-import { BabyDiaryEditSheet } from "./baby-diary-edit-sheet"
-import { BabyLogFormSheet } from "./baby-log-form-sheet"
 import { BabyTemperatureCard } from "./baby-temperature-card"
 import { FeedingTimer, type RunningTimer } from "./feeding-timer"
 import { RunningTimerChip } from "./running-timer-chip"
@@ -28,6 +26,9 @@ import {
 import { BarChart3, Thermometer, TrendingUp } from "lucide-react"
 import { BabyWeeklySummary } from "./weekly-summary/baby-weekly-summary"
 import dynamic from "next/dynamic"
+const SheetLoading = () => <p role="status" className="fixed bottom-24 inset-x-4 z-50 rounded-xl bg-background p-4 text-center shadow">入力画面を読み込み中</p>
+const BabyDiaryEditSheet = dynamic(() => import("./baby-diary-edit-sheet").then(m => m.BabyDiaryEditSheet), { loading: SheetLoading })
+const BabyLogFormSheet = dynamic(() => import("./baby-log-form-sheet").then(m => m.BabyLogFormSheet), { loading: SheetLoading })
 import { growthLatestSummary } from "@/lib/domain/growth-summary"
 const GrowthChartSection = dynamic(()=>import("./charts/growth-chart-section").then(m=>m.GrowthChartSection),{loading:()=> <p className="py-4 text-xs text-muted-foreground">グラフを読み込み中</p>})
 import {
@@ -1610,7 +1611,8 @@ export function BabyDashboard({
       {/* 再マウント用の key は兄弟（BabyLogFormSheet）と名前空間を分ける。どちらも
           0 から数える数値ゆえ、素の数値だと値が揃った瞬間に重複 key になり、React が
           fiber を取り違える（"Encountered two children with the same key"） */}
-      <BabyDiaryEditSheet
+      {/* Load editors on first intent, then retain them while saves/drafts settle even when closed. */}
+      {diaryKey > 0 && <BabyDiaryEditSheet
         key={`diary-${diaryKey}`}
         open={diaryEditOpen}
         onOpenChange={setDiaryEditOpen}
@@ -1619,9 +1621,9 @@ export function BabyDashboard({
         initialUpdatedAt={visibleDiary?.updated_at ?? null}
         onSaved={handleDiarySaved}
         owner={owner}
-      />
+      />}
 
-      <BabyLogFormSheet
+      {formKey > 0 && <BabyLogFormSheet
         key={`log-${formKey}`}
         open={sheetOpen}
         onOpenChange={setSheetOpen}
@@ -1640,7 +1642,7 @@ export function BabyDashboard({
         onLogRemoved={removeLog}
         // 保存の衝突の後、最新の行で開き直す（key で作り直し、最新の版から seed。P2-07）
         onReloadLog={handleEdit}
-      />
+      />}
 
       <FeedingTimer
         open={timerOpen}
