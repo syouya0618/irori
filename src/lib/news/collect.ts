@@ -15,11 +15,22 @@ export async function collectRegionNews(db:SupabaseClient<Database>,regionKey:st
    if(!claim.data)return {state:"cooldown",count:0}
    claimed=true
    const raw=await fetchFeed(source,now,undefined,deadline)
-   const articles=await enrichNewsArticles(db,raw,{now,signal:deadline})
-   if(articles.length){const {error}=await db.from("news_articles").upsert(articles,{onConflict:"region_key,id",ignoreDuplicates:true}).abortSignal(deadline);if(error)throw new Error("persist failed")}
+   if(raw.length){const {error}=await db.from("news_articles").upsert(raw,{onConflict:"region_key,id",ignoreDuplicates:true}).abortSignal(deadline);if(error)throw new Error("persist failed")}
    const receipt=await db.from("news_source_runs").update({last_success_at:stamp,last_error_at:null}).eq("source_key",source.key).eq("claimed_at",stamp).abortSignal(deadline)
    if(receipt.error)throw new Error("receipt failed")
-   return {state:"updated",count:articles.length}
+   // Commit the original feed and receipt before optional enrichment can use its budget.
+   // AI may be enabled after articles were already collected: update only helper fields,
+   // preserving original publication/first-seen dates, title and source provenance.
+   try{
+    if(!deadline.aborted){
+     const enriched=await enrichNewsArticles(db,raw,{now,signal:deadline})
+     for(const article of enriched){
+      if(deadline.aborted)break
+      if(article.ai_category&&article.ai_summary)await db.from("news_articles").update({ai_category:article.ai_category,ai_summary:article.ai_summary}).eq("region_key",regionKey).eq("id",article.id).abortSignal(deadline)
+     }
+    }
+   }catch{ /* Optional AI cannot downgrade an already successful RSS collection. */ }
+   return {state:"updated",count:raw.length}
   }catch{
    if(claimed)await db.from("news_source_runs").update({last_error_at:stamp}).eq("source_key",source.key).eq("claimed_at",stamp).abortSignal(deadline)
    return {state:"failed",count:0}

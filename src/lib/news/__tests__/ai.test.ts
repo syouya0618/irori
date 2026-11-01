@@ -35,6 +35,10 @@ describe("optional public keyword AI", () => {
   expect(init.redirect).toBe("error"); expect(JSON.stringify(init.body)).not.toContain(article.url)
   expect(JSON.stringify(init.body)).not.toContain("お知らせ")
  })
+ it("accepts provider structured response but validates it identically", async () => {
+  const { db } = fixture(), fetcher = vi.fn(async () => new Response(JSON.stringify({ success: true, result: { response: { category: "support", keywords: ["相談"] } } })))
+  expect((await enrichNewsArticles(db, [article], { env, fetcher }))[0]).toMatchObject({ ai_summary: "相談" })
+ })
  it("uses shared cache without inference or budget claim", async () => {
   const { db, rpc } = fixture({ category: "support", keywords: ["相談"] }), fetcher = vi.fn()
   expect((await enrichNewsArticles(db, [article], { env, fetcher }))[0]).toMatchObject({ ai_summary: "相談" })
@@ -45,8 +49,9 @@ describe("optional public keyword AI", () => {
   expect(await enrichNewsArticles(db, [article], { env, fetcher })).toEqual([article]); expect(fetcher).not.toHaveBeenCalled()
  })
  it.each([401, 429, 500])("falls back on provider status %s", async status => {
-  const { db } = fixture(), fetcher = vi.fn(async () => new Response("failure", { status }))
+  const { db, upsert } = fixture(), fetcher = vi.fn(async () => new Response("failure", { status }))
   expect(await enrichNewsArticles(db, [article], { env, fetcher })).toEqual([article])
+  expect(upsert).not.toHaveBeenCalled()
  })
  it("bounds attempts per batch even when provider throws", async () => {
   const { db } = fixture(), fetcher = vi.fn(async () => { throw new Error("timeout") })
