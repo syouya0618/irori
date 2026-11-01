@@ -108,7 +108,7 @@ describe("BabyDashboard / 過去日の追記（機能 C）", () => {
       }),
     )
     await flush()
-    const dialog = await screen.findByRole("dialog")
+    const dialog = screen.getByRole("dialog")
     expect(within(dialog).getByText(/2026年7月18日\(土\) の記録として保存します/)).toBeInTheDocument()
     expect((within(dialog).getByLabelText("日付") as HTMLInputElement).value).toBe(YESTERDAY)
 
