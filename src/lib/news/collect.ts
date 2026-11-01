@@ -15,7 +15,8 @@ export async function collectRegionNews(db:SupabaseClient<Database>,regionKey:st
    if(!claim.data)return {state:"cooldown",count:0}
    claimed=true
    const raw=await fetchFeed(source,now,undefined,deadline)
-   if(raw.length){const {error}=await db.from("news_articles").upsert(raw,{onConflict:"region_key,id",ignoreDuplicates:true}).abortSignal(deadline);if(error)throw new Error("persist failed")}
+   let inserted=0
+   if(raw.length){const {data,error}=await db.from("news_articles").upsert(raw,{onConflict:"region_key,id",ignoreDuplicates:true}).select("id").abortSignal(deadline);if(error)throw new Error("persist failed");inserted=data?.length??0}
    const receipt=await db.from("news_source_runs").update({last_success_at:stamp,last_error_at:null}).eq("source_key",source.key).eq("claimed_at",stamp).abortSignal(deadline)
    if(receipt.error)throw new Error("receipt failed")
    // Commit the original feed and receipt before optional enrichment can use its budget.
@@ -30,7 +31,7 @@ export async function collectRegionNews(db:SupabaseClient<Database>,regionKey:st
      }
     }
    }catch{ /* Optional AI cannot downgrade an already successful RSS collection. */ }
-   return {state:"updated",count:raw.length}
+   return {state:"updated",count:inserted}
   }catch{
    if(claimed)await db.from("news_source_runs").update({last_error_at:stamp}).eq("source_key",source.key).eq("claimed_at",stamp).abortSignal(deadline)
    return {state:"failed",count:0}

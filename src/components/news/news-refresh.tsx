@@ -20,7 +20,7 @@ export function NewsRefresh() {
       start(async () => {
         try {
           const result = await refreshNews()
-          setMessage("error" in result ? result.error ?? "取得できませんでした" : messages[result.status])
+          setMessage("error" in result ? result.error ?? "取得できませんでした" : result.status === "updated" && result.fetched === 0 ? "新着記事はありません。取得済みの記事を表示しています。" : messages[result.status])
           router.refresh()
         } catch { setMessage("取得結果を確認できませんでした。一覧を読み直してください。") }
       })

@@ -15,7 +15,7 @@ it("independent leases keep two sources available when the third fails, without 
   return parseNewsFeed('<rss><channel><item><title>synthetic article</title><link>https://www.city.kakegawa.shizuoka.jp/kakekko/synthetic/a.html?utm_source=test</link><pubDate>2026-10-31T01:00:00Z</pubDate></item></channel></rss>',source,now)
  })
  const result=await collectRegionNews(fake.client,"kakegawa",now,fetchFeed)
- expect(result.status).toBe("partial");expect(result.failed).toBe(1);expect(fetchFeed).toHaveBeenCalledTimes(3)
+ expect(result.fetched).toBe(1);expect(result.status).toBe("partial");expect(result.failed).toBe(1);expect(fetchFeed).toHaveBeenCalledTimes(3)
  expect(state.news_articles).toHaveLength(1);expect(state.news_deliveries).toHaveLength(0)
  expect((await collectRegionNews(fake.client,"kakegawa",now,fetchFeed)).status).toBe("cooldown")
  expect(fetchFeed).toHaveBeenCalledTimes(3)
@@ -54,4 +54,12 @@ it("enriches previously cached rows without rewriting original dates or provenan
  expect(s.state.news_articles[0]).toMatchObject({...s.raw[0],first_seen_at:firstSeen,ai_category:"support",ai_summary:"相談・教室"})
  s.fake.failOn("news_articles","update",{message:"synthetic optional write failure"})
  expect(await s.run()).toMatchObject({status:"updated",failed:0})
+})
+
+it("counts inserted articles rather than repeated feed entries on a later refresh",async()=>{
+ const s=enrichmentSetup()
+ vi.spyOn(ai,"enrichNewsArticles").mockImplementation(async(_db,articles)=>articles)
+ expect(await s.run()).toMatchObject({status:"updated",fetched:1,failed:0})
+ expect(await s.run()).toMatchObject({status:"updated",fetched:0,failed:0})
+ expect(s.state.news_articles).toHaveLength(1)
 })

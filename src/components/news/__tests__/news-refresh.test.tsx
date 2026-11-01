@@ -12,7 +12,7 @@ it.each([
   ["failed", "配信元を取得できませんでした"],
   ["cooldown", "取得中、または直前に確認済みです"],
 ] as const)("shows %s without claiming delivery", async (status, message) => {
-  vi.mocked(refreshNews).mockResolvedValue({ status, fetched: 0 })
+  vi.mocked(refreshNews).mockResolvedValue({ status, fetched: 1 })
   render(<NewsRefresh />)
   await act(async () => fireEvent.click(screen.getByRole("button", { name: "配信元から記事を更新" })))
   expect(screen.getByRole("status")).toHaveTextContent(message)
@@ -23,4 +23,12 @@ it("keeps a lost response uncertain", async () => {
   render(<NewsRefresh />)
   await act(async () => fireEvent.click(screen.getByRole("button", { name: "配信元から記事を更新" })))
   expect(screen.getByRole("status")).toHaveTextContent("取得結果を確認できませんでした")
+})
+
+it("distinguishes successful refresh with no newly inserted articles", async () => {
+  vi.mocked(refreshNews).mockResolvedValue({ status: "updated", fetched: 0 })
+  render(<NewsRefresh />)
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "配信元から記事を更新" })))
+  expect(screen.getByRole("status")).toHaveTextContent("新着記事はありません。取得済みの記事を表示しています。")
+  expect(refresh).toHaveBeenCalledOnce()
 })
