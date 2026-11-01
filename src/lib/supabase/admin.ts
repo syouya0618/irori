@@ -10,6 +10,7 @@ import type { Database } from "@/lib/types/database"
  *    INSERT/UPDATE の RLS ポリシーも GRANT も持たぬ = service role 専用）。
  * 2. **同期エンジン**（`calendar_events` の google 行 upsert / delete、
  *    `google_calendar_subscriptions.sync_token` の読み書き）。
+ * 4. **地域ニュースの明示的更新Action**（認証・承認・世帯所属と保存済み地域を確認後、固定公開RSSの共有キャッシュのみ）。
  * 3. **cron ハンドラ**（CRON_SECRET を検証した**後**）。
  *
  * ## 呼んではならぬ場所

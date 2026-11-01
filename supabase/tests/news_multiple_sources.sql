@@ -1,0 +1,38 @@
+BEGIN;
+SELECT no_plan();
+INSERT INTO households(id,name) VALUES('e6000000-0000-4000-8000-000000000001','synthetic regional family');
+INSERT INTO auth.users(id,email) VALUES('e6000000-0000-4000-8000-000000000002','regional@example.invalid');
+UPDATE profiles SET household_id='e6000000-0000-4000-8000-000000000001',is_approved=true,role='owner' WHERE id='e6000000-0000-4000-8000-000000000002';
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims','{"sub":"e6000000-0000-4000-8000-000000000002","role":"authenticated"}',true);
+SELECT is(save_news_preferences('kakegawa',false,NULL)->>'status','saved','Kakegawa viewing independent of Push');
+SELECT is(news_source_statuses(),'[]'::jsonb,'unfetched sources have no fabricated success');
+SELECT ok(NOT has_function_privilege('authenticated','public.claim_news_source(text,timestamptz)','EXECUTE'),'browser cannot claim arbitrary source fetches');
+RESET ROLE;
+SET LOCAL ROLE service_role;
+SELECT ok(claim_news_source('kakegawa-news','2026-11-01T00:00:00Z'),'news source claimed');
+SELECT ok(NOT claim_news_source('kakegawa-news','2026-11-01T00:00:01Z'),'shared cooldown rejects simultaneous readers');
+SELECT ok(claim_news_source('kakegawa-facilities','2026-11-01T00:00:01Z'),'facilities have independent lease');
+SELECT ok(claim_news_source('kakegawa-dining','2026-11-01T00:00:01Z'),'dining has independent lease');
+SELECT ok(NOT claim_news_source('https://example.invalid/rss','2026-11-01T00:00:01Z'),'unknown source denied');
+UPDATE news_source_runs SET last_success_at=claimed_at WHERE source_key='kakegawa-news';
+UPDATE news_source_runs SET last_error_at=claimed_at WHERE source_key='kakegawa-facilities';
+INSERT INTO news_articles(region_key,source_key,id,title,url,published_at) VALUES
+ ('kakegawa','kakegawa-news',repeat('e',64),'synthetic undated','https://www.city.kakegawa.shizuoka.jp/kakekko/synthetic/undated.html',NULL);
+SELECT throws_ok($$INSERT INTO news_articles(region_key,source_key,id,title,url,published_at) VALUES('sapporo','kakegawa-news',repeat('f',64),'synthetic mismatch','https://www.city.sapporo.jp/synthetic/a.html',NULL)$$,'23514',NULL,'source cannot be assigned to a different region');
+RESET ROLE;
+SET LOCAL ROLE authenticated;
+SELECT is((SELECT count(*) FROM news_articles),1::bigint,'undated article available for explicit browsing');
+SELECT is(jsonb_array_length(news_source_statuses()),3,'source status scoped to selected region');
+SELECT is(save_news_preferences('yokohama',false,(SELECT updated_at FROM news_preferences))->>'status','saved','switch region');
+SELECT is((SELECT count(*) FROM news_articles),0::bigint,'old-region articles vanish after switch');
+SELECT is(news_source_statuses(),'[]'::jsonb,'old-region states vanish after switch');
+RESET ROLE;
+-- Unknown publication dates can never satisfy the dated notification query.
+UPDATE news_preferences SET region_key='kakegawa',enabled=true,enabled_from='2026-10-01';
+INSERT INTO push_subscriptions(id,user_id,endpoint,p256dh,auth) VALUES('e6000000-0000-4000-8000-000000000003','e6000000-0000-4000-8000-000000000002','https://fcm.googleapis.com/synthetic-regional','fixture-key','fixture-auth');
+SET LOCAL ROLE service_role;
+SELECT is(prepare_news_deliveries('2026-11-01T08:00:00+09:00'),0,'undated article never queues a new-publication Push');
+RESET ROLE;
+SELECT * FROM finish();
+ROLLBACK;

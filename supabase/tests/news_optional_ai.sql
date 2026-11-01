@@ -1,0 +1,14 @@
+begin;
+select plan(9);
+select ok((select relrowsecurity from pg_class where oid='public.news_ai_cache'::regclass), 'AI cache RLS enabled');
+select ok((select relrowsecurity from pg_class where oid='public.news_ai_budget'::regclass), 'AI budget RLS enabled');
+select ok(not has_table_privilege('authenticated','public.news_ai_cache','SELECT'), 'private service cache unavailable to users');
+select ok(not has_function_privilege('authenticated','public.claim_news_ai_call(date,integer)','EXECUTE'), 'users cannot consume AI budget');
+select is(public.claim_news_ai_call((now() at time zone 'UTC')::date-1,2),false,'cannot reset budget using old date');
+select is(public.claim_news_ai_call((now() at time zone 'UTC')::date,21),false,'hard maximum enforced');
+delete from public.news_ai_budget;
+select is(public.claim_news_ai_call((now() at time zone 'UTC')::date,2),true,'first claim succeeds');
+select is(public.claim_news_ai_call((now() at time zone 'UTC')::date,2),true,'second claim succeeds');
+select is(public.claim_news_ai_call((now() at time zone 'UTC')::date,2),false,'daily limit rejects next claim');
+select * from finish();
+rollback;

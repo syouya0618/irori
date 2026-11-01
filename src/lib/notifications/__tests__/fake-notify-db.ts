@@ -368,6 +368,7 @@ export function createFakeNotifySupabase(
         record.order = column
         return builder
       },
+      abortSignal(_signal: AbortSignal) { void _signal; return builder },
       limit(count: number) {
         record.limit = count
         return builder
