@@ -17,6 +17,7 @@ export const MAX_TIMER_AGE_MS = 2 * 60 * 60 * 1000
 export type PersistedBreastSide = "breast_left" | "breast_right"
 
 export interface PersistedTimerState {
+  childId?: string
   startedAt: string // ISO
   /** 現在吸わせている側。旧形式から復元できるようキー名は据え置く */
   feedingType: PersistedBreastSide
@@ -58,6 +59,7 @@ export interface PersistedFeedingSubmission {
 }
 
 export interface PersistedFeedingPayload {
+  childId?: string
   feedingType: "breast"
   breastLeftCount: number
   breastRightCount: number
@@ -126,33 +128,48 @@ export function parsePersistedSubmission(value: unknown): PersistedFeedingSubmis
         : { durationSec: p.durationSec as number }),
       ...(typeof p.loggedAt === "string" ? { loggedAt: p.loggedAt } : {}),
       clientId: p.clientId,
+      ...(typeof p.childId === "string" ? { childId: p.childId } : {}),
     },
   }
 }
 
-export function readPersistedTimer(): PersistedTimerState | null {
+/** Project both reads and writes: a typed assertion/spread must not retain unrelated secrets. */
+function timerSnapshot(value: unknown, recovering: boolean): PersistedTimerState | null {
+  if (typeof value !== "object" || value === null) return null
+  const s = value as Record<string, unknown>
+  if (typeof s.startedAt !== "string" || Number.isNaN(Date.parse(s.startedAt))) return null
+  if (s.feedingType !== "breast_left" && s.feedingType !== "breast_right") return null
+  // A malformed owner must never become an ownerless legacy timer by omission.
+  for (const k of ["userId", "householdId", "childId", "clientId"] as const) {
+    if (s[k] !== undefined && (typeof s[k] !== "string" || s[k].length === 0)) return null
+  }
+  const submission = s.submission === undefined ? null : parsePersistedSubmission(s.submission)
+  if (s.submission !== undefined && submission === null) {
+    if (!recovering) return null
+    // Preserve the previous recovery behavior for a damaged historical submission.
+    console.warn("[feeding-timer] 端末保存の送信内容が壊れていたため送信内容だけ捨てた")
+  }
+  return {
+    startedAt: s.startedAt,
+    feedingType: s.feedingType,
+    ...(typeof s.userId === "string" ? { userId: s.userId } : {}),
+    ...(typeof s.householdId === "string" ? { householdId: s.householdId } : {}),
+    ...(typeof s.childId === "string" ? { childId: s.childId } : {}),
+    ...(typeof s.clientId === "string" ? { clientId: s.clientId } : {}),
+    ...(isNonNegativeInt(s.leftCount) ? { leftCount: s.leftCount } : {}),
+    ...(isNonNegativeInt(s.rightCount) ? { rightCount: s.rightCount } : {}),
+    ...(isNonNegativeInt(s.leftSec) ? { leftSec: s.leftSec } : {}),
+    ...(isNonNegativeInt(s.rightSec) ? { rightSec: s.rightSec } : {}),
+    ...(typeof s.sideSince === "string" && Number.isFinite(Date.parse(s.sideSince)) ? { sideSince: s.sideSince } : {}),
+    ...(s.startSide === "breast_left" || s.startSide === "breast_right" ? { startSide: s.startSide } : {}),
+    ...(submission ? { submission } : {}),
+  }
+}
+
+export function readPersistedTimer(childId?: string): PersistedTimerState | null {
   try {
-    const raw = localStorage.getItem(FEEDING_TIMER_STORAGE_KEY)
-    if (raw === null) return null
-    const parsed: unknown = JSON.parse(raw)
-    if (typeof parsed !== "object" || parsed === null) return null
-    const state = parsed as Partial<PersistedTimerState>
-    if (typeof state.startedAt !== "string") return null
-    if (Number.isNaN(new Date(state.startedAt).getTime())) return null
-    if (state.feedingType !== "breast_left" && state.feedingType !== "breast_right") {
-      return null
-    }
-    // 送信内容は形を確かめ直したものだけを残す（崩れておれば送信内容だけ捨て、計測は残す）
-    const { submission: rawSubmission, ...rest } = state
-    const submission =
-      rawSubmission === undefined ? null : parsePersistedSubmission(rawSubmission)
-    if (rawSubmission !== undefined && submission === null) {
-      console.warn("[feeding-timer] 端末保存の送信内容が壊れていたため送信内容だけ捨てた")
-    }
-    return {
-      ...(rest as PersistedTimerState),
-      ...(submission ? { submission } : {}),
-    }
+    const raw = localStorage.getItem(childId ? `${FEEDING_TIMER_STORAGE_KEY}:${childId}` : FEEDING_TIMER_STORAGE_KEY)
+    return raw === null ? null : timerSnapshot(JSON.parse(raw), true)
   } catch {
     return null
   }
@@ -160,7 +177,9 @@ export function readPersistedTimer(): PersistedTimerState | null {
 
 export function writePersistedTimer(state: PersistedTimerState): boolean {
   try {
-    localStorage.setItem(FEEDING_TIMER_STORAGE_KEY, JSON.stringify(state))
+    const snapshot = timerSnapshot(state, false)
+    if (!snapshot) return false
+    localStorage.setItem(snapshot.childId ? `${FEEDING_TIMER_STORAGE_KEY}:${snapshot.childId}` : FEEDING_TIMER_STORAGE_KEY, JSON.stringify(snapshot))
     return true
   } catch (err) {
     // 容量不足・プライベートモード等。計測は画面上では続くが、リロードで消える。
@@ -172,9 +191,9 @@ export function writePersistedTimer(state: PersistedTimerState): boolean {
   }
 }
 
-export function clearPersistedTimer(): void {
+export function clearPersistedTimer(childId?: string): void {
   try {
-    localStorage.removeItem(FEEDING_TIMER_STORAGE_KEY)
+    localStorage.removeItem(childId ? `${FEEDING_TIMER_STORAGE_KEY}:${childId}` : FEEDING_TIMER_STORAGE_KEY)
   } catch {
     // 読めぬ・消せぬ環境では残っていても害は無い（復元時に捨てられる）
   }
@@ -209,7 +228,7 @@ export function belongsToUser(
  */
 export function summarizePersistedTimer(
   state: PersistedTimerState | null,
-  owner: { userId: string; householdId: string },
+  owner: { userId: string; householdId: string; childId?: string },
   nowMs: number,
 ): {
   startedAt: string
@@ -231,8 +250,27 @@ export function summarizePersistedTimer(
 
 export function belongsToOwner(
   state: PersistedTimerState,
-  owner: { userId: string; householdId: string },
+  owner: { userId: string; householdId: string; childId?: string },
 ): boolean {
-  if (!belongsToUser(state, owner.userId)) return false
+  if (!belongsToUser(state, owner.userId) || state.childId !== owner.childId) return false
   return state.householdId === undefined || state.householdId === owner.householdId
+}
+
+/** Child timers share the existing account/household cleanup boundary. */
+export function purgeChildTimers(owner?: { userId: string; householdId: string }): void {
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (!key.startsWith(FEEDING_TIMER_STORAGE_KEY + ":")) continue
+      const state = JSON.parse(localStorage.getItem(key) ?? "null") as PersistedTimerState | null
+      if (!owner || !state || state.userId !== owner.userId || state.householdId !== owner.householdId) localStorage.removeItem(key)
+    }
+  } catch { /* unavailable storage is reported by the existing account guard */ }
+}
+
+export function ownedChildTimerIds(owner: { userId: string; householdId: string }): string[] {
+  try {
+    return Object.keys(localStorage).filter(k => k.startsWith(FEEDING_TIMER_STORAGE_KEY + ":"))
+      .map(k => k.slice(FEEDING_TIMER_STORAGE_KEY.length + 1))
+      .filter(id => { const s = readPersistedTimer(id); return s?.userId === owner.userId && s.householdId === owner.householdId })
+  } catch { return [] }
 }

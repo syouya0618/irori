@@ -1,5 +1,8 @@
+import { getChildContext } from "@/lib/supabase/child-context"
+import { ChildScopeProvider } from "@/components/baby/child-scope"
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
+import { getProfileForRequest } from "@/lib/supabase/profile-for-request"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { getVerifiedUser } from "@/lib/supabase/verified-user"
 import { FEEDING_INTERVAL_DEFAULT } from "@/lib/domain/baby-feeding-interval"
@@ -96,11 +99,7 @@ export default async function SettingsPage({
   }
   const { userId, email } = verified
 
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("id, display_name, avatar_url, household_id, role, default_page")
-    .eq("id", userId)
-    .single()
+  const { data: profile, error: profileError } = await getProfileForRequest(userId)
 
   if (profileError) {
     logSupabaseError("settings", "profile lookup failed", profileError, {
@@ -129,6 +128,7 @@ export default async function SettingsPage({
     { data: lastDelivery, error: lastDeliveryError },
     { data: notificationPrefs, error: notificationPrefsError },
     feedbackUnseenUpdates,
+    childContext,
   ] = await Promise.all([
     supabase
       .from("households")
@@ -188,6 +188,7 @@ export default async function SettingsPage({
     // 要望・改善提案: 自分の要望への未読の更新（ヘルプのカードの件数）。
     // 読めなかった時は null（「0 件」と偽らぬ。関数がログを残す）。
     countMyUnseenFeedback(supabase, userId),
+    getChildContext(),
   ])
 
   // 受信箱の未読は運用者だと分かった後にだけ数える（運用者でなければ RLS が自分の行だけを
@@ -298,6 +299,7 @@ export default async function SettingsPage({
   const now = new Date()
 
   return (
+    <ChildScopeProvider key={childContext.child.id} scope={{ id: childContext.child.id, isLegacy: childContext.child.is_legacy, updatedAt: childContext.child.updated_at }}>
     <SettingsContent
       profile={{
         id: profile.id,
@@ -324,10 +326,10 @@ export default async function SettingsPage({
       babyProfile={
         household
           ? {
-              name: household.baby_name ?? null,
-              birthDate: household.baby_birth_date ?? null,
+              name: childContext.child.name || null,
+              birthDate: childContext.child.birth_date,
               feedingIntervalMin:
-                household.feeding_interval_min ?? FEEDING_INTERVAL_DEFAULT,
+                childContext.child.feeding_interval_min ?? FEEDING_INTERVAL_DEFAULT,
             }
           : null
       }
@@ -377,5 +379,6 @@ export default async function SettingsPage({
         now,
       })}
     />
+    </ChildScopeProvider>
   )
 }

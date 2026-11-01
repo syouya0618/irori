@@ -267,7 +267,7 @@ test("夫婦の 1 日: 妻が決めた量で記録し、量を直しても時刻
     // ── 5. 妻: その行の量だけを 100 に直す → 記録時刻は一字も変わらぬ ───────────
     await openOverlay(milkRowAt(page, quickHm), page.getByRole("heading", { name: "授乳を編集" }))
     await expect(openSheetOf(page).getByLabel("開始時刻")).toHaveValue(quickHm)
-    await openSheetOf(page).getByRole("button", { name: "100", exact: true }).click()
+    await openSheetOf(page).getByLabel("量 (ml)").fill("100")
     await expect(openSheetOf(page).getByLabel("開始時刻")).toHaveValue(quickHm)
     await openSheetOf(page).getByRole("button", { name: "更新する" }).click()
     await expect(page.locator('[data-slot="sheet-content"]')).toHaveCount(0, { timeout: 10_000 })

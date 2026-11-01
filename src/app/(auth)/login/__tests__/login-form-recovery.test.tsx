@@ -19,6 +19,7 @@ vi.mock("sonner", () => ({ toast: { error: (...a: unknown[]) => toastError(...a)
 import { LoginForm } from "../login-form"
 import { SIGN_IN_TIMEOUT_MS } from "../login-resend"
 import { readRecentFailures } from "@/lib/diagnostics/diagnostic-summary"
+import { renderToString } from "react-dom/server"
 
 const emailInput = () => screen.getByLabelText("メールアドレス") as HTMLInputElement
 
@@ -42,6 +43,15 @@ afterEach(() => {
 })
 
 describe("LoginForm の戻り方", () => {
+  it("does not accept an email before hydration can capture its change event", () => {
+    const server = document.createElement("div")
+    server.innerHTML = renderToString(<LoginForm />)
+    expect(server.querySelector('input[type="email"]')).toBeDisabled()
+    expect(server.querySelector('button[type="submit"]')).toBeDisabled()
+    render(<LoginForm />)
+    expect(emailInput()).toBeEnabled()
+    expect(screen.getByRole("button", { name: "マジックリンクを送信" })).toBeEnabled()
+  })
   it("受け付けたら送信先と、別のブラウザ・期限切れの戻り方を出す（届いたとは言わぬ）", async () => {
     signInWithOtp.mockResolvedValue({ error: null })
     render(<LoginForm />)

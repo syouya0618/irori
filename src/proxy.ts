@@ -172,7 +172,7 @@ export async function proxy(request: NextRequest) {
     .from("profiles")
     // `default_page` は**同じ 1 往復で読む**（列を足しても往復は増えぬ）。
     // これで `/` の行き先を proxy が決められる ＝ `/` の動的描画そのものが不要になる。
-    .select("is_approved, default_page")
+    .select("is_approved, default_page, role")
     .eq("id", userId)
     .single()
   dbMs = performance.now() - dbStart
@@ -216,7 +216,7 @@ export async function proxy(request: NextRequest) {
      */
     if (isPublicRoute || isPendingRoute || isRootRoute) {
       const url = request.nextUrl.clone()
-      url.pathname = `/${resolveDefaultPage(profile?.default_page)}`
+      url.pathname = profile?.role === "viewer" ? "/shared" : `/${resolveDefaultPage(profile?.default_page)}`
       return finalize(
         NextResponse.redirect(
           new URL(url.pathname + url.search, getAppOrigin(request))
@@ -231,6 +231,7 @@ export async function proxy(request: NextRequest) {
     // 値は自分の user id ゆえ、本人のブラウザへ返して漏れるものは無い。
     const passThrough = finalize(supabaseResponse)
     passThrough.headers.set(CACHE_OWNER_RESPONSE_HEADER, userId)
+    if (pathname === "/shared" || pathname.startsWith("/shared/") || pathname.endsWith("/shared")) passThrough.headers.set("Cache-Control", "private, no-store, max-age=0")
     return passThrough
   }
 

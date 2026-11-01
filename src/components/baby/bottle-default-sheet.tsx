@@ -1,5 +1,7 @@
 "use client"
 
+import { useChildScope } from "./child-scope"
+
 import { useEffect, useId, useRef, useState, useTransition } from "react"
 import { NumberField } from "@base-ui/react/number-field"
 import { AlertCircle, Loader2, Minus, Plus } from "lucide-react"
@@ -75,6 +77,8 @@ export function BottleDefaultSheet({
   onSaved,
   onConflict,
 }: BottleDefaultSheetProps) {
+  const childScope = useChildScope()
+  const childId = childScope?.id
   const inputId = useId()
   const errorId = useId()
   const [value, setValue] = useState<number | null>(initialAmountMl)
@@ -105,7 +109,7 @@ export function BottleDefaultSheet({
     setError(null)
     startTransition(async () => {
       try {
-        const result = await updateBottleDefault({ amountMl, expectedMl })
+        const result = await updateBottleDefault({ ...(childId ? { childId } : {}), amountMl, expectedMl })
         if (result.ok) {
           onSaved(result.amountMl, intent)
           return

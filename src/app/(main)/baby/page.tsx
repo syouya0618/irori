@@ -1,10 +1,11 @@
-import { getAuthContext } from "@/lib/supabase/auth-context"
+import { getChildContext } from "@/lib/supabase/child-context"
+import { ChildScopeProvider } from "@/components/baby/child-scope"
+import { ChildPicker } from "@/components/baby/child-picker"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { BabyDashboard } from "@/components/baby/baby-dashboard"
 import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
 import { FEEDING_INTERVAL_DEFAULT } from "@/lib/domain/baby-feeding-interval"
 import { decodeBottleDefault } from "@/lib/domain/bottle-default"
-import { selectBottleDefault } from "@/lib/supabase/bottle-default-query"
 import { resolveBabyDate, type BabySearchParams } from "@/lib/domain/baby-link"
 import { CALENDAR_EVENT_COLUMNS } from "@/lib/domain/calendar-event-columns"
 import {
@@ -29,12 +30,11 @@ export default async function BabyPage({
 }: {
   searchParams: Promise<BabySearchParams>
 }) {
-  const result = await getAuthContext()
-  if (result.error !== null) return null
-  const { supabase, userId, householdId } = result.context
+  const params = await searchParams
+  const { supabase, userId, householdId, child, children } = await getChildContext(typeof params.child === "string" ? params.child : undefined)
 
   const todayJst = todayJstString()
-  const selectedDate = resolveBabyDate(await searchParams, todayJst)
+  const selectedDate = resolveBabyDate(params, todayJst)
   const tomorrowJst = shiftYmd(todayJst, 1)
   // baby_logs の窓と条件は baby-log-queries.ts が正本（dashboard の取り直しと同じ組み立て）。
   // 選択日（既定は今日）の窓だけが選択日基準で、週窓・成長・フォールバックは今日基準。
@@ -43,22 +43,15 @@ export default async function BabyPage({
   const [
     { data: logs, error: logsError },
     { data: weeklyLogs, error: weeklyLogsError },
-    { data: household, error: householdError },
     { data: growthLogs, error: growthLogsError },
     { data: diary, error: diaryError },
     { data: lastFeedingData, error: lastFeedingError },
     { data: lastNursingData, error: lastNursingError },
     { data: upcomingEvents, error: upcomingError },
     { data: members, error: membersError },
-    bottleDefaultResult,
   ] = await Promise.all([
       selectBabyLogsOfDay(supabase, householdId, selectedDate),
       selectBabyLogsOfWeek(supabase, householdId, todayJst),
-      supabase
-        .from("households")
-        .select("baby_name, baby_birth_date, feeding_interval_min")
-        .eq("id", householdId)
-        .maybeSingle(),
       selectGrowthLogs(supabase, householdId),
       // 選択日の育児日記（1日1本・無い日は正常系ゆえ maybeSingle）
       supabase
@@ -87,20 +80,13 @@ export default async function BabyPage({
         .from("profiles")
         .select("id, display_name")
         .eq("household_id", householdId),
-      // いつものミルク量（クイック記録の 1 タップの量）。上の households の select へ混ぜず
-      // 別に読む（混ぜると migration 前の DB で赤子の名前・授乳間隔まで落ちる。
-      // bottle-default-query.ts の注記）。未設定と取得失敗は decodeBottleDefault が分ける
-      selectBottleDefault(supabase, householdId),
     ])
 
+  // children is already required and validated by getChildContext. Reuse the same selected row.
+  const bottleDefaultResult = { data: child, error: null }
   const bottleDefault = decodeBottleDefault(bottleDefaultResult)
-  if (bottleDefaultResult.error) {
-    logSupabaseError("baby", "bottle default lookup failed", bottleDefaultResult.error, {
-      householdId,
-    })
-  } else if (bottleDefault.status === "error") {
-    // error 無しで読めぬ（行が見えぬ・範囲外の値）。量は出さず、画面は取得失敗として扱う
-    console.error("[baby] bottle default lookup returned no usable row", { householdId })
+  if (bottleDefault.status === "error") {
+    console.error("[baby] child bottle default returned no usable value", { householdId })
   }
 
   if (logsError) {
@@ -112,12 +98,6 @@ export default async function BabyPage({
 
   if (weeklyLogsError) {
     logSupabaseError("baby", "weekly logs lookup failed", weeklyLogsError, {
-      householdId,
-    })
-  }
-
-  if (householdError) {
-    logSupabaseError("baby", "household profile lookup failed", householdError, {
       householdId,
     })
   }
@@ -163,8 +143,10 @@ export default async function BabyPage({
     // 持ち主・世帯・着地日ごとに作り直す（key）。別の持ち主の画面の状態を持ち越さぬ。
     // `/baby?date=…` から `/baby` へ戻った時に同じ segment の
     // component が残ると、useState(initialDate) の選択日が着地日のまま居座る
+    <ChildScopeProvider key={child.id} scope={{ id: child.id, isLegacy: child.is_legacy, updatedAt: child.updated_at }}>
+    <ChildPicker childrenList={children} selectedId={child.id} />
     <BabyDashboard
-      key={`${userId}:${householdId}:${selectedDate}`}
+      key={`${userId}:${householdId}:${child.id}:${selectedDate}`}
       initialLogs={logs ?? []}
       initialWeeklyLogs={weeklyLogs ?? []}
       initialGrowthLogs={growthLogs ?? []}
@@ -174,10 +156,11 @@ export default async function BabyPage({
       initialDiary={diary ?? null}
       lastFeedingFallback={lastFeedingData ?? null}
       lastNursingFallback={lastNursingData ?? null}
-      babyName={household?.baby_name ?? null}
-      babyBirthDate={household?.baby_birth_date ?? null}
+      babyName={child.name || null}
+      babyBirthDate={child.birth_date}
+      babySex={child.sex==="male"||child.sex==="female"?child.sex:null}
       feedingIntervalMin={
-        household?.feeding_interval_min ?? FEEDING_INTERVAL_DEFAULT
+        child.feeding_interval_min ?? FEEDING_INTERVAL_DEFAULT
       }
       initialBottleDefault={bottleDefault}
       initialUpcomingEvents={
@@ -197,5 +180,6 @@ export default async function BabyPage({
         upcoming: Boolean(upcomingError),
       }}
     />
+    </ChildScopeProvider>
   )
 }

@@ -1,6 +1,8 @@
 "use client"
 
-import { useTransition } from "react"
+import { useChildScope } from "@/components/baby/child-scope"
+
+import { useState,useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { Baby, Loader2, TriangleAlert } from "lucide-react"
@@ -69,16 +71,20 @@ export function BabyProfileCard({
 }
 
 function BabyProfileForm({ initialProfile }: { initialProfile: BabyProfile }) {
+  const childScope = useChildScope()
+  const [version,setVersion] = useState(childScope?.updatedAt)
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
 
   const handleSave = (formData: FormData) => {
+    if (childScope) { formData.set("child_id", childScope.id);formData.set("child_version", version ?? "") }
     startTransition(async () => {
       try {
         const result = await updateBabyProfile(formData)
         if (result.error) {
           toast.error(result.error)
         } else {
+          if("updatedAt" in result && result.updatedAt)setVersion(result.updatedAt)
           toast.success("赤ちゃん情報を更新しました")
           router.refresh()
         }

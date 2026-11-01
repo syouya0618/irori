@@ -732,3 +732,13 @@ describe("CalendarView - 自分の保存で進んだ版を辿る（偽の衝突�
     expect(augustEnd! > "2026-08-01").toBe(true)
   })
 })
+
+const medicalNavigation=vi.hoisted(()=>({push:vi.fn()}))
+vi.mock("next/navigation",()=>({useRouter:()=>medicalNavigation}))
+
+it("opens linked medical events with their frozen child scope",()=>{
+ render(<CalendarView {...base} initialEvents={[ev({id:"medical-synthetic",title:"synthetic medical visit",child_id:"synthetic-child",medical_record_id:"medical-synthetic"})]}/> )
+ fireEvent.click(dayCell("2026-07-15"));fireEvent.click(screen.getByText("synthetic medical visit"))
+ expect(medicalNavigation.push).toHaveBeenCalledWith("/baby/medical?child=synthetic-child")
+ expect(screen.queryByLabelText("タイトル")).not.toBeInTheDocument()
+})

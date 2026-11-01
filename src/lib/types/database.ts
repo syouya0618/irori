@@ -64,6 +64,55 @@ export type GoogleSyncErrorKind =
 export interface Database {
   public: {
     Tables: {
+      news_batches:{Row:{user_id:string;day:string;household_id:string;region_key:string;article_ids:string[]};Insert:never;Update:never;Relationships:[]}
+      news_preferences:{Row:{user_id:string;region_key:string|null;enabled:boolean;enabled_from:string;updated_at:string};Insert:never;Update:never;Relationships:[]}
+      news_articles:{Row:{region_key:string;id:string;title:string;url:string;published_at:string;first_seen_at:string;min_months:number|null;max_months:number|null};Insert:{region_key:string;id:string;title:string;url:string;published_at:string;min_months?:number|null;max_months?:number|null};Update:never;Relationships:[]}
+      news_source_runs:{Row:{region_key:string;claimed_at:string;last_success_at:string|null};Insert:never;Update:{last_success_at?:string};Relationships:[]}
+      news_deliveries:{Row:{id:string;recipient_id:string;household_id:string;region_key:string;day:string;subscription_id:string|null;article_ids:string[];sent_at:string|null;accepted_at:string|null;skipped_at:string|null};Insert:never;Update:{sent_at?:string|null;accepted_at?:string|null;skipped_at?:string|null};Relationships:[]}
+      custom_fields: {
+        Row:{id:string;household_id:string;label:string;value_type:"number"|"boolean"|"text"|"datetime"|"choice";options:Json;archived:boolean;updated_at:string;created_at:string}
+        Insert:never
+        Update:never
+        Relationships:[]
+      }
+      custom_records: {
+        Row:{id:string;household_id:string;child_id:string;field_id:string;field_label:string;value_type:"number"|"boolean"|"text"|"datetime"|"choice";field_options:Json;value:Json;logged_at:string;memo:string|null;voided:boolean;created_by:string|null;updated_at:string;created_at:string;search_text:string}
+        Insert:never
+        Update:never
+        Relationships:[]
+      }
+      medical_records: {
+        Row: { id:string;household_id:string;child_id:string;kind:"vaccination"|"checkup";title:string;dose:number|null;status:"planned"|"completed"|"cancelled";scheduled_date:string;completed_date:string|null;memo:string|null;remind:boolean;source_key:string;created_by:string|null;updated_at:string;created_at:string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      sleep_sessions: {
+        Row: { id: string; household_id: string; child_id: string; started_at: string; ended_at: string | null; started_by: string | null; ended_by: string | null; memo: string | null; voided: boolean; updated_at: string; created_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+
+      child_shares: {
+        Row: { id: string; household_id: string; child_id: string; invitation_id: string; viewer_id: string | null; allow_daily: boolean; allow_diary: boolean; allow_health: boolean; allow_custom: boolean; expires_at: string | null; revoked_at: string | null; created_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      children: {
+        Row: { id: string; household_id: string; name: string; birth_date: string | null; sex: string | null; is_legacy: boolean; feeding_interval_min: number; bottle_default_ml: number | null; created_at: string; updated_at: string }
+        Insert: { id?: string; household_id: string; name: string; birth_date?: string | null; sex?: string | null; is_legacy?: boolean; feeding_interval_min?: number; bottle_default_ml?: number | null }
+        Update: { name?: string; birth_date?: string | null; sex?: string | null; feeding_interval_min?: number; bottle_default_ml?: number | null }
+        Relationships: []
+      }
+
+      feeding_amount_history: {
+        Row: { user_id: string; household_id: string; child_id: string; feeding_type: string; amount_ml: number; use_order: number }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       households: {
         Row: {
           id: string
@@ -132,6 +181,7 @@ export interface Database {
       }
       invitations: {
         Row: {
+          purpose: "member" | "child_share"
           id: string
           household_id: string
           invited_by: string
@@ -162,6 +212,7 @@ export interface Database {
       }
       baby_logs: {
         Row: {
+          child_id: string
           id: string
           household_id: string
           log_type: BabyLogType
@@ -192,6 +243,7 @@ export interface Database {
           updated_at: string
         }
         Insert: {
+          child_id?: string | null
           id?: string
           household_id: string
           log_type: BabyLogType
@@ -214,6 +266,7 @@ export interface Database {
           memo?: string | null
         }
         Update: {
+          child_id?: string | null
           log_type?: BabyLogType
           logged_at?: string
           feeding_type?: FeedingType | null
@@ -236,6 +289,7 @@ export interface Database {
       }
       baby_diaries: {
         Row: {
+          child_id: string
           id: string
           household_id: string
           /** JST の暦日 "YYYY-MM-DD"（1世帯・1日につき1本、UNIQUE） */
@@ -246,6 +300,7 @@ export interface Database {
           updated_at: string
         }
         Insert: {
+          child_id?: string | null
           id?: string
           household_id: string
           diary_date: string
@@ -253,6 +308,7 @@ export interface Database {
           updated_by?: string | null
         }
         Update: {
+          child_id?: string | null
           content?: string
           updated_by?: string | null
         }
@@ -260,6 +316,7 @@ export interface Database {
       }
       calendar_events: {
         Row: {
+          child_id: string | null
           id: string
           household_id: string
           title: string
@@ -297,11 +354,13 @@ export interface Database {
            * ⚠️ 生成列ゆえ **書けぬ** → `Insert` / `Update` には出しておらぬ。
            */
           event_uid: string
+          medical_record_id?: string | null
           created_by: string | null
           created_at: string
           updated_at: string
         }
         Insert: {
+          child_id?: string | null
           id?: string
           household_id: string
           title: string
@@ -327,6 +386,7 @@ export interface Database {
           created_by?: string | null
         }
         Update: {
+          child_id?: string | null
           title?: string
           memo?: string | null
           is_all_day?: boolean
@@ -754,6 +814,25 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
+      news_source_status:{Args:Record<string,never>;Returns:string|null}
+      save_news_preferences:{Args:{p_region:string|null;p_enabled:boolean;p_version:string|null};Returns:Json}
+      claim_news_source:{Args:{p_region:string;p_now:string};Returns:boolean}
+      prepare_news_deliveries:{Args:{p_now:string};Returns:number}
+      claim_news_delivery:{Args:{p_id:string;p_now:string};Returns:Json}
+      save_custom_field:{Args:{p_id:string;p_version:string|null;p_label:string;p_type:string;p_options:Json;p_archived:boolean};Returns:Json}
+      save_custom_record:{Args:{p_id:string;p_child:string;p_version:string|null;p_field:string;p_value:Json;p_logged_at:string;p_memo:string|null;p_voided:boolean};Returns:Json}
+      export_child_records:{Args:{p_child:string;p_from?:string|null;p_to?:string|null};Returns:Json}
+      save_medical_record: { Args:{p_id:string;p_child:string;p_version:string|null;p_value:Json};Returns:Json }
+      start_sleep: { Args: { p_id: string; p_child: string; p_start?: string | null; p_end?: string | null; p_memo?: string | null }; Returns: Json }
+      stop_sleep: { Args: { p_id: string; p_child: string; p_version: string; p_stop_id: string; p_end?: string | null }; Returns: Json }
+      edit_sleep: { Args: { p_id: string; p_child: string; p_version: string; p_start: string; p_end: string; p_memo?: string | null; p_voided?: boolean }; Returns: Json }
+
+      create_child_share: { Args: { p_child_id: string; p_daily: boolean; p_diary: boolean; p_health: boolean; p_custom: boolean; p_until?: string | null }; Returns: Json }
+      accept_child_share: { Args: { p_token: string }; Returns: string }
+      revoke_child_share: { Args: { p_share_id: string }; Returns: boolean }
+      list_child_shares: { Args: { p_owned?: boolean }; Returns: Json }
+      shared_child_snapshot: { Args: { p_share_id: string }; Returns: Json }
+
       enqueue_feeding_delivery: {
         Args: { p_household_id: string; p_log_id: string; p_subscription_id: string; p_scheduled_at: string }
         Returns: string | null

@@ -1,14 +1,16 @@
+import { cache } from "react"
 import { createServerClient } from "@supabase/ssr"
 import { cookies } from "next/headers"
 import type { Database } from "@/lib/types/database"
 
-export async function createClient() {
+async function makeClient(childId?: string) {
   const cookieStore = await cookies()
 
   return createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "",
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ?? "",
     {
+      global: { headers: childId ? { "x-irori-child": childId } : {} },
       cookies: {
         getAll() {
           return cookieStore.getAll()
@@ -27,3 +29,6 @@ export async function createClient() {
     }
   )
 }
+
+/** React.cache is request-local in RSC; never a process-wide SDK singleton. Child headers remain immutable. */
+export const createClient = cache(makeClient)

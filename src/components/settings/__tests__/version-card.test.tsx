@@ -56,8 +56,8 @@ describe("VersionCard", () => {
       expect(screen.getByTestId("server-build-status")).toHaveTextContent("この端末の版と同じです"),
     )
     expect(screen.queryByRole("button", { name: "読み直して更新する" })).not.toBeInTheDocument()
-    // 利用者向けの変更点を出す
-    expect(screen.getByRole("heading", { name: "この更新のおもな変更" })).toBeInTheDocument()
+    // 履歴は設定最下部の専用ボタンから開く。
+    expect(screen.queryByRole("heading", { name: "この更新のおもな変更" })).not.toBeInTheDocument()
   })
 
   it("取得できなかった時は「確かめられませんでした」— 最新とも新しい版ありとも言わぬ", async () => {

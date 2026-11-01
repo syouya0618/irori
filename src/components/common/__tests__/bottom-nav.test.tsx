@@ -125,3 +125,7 @@ describe("BottomNav: 殻との寸法契約", () => {
     expect(row.className).toContain("h-(--bottom-nav-h)")
   })
 })
+
+it("news and child management remain under the childcare tab",()=>{
+ for(const path of ["/news","/children","/children/sharing"]){pathname=path;render(<BottomNav/>);expect(activeLinks()).toEqual(["育児"]);cleanup()}
+})

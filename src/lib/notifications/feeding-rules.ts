@@ -24,12 +24,12 @@ export function dueFeedingReminder(loggedAt: string, interval: number, lead: unk
   }
 }
 
-export function buildFeedingNotification(loggedAt: string, targetIso: string): NotificationPayload {
+export function buildFeedingNotification(loggedAt: string, targetIso: string, childId?: string): NotificationPayload {
   return {
     title: "うちのログ",
     body: `次の授乳の目安 ${formatJstTimeInput(targetIso)}\n前回の授乳は${formatJstTimeInput(loggedAt)}開始です。そろそろ次の授乳時間です。赤ちゃんの様子に合わせてください。`,
-    url: "/baby",
+    url: childId ? `/baby?child=${encodeURIComponent(childId)}` : "/baby",
     // 端末に残った前の授乳通知を置き換える（受理済みPushの取消しは保証できない）。
-    tag: "feeding",
+    tag: childId ? `feeding:${childId}` : "feeding",
   }
 }

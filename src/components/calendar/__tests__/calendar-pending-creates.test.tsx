@@ -774,3 +774,5 @@ describe("独立レビュー v9rc2 の回帰: 直すシートを開いておる�
     expect(screen.queryByText(/7日間/)).toBeNull()
   })
 })
+
+vi.mock("next/navigation",()=>({useRouter:()=>({push:vi.fn()})}))

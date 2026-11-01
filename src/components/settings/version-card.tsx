@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button"
 import { UpdateAction, UPDATE_RELOAD_NOTE } from "@/components/common/app-update-notice"
 import { useAppVersion } from "@/lib/pwa/use-app-version"
 import { clientBuildId, DEV_BUILD_ID } from "@/lib/release/build-info"
-import { RELEASE_HIGHLIGHTS, RELEASE_NAME } from "@/lib/release/release-notes"
+import { RELEASE_NAME } from "@/lib/release/release-notes"
 import type { SaveOwner } from "@/lib/domain/save-attempt"
 import type { VersionCheckResult } from "@/lib/pwa/app-version"
 
@@ -40,7 +40,8 @@ function serverStatusText(result: VersionCheckResult | null): string {
  * 設定 > ヘルプとアカウントの「このアプリの版」（2026-10-27 大型更新 E1）。
  *
  * リリース名・この端末が読んでおる build（ビルド時に埋め込んだ短い SHA）・いま公開中の build
- * （/api/version）・利用者向けの変更点を出す。branch 名・環境名・利用者の情報は出さぬ。
+ * （/api/version）を出す。変更点は設定末尾のReleaseHistoryから開く。
+ * branch 名・環境名・利用者の情報は出さぬ。
  * 新しい版がある時は UpdateAction（押した時だけ読み直す。書きかけ等があれば先に確認）を出す。
  */
 export function VersionCard({ owner }: { owner: SaveOwner | null }) {
@@ -92,14 +93,6 @@ export function VersionCard({ owner }: { owner: SaveOwner | null }) {
           </Button>
         )}
 
-        <div className="flex flex-col gap-1">
-          <h3 className="text-sm font-medium">この更新のおもな変更</h3>
-          <ul className="flex list-disc flex-col gap-1 pl-5 text-sm text-muted-foreground">
-            {RELEASE_HIGHLIGHTS.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </div>
       </CardContent>
     </Card>
   )

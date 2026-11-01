@@ -27,7 +27,7 @@ function isLogRow(value: unknown): value is BabyLogData {
 
 export async function lookupBabyLogs(
   ids: string[],
-  opts: { signal?: AbortSignal; timeoutMs?: number } = {},
+  opts: { childId?: string; signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<LookupOutcome> {
   const controller = new AbortController()
   let timedOut = false
@@ -41,7 +41,7 @@ export async function lookupBabyLogs(
     else opts.signal.addEventListener("abort", onAbort, { once: true })
   }
   try {
-    const query = ids.map((id) => `id=${encodeURIComponent(id)}`).join("&")
+    const query = (opts.childId ? `child=${encodeURIComponent(opts.childId)}&` : "") + ids.map((id) => `id=${encodeURIComponent(id)}`).join("&")
     const res = await fetch(`/api/baby-logs/lookup?${query}`, {
       redirect: "manual",
       cache: "no-store",

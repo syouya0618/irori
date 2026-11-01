@@ -58,6 +58,7 @@ import {
 import { ThemeCard } from "@/components/settings/theme-card"
 import { HelpCard, type HelpCardFeedback } from "@/components/settings/help-card"
 import { VersionCard } from "@/components/settings/version-card"
+import { ReleaseHistory } from "@/components/settings/release-history"
 import type { HouseholdRole } from "@/lib/types/database"
 import type { NotificationHealthView } from "@/lib/domain/notification-health"
 
@@ -625,6 +626,7 @@ export function SettingsContent({
           </Button>
         )}
       </SettingsSection>
+      <ReleaseHistory />
     </div>
   )
 }

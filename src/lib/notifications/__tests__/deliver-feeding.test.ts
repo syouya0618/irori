@@ -6,10 +6,11 @@ const now = new Date("2026-10-29T21:15:00+09:00")
 const vapid = { publicKey: "pub", privateKey: "priv", subject: "mailto:test@example.com" }
 function setup() {
   const db = emptyNotifyDb()
+  db.children.push({ id: "child1", household_id: "h1", feeding_interval_min: 180 })
   db.households.push({ id: "h1", feeding_interval_min: 180 })
-  db.profiles.push({ id: "u1", household_id: "h1", is_approved: true })
+  db.profiles.push({ id: "u1", household_id: "h1", is_approved: true, role: "member" })
   db.notification_preferences.push({ user_id: "u1", feeding_reminder_minutes: 15 })
-  db.baby_logs.push({ id: "log1", household_id: "h1", log_type: "feeding", feeding_type: "bottle", logged_at: "2026-10-29T18:30:00+09:00" })
+  db.baby_logs.push({ id: "log1", child_id: "child1", household_id: "h1", log_type: "feeding", feeding_type: "bottle", logged_at: "2026-10-29T18:30:00+09:00" })
   db.push_subscriptions.push({ id: "sub1", user_id: "u1", endpoint: "https://fcm.googleapis.com/test", p256dh: "key", auth: "auth", failure_count: 0 })
   const fake = createFakeNotifySupabase(db)
   const rpc = vi.fn(async (name: string, args: Record<string, unknown>) => {
@@ -39,7 +40,7 @@ describe("授乳通知の実配信経路（DBの認可/競合はpgTAPと実Postg
       p_scheduled_at: "2026-10-29T12:15:00.000Z",
     })
     expect(s.sendPush).toHaveBeenCalledWith(expect.objectContaining({ endpoint: "https://fcm.googleapis.com/test" }), vapid,
-      expect.objectContaining({ url: "/baby", body: expect.stringContaining("21:30") }), { ttlSeconds: 300 })
+      expect.objectContaining({ url: "/baby?child=child1", body: expect.stringContaining("21:30") }), { ttlSeconds: 300 })
   })
   it.each(["off", "no-subscription", "unapproved", "new-log", "only-pump"])("%sなら送らない", async (kind) => {
     const s = setup()
@@ -53,7 +54,7 @@ describe("授乳通知の実配信経路（DBの認可/競合はpgTAPと実Postg
   })
   it("父母のリードが違い、対象ユーザーの複数端末へだけ送る", async () => {
     const s = setup()
-    s.db.profiles.push({ id: "u2", household_id: "h1", is_approved: true })
+    s.db.profiles.push({ id: "u2", household_id: "h1", is_approved: true, role: "member" })
     s.db.notification_preferences.push({ user_id: "u2", feeding_reminder_minutes: 5 })
     s.db.push_subscriptions.push({ ...s.db.push_subscriptions[0], id: "sub2" }, { ...s.db.push_subscriptions[0], id: "sub3", user_id: "u2" })
     expect((await s.run()).sent).toBe(2)
@@ -62,6 +63,18 @@ describe("授乳通知の実配信経路（DBの認可/競合はpgTAPと実Postg
   it("別世帯の新しい記録は起点にも本文にも混ぜない", async () => {
     const s = setup()
     s.db.baby_logs.push({ ...s.db.baby_logs[0], household_id: "h2", id: "foreign", logged_at: "2026-10-29T21:00:00+09:00" })
+    expect((await s.run()).sent).toBe(1)
+    expect(s.rpc.mock.calls[0][1].p_log_id).toBe("log1")
+  })
+  it("閲覧専用者と承認取消された利用者には送らない", async () => {
+    const s = setup();s.db.profiles[0].role="viewer"
+    expect((await s.run()).sent).toBe(0)
+    expect(s.sendPush).not.toHaveBeenCalled()
+  })
+  it("兄弟の新しい授乳で別の子の通知を消さない", async () => {
+    const s = setup()
+    s.db.children.push({ id: "child2", household_id: "h1", feeding_interval_min: 180 })
+    s.db.baby_logs.push({ ...s.db.baby_logs[0], child_id: "child2", id: "sibling-new", logged_at: "2026-10-29T20:00:00+09:00" })
     expect((await s.run()).sent).toBe(1)
     expect(s.rpc.mock.calls[0][1].p_log_id).toBe("log1")
   })

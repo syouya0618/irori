@@ -125,3 +125,13 @@ describe("useVisibilityRefetch", () => {
     addSpy.mockRestore()
   })
 })
+
+it("optional scoped polling only runs while visible and online, and stops on unmount",()=>{
+ vi.useFakeTimers();const cb=vi.fn()
+ function Poll(){useVisibilityRefetch(cb,30000);return null}
+ Object.defineProperty(navigator,"onLine",{configurable:true,value:true});const view=render(<Poll/> )
+ act(()=>vi.advanceTimersByTime(30000));expect(cb).toHaveBeenCalledTimes(1)
+ setVisibility("hidden");act(()=>vi.advanceTimersByTime(30000));expect(cb).toHaveBeenCalledTimes(1)
+ setVisibility("visible");Object.defineProperty(navigator,"onLine",{configurable:true,value:false});act(()=>vi.advanceTimersByTime(30000));expect(cb).toHaveBeenCalledTimes(1)
+ view.unmount();act(()=>vi.advanceTimersByTime(30000));expect(cb).toHaveBeenCalledTimes(1);Object.defineProperty(navigator,"onLine",{configurable:true,value:true});vi.useRealTimers()
+})

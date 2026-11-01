@@ -3,7 +3,7 @@
 --
 -- ## なぜ要るか
 -- upsertBabyDiary（src/app/(main)/baby/actions.ts）は updated_at を版にして、
---   新規 = INSERT … ON CONFLICT (household_id, diary_date) DO NOTHING（行が在れば 0 行）
+--   新規 = INSERT … ON CONFLICT (household_id, child_id, diary_date) DO NOTHING（行が在れば 0 行）
 --   更新 = UPDATE … WHERE updated_at = 期待版（版が進んでおれば 0 行）
 --   削除 = DELETE … WHERE updated_at = 期待版
 -- の「0 行」を衝突として扱う。vitest の fake はこの振る舞いを**自前で模すだけ**ゆえ、
@@ -46,7 +46,7 @@ WITH ins AS (
   INSERT INTO baby_diaries (household_id, diary_date, content, updated_by)
   VALUES ('11111111-1111-1111-1111-111111111111', '2026-07-20', '空欄から書いた一言',
           '22222222-2222-2222-2222-222222222222')
-  ON CONFLICT (household_id, diary_date) DO NOTHING
+  ON CONFLICT (household_id, child_id, diary_date) DO NOTHING
   RETURNING 1)
 SELECT is((SELECT count(*) FROM ins), 0::bigint,
   '新規: 既存行が在れば ON CONFLICT DO NOTHING は 0 行（衝突として検知できる）');

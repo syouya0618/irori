@@ -65,6 +65,11 @@ vi.mock("@/lib/supabase/verified-user", () => ({
   getVerifiedUser: async () => ({ userId: "u1", email: "me@example.com" }),
 }))
 
+vi.mock("@/lib/supabase/child-context", () => ({ getChildContext: async () => {
+  const h = tableResults.households?.data as Record<string, unknown> | null
+  return { child: { id: "synthetic-child", is_legacy: true, name: h?.baby_name, birth_date: h?.baby_birth_date, feeding_interval_min: h?.feeding_interval_min } }
+} }))
+
 const logSupabaseError = vi.fn()
 vi.mock("@/lib/supabase/log-error", () => ({
   logSupabaseError: (...args: unknown[]) => logSupabaseError(...args),
@@ -114,7 +119,7 @@ async function renderProps(): Promise<Record<string, unknown>> {
   const element = (await SettingsPage({
     searchParams: Promise.resolve({}),
   })) as ReactElement<Record<string, unknown>>
-  return element.props
+  return (element.props.children as ReactElement<Record<string, unknown>>).props
 }
 
 const rpcNames = () => rpc.mock.calls.map(([name]) => name)

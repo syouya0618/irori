@@ -19,3 +19,8 @@ export const RELEASE_HIGHLIGHTS: readonly string[] = [
   "ログインメールの再送と、リンクがうまく開けないときの案内を足しました",
   "要望を送るときに、任意で診断情報（版・端末の種類など。本文や名前は含みません）を添えられるようにしました",
 ]
+
+/** Published changes only, newest first. Draft work belongs in CHANGELOG's Unreleased section. */
+export const RELEASE_HISTORY = [
+  { id: "2026-10-28", title: "2026年10月28日の更新", items: RELEASE_HIGHLIGHTS },
+] as const

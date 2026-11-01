@@ -1,5 +1,6 @@
 "use server"
 
+import { getBabyAuthContext } from "@/lib/supabase/child-context"
 import { revalidatePath } from "next/cache"
 import { getAuthContext, type AuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
@@ -349,6 +350,7 @@ function validateBreastCounts(
 }
 
 interface RecordFeedingInput {
+  childId?: string
   feedingType: FeedingType
   amountMl?: number | null
   /**
@@ -391,6 +393,7 @@ interface RecordFeedingInput {
 }
 
 interface RecordDiaperInput {
+  childId?: string
   diaperType: DiaperType
   /**
    * うんちの量（small / large）。diaperType が poop / both の時のみ指定可
@@ -405,6 +408,7 @@ interface RecordDiaperInput {
 }
 
 interface RecordTemperatureInput {
+  childId?: string
   temperature: number
   /** 記録時刻（ISO 8601）。未指定時は DB の now() 既定に依存する。 */
   loggedAt?: string
@@ -414,6 +418,7 @@ interface RecordTemperatureInput {
 }
 
 interface RecordGrowthInput {
+  childId?: string
   weightG?: number | null
   heightCm?: number | null
   /** 記録時刻（ISO 8601）。未指定時は DB の now() 既定に依存する。 */
@@ -424,6 +429,7 @@ interface RecordGrowthInput {
 }
 
 interface RecordMemoInput {
+  childId?: string
   memo: string
   /** 記録時刻（ISO 8601）。未指定時は DB の now() 既定に依存する。 */
   loggedAt?: string
@@ -480,7 +486,7 @@ export async function recordFeeding(input: RecordFeedingInput) {
     }
   }
 
-  const result = await getAuthContext()
+  const result = await getBabyAuthContext(input.childId)
   if (result.error !== null) return { error: result.error, id: null, failure: "rejected" as const }
   const { supabase, userId, householdId } = result.context
 
@@ -494,6 +500,7 @@ export async function recordFeeding(input: RecordFeedingInput) {
     householdId,
     userId,
     {
+      ...(input.childId ? { child_id: input.childId } : {}),
       log_type: "feeding",
       feeding_type: input.feedingType,
       amount_ml: input.amountMl ?? null,
@@ -538,7 +545,7 @@ export async function recordDiaper(input: RecordDiaperInput) {
     }
   }
 
-  const result = await getAuthContext()
+  const result = await getBabyAuthContext(input.childId)
   if (result.error !== null) return { error: result.error, id: null, failure: "rejected" as const }
   const { supabase, userId, householdId } = result.context
 
@@ -547,6 +554,7 @@ export async function recordDiaper(input: RecordDiaperInput) {
     householdId,
     userId,
     {
+      ...(input.childId ? { child_id: input.childId } : {}),
       log_type: "diaper",
       diaper_type: input.diaperType,
       // pee は上で拒否済みゆえ常に null（chk_poop_amount_only_poop のミラー）
@@ -569,7 +577,7 @@ export async function recordTemperature(input: RecordTemperatureInput) {
   const clientIdError = validateClientId(input.clientId)
   if (clientIdError) return { error: clientIdError, id: null, failure: "rejected" as const }
 
-  const result = await getAuthContext()
+  const result = await getBabyAuthContext(input.childId)
   if (result.error !== null) return { error: result.error, id: null, failure: "rejected" as const }
   const { supabase, userId, householdId } = result.context
 
@@ -579,6 +587,7 @@ export async function recordTemperature(input: RecordTemperatureInput) {
     householdId,
     userId,
     {
+      ...(input.childId ? { child_id: input.childId } : {}),
       log_type: "temperature",
       temperature: input.temperature,
       ...(input.loggedAt != null && { logged_at: input.loggedAt }),
@@ -597,7 +606,7 @@ export async function recordGrowth(input: RecordGrowthInput) {
   const clientIdError = validateClientId(input.clientId)
   if (clientIdError) return { error: clientIdError, id: null, failure: "rejected" as const }
 
-  const result = await getAuthContext()
+  const result = await getBabyAuthContext(input.childId)
   if (result.error !== null) return { error: result.error, id: null, failure: "rejected" as const }
   const { supabase, userId, householdId } = result.context
 
@@ -607,6 +616,7 @@ export async function recordGrowth(input: RecordGrowthInput) {
     householdId,
     userId,
     {
+      ...(input.childId ? { child_id: input.childId } : {}),
       log_type: "growth",
       weight_g: input.weightG ?? null,
       height_cm: input.heightCm ?? null,
@@ -627,7 +637,7 @@ export async function recordMemo(input: RecordMemoInput) {
   const clientIdError = validateClientId(input.clientId)
   if (clientIdError) return { error: clientIdError, id: null, failure: "rejected" as const }
 
-  const result = await getAuthContext()
+  const result = await getBabyAuthContext(input.childId)
   if (result.error !== null) return { error: result.error, id: null, failure: "rejected" as const }
   const { supabase, userId, householdId } = result.context
 
@@ -637,6 +647,7 @@ export async function recordMemo(input: RecordMemoInput) {
     householdId,
     userId,
     {
+      ...(input.childId ? { child_id: input.childId } : {}),
       log_type: "memo",
       ...(input.loggedAt != null && { logged_at: input.loggedAt }),
       memo: input.memo,
@@ -743,6 +754,7 @@ export async function updateLog(
    * UPDATE ごとに進める）。
    */
   expectedUpdatedAt: string,
+  childId?: string,
   // 成功時は更新後の行（サーバ真値）を返す。呼び出し側はこれで画面を即時に書き換える —
   // Realtime UPDATE の到達だけに頼ると、不達の間「更新しました」と出るのに旧値のまま
   // 残る（作成・削除が B-03 で楽観反映へ移った後も、編集だけが取り残されておった）。
@@ -839,7 +851,7 @@ export async function updateLog(
     return { error: STALE_SCREEN_SAVE_ERROR }
   }
 
-  const result = await getAuthContext()
+  const result = await getBabyAuthContext(childId)
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
 
@@ -1008,6 +1020,7 @@ export async function deleteLog(
    * 直した記録を、古い画面から編集ごと消させぬ。updateLog と同じ楽観的排他）。
    */
   expectedUpdatedAt: string,
+  childId?: string,
   // 0 行は読み直して分ける: 行が無い（削除済み・別世帯）→ alreadyDeleted（呼び出し側は
   // 画面の幽霊行を外す）、版が進んでおる → conflict.current に最新の行（外さず見せる）、
   // 読み直しまで失敗 → どちらも付けぬ（行を外させぬ）。
@@ -1023,7 +1036,7 @@ export async function deleteLog(
     return { error: STALE_SCREEN_SAVE_ERROR }
   }
 
-  const result = await getAuthContext()
+  const result = await getBabyAuthContext(childId)
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
 
@@ -1127,6 +1140,7 @@ export async function upsertBabyDiary(
   diaryDate: string,
   content: string,
   expectedUpdatedAt: string | null,
+  childId?: string,
 ): Promise<UpsertBabyDiaryResult> {
   if (!DIARY_DATE_RE.test(diaryDate)) {
     return { error: "日付の形式が不正です", diary: null }
@@ -1151,9 +1165,14 @@ export async function upsertBabyDiary(
     }
   }
 
-  const result = await getAuthContext()
+  const result = await getBabyAuthContext(childId)
   if (result.error !== null) return { error: result.error, diary: null }
   const { supabase, userId, householdId } = result.context
+
+  const { data: child, error: childError } = await supabase.from("children").select("id")
+    .eq("household_id", householdId).eq(childId ? "id" : "is_legacy", childId ?? true).maybeSingle()
+  if (childError || !child) return { error: "子どもの情報を取得できませんでした", diary: null }
+  childId = child.id
 
   // 衝突の確定: 最新の行を読み直して返す。読み直しまで失敗したら conflict を付けない
   // （current: null は「削除済み」の意味ゆえ、読めなかったことと混同させない）。
@@ -1227,11 +1246,12 @@ export async function upsertBabyDiary(
       .upsert(
         {
           household_id: householdId,
+          ...(childId ? { child_id: childId } : {}),
           diary_date: diaryDate,
           content: trimmed,
           updated_by: userId,
         },
-        { onConflict: "household_id,diary_date", ignoreDuplicates: true },
+        { onConflict: "household_id,child_id,diary_date", ignoreDuplicates: true },
       )
       .select(BABY_DIARY_COLUMNS)
     if (error) {
@@ -1301,6 +1321,7 @@ const BOTTLE_DEFAULT_CONFLICT_ERROR =
  * 世帯は引数で受けず、getAuthContext の利用者の世帯だけを書く。
  */
 export async function updateBottleDefault(input: {
+  childId?: string
   amountMl: number
   expectedMl: number | null
 }): Promise<UpdateBottleDefaultResult> {
@@ -1317,15 +1338,15 @@ export async function updateBottleDefault(input: {
     return { ok: false, error: STALE_SCREEN_SAVE_ERROR }
   }
 
-  const auth = await getAuthContext()
+  const auth = await getBabyAuthContext(input.childId)
   if (auth.error !== null) return { ok: false, error: auth.error }
   const { supabase, userId, householdId } = auth.context
   const logContext = { userId, householdId }
 
   const update = supabase
-    .from("households")
+    .from(input.childId ? "children" : "households")
     .update({ bottle_default_ml: amountMl })
-    .eq("id", householdId)
+    .eq("id", input.childId ?? householdId)
   // 未設定（NULL）との比較は `.is(null)`。`.eq(col, null)` は `= NULL` となり決して一致せぬ
   const guarded =
     expectedMl === null
@@ -1347,9 +1368,9 @@ export async function updateBottleDefault(input: {
   }
 
   const { data: row, error: readError } = await supabase
-    .from("households")
+    .from(input.childId ? "children" : "households")
     .select("bottle_default_ml")
-    .eq("id", householdId)
+    .eq("id", input.childId ?? householdId)
     .maybeSingle()
   if (readError) {
     logSupabaseError("baby", "bottle default re-read failed", readError, logContext)

@@ -15,6 +15,7 @@ import type { BabyLogData } from "@/lib/types/baby"
  */
 const COMPLETE: BabyLogData = {
   id: "",
+  child_id: "",
   log_type: "feeding",
   logged_at: "",
   logged_by: "",

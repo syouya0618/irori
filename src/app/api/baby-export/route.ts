@@ -1,5 +1,7 @@
+import { selectChildProfile } from "@/lib/supabase/child-profile-query"
 import type { PostgrestError } from "@supabase/supabase-js"
-import { getAuthContext, type AuthContext } from "@/lib/supabase/auth-context"
+import { getBabyAuthContext } from "@/lib/supabase/child-context"
+import type { AuthContext } from "@/lib/supabase/auth-context"
 // 拒否理由 → HTTP status は PDF・Google 同期と同じ 1 表（401 はログインし直せば直る時だけ）
 import { AUTH_DENIAL_HTTP_STATUS } from "@/lib/auth/auth-denial-status"
 import { logSupabaseError } from "@/lib/supabase/log-error"
@@ -151,7 +153,7 @@ function headerValue(value: string): string {
 }
 
 export async function GET(request: Request) {
-  const result = await getAuthContext()
+  const result = await getBabyAuthContext(new URL(request.url).searchParams.get("child") ?? undefined)
   if (result.error !== null) {
     return new Response(result.error, { status: AUTH_DENIAL_HTTP_STATUS[result.reason] })
   }
@@ -206,11 +208,7 @@ export async function GET(request: Request) {
 
   const [householdResult, membersResult, logsResult, diariesResult] = await Promise.all([
     wantHousehold
-      ? supabase
-          .from("households")
-          .select("baby_name, baby_birth_date")
-          .eq("id", householdId)
-          .single()
+      ? selectChildProfile(supabase, householdId, new URL(request.url).searchParams.get("child") ?? undefined)
       : Promise.resolve({ data: null, error: null }),
     wantMembers
       ? supabase.from("profiles").select("id, display_name").eq("household_id", householdId)

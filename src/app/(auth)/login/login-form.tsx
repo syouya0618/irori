@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useSyncExternalStore } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -28,6 +28,9 @@ import { recordClientFailure } from "@/lib/diagnostics/diagnostic-summary"
  * - unknown: 送れたか分からぬ（通信断・期限切れ）。届いておるかを先に確かめさせる
  */
 type FormState = "initial" | "loading" | "sent" | "unknown"
+const subscribeHydration = () => () => {}
+const clientReady = () => true
+const serverReady = () => false
 
 /**
  * `/auth/callback` へ渡す戻り先 URL を組み立てる。
@@ -80,6 +83,9 @@ function useCooldown(): {
  * - 期限切れ・別のブラウザで開いた時の戻り方の説明
  */
 export function LoginForm() {
+  // A server-rendered controlled input must not accept text before onChange is
+  // attached: hydration would otherwise replace that text with the empty state.
+  const hydrated = useSyncExternalStore(subscribeHydration, clientReady, serverReady)
   const [email, setEmail] = useState("")
   const [formState, setFormState] = useState<FormState>("initial")
   // 送った後の画面からの再送か（送信中もその画面のまま待たせる）
@@ -251,7 +257,7 @@ export function LoginForm() {
             placeholder="example@email.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            disabled={formState === "loading"}
+            disabled={!hydrated || formState === "loading"}
             required
             autoComplete="email"
             className="min-h-11 rounded-lg"
@@ -264,7 +270,7 @@ export function LoginForm() {
         )}
         <Button
           type="submit"
-          disabled={formState === "loading"}
+          disabled={!hydrated || formState === "loading"}
           className="min-h-11 w-full rounded-lg text-base font-semibold"
         >
           {formState === "loading" ? (

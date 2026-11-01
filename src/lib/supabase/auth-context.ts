@@ -2,6 +2,7 @@ import { cache } from "react"
 import { createClient } from "@/lib/supabase/server"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { getVerifiedUserId } from "@/lib/supabase/verified-user"
+import { getProfileForRequest } from "./profile-for-request"
 import type { AuthDenialReason } from "@/lib/auth/auth-denial-status"
 
 export type AuthContext = {
@@ -38,11 +39,7 @@ export const getAuthContext = cache(
     // 置き場所を一段間違えるだけでビルドも lint も型検査も緑のまま黙って無効化
     // されうる（過去に半年間ゲートが不稼働だった類型）。proxy が inert になった
     // 場合でも、承認されておらぬ利用者へデータ経路を開かぬようにする。
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("household_id, is_approved")
-      .eq("id", userId)
-      .single()
+    const { data: profile, error: profileError } = await getProfileForRequest(userId)
 
     // 一過性の DB エラー（接続断・タイムアウト・RLS 誤設定）を「世帯なし」と
     // 混同してはならぬ。混同すると**世帯が在るのに /setup へ飛ばされる**（世帯を
@@ -82,6 +79,9 @@ export const getAuthContext = cache(
     // どちらとも断定せぬため — その経路は上で lookup-failed として既に落ちている。
     if (profile.is_approved === false)
       return { error: "承認待ちです", reason: "not-approved", context: null }
+
+    if (profile.role === "viewer")
+      return { error: "共有画面から閲覧してください", reason: "shared-only", context: null }
 
     if (!profile.household_id)
       return { error: "世帯が設定されていません", reason: "no-household", context: null }

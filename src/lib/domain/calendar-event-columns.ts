@@ -14,4 +14,4 @@
  * `updateCalendarEvent` へ渡し、配偶者が先に直した予定を古い画面から巻き戻さぬ。
  */
 export const CALENDAR_EVENT_COLUMNS =
-  "id, title, memo, is_all_day, start_date, end_date, start_at, end_at, source, series_id, updated_at"
+  "id, title, memo, is_all_day, start_date, end_date, start_at, end_at, source, series_id, updated_at, child_id, medical_record_id"
