@@ -74,7 +74,7 @@ describe("FeedbackForm の診断情報", () => {
     fireEvent.click(toggle())
     const preview = screen.getByTestId("feedback-diagnostic-preview").textContent ?? ""
     expect(preview.startsWith(DIAGNOSTIC_HEADER)).toBe(true)
-    expect(preview).toContain("版: 2026年10月の更新 / abc1234")
+    expect(preview).toContain("版: 2026年11月の更新 / abc1234")
     await submit()
     expect(sentBodies()).toEqual([`全期間で失敗した\n\n${preview}`])
   })

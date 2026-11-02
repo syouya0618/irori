@@ -13,7 +13,7 @@ function setup(withQueue=true){
   if(name==="prepare_news_deliveries")return {data:0,error:null}
   if(name==="claim_news_delivery"){if(row.sent_at!==null)return {data:null,error:null};row.sent_at=String(args.p_now);return {data:{id:row.id},error:null}}
   throw new Error("unexpected synthetic RPC")
- });Object.assign(fake.client,{rpc})
+ });Object.assign(fake.client,{rpc:(...args:Parameters<typeof rpc>)=>{const p=rpc(...args);return Object.assign(p,{abortSignal:()=>p})}})
  const send=vi.fn<NewsDeps["sendPush"]>().mockResolvedValue({ok:true}),fetchFeed=vi.fn<NonNullable<NewsDeps["fetchFeed"]>>().mockResolvedValue([]),settle=vi.fn()
  const target={id:"synthetic-sub",user_id:"synthetic-user",endpoint:"https://fcm.googleapis.com/synthetic-news",p256dh:"fixture-key",auth:"fixture-auth",failure_count:0}
  const deps:NewsDeps={now,vapid:{publicKey:"fixture-public",privateKey:"fixture-private",subject:"mailto:fixture@example.invalid"},sendPush:send,fetchFeed,loadSubscriptions:async()=>({rows:[target],error:null}),settleSubscription:settle}

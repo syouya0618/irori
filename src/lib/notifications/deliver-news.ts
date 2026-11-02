@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database } from "@/lib/types/database"
-import { NEWS_REGIONS,newsWindow } from "@/lib/domain/regional-news"
+import { newsWindow } from "@/lib/domain/regional-news"
+import { collectConfiguredNews } from "@/lib/news/collect"
 import { fetchNewsFeed } from "@/lib/news/rss"
 import { isAllowedPushEndpoint } from "@/lib/domain/push-endpoint"
 import { isProvenNotDelivered,type PushSendOptions,type PushSendResult,type PushTarget,type VapidConfig } from "./send-push"
@@ -12,18 +13,9 @@ export type NewsDeps=Omit<FeedbackPhaseDeps,"sendPush">&{sendPush:(target:PushTa
 export async function deliverRegionalNews(db:Client,deps:NewsDeps,counters:FeedbackPhaseCounters&{scheduled:number}):Promise<void>{
  const window=newsWindow(deps.now);if(!window)return
  const nowIso=deps.now.toISOString(),day=new Date(deps.now.getTime()+9*3600000).toISOString().slice(0,10),started=performance.now()
- let configured=false
- await Promise.all(NEWS_REGIONS.map(async region=>{
-  try{
-   // Global existence check for this public source; never pass user attributes to a feed.
-   const {data:pref,error:pe}=await db.from("news_preferences").select("user_id").eq("region_key",region.key).limit(1)
-   if(pe)throw new Error("preference lookup failed");if(!pref?.length)return;configured=true
-   const {data:claimed,error:ce}=await db.rpc("claim_news_source",{p_region:region.key,p_now:nowIso});if(ce)throw new Error("source claim failed");if(!claimed)return
-   const articles=await (deps.fetchFeed??fetchNewsFeed)(region,deps.now)
-   if(articles.length){const {error}=await db.from("news_articles").upsert(articles,{onConflict:"region_key,id",ignoreDuplicates:true});if(error)throw new Error("article persistence failed")}
-   const {error:se}=await db.from("news_source_runs").update({last_success_at:nowIso}).eq("region_key",region.key);if(se)throw new Error("source receipt failed")
-  }catch{counters.failed++;console.error("[cron-notify] news source phase failed",{source:region.key})}
- }))
+ const collection=await collectConfiguredNews(db,deps.now,deps.fetchFeed)
+ counters.failed+=collection.failed
+ const configured=collection.configured
  if(window!=="deliver"||!configured)return
  const {data:prepared,error:qe}=await db.rpc("prepare_news_deliveries",{p_now:nowIso});if(qe)throw new Error("news queue preparation failed");counters.scheduled+=prepared??0
  const {data:rows,error:re}=await db.from("news_deliveries").select("id,recipient_id,subscription_id,article_ids,day").eq("day",day).is("sent_at",null).is("skipped_at",null).order("id").limit(200)

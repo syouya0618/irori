@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useState, useTransition, type ReactNode } from "react"
 import { unstable_rethrow } from "next/navigation"
 import { toast } from "sonner"
@@ -472,6 +473,9 @@ export function SettingsContent({
       <SettingsSection id="settings-you" title="あなたと赤ちゃん">
         <ProfileCard profile={profile} email={email} />
         <BabyProfileCard initialProfile={babyProfile} />
+        <nav aria-label="子育ての管理と記録" className="glass grid grid-cols-2 gap-2 rounded-2xl p-4">
+          {[ ["/children", "子どもの追加・切替"], ["/children/sharing", "閲覧共有・取消"], ["/baby/sleep", "睡眠と生活リズム"], ["/baby/medical", "予防接種・健診"], ["/baby/custom", "カスタム記録"], ["/news", "地域ニュース"] ].map(([href, label]) => <Link key={href} href={href} className="flex min-h-11 items-center text-sm text-primary">{label}</Link>)}
+        </nav>
       </SettingsSection>
 
       <SettingsSection

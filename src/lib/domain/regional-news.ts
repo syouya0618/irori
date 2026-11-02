@@ -1,13 +1,25 @@
 export const NEWS_REGIONS=[
  {key:"sapporo",label:"札幌市",publisher:"札幌市 子ども未来局",feed:"https://www.city.sapporo.jp/org/kodomomirai/kodomo_shinchaku.xml",origin:"https://www.city.sapporo.jp",guide:"https://www.city.sapporo.jp/koho/hp/rss/index.html"},
  {key:"yokohama",label:"横浜市",publisher:"横浜市 子育て・教育",feed:"https://www.city.yokohama.lg.jp/kosodate-kyoiku/rss_news.xml",origin:"https://www.city.yokohama.lg.jp",guide:"https://www.city.yokohama.lg.jp/aboutweb/usage/rss.html"},
+ {key:"kakegawa",label:"掛川市",publisher:"掛川市 かけっこ",feed:"https://www.city.kakegawa.shizuoka.jp/kakekko/oshirase/news/rss.xml",origin:"https://www.city.kakegawa.shizuoka.jp",guide:"https://www.city.kakegawa.shizuoka.jp/kakekko/oshirase/news/"},
 ] as const
 export type NewsRegion=typeof NEWS_REGIONS[number]
 export function newsRegion(key:unknown):NewsRegion|null{return NEWS_REGIONS.find(r=>r.key===key)??null}
-export function canonicalNewsUrl(raw:string,region:NewsRegion):string|null{
+export type NewsSource={key:string;region_key:string;publisher:string;feed:string;origin:string;guide:string}
+export const NEWS_SOURCES:readonly NewsSource[]=[
+ ...NEWS_REGIONS.filter(r=>r.key!=="kakegawa").map(r=>({...r,region_key:r.key})),
+ ...[
+  ["kakegawa-news","市のお知らせ","oshirase/news"],
+  ["kakegawa-facilities","施設のおたより","shisetsu-otayori-docs"],
+  ["kakegawa-dining","居場所・こども食堂","oshirase/place-dining"],
+ ].map(([key,publisher,path])=>({key,region_key:"kakegawa",publisher:`掛川市 ${publisher}`,feed:`https://www.city.kakegawa.shizuoka.jp/kakekko/${path}/rss.xml`,origin:"https://www.city.kakegawa.shizuoka.jp",guide:`https://www.city.kakegawa.shizuoka.jp/kakekko/${path}/`}))
+]
+export function newsSources(regionKey:string){return NEWS_SOURCES.filter(s=>s.region_key===regionKey)}
+export function newsSource(key:unknown){return NEWS_SOURCES.find(s=>s.key===key)??null}
+export function canonicalNewsUrl(raw:string,region:{feed:string;origin:string}):string|null{
  if(!raw.trim())return null
  try{const u=new URL(raw,region.feed);if(u.origin!==region.origin||u.username||u.password||u.protocol!=="https:"||u.href.length>2000)return null
- u.hash="";for(const k of [...u.searchParams.keys()])if(/^utm_/i.test(k)||k==="fbclid")u.searchParams.delete(k);return u.href}catch{return null}
+ u.hash="";for(const k of [...u.searchParams.keys()])if(/^utm_/i.test(k)||k==="fbclid")u.searchParams.delete(k);u.searchParams.sort();return u.href}catch{return null}
 }
 /** Conservative headline hints, never eligibility/medical advice. Unknown targets stay unfiltered. */
 export function newsAgeHint(title:string):{min_months:number|null;max_months:number|null}{

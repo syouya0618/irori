@@ -12,3 +12,18 @@ export async function saveNewsPreferences(region:string|null,enabled:boolean,ver
  revalidatePath("/news")
  return {status:String(data.status)}
 }
+
+/** Explicit authenticated POST action; the source lease is shared across all readers. */
+export async function refreshNews(){
+ const auth=await getAuthContext();if(auth.error!==null)return {error:auth.error}
+ const {data:pref,error}=await auth.context.supabase.from("news_preferences").select("region_key").eq("user_id",auth.context.userId).maybeSingle()
+ const region=newsRegion(pref?.region_key)
+ if(error||!region)return {error:"先に地域を保存してください"}
+ try{
+  const {createAdminClient}=await import("@/lib/supabase/admin")
+  const {collectRegionNews}=await import("@/lib/news/collect")
+  const result=await collectRegionNews(createAdminClient(),region.key,new Date())
+  revalidatePath("/news")
+  return {status:result.status,fetched:result.fetched}
+ }catch{return {error:"更新を開始できませんでした。しばらくして再度お試しください"}}
+}

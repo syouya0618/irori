@@ -50,7 +50,7 @@ describe("VersionCard", () => {
   it("リリース名・この端末の版・公開中の版を分けて出す（同じ版）", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => versionResponse("abc1234")))
     render(<VersionCard owner={OWNER} />)
-    expect(screen.getByText("2026年10月の更新")).toBeInTheDocument()
+    expect(screen.getByText("2026年11月の更新")).toBeInTheDocument()
     expect(screen.getByTestId("client-build-id")).toHaveTextContent("abc1234")
     await waitFor(() =>
       expect(screen.getByTestId("server-build-status")).toHaveTextContent("この端末の版と同じです"),

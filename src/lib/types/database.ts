@@ -64,10 +64,12 @@ export type GoogleSyncErrorKind =
 export interface Database {
   public: {
     Tables: {
+      news_ai_cache: { Row: { key: string; result: Json; created_at: string }; Insert: { key: string; result: Json }; Update: { result?: Json }; Relationships: [] }
+      news_ai_budget: { Row: { day: string; calls: number }; Insert: { day: string; calls: number }; Update: { calls?: number }; Relationships: [] }
       news_batches:{Row:{user_id:string;day:string;household_id:string;region_key:string;article_ids:string[]};Insert:never;Update:never;Relationships:[]}
       news_preferences:{Row:{user_id:string;region_key:string|null;enabled:boolean;enabled_from:string;updated_at:string};Insert:never;Update:never;Relationships:[]}
-      news_articles:{Row:{region_key:string;id:string;title:string;url:string;published_at:string;first_seen_at:string;min_months:number|null;max_months:number|null};Insert:{region_key:string;id:string;title:string;url:string;published_at:string;min_months?:number|null;max_months?:number|null};Update:never;Relationships:[]}
-      news_source_runs:{Row:{region_key:string;claimed_at:string;last_success_at:string|null};Insert:never;Update:{last_success_at?:string};Relationships:[]}
+      news_articles:{Row:{ai_category:string|null;ai_summary:string|null;region_key:string;id:string;title:string;url:string;published_at:string|null;source_key:string;first_seen_at:string;min_months:number|null;max_months:number|null};Insert:{ai_category?:string|null;ai_summary?:string|null;region_key:string;id:string;title:string;url:string;published_at:string|null;source_key:string;min_months?:number|null;max_months?:number|null};Update:{ai_category?:string|null;ai_summary?:string|null};Relationships:[]}
+      news_source_runs:{Row:{region_key:string;source_key:string;claimed_at:string;last_success_at:string|null;last_error_at:string|null};Insert:never;Update:{last_success_at?:string;last_error_at?:string|null};Relationships:[]}
       news_deliveries:{Row:{id:string;recipient_id:string;household_id:string;region_key:string;day:string;subscription_id:string|null;article_ids:string[];sent_at:string|null;accepted_at:string|null;skipped_at:string|null};Insert:never;Update:{sent_at?:string|null;accepted_at?:string|null;skipped_at?:string|null};Relationships:[]}
       custom_fields: {
         Row:{id:string;household_id:string;label:string;value_type:"number"|"boolean"|"text"|"datetime"|"choice";options:Json;archived:boolean;updated_at:string;created_at:string}
@@ -814,6 +816,8 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
+      claim_news_ai_call: { Args: { p_day: string; p_limit: number }; Returns: boolean }
+      news_source_statuses:{Args:Record<string,never>;Returns:Json}
       news_source_status:{Args:Record<string,never>;Returns:string|null}
       save_news_preferences:{Args:{p_region:string|null;p_enabled:boolean;p_version:string|null};Returns:Json}
       claim_news_source:{Args:{p_region:string;p_now:string};Returns:boolean}

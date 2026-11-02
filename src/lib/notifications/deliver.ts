@@ -69,6 +69,7 @@ import {
 import { findLastNursing } from "@/lib/domain/baby-feeding-interval"
 import { buildFeedingNotification, dueFeedingReminder, isFeedingReminderMinutes } from "./feeding-rules"
 import type { PushSendOptions } from "./send-push"
+import { collectConfiguredNews } from "@/lib/news/collect"
 import { deliverRegionalNews } from "./deliver-news"
 import { deliverFeedbackNotifications } from "./deliver-feedback"
 
@@ -215,6 +216,9 @@ export async function deliverDueNotifications(
   try {
     const vapid = deps.readVapid()
     if (!vapid) {
+      // RSS browsing remains available while Push configuration still fails closed.
+      try { counters.failed += (await collectConfiguredNews(supabase,now)).failed } catch { counters.failed += 1 }
+
       // fail-closed。届けられぬと分かっておる行を積んでも、grace 切れで
       // skipped になるだけで害が増える。ここで止めて心拍と 500 で知らせる。
       counters.failed += 1

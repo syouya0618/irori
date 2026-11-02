@@ -6,7 +6,7 @@
  * 版の識別子（SHA）はここに書かぬ — build-info.ts がビルド時の値を持つ。
  */
 
-export const RELEASE_NAME = "2026年10月の更新"
+export const RELEASE_NAME = "2026年11月の更新"
 
 export const RELEASE_HIGHLIGHTS: readonly string[] = [
   "記録を保存できたか分からないときに、同じ内容のまま確かめて送り直せるようにしました",
@@ -22,5 +22,11 @@ export const RELEASE_HIGHLIGHTS: readonly string[] = [
 
 /** Published changes only, newest first. Draft work belongs in CHANGELOG's Unreleased section. */
 export const RELEASE_HISTORY = [
+  { id: "2026-11-01", title: "2026年11月の子育て機能の更新", items: [
+    "子どもを追加・切り替えて、記録やいつもの量を分けて使えます。量候補は本人・子ども別の直近5件です",
+    "祖父母などへの閲覧共有は、共有項目と期限を選び、あとから取り消せます。世帯への参加とは別の招待です",
+    "睡眠と生活リズム、予防接種・健診、成長のパーセンタイル帯、カスタム記録を追加しました",
+    "子どもの年齢に応じたホームと優先機能を選べます。育児画面から地域ニュースを読めます",
+  ] },
   { id: "2026-10-28", title: "2026年10月28日の更新", items: RELEASE_HIGHLIGHTS },
 ] as const

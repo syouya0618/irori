@@ -17,8 +17,10 @@ describe("official RSS boundaries",()=>{
   const rows=parseNewsFeed(rss(item()+item("synthetic duplicate","https://www.city.sapporo.jp/synthetic/a.html")),region,now)
   expect(rows).toHaveLength(1);expect(rows[0]).toMatchObject({region_key:"sapporo",title:"synthetic infant news",url:"https://www.city.sapporo.jp/synthetic/a.html",published_at:"2026-10-30T21:00:00.000Z"});expect(rows[0].id).toMatch(/^[a-f0-9]{64}$/)
  })
- it("discards undated, future, old, recruiting and nonofficial items",()=>{
-  expect(parseNewsFeed(rss(item("synthetic missing",undefined,"")+item("synthetic future",undefined,"2026-11-01T00:00:00Z")+item("synthetic old",undefined,"2025-01-01T00:00:00Z")+item("職員募集 fixture")+item("synthetic other","https://example.invalid/unsafe")),region,now)).toEqual([])
+ it("keeps undated and old publications honestly, rejects future, recruiting and nonofficial items",()=>{
+  expect(parseNewsFeed(rss(item("synthetic missing",undefined,"")),region,now)[0].published_at).toBeNull()
+  expect(parseNewsFeed(rss(item("synthetic old",undefined,"2025-01-01T00:00:00Z")),region,now)[0].published_at).toBe("2025-01-01T00:00:00.000Z")
+  expect(parseNewsFeed(rss(item("synthetic future",undefined,"2026-11-01T00:00:00Z")+item("職員募集 fixture")+item("synthetic other","https://example.invalid/unsafe")),region,now)).toEqual([])
   for(const url of ["","http://127.0.0.1/","https://www.city.sapporo.jp.example.invalid/x","https://user:pass@www.city.sapporo.jp/x","javascript:alert(1)"])expect(canonicalNewsUrl(url,region)).toBeNull()
  })
  it("rejects DTD/entity documents, malformed XML and oversized bodies",()=>{

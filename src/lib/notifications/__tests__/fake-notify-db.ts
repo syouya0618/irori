@@ -253,6 +253,7 @@ export function createFakeNotifySupabase(
     if (conflictColumns.length === 0) {
       throw new Error("fake-notify-db: upsert には onConflict が要る")
     }
+    const changed: Row[] = []
     for (const row of rows) {
       const key = conflictKey(row, conflictColumns)
       const existing = store.find(
@@ -262,12 +263,15 @@ export function createFakeNotifySupabase(
         // ignoreDuplicates = ON CONFLICT DO NOTHING。**触ってはならぬ。**
         if (record.upsertOptions?.ignoreDuplicates !== true) {
           Object.assign(existing, row)
+          changed.push(existing)
         }
         continue
       }
-      store.push({ ...(TABLE_DEFAULTS[record.table]?.() ?? {}), ...row })
+      const inserted = { ...(TABLE_DEFAULTS[record.table]?.() ?? {}), ...row }
+      store.push(inserted)
+      changed.push(inserted)
     }
-    return { data: null, error: null }
+    return { data: record.returning ? changed.map(row => ({ ...row })) : null, error: null }
   }
 
   function from(table: keyof FakeNotifyDb) {
@@ -368,6 +372,7 @@ export function createFakeNotifySupabase(
         record.order = column
         return builder
       },
+      abortSignal(_signal: AbortSignal) { void _signal; return builder },
       limit(count: number) {
         record.limit = count
         return builder

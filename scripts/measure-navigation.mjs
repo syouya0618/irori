@@ -53,7 +53,7 @@ try{
  for(let i=0;i<100;i++){if(app.exitCode!==null)throw new Error("owned local server exited before readiness");if(!readyOutput.includes("Ready in")){await new Promise(r=>setTimeout(r,200));continue}try{if((await fetch("http://127.0.0.1:55438/login",{signal:AbortSignal.timeout(1500)})).ok)break}catch{}if(i===99)throw new Error("local server did not start");await new Promise(r=>setTimeout(r,200))}
  const chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";browser=await chromium.launch(existsSync(chrome)?{executablePath:chrome}:{})
  const results=[],scenarios=[{name:"normal",latency:0,rows:30,children:1},{name:"many-records",latency:0,rows:800,children:1},{name:"multiple-children",latency:0,rows:30,children:4},{name:"slow-network",latency:200,rows:30,children:1,network:true}]
- for(const scenario of scenarios){latency=scenario.latency;rowCount=scenario.rows;childCount=scenario.children
+ for(const scenario of scenarios.filter(s=>!args.some(a=>a.startsWith("--scenario="))||args.includes(`--scenario=${s.name}`))){latency=scenario.latency;rowCount=scenario.rows;childCount=scenario.children
   for(let trial=1;trial<=trials;trial++){
    const context=await browser.newContext({viewport:{width:390,height:844},locale:"ja-JP",timezoneId:"Asia/Tokyo",serviceWorkers:"block"})
    await context.route("**/*",route=>{const u=new URL(route.request().url());return u.hostname==="127.0.0.1"&&["55438","55439"].includes(u.port)?route.continue():route.abort()})
@@ -85,9 +85,17 @@ try{
      },{target:path,name});instrumented=true
     }
     await action();await ready(path,name);const contentMs=performance.now()-start
+    let recordReadyMs=null
+    if(operation==="cold-start"){
+     await page.getByRole("button",{name:"搾乳",exact:true}).click()
+     const dialog=page.getByRole("dialog");await dialog.waitFor()
+     await dialog.getByRole("button",{name:"記録する",exact:true}).waitFor()
+     recordReadyMs=performance.now()-start
+     await page.keyboard.press("Escape");await dialog.waitFor({state:"hidden"})
+    }
     const render=await page.evaluate(({instrumented,cold})=>{const n=performance.getEntriesByType("navigation")[0];return {tapToReadyMs:instrumented&&window.__tap?.at!==null?window.__tap.ready??performance.now()-window.__tap.at:null,feedbackMs:window.__tap?.feedback??null,ttfbMs:cold&&n?n.responseStart-n.requestStart:null,fcpMs:cold?performance.getEntriesByName("first-contentful-paint")[0]?.startTime??null:null,lcpMs:cold?window.__lcp:null,vitals:window.__vitals??[],rscResources:performance.getEntriesByType("resource").filter(e=>e.name.includes("_rsc=")).map(e=>({path:new URL(e.name).pathname,start:e.startTime,ttfb:e.responseStart-e.startTime,transfer:e.responseEnd-e.responseStart}))}}, {instrumented,cold:operation.startsWith("cold")})
     await idle();const calls=requests.filter(r=>r.sample===sampleId),stats=phase=>{const xs=calls.filter(r=>r.phase===phase);return {requests:xs.length,sumMs:Math.round(xs.reduce((n,r)=>n+r.end-r.start,0)),spanMs:xs.length?Math.round(Math.max(...xs.map(r=>r.end))-Math.min(...xs.map(r=>r.start))):0}}
-    results.push({scenario:scenario.name,trial,operation,contentMs:Math.round(contentMs),...render,server:stats("server"),browserApi:stats("browser")});console.log(`${scenario.name} ${trial}/${trials} ${operation}: ${Math.round(contentMs)}ms`)
+    results.push({scenario:scenario.name,trial,operation,contentMs:Math.round(contentMs),recordReadyMs,...render,server:stats("server"),browserApi:stats("browser")});console.log(`${scenario.name} ${trial}/${trials} ${operation}: ${Math.round(contentMs)}ms`)
    }
    const childName=scenario.children>1?"テスト児A2":"テスト児A1"
    await sample("cold-start",()=>page.goto("http://127.0.0.1:55438/baby"),"/baby",childName)
@@ -104,7 +112,7 @@ try{
  }
  const percentile=(values,p)=>{const xs=[...values].sort((a,b)=>a-b);return xs[Math.ceil(xs.length*p)-1]}
  const groups=new Map();for(const r of results){const key=`${r.scenario}:${r.operation}`;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(r)}
- const summary=[...groups].map(([key,rows])=>({key,n:rows.length,medianMs:percentile(rows.map(r=>r.contentMs),0.5),p95Ms:percentile(rows.map(r=>r.contentMs),0.95),medianTapMs:rows.every(r=>r.tapToReadyMs!==null)?percentile(rows.map(r=>r.tapToReadyMs),0.5):null,medianFeedbackMs:rows.every(r=>r.feedbackMs!==null)?percentile(rows.map(r=>r.feedbackMs),0.5):null,medianServerSpanMs:percentile(rows.map(r=>r.server.spanMs),0.5),medianServerRequests:percentile(rows.map(r=>r.server.requests),0.5)}))
- const result={source,method:"local production build; synthetic HTTP/Auth fixtures; Chrome 390px; SW blocked; external requests blocked; five fresh browser contexts per scenario by default; frame observer for tap readiness plus double animation-frame automation completion; p95 nearest rank (maximum with five trials); API span and sum are separate; not actual DB/Auth/Realtime/PWA/device proof",scenarios,trials,summary,results}
+ const summary=[...groups].map(([key,rows])=>({key,n:rows.length,medianMs:percentile(rows.map(r=>r.contentMs),0.5),rangeMs:[Math.min(...rows.map(r=>r.contentMs)),Math.max(...rows.map(r=>r.contentMs))],medianRecordReadyMs:rows.every(r=>r.recordReadyMs!==null)?percentile(rows.map(r=>r.recordReadyMs),0.5):null,recordReadyRangeMs:rows.every(r=>r.recordReadyMs!==null)?[Math.min(...rows.map(r=>r.recordReadyMs)),Math.max(...rows.map(r=>r.recordReadyMs))]:null,medianTapMs:rows.every(r=>r.tapToReadyMs!==null)?percentile(rows.map(r=>r.tapToReadyMs),0.5):null,medianFeedbackMs:rows.every(r=>r.feedbackMs!==null)?percentile(rows.map(r=>r.feedbackMs),0.5):null,medianServerSpanMs:percentile(rows.map(r=>r.server.spanMs),0.5),medianServerRequests:percentile(rows.map(r=>r.server.requests),0.5)}))
+ const result={source,method:"local production build; synthetic HTTP/Auth fixtures; Chrome 390px; SW blocked; external requests blocked; five fresh browser contexts per scenario by default; frame observer for tap readiness plus double animation-frame automation completion; median and range; recordReadyMs opens the expressed-milk editor and waits for its save control without writing; API span and sum are separate; not actual DB/Auth/Realtime/PWA/device proof",scenarios,trials,summary,results}
  if(output)writeFileSync(output,JSON.stringify(result,null,2)+"\n");console.log(JSON.stringify({source,summary},null,2))
 }finally{await browser?.close();app.kill("SIGTERM");api.closeAllConnections();api.close()}
