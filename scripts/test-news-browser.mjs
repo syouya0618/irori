@@ -2,7 +2,7 @@
 import { createServer } from "node:http"
 import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, readdirSync } from "node:fs"
-import { chromium, expect } from "@playwright/test"
+import { chromium, webkit, expect } from "@playwright/test"
 if (readdirSync(".").some(name => /^\.env(?:\.|$)/.test(name))) throw new Error("requires checkout without environment files")
 const output = process.argv[2] || "/private/tmp/irori-news-shots"
 mkdirSync(output, {recursive:true})
@@ -36,7 +36,7 @@ let browser, currentPage
 try {
  await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error("server readiness deadline")),30000);app.once("exit",()=>reject(new Error("server exited")));app.stdout.on("data",b=>{if(b.toString().includes("Ready in")){clearTimeout(timer);resolve()}})})
  const chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
- browser=await chromium.launch(existsSync(chrome)?{executablePath:chrome}:{})
+ browser=process.argv.includes("--webkit")?await webkit.launch():await chromium.launch(existsSync(chrome)?{executablePath:chrome}:{})
  for(const width of [390,1280]){
   preference=null
   const context=await browser.newContext({viewport:{width,height:844},locale:"ja-JP",timezoneId:"Asia/Tokyo",serviceWorkers:"block"})
@@ -63,6 +63,10 @@ try {
   await page.reload()
   await expect(page.getByLabel("新着がある朝8時に通知する")).toBeChecked()
   await expect(page.getByLabel("ニュースの地域")).toHaveValue("kakegawa")
+  await page.getByLabel("新着がある朝8時に通知する").uncheck()
+  await page.getByRole("button",{name:"ニュース設定を保存"}).click()
+  await expect(page.getByText("保存しました",{exact:true})).toBeVisible()
+  await page.reload();await expect(page.getByLabel("新着がある朝8時に通知する")).not.toBeChecked()
   if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error(`overflow ${width}`)
   await page.screenshot({path:`${output}/news-${width}.png`,fullPage:true})
   for(const region of ["sapporo","yokohama"]){await page.getByLabel("ニュースの地域").selectOption(region);await page.getByRole("button",{name:"ニュース設定を保存"}).click();await expect(page.getByText("保存しました",{exact:true})).toBeVisible();await expect(page.getByRole("link",{name:"合成ニュース・赤ちゃんの集い"})).toHaveCount(0)}

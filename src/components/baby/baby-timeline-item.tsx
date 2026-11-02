@@ -54,7 +54,7 @@ export function BabyTimelineItem({
     <button
       type="button"
       onClick={() => onEdit(log)}
-      className="flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors duration-200 hover:bg-muted/50 active:bg-muted/70 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+      className="flex min-h-14 w-full flex-wrap items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors duration-200 hover:bg-muted/50 active:bg-muted/70 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
     >
       <span className="min-w-12 shrink-0 font-mono text-base font-semibold tabular-nums">
         {formatTimeJst(log.logged_at)}
@@ -66,7 +66,7 @@ export function BabyTimelineItem({
         <Icon size={18} className={config.text} />
       </div>
 
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 basis-24">
         {log.log_type === "memo" ? (
           // メモは全文をタイムラインでも読めるよう複数行で頭出し（改行を反映）。
           // 密度維持のため line-clamp-3 で切り、全文は編集シート/日記ビューで読む。
@@ -75,7 +75,7 @@ export function BabyTimelineItem({
           </p>
         ) : (
           <>
-            <p className="text-sm font-medium">{getLogSummary(log)}</p>
+            <p className="wrap-anywhere text-sm font-medium">{getLogSummary(log)}</p>
             {log.memo && (
               // メモ注記は複数行入力に対応（改行反映・2行まで頭出し）。
               <p className="line-clamp-2 whitespace-pre-wrap text-xs text-muted-foreground">

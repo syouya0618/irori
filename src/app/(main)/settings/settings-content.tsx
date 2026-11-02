@@ -623,7 +623,7 @@ export function SettingsContent({
             variant="ghost"
             size="lg"
             onClick={openSignOutConfirm}
-            className="cursor-pointer text-destructive hover:text-destructive"
+            className="cursor-pointer text-destructive hover:text-destructive dark:text-red-300 dark:hover:text-red-200"
           >
             <LogOut size={16} />
             ログアウト

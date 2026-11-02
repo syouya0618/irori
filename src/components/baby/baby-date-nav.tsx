@@ -36,9 +36,9 @@ export function BabyDateNav({
 
   return (
     <div className="flex flex-col gap-2">
-    <div className="flex items-center justify-between">
+    <div className="flex flex-wrap items-center justify-between gap-2">
       <h1 className="text-2xl font-bold">{formatDateLabel(selectedDate, today)}</h1>
-      <div className="flex items-center gap-1">
+      <div className="flex flex-wrap items-center gap-1">
         <Button
           variant="ghost"
           size="icon-sm"

@@ -58,7 +58,7 @@ export function BottomNav() {
               // Avoid duplicate partial-shell authorization requests; keep the approved route TTL.
               prefetch={false}
               className={cn(
-                "relative flex flex-1 flex-col items-center justify-center gap-0.5 rounded-lg transition-colors duration-200 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary",
+                "relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg transition-colors duration-200 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary",
                 isActive
                   ? "text-primary"
                   : "text-muted-foreground hover:text-foreground"
@@ -67,7 +67,7 @@ export function BottomNav() {
             >
               <span
                 className={cn(
-                  "flex h-8 w-16 items-center justify-center rounded-full transition-colors duration-200",
+                  "flex h-8 w-16 max-w-full items-center justify-center rounded-full transition-colors duration-200",
                   isActive && "bg-primary/15"
                 )}
               >

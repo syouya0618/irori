@@ -156,7 +156,7 @@ export function BabySummaryBar({
         {/* 次の授乳の目安（最後の授乳の開始＋設定間隔）。授乳記録がある今日だけ表示 */}
         {nextFeeding && (
           <div
-            className={`flex items-center gap-3 rounded-xl px-3 py-2.5 ${
+            className={`flex flex-wrap items-center gap-3 rounded-xl px-3 py-2.5 ${
               overdue
                 ? "bg-amber-100 dark:bg-amber-900/40"
                 : "bg-muted/60 dark:bg-muted/40"
@@ -168,7 +168,7 @@ export function BabySummaryBar({
               aria-hidden="true"
             />
             <span className="text-sm text-muted-foreground">次の授乳の目安</span>
-            <span className="ml-auto flex items-baseline gap-2">
+            <span className="ml-auto flex flex-wrap items-baseline gap-2">
               <span className="font-mono text-xl font-semibold tabular-nums">
                 {formatTimeJst(nextFeeding.targetIso)}
               </span>
