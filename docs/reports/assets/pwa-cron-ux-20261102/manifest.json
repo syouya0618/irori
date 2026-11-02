@@ -1,0 +1,42 @@
+{
+  "after.json": {
+    "bytes": 28384,
+    "sha256": "7bc817b11b8a55259122b6d3f560da3926c89c90b212f496059fd820d11efb58"
+  },
+  "baby-320-after.png": {
+    "bytes": 507083,
+    "sha256": "bb88db637c698f7fc614351de5ee45e9506e46c2aeff4864779a176ad6bb9d35"
+  },
+  "baby-320-before.png": {
+    "bytes": 512189,
+    "sha256": "8e0e32996a906c8189ea4d9ce8635de3f9b16e25ad895da896d0eb6b97b22d45"
+  },
+  "before.json": {
+    "bytes": 28500,
+    "sha256": "c064502a35846e3df3fbab72b878839f9ceb43c59f25c5bc9c8f8057d114e175"
+  },
+  "cleanup.json": {
+    "bytes": 14987,
+    "sha256": "5871200071f3164da0d4f1df2781cf84b1fe6250d5d64b41ee50ad44441e91d6"
+  },
+  "github-baseline.json": {
+    "bytes": 1269,
+    "sha256": "4a40565f79a04ec6b54f72dc1c94bdec3a3551634dac420ef0d8fa1ad26ea775"
+  },
+  "local-log-hashes.json": {
+    "bytes": 781,
+    "sha256": "e9403e722c8858e249924eea5e2128807273a881f1aec6772ebe158079f6781c"
+  },
+  "news-webkit-390.png": {
+    "bytes": 140288,
+    "sha256": "0c698c337da5f6dccdb06ca92009fed0bf6bc83b5dc5874335e7868e5b30447c"
+  },
+  "settings-390-after.png": {
+    "bytes": 537691,
+    "sha256": "1bb778b27f0ceef651c59c430ebb504f3130cb9ce25b8044975830e3d10075ed"
+  },
+  "slow-network.json": {
+    "bytes": 89135,
+    "sha256": "8585fd77d4ae50e845c08a62152651fc11f28961ee22cc2a603225519eb9a1fa"
+  }
+}

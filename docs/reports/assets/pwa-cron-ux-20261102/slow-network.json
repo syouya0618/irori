@@ -1,0 +1,3624 @@
+{
+  "source": "7c0358352f3115a69c69fdaf37d7054da1b23687",
+  "method": "local production build; synthetic HTTP/Auth fixtures; Chrome 390px; SW blocked; external requests blocked; five fresh browser contexts per scenario by default; frame observer for tap readiness plus double animation-frame automation completion; median and range; recordReadyMs opens the expressed-milk editor and waits for its save control without writing; API span and sum are separate; not actual DB/Auth/Realtime/PWA/device proof",
+  "scenarios": [
+    {
+      "name": "normal",
+      "latency": 0,
+      "rows": 30,
+      "children": 1
+    },
+    {
+      "name": "many-records",
+      "latency": 0,
+      "rows": 800,
+      "children": 1
+    },
+    {
+      "name": "multiple-children",
+      "latency": 0,
+      "rows": 30,
+      "children": 4
+    },
+    {
+      "name": "slow-network",
+      "latency": 200,
+      "rows": 30,
+      "children": 1,
+      "network": true
+    }
+  ],
+  "trials": 5,
+  "summary": [
+    {
+      "key": "slow-network:cold-start",
+      "n": 5,
+      "medianMs": 5076,
+      "rangeMs": [
+        5059,
+        5205
+      ],
+      "medianRecordReadyMs": 5126.020916999998,
+      "recordReadyRangeMs": [
+        5108.613041000004,
+        5256.099125000001
+      ],
+      "medianTapMs": null,
+      "medianFeedbackMs": null,
+      "medianServerSpanMs": 5909,
+      "medianServerRequests": 26
+    },
+    {
+      "key": "slow-network:baby-calendar",
+      "n": 5,
+      "medianMs": 1651,
+      "rangeMs": [
+        1623,
+        1686
+      ],
+      "medianRecordReadyMs": null,
+      "recordReadyRangeMs": null,
+      "medianTapMs": 1613.7000000476837,
+      "medianFeedbackMs": 17.100000143051147,
+      "medianServerSpanMs": 1020,
+      "medianServerRequests": 7
+    },
+    {
+      "key": "slow-network:calendar-settings",
+      "n": 5,
+      "medianMs": 1577,
+      "rangeMs": [
+        1574,
+        1623
+      ],
+      "medianRecordReadyMs": null,
+      "recordReadyRangeMs": null,
+      "medianTapMs": 1536.7000000476837,
+      "medianFeedbackMs": 13.200000047683716,
+      "medianServerSpanMs": 2789,
+      "medianServerRequests": 35
+    },
+    {
+      "key": "slow-network:settings-baby",
+      "n": 5,
+      "medianMs": 70,
+      "rangeMs": [
+        56,
+        92
+      ],
+      "medianRecordReadyMs": null,
+      "recordReadyRangeMs": null,
+      "medianTapMs": 32.5,
+      "medianFeedbackMs": 15.099999904632568,
+      "medianServerSpanMs": 0,
+      "medianServerRequests": 0
+    },
+    {
+      "key": "slow-network:back",
+      "n": 5,
+      "medianMs": 47,
+      "rangeMs": [
+        41,
+        59
+      ],
+      "medianRecordReadyMs": null,
+      "recordReadyRangeMs": null,
+      "medianTapMs": null,
+      "medianFeedbackMs": null,
+      "medianServerSpanMs": 404,
+      "medianServerRequests": 2
+    },
+    {
+      "key": "slow-network:cold-settings",
+      "n": 5,
+      "medianMs": 4386,
+      "rangeMs": [
+        4371,
+        4405
+      ],
+      "medianRecordReadyMs": null,
+      "recordReadyRangeMs": null,
+      "medianTapMs": null,
+      "medianFeedbackMs": null,
+      "medianServerSpanMs": 5627,
+      "medianServerRequests": 41
+    }
+  ],
+  "results": [
+    {
+      "scenario": "slow-network",
+      "trial": 1,
+      "operation": "cold-start",
+      "contentMs": 5205,
+      "recordReadyMs": 5256.099125000001,
+      "tapToReadyMs": null,
+      "feedbackMs": null,
+      "ttfbMs": 911.5,
+      "fcpMs": 1588,
+      "lcpMs": 1876,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1588,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 914.5999999046326,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1876,
+          "rating": "good",
+          "navigationType": "navigate"
+        }
+      ],
+      "rscResources": [],
+      "server": {
+        "requests": 26,
+        "sumMs": 5232,
+        "spanMs": 6048
+      },
+      "browserApi": {
+        "requests": 8,
+        "sumMs": 1601,
+        "spanMs": 414
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 1,
+      "operation": "baby-calendar",
+      "contentMs": 1686,
+      "recordReadyMs": null,
+      "tapToReadyMs": 1632.5,
+      "feedbackMs": 14.599999904632568,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1588,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 914.5999999046326,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1876,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1642.2000000476837,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 40,
+          "rating": "good",
+          "navigationType": "navigate"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/children",
+          "start": 5181.299999952316,
+          "ttfb": 420.40000009536743,
+          "transfer": 51.299999952316284
+        },
+        {
+          "path": "/baby/search",
+          "start": 5181.399999856949,
+          "ttfb": 417.2000000476837,
+          "transfer": 43.10000014305115
+        },
+        {
+          "path": "/baby/search",
+          "start": 5643.700000047684,
+          "ttfb": 416.7999999523163,
+          "transfer": 28.5
+        },
+        {
+          "path": "/children",
+          "start": 5654.399999856949,
+          "ttfb": 408.80000019073486,
+          "transfer": 15.299999952316284
+        },
+        {
+          "path": "/calendar",
+          "start": 6241.099999904633,
+          "ttfb": 420.7000000476837,
+          "transfer": 615.9000000953674
+        }
+      ],
+      "server": {
+        "requests": 7,
+        "sumMs": 1411,
+        "spanMs": 1024
+      },
+      "browserApi": {
+        "requests": 2,
+        "sumMs": 404,
+        "spanMs": 1689
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 1,
+      "operation": "calendar-settings",
+      "contentMs": 1591,
+      "recordReadyMs": null,
+      "tapToReadyMs": 1542.2999999523163,
+      "feedbackMs": 14.5,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1588,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 914.5999999046326,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1876,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1642.2000000476837,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 40,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1642.2000000476837,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 1549.1000001430511,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/children",
+          "start": 5181.299999952316,
+          "ttfb": 420.40000009536743,
+          "transfer": 51.299999952316284
+        },
+        {
+          "path": "/baby/search",
+          "start": 5181.399999856949,
+          "ttfb": 417.2000000476837,
+          "transfer": 43.10000014305115
+        },
+        {
+          "path": "/baby/search",
+          "start": 5643.700000047684,
+          "ttfb": 416.7999999523163,
+          "transfer": 28.5
+        },
+        {
+          "path": "/children",
+          "start": 5654.399999856949,
+          "ttfb": 408.80000019073486,
+          "transfer": 15.299999952316284
+        },
+        {
+          "path": "/calendar",
+          "start": 6241.099999904633,
+          "ttfb": 420.7000000476837,
+          "transfer": 615.9000000953674
+        },
+        {
+          "path": "/settings",
+          "start": 8272.899999856949,
+          "ttfb": 417.90000009536743,
+          "transfer": 624.5999999046326
+        }
+      ],
+      "server": {
+        "requests": 35,
+        "sumMs": 7030,
+        "spanMs": 2809
+      },
+      "browserApi": {
+        "requests": 2,
+        "sumMs": 402,
+        "spanMs": 688
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 1,
+      "operation": "settings-baby",
+      "contentMs": 71,
+      "recordReadyMs": null,
+      "tapToReadyMs": 32.200000047683716,
+      "feedbackMs": 15.099999904632568,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1588,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 914.5999999046326,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1876,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1642.2000000476837,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 40,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1642.2000000476837,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 1549.1000001430511,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "LCP",
+          "value": 1549.1000001430511,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/children",
+          "start": 5181.299999952316,
+          "ttfb": 420.40000009536743,
+          "transfer": 51.299999952316284
+        },
+        {
+          "path": "/baby/search",
+          "start": 5181.399999856949,
+          "ttfb": 417.2000000476837,
+          "transfer": 43.10000014305115
+        },
+        {
+          "path": "/baby/search",
+          "start": 5643.700000047684,
+          "ttfb": 416.7999999523163,
+          "transfer": 28.5
+        },
+        {
+          "path": "/children",
+          "start": 5654.399999856949,
+          "ttfb": 408.80000019073486,
+          "transfer": 15.299999952316284
+        },
+        {
+          "path": "/calendar",
+          "start": 6241.099999904633,
+          "ttfb": 420.7000000476837,
+          "transfer": 615.9000000953674
+        },
+        {
+          "path": "/settings",
+          "start": 8272.899999856949,
+          "ttfb": 417.90000009536743,
+          "transfer": 624.5999999046326
+        },
+        {
+          "path": "/children/sharing",
+          "start": 9817.299999952316,
+          "ttfb": 420.2000000476837,
+          "transfer": 6.8999998569488525
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 9817.299999952316,
+          "ttfb": 426.5,
+          "transfer": 34.200000047683716
+        },
+        {
+          "path": "/baby/medical",
+          "start": 9817.399999856949,
+          "ttfb": 422.2000000476837,
+          "transfer": 15.700000047683716
+        },
+        {
+          "path": "/baby/custom",
+          "start": 9817.5,
+          "ttfb": 424.2999999523163,
+          "transfer": 23.700000047683716
+        },
+        {
+          "path": "/news",
+          "start": 10244.899999856949,
+          "ttfb": 415.7000000476837,
+          "transfer": 5
+        },
+        {
+          "path": "/children/sharing",
+          "start": 10256,
+          "ttfb": 409.09999990463257,
+          "transfer": 12.100000143051147
+        },
+        {
+          "path": "/baby/medical",
+          "start": 10266,
+          "ttfb": 407.59999990463257,
+          "transfer": 15.100000143051147
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 10278.599999904633,
+          "ttfb": 406.5,
+          "transfer": 14.600000143051147
+        },
+        {
+          "path": "/baby/custom",
+          "start": 10667.399999856949,
+          "ttfb": 416.7000000476837,
+          "transfer": 5.200000047683716
+        },
+        {
+          "path": "/news",
+          "start": 10678.5,
+          "ttfb": 411.59999990463257,
+          "transfer": 10.799999952316284
+        }
+      ],
+      "server": {
+        "requests": 0,
+        "sumMs": 0,
+        "spanMs": 0
+      },
+      "browserApi": {
+        "requests": 7,
+        "sumMs": 1412,
+        "spanMs": 251
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 1,
+      "operation": "back",
+      "contentMs": 59,
+      "recordReadyMs": null,
+      "tapToReadyMs": null,
+      "feedbackMs": null,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1588,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 914.5999999046326,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1876,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1642.2000000476837,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 40,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1642.2000000476837,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 1549.1000001430511,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "LCP",
+          "value": 1549.1000001430511,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 39.5,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "LCP",
+          "value": 39.5,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 25.100000143051147,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/children",
+          "start": 5181.299999952316,
+          "ttfb": 420.40000009536743,
+          "transfer": 51.299999952316284
+        },
+        {
+          "path": "/baby/search",
+          "start": 5181.399999856949,
+          "ttfb": 417.2000000476837,
+          "transfer": 43.10000014305115
+        },
+        {
+          "path": "/baby/search",
+          "start": 5643.700000047684,
+          "ttfb": 416.7999999523163,
+          "transfer": 28.5
+        },
+        {
+          "path": "/children",
+          "start": 5654.399999856949,
+          "ttfb": 408.80000019073486,
+          "transfer": 15.299999952316284
+        },
+        {
+          "path": "/calendar",
+          "start": 6241.099999904633,
+          "ttfb": 420.7000000476837,
+          "transfer": 615.9000000953674
+        },
+        {
+          "path": "/settings",
+          "start": 8272.899999856949,
+          "ttfb": 417.90000009536743,
+          "transfer": 624.5999999046326
+        },
+        {
+          "path": "/children/sharing",
+          "start": 9817.299999952316,
+          "ttfb": 420.2000000476837,
+          "transfer": 6.8999998569488525
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 9817.299999952316,
+          "ttfb": 426.5,
+          "transfer": 34.200000047683716
+        },
+        {
+          "path": "/baby/medical",
+          "start": 9817.399999856949,
+          "ttfb": 422.2000000476837,
+          "transfer": 15.700000047683716
+        },
+        {
+          "path": "/baby/custom",
+          "start": 9817.5,
+          "ttfb": 424.2999999523163,
+          "transfer": 23.700000047683716
+        },
+        {
+          "path": "/news",
+          "start": 10244.899999856949,
+          "ttfb": 415.7000000476837,
+          "transfer": 5
+        },
+        {
+          "path": "/children/sharing",
+          "start": 10256,
+          "ttfb": 409.09999990463257,
+          "transfer": 12.100000143051147
+        },
+        {
+          "path": "/baby/medical",
+          "start": 10266,
+          "ttfb": 407.59999990463257,
+          "transfer": 15.100000143051147
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 10278.599999904633,
+          "ttfb": 406.5,
+          "transfer": 14.600000143051147
+        },
+        {
+          "path": "/baby/custom",
+          "start": 10667.399999856949,
+          "ttfb": 416.7000000476837,
+          "transfer": 5.200000047683716
+        },
+        {
+          "path": "/news",
+          "start": 10678.5,
+          "ttfb": 411.59999990463257,
+          "transfer": 10.799999952316284
+        }
+      ],
+      "server": {
+        "requests": 2,
+        "sumMs": 403,
+        "spanMs": 406
+      },
+      "browserApi": {
+        "requests": 0,
+        "sumMs": 0,
+        "spanMs": 0
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 1,
+      "operation": "cold-settings",
+      "contentMs": 4386,
+      "recordReadyMs": null,
+      "tapToReadyMs": null,
+      "feedbackMs": null,
+      "ttfbMs": 841.5,
+      "fcpMs": 1528,
+      "lcpMs": 1528,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1528,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 844.5999999046326,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        }
+      ],
+      "rscResources": [],
+      "server": {
+        "requests": 41,
+        "sumMs": 8233,
+        "spanMs": 5627
+      },
+      "browserApi": {
+        "requests": 0,
+        "sumMs": 0,
+        "spanMs": 0
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 2,
+      "operation": "cold-start",
+      "contentMs": 5059,
+      "recordReadyMs": 5126.020916999998,
+      "tapToReadyMs": null,
+      "feedbackMs": null,
+      "ttfbMs": 816.1000001430511,
+      "fcpMs": 1520,
+      "lcpMs": 1520,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1520,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 817.3000001907349,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1520,
+          "rating": "good",
+          "navigationType": "navigate"
+        }
+      ],
+      "rscResources": [],
+      "server": {
+        "requests": 26,
+        "sumMs": 5215,
+        "spanMs": 5896
+      },
+      "browserApi": {
+        "requests": 8,
+        "sumMs": 1604,
+        "spanMs": 409
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 2,
+      "operation": "baby-calendar",
+      "contentMs": 1651,
+      "recordReadyMs": null,
+      "tapToReadyMs": 1601.7999999523163,
+      "feedbackMs": 14.799999952316284,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1520,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 817.3000001907349,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1520,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1611,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0.00016496779609622428,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 32,
+          "rating": "good",
+          "navigationType": "navigate"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/children",
+          "start": 5038.5,
+          "ttfb": 406,
+          "transfer": 39
+        },
+        {
+          "path": "/baby/search",
+          "start": 5038.600000143051,
+          "ttfb": 406.2999999523163,
+          "transfer": 49.59999990463257
+        },
+        {
+          "path": "/children",
+          "start": 5484.900000095367,
+          "ttfb": 407,
+          "transfer": 2
+        },
+        {
+          "path": "/baby/search",
+          "start": 5495.300000190735,
+          "ttfb": 405,
+          "transfer": 18.199999809265137
+        },
+        {
+          "path": "/calendar",
+          "start": 6094.800000190735,
+          "ttfb": 412,
+          "transfer": 612
+        }
+      ],
+      "server": {
+        "requests": 7,
+        "sumMs": 1408,
+        "spanMs": 1011
+      },
+      "browserApi": {
+        "requests": 2,
+        "sumMs": 403,
+        "spanMs": 1654
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 2,
+      "operation": "calendar-settings",
+      "contentMs": 1574,
+      "recordReadyMs": null,
+      "tapToReadyMs": 1536.7000000476837,
+      "feedbackMs": 13.200000047683716,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1520,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 817.3000001907349,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1520,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1611,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0.00016496779609622428,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 32,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1611,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 1542.3999998569489,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/children",
+          "start": 5038.5,
+          "ttfb": 406,
+          "transfer": 39
+        },
+        {
+          "path": "/baby/search",
+          "start": 5038.600000143051,
+          "ttfb": 406.2999999523163,
+          "transfer": 49.59999990463257
+        },
+        {
+          "path": "/children",
+          "start": 5484.900000095367,
+          "ttfb": 407,
+          "transfer": 2
+        },
+        {
+          "path": "/baby/search",
+          "start": 5495.300000190735,
+          "ttfb": 405,
+          "transfer": 18.199999809265137
+        },
+        {
+          "path": "/calendar",
+          "start": 6094.800000190735,
+          "ttfb": 412,
+          "transfer": 612
+        },
+        {
+          "path": "/settings",
+          "start": 8096.400000095367,
+          "ttfb": 418.09999990463257,
+          "transfer": 619.1000001430511
+        }
+      ],
+      "server": {
+        "requests": 35,
+        "sumMs": 7030,
+        "spanMs": 2787
+      },
+      "browserApi": {
+        "requests": 2,
+        "sumMs": 402,
+        "spanMs": 659
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 2,
+      "operation": "settings-baby",
+      "contentMs": 70,
+      "recordReadyMs": null,
+      "tapToReadyMs": 30.600000143051147,
+      "feedbackMs": 12.5,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1520,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 817.3000001907349,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1520,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1611,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0.00016496779609622428,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 32,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1611,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 1542.3999998569489,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "LCP",
+          "value": 1542.3999998569489,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/children",
+          "start": 5038.5,
+          "ttfb": 406,
+          "transfer": 39
+        },
+        {
+          "path": "/baby/search",
+          "start": 5038.600000143051,
+          "ttfb": 406.2999999523163,
+          "transfer": 49.59999990463257
+        },
+        {
+          "path": "/children",
+          "start": 5484.900000095367,
+          "ttfb": 407,
+          "transfer": 2
+        },
+        {
+          "path": "/baby/search",
+          "start": 5495.300000190735,
+          "ttfb": 405,
+          "transfer": 18.199999809265137
+        },
+        {
+          "path": "/calendar",
+          "start": 6094.800000190735,
+          "ttfb": 412,
+          "transfer": 612
+        },
+        {
+          "path": "/settings",
+          "start": 8096.400000095367,
+          "ttfb": 418.09999990463257,
+          "transfer": 619.1000001430511
+        },
+        {
+          "path": "/children/sharing",
+          "start": 9634.800000190735,
+          "ttfb": 416.69999980926514,
+          "transfer": 7.900000095367432
+        },
+        {
+          "path": "/baby/medical",
+          "start": 9634.900000095367,
+          "ttfb": 417.2999999523163,
+          "transfer": 20.5
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 9634.900000095367,
+          "ttfb": 418.59999990463257,
+          "transfer": 42.10000014305115
+        },
+        {
+          "path": "/baby/custom",
+          "start": 9635,
+          "ttfb": 417.90000009536743,
+          "transfer": 30.200000047683716
+        },
+        {
+          "path": "/news",
+          "start": 10061.100000143051,
+          "ttfb": 407.09999990463257,
+          "transfer": 3.6000001430511475
+        },
+        {
+          "path": "/children/sharing",
+          "start": 10073.600000143051,
+          "ttfb": 405.5,
+          "transfer": 4.099999904632568
+        },
+        {
+          "path": "/baby/medical",
+          "start": 10083.900000095367,
+          "ttfb": 405.7000000476837,
+          "transfer": 4.8999998569488525
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 10096.400000095367,
+          "ttfb": 405.5,
+          "transfer": 4.5
+        },
+        {
+          "path": "/baby/custom",
+          "start": 10472.600000143051,
+          "ttfb": 408.7999999523163,
+          "transfer": 2
+        },
+        {
+          "path": "/news",
+          "start": 10484,
+          "ttfb": 406.80000019073486,
+          "transfer": 4.699999809265137
+        }
+      ],
+      "server": {
+        "requests": 0,
+        "sumMs": 0,
+        "spanMs": 0
+      },
+      "browserApi": {
+        "requests": 7,
+        "sumMs": 1409,
+        "spanMs": 222
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 2,
+      "operation": "back",
+      "contentMs": 46,
+      "recordReadyMs": null,
+      "tapToReadyMs": null,
+      "feedbackMs": null,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1520,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 817.3000001907349,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1520,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1611,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0.00016496779609622428,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 32,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1611,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 1542.3999998569489,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "LCP",
+          "value": 1542.3999998569489,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 37.299999952316284,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "LCP",
+          "value": 37.299999952316284,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 17.5,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/children",
+          "start": 5038.5,
+          "ttfb": 406,
+          "transfer": 39
+        },
+        {
+          "path": "/baby/search",
+          "start": 5038.600000143051,
+          "ttfb": 406.2999999523163,
+          "transfer": 49.59999990463257
+        },
+        {
+          "path": "/children",
+          "start": 5484.900000095367,
+          "ttfb": 407,
+          "transfer": 2
+        },
+        {
+          "path": "/baby/search",
+          "start": 5495.300000190735,
+          "ttfb": 405,
+          "transfer": 18.199999809265137
+        },
+        {
+          "path": "/calendar",
+          "start": 6094.800000190735,
+          "ttfb": 412,
+          "transfer": 612
+        },
+        {
+          "path": "/settings",
+          "start": 8096.400000095367,
+          "ttfb": 418.09999990463257,
+          "transfer": 619.1000001430511
+        },
+        {
+          "path": "/children/sharing",
+          "start": 9634.800000190735,
+          "ttfb": 416.69999980926514,
+          "transfer": 7.900000095367432
+        },
+        {
+          "path": "/baby/medical",
+          "start": 9634.900000095367,
+          "ttfb": 417.2999999523163,
+          "transfer": 20.5
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 9634.900000095367,
+          "ttfb": 418.59999990463257,
+          "transfer": 42.10000014305115
+        },
+        {
+          "path": "/baby/custom",
+          "start": 9635,
+          "ttfb": 417.90000009536743,
+          "transfer": 30.200000047683716
+        },
+        {
+          "path": "/news",
+          "start": 10061.100000143051,
+          "ttfb": 407.09999990463257,
+          "transfer": 3.6000001430511475
+        },
+        {
+          "path": "/children/sharing",
+          "start": 10073.600000143051,
+          "ttfb": 405.5,
+          "transfer": 4.099999904632568
+        },
+        {
+          "path": "/baby/medical",
+          "start": 10083.900000095367,
+          "ttfb": 405.7000000476837,
+          "transfer": 4.8999998569488525
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 10096.400000095367,
+          "ttfb": 405.5,
+          "transfer": 4.5
+        },
+        {
+          "path": "/baby/custom",
+          "start": 10472.600000143051,
+          "ttfb": 408.7999999523163,
+          "transfer": 2
+        },
+        {
+          "path": "/news",
+          "start": 10484,
+          "ttfb": 406.80000019073486,
+          "transfer": 4.699999809265137
+        }
+      ],
+      "server": {
+        "requests": 2,
+        "sumMs": 403,
+        "spanMs": 405
+      },
+      "browserApi": {
+        "requests": 0,
+        "sumMs": 0,
+        "spanMs": 0
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 2,
+      "operation": "cold-settings",
+      "contentMs": 4387,
+      "recordReadyMs": null,
+      "tapToReadyMs": null,
+      "feedbackMs": null,
+      "ttfbMs": 820.1000001430511,
+      "fcpMs": 1520,
+      "lcpMs": 1520,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1520,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 822,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        }
+      ],
+      "rscResources": [],
+      "server": {
+        "requests": 41,
+        "sumMs": 8234,
+        "spanMs": 5632
+      },
+      "browserApi": {
+        "requests": 0,
+        "sumMs": 0,
+        "spanMs": 0
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 3,
+      "operation": "cold-start",
+      "contentMs": 5060,
+      "recordReadyMs": 5108.613041000004,
+      "tapToReadyMs": null,
+      "feedbackMs": null,
+      "ttfbMs": 814.8000001907349,
+      "fcpMs": 1524,
+      "lcpMs": 1524,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1524,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 816,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1524,
+          "rating": "good",
+          "navigationType": "navigate"
+        }
+      ],
+      "rscResources": [],
+      "server": {
+        "requests": 26,
+        "sumMs": 5218,
+        "spanMs": 5887
+      },
+      "browserApi": {
+        "requests": 8,
+        "sumMs": 1602,
+        "spanMs": 416
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 3,
+      "operation": "baby-calendar",
+      "contentMs": 1623,
+      "recordReadyMs": null,
+      "tapToReadyMs": 1600.6000001430511,
+      "feedbackMs": 17.100000143051147,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1524,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 816,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1524,
+          "rating": "good",
+          "navigationType": "navigate"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/children",
+          "start": 5032.399999856949,
+          "ttfb": 404.7000000476837,
+          "transfer": 22.40000009536743
+        },
+        {
+          "path": "/baby/search",
+          "start": 5032.5,
+          "ttfb": 405,
+          "transfer": 46.69999980926514
+        },
+        {
+          "path": "/children",
+          "start": 5461.099999904633,
+          "ttfb": 405.7000000476837,
+          "transfer": 4.299999952316284
+        },
+        {
+          "path": "/baby/search",
+          "start": 5485.099999904633,
+          "ttfb": 406.2999999523163,
+          "transfer": 15.700000047683716
+        },
+        {
+          "path": "/calendar",
+          "start": 6077.5,
+          "ttfb": 410.39999985694885,
+          "transfer": 607.4000000953674
+        }
+      ],
+      "server": {
+        "requests": 7,
+        "sumMs": 1409,
+        "spanMs": 1011
+      },
+      "browserApi": {
+        "requests": 2,
+        "sumMs": 401,
+        "spanMs": 1641
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 3,
+      "operation": "calendar-settings",
+      "contentMs": 1575,
+      "recordReadyMs": null,
+      "tapToReadyMs": 1518.2999999523163,
+      "feedbackMs": 15.400000095367432,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1524,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 816,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1524,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1608.4000000953674,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0.0001879127985698481,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 40,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1608.4000000953674,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 1522.8000001907349,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/children",
+          "start": 5032.399999856949,
+          "ttfb": 404.7000000476837,
+          "transfer": 22.40000009536743
+        },
+        {
+          "path": "/baby/search",
+          "start": 5032.5,
+          "ttfb": 405,
+          "transfer": 46.69999980926514
+        },
+        {
+          "path": "/children",
+          "start": 5461.099999904633,
+          "ttfb": 405.7000000476837,
+          "transfer": 4.299999952316284
+        },
+        {
+          "path": "/baby/search",
+          "start": 5485.099999904633,
+          "ttfb": 406.2999999523163,
+          "transfer": 15.700000047683716
+        },
+        {
+          "path": "/calendar",
+          "start": 6077.5,
+          "ttfb": 410.39999985694885,
+          "transfer": 607.4000000953674
+        },
+        {
+          "path": "/settings",
+          "start": 8078.599999904633,
+          "ttfb": 406.7000000476837,
+          "transfer": 613.3999998569489
+        }
+      ],
+      "server": {
+        "requests": 35,
+        "sumMs": 7029,
+        "spanMs": 2772
+      },
+      "browserApi": {
+        "requests": 2,
+        "sumMs": 403,
+        "spanMs": 645
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 3,
+      "operation": "settings-baby",
+      "contentMs": 59,
+      "recordReadyMs": null,
+      "tapToReadyMs": 33.5,
+      "feedbackMs": 16.399999856948853,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1524,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 816,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1524,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1608.4000000953674,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0.0001879127985698481,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 40,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1608.4000000953674,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 1522.8000001907349,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "LCP",
+          "value": 1522.8000001907349,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/children",
+          "start": 5032.399999856949,
+          "ttfb": 404.7000000476837,
+          "transfer": 22.40000009536743
+        },
+        {
+          "path": "/baby/search",
+          "start": 5032.5,
+          "ttfb": 405,
+          "transfer": 46.69999980926514
+        },
+        {
+          "path": "/children",
+          "start": 5461.099999904633,
+          "ttfb": 405.7000000476837,
+          "transfer": 4.299999952316284
+        },
+        {
+          "path": "/baby/search",
+          "start": 5485.099999904633,
+          "ttfb": 406.2999999523163,
+          "transfer": 15.700000047683716
+        },
+        {
+          "path": "/calendar",
+          "start": 6077.5,
+          "ttfb": 410.39999985694885,
+          "transfer": 607.4000000953674
+        },
+        {
+          "path": "/settings",
+          "start": 8078.599999904633,
+          "ttfb": 406.7000000476837,
+          "transfer": 613.3999998569489
+        },
+        {
+          "path": "/children/sharing",
+          "start": 9599.199999809265,
+          "ttfb": 409.2000000476837,
+          "transfer": 18.200000047683716
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 9599.199999809265,
+          "ttfb": 410,
+          "transfer": 50.200000047683716
+        },
+        {
+          "path": "/baby/medical",
+          "start": 9599.299999952316,
+          "ttfb": 409.39999985694885,
+          "transfer": 29.90000009536743
+        },
+        {
+          "path": "/baby/custom",
+          "start": 9599.299999952316,
+          "ttfb": 409.59999990463257,
+          "transfer": 40.5
+        },
+        {
+          "path": "/news",
+          "start": 10027.599999904633,
+          "ttfb": 408,
+          "transfer": 1.5999999046325684
+        },
+        {
+          "path": "/children/sharing",
+          "start": 10039.199999809265,
+          "ttfb": 405.40000009536743,
+          "transfer": 4.700000047683716
+        },
+        {
+          "path": "/baby/medical",
+          "start": 10049.799999952316,
+          "ttfb": 404.5,
+          "transfer": 6.8999998569488525
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 10060,
+          "ttfb": 404.59999990463257,
+          "transfer": 7.400000095367432
+        },
+        {
+          "path": "/baby/custom",
+          "start": 10438,
+          "ttfb": 406.39999985694885,
+          "transfer": 5.700000047683716
+        },
+        {
+          "path": "/news",
+          "start": 10450,
+          "ttfb": 404.69999980926514,
+          "transfer": 7
+        }
+      ],
+      "server": {
+        "requests": 0,
+        "sumMs": 0,
+        "spanMs": 0
+      },
+      "browserApi": {
+        "requests": 7,
+        "sumMs": 1406,
+        "spanMs": 204
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 3,
+      "operation": "back",
+      "contentMs": 41,
+      "recordReadyMs": null,
+      "tapToReadyMs": null,
+      "feedbackMs": null,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1524,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 816,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1524,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1608.4000000953674,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0.0001879127985698481,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 40,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1608.4000000953674,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 1522.8000001907349,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "LCP",
+          "value": 1522.8000001907349,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 36.700000047683716,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "LCP",
+          "value": 36.700000047683716,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 13.700000047683716,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/children",
+          "start": 5032.399999856949,
+          "ttfb": 404.7000000476837,
+          "transfer": 22.40000009536743
+        },
+        {
+          "path": "/baby/search",
+          "start": 5032.5,
+          "ttfb": 405,
+          "transfer": 46.69999980926514
+        },
+        {
+          "path": "/children",
+          "start": 5461.099999904633,
+          "ttfb": 405.7000000476837,
+          "transfer": 4.299999952316284
+        },
+        {
+          "path": "/baby/search",
+          "start": 5485.099999904633,
+          "ttfb": 406.2999999523163,
+          "transfer": 15.700000047683716
+        },
+        {
+          "path": "/calendar",
+          "start": 6077.5,
+          "ttfb": 410.39999985694885,
+          "transfer": 607.4000000953674
+        },
+        {
+          "path": "/settings",
+          "start": 8078.599999904633,
+          "ttfb": 406.7000000476837,
+          "transfer": 613.3999998569489
+        },
+        {
+          "path": "/children/sharing",
+          "start": 9599.199999809265,
+          "ttfb": 409.2000000476837,
+          "transfer": 18.200000047683716
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 9599.199999809265,
+          "ttfb": 410,
+          "transfer": 50.200000047683716
+        },
+        {
+          "path": "/baby/medical",
+          "start": 9599.299999952316,
+          "ttfb": 409.39999985694885,
+          "transfer": 29.90000009536743
+        },
+        {
+          "path": "/baby/custom",
+          "start": 9599.299999952316,
+          "ttfb": 409.59999990463257,
+          "transfer": 40.5
+        },
+        {
+          "path": "/news",
+          "start": 10027.599999904633,
+          "ttfb": 408,
+          "transfer": 1.5999999046325684
+        },
+        {
+          "path": "/children/sharing",
+          "start": 10039.199999809265,
+          "ttfb": 405.40000009536743,
+          "transfer": 4.700000047683716
+        },
+        {
+          "path": "/baby/medical",
+          "start": 10049.799999952316,
+          "ttfb": 404.5,
+          "transfer": 6.8999998569488525
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 10060,
+          "ttfb": 404.59999990463257,
+          "transfer": 7.400000095367432
+        },
+        {
+          "path": "/baby/custom",
+          "start": 10438,
+          "ttfb": 406.39999985694885,
+          "transfer": 5.700000047683716
+        },
+        {
+          "path": "/news",
+          "start": 10450,
+          "ttfb": 404.69999980926514,
+          "transfer": 7
+        }
+      ],
+      "server": {
+        "requests": 2,
+        "sumMs": 402,
+        "spanMs": 403
+      },
+      "browserApi": {
+        "requests": 0,
+        "sumMs": 0,
+        "spanMs": 0
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 3,
+      "operation": "cold-settings",
+      "contentMs": 4371,
+      "recordReadyMs": null,
+      "tapToReadyMs": null,
+      "feedbackMs": null,
+      "ttfbMs": 821.6999998092651,
+      "fcpMs": 1516,
+      "lcpMs": 1516,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1516,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 823.0999999046326,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        }
+      ],
+      "rscResources": [],
+      "server": {
+        "requests": 41,
+        "sumMs": 8239,
+        "spanMs": 5624
+      },
+      "browserApi": {
+        "requests": 0,
+        "sumMs": 0,
+        "spanMs": 0
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 4,
+      "operation": "cold-start",
+      "contentMs": 5076,
+      "recordReadyMs": 5125.887499999997,
+      "tapToReadyMs": null,
+      "feedbackMs": null,
+      "ttfbMs": 820.5999999046326,
+      "fcpMs": 1516,
+      "lcpMs": 1516,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1516,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 823.2999999523163,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1516,
+          "rating": "good",
+          "navigationType": "navigate"
+        }
+      ],
+      "rscResources": [],
+      "server": {
+        "requests": 26,
+        "sumMs": 5229,
+        "spanMs": 5923
+      },
+      "browserApi": {
+        "requests": 8,
+        "sumMs": 1605,
+        "spanMs": 418
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 4,
+      "operation": "baby-calendar",
+      "contentMs": 1645,
+      "recordReadyMs": null,
+      "tapToReadyMs": 1617.3000001907349,
+      "feedbackMs": 17.200000047683716,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1516,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 823.2999999523163,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1516,
+          "rating": "good",
+          "navigationType": "navigate"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/children",
+          "start": 5066.099999904633,
+          "ttfb": 406.2000000476837,
+          "transfer": 34.40000009536743
+        },
+        {
+          "path": "/baby/search",
+          "start": 5066.099999904633,
+          "ttfb": 406.7999999523163,
+          "transfer": 44.5
+        },
+        {
+          "path": "/children",
+          "start": 5509.299999952316,
+          "ttfb": 411,
+          "transfer": 8.099999904632568
+        },
+        {
+          "path": "/baby/search",
+          "start": 5518.5,
+          "ttfb": 409.39999985694885,
+          "transfer": 25
+        },
+        {
+          "path": "/calendar",
+          "start": 6096.899999856949,
+          "ttfb": 421.80000019073486,
+          "transfer": 611.5999999046326
+        }
+      ],
+      "server": {
+        "requests": 7,
+        "sumMs": 1406,
+        "spanMs": 1023
+      },
+      "browserApi": {
+        "requests": 2,
+        "sumMs": 403,
+        "spanMs": 1640
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 4,
+      "operation": "calendar-settings",
+      "contentMs": 1577,
+      "recordReadyMs": null,
+      "tapToReadyMs": 1528.2000000476837,
+      "feedbackMs": 12.200000047683716,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1516,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 823.2999999523163,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1516,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1626.7999999523163,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0.0001879127985698481,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 40,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1626.7999999523163,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 1537,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/children",
+          "start": 5066.099999904633,
+          "ttfb": 406.2000000476837,
+          "transfer": 34.40000009536743
+        },
+        {
+          "path": "/baby/search",
+          "start": 5066.099999904633,
+          "ttfb": 406.7999999523163,
+          "transfer": 44.5
+        },
+        {
+          "path": "/children",
+          "start": 5509.299999952316,
+          "ttfb": 411,
+          "transfer": 8.099999904632568
+        },
+        {
+          "path": "/baby/search",
+          "start": 5518.5,
+          "ttfb": 409.39999985694885,
+          "transfer": 25
+        },
+        {
+          "path": "/calendar",
+          "start": 6096.899999856949,
+          "ttfb": 421.80000019073486,
+          "transfer": 611.5999999046326
+        },
+        {
+          "path": "/settings",
+          "start": 8097.599999904633,
+          "ttfb": 412.2999999523163,
+          "transfer": 612.3000001907349
+        }
+      ],
+      "server": {
+        "requests": 35,
+        "sumMs": 7029,
+        "spanMs": 2789
+      },
+      "browserApi": {
+        "requests": 2,
+        "sumMs": 402,
+        "spanMs": 641
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 4,
+      "operation": "settings-baby",
+      "contentMs": 92,
+      "recordReadyMs": null,
+      "tapToReadyMs": 32.5,
+      "feedbackMs": 13.900000095367432,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1516,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 823.2999999523163,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1516,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1626.7999999523163,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0.0001879127985698481,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 40,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1626.7999999523163,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 1537,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "LCP",
+          "value": 1537,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 41,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/children",
+          "start": 5066.099999904633,
+          "ttfb": 406.2000000476837,
+          "transfer": 34.40000009536743
+        },
+        {
+          "path": "/baby/search",
+          "start": 5066.099999904633,
+          "ttfb": 406.7999999523163,
+          "transfer": 44.5
+        },
+        {
+          "path": "/children",
+          "start": 5509.299999952316,
+          "ttfb": 411,
+          "transfer": 8.099999904632568
+        },
+        {
+          "path": "/baby/search",
+          "start": 5518.5,
+          "ttfb": 409.39999985694885,
+          "transfer": 25
+        },
+        {
+          "path": "/calendar",
+          "start": 6096.899999856949,
+          "ttfb": 421.80000019073486,
+          "transfer": 611.5999999046326
+        },
+        {
+          "path": "/settings",
+          "start": 8097.599999904633,
+          "ttfb": 412.2999999523163,
+          "transfer": 612.3000001907349
+        },
+        {
+          "path": "/children/sharing",
+          "start": 9627.599999904633,
+          "ttfb": 408.60000014305115,
+          "transfer": 14.5
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 9627.599999904633,
+          "ttfb": 409.90000009536743,
+          "transfer": 46.09999990463257
+        },
+        {
+          "path": "/baby/medical",
+          "start": 9627.700000047684,
+          "ttfb": 408.69999980926514,
+          "transfer": 25.5
+        },
+        {
+          "path": "/baby/custom",
+          "start": 9627.799999952316,
+          "ttfb": 409,
+          "transfer": 36.5
+        },
+        {
+          "path": "/news",
+          "start": 10051.5,
+          "ttfb": 413.2000000476837,
+          "transfer": 7.799999952316284
+        },
+        {
+          "path": "/children/sharing",
+          "start": 10062.799999952316,
+          "ttfb": 410.2999999523163,
+          "transfer": 10.700000047683716
+        },
+        {
+          "path": "/baby/medical",
+          "start": 10074.099999904633,
+          "ttfb": 406.90000009536743,
+          "transfer": 14.5
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 10084.200000047684,
+          "ttfb": 406.39999985694885,
+          "transfer": 18
+        },
+        {
+          "path": "/baby/custom",
+          "start": 10474.399999856949,
+          "ttfb": 413,
+          "transfer": 8.800000190734863
+        },
+        {
+          "path": "/news",
+          "start": 10485.399999856949,
+          "ttfb": 408.7000000476837,
+          "transfer": 14.400000095367432
+        }
+      ],
+      "server": {
+        "requests": 0,
+        "sumMs": 0,
+        "spanMs": 0
+      },
+      "browserApi": {
+        "requests": 7,
+        "sumMs": 1414,
+        "spanMs": 219
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 4,
+      "operation": "back",
+      "contentMs": 58,
+      "recordReadyMs": null,
+      "tapToReadyMs": null,
+      "feedbackMs": null,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1516,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 823.2999999523163,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1516,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1626.7999999523163,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0.0001879127985698481,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 40,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1626.7999999523163,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 1537,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "LCP",
+          "value": 1537,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 41,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "LCP",
+          "value": 41,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 19.200000047683716,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/children",
+          "start": 5066.099999904633,
+          "ttfb": 406.2000000476837,
+          "transfer": 34.40000009536743
+        },
+        {
+          "path": "/baby/search",
+          "start": 5066.099999904633,
+          "ttfb": 406.7999999523163,
+          "transfer": 44.5
+        },
+        {
+          "path": "/children",
+          "start": 5509.299999952316,
+          "ttfb": 411,
+          "transfer": 8.099999904632568
+        },
+        {
+          "path": "/baby/search",
+          "start": 5518.5,
+          "ttfb": 409.39999985694885,
+          "transfer": 25
+        },
+        {
+          "path": "/calendar",
+          "start": 6096.899999856949,
+          "ttfb": 421.80000019073486,
+          "transfer": 611.5999999046326
+        },
+        {
+          "path": "/settings",
+          "start": 8097.599999904633,
+          "ttfb": 412.2999999523163,
+          "transfer": 612.3000001907349
+        },
+        {
+          "path": "/children/sharing",
+          "start": 9627.599999904633,
+          "ttfb": 408.60000014305115,
+          "transfer": 14.5
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 9627.599999904633,
+          "ttfb": 409.90000009536743,
+          "transfer": 46.09999990463257
+        },
+        {
+          "path": "/baby/medical",
+          "start": 9627.700000047684,
+          "ttfb": 408.69999980926514,
+          "transfer": 25.5
+        },
+        {
+          "path": "/baby/custom",
+          "start": 9627.799999952316,
+          "ttfb": 409,
+          "transfer": 36.5
+        },
+        {
+          "path": "/news",
+          "start": 10051.5,
+          "ttfb": 413.2000000476837,
+          "transfer": 7.799999952316284
+        },
+        {
+          "path": "/children/sharing",
+          "start": 10062.799999952316,
+          "ttfb": 410.2999999523163,
+          "transfer": 10.700000047683716
+        },
+        {
+          "path": "/baby/medical",
+          "start": 10074.099999904633,
+          "ttfb": 406.90000009536743,
+          "transfer": 14.5
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 10084.200000047684,
+          "ttfb": 406.39999985694885,
+          "transfer": 18
+        },
+        {
+          "path": "/baby/custom",
+          "start": 10474.399999856949,
+          "ttfb": 413,
+          "transfer": 8.800000190734863
+        },
+        {
+          "path": "/news",
+          "start": 10485.399999856949,
+          "ttfb": 408.7000000476837,
+          "transfer": 14.400000095367432
+        }
+      ],
+      "server": {
+        "requests": 2,
+        "sumMs": 403,
+        "spanMs": 404
+      },
+      "browserApi": {
+        "requests": 0,
+        "sumMs": 0,
+        "spanMs": 0
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 4,
+      "operation": "cold-settings",
+      "contentMs": 4405,
+      "recordReadyMs": null,
+      "tapToReadyMs": null,
+      "feedbackMs": null,
+      "ttfbMs": 823.1000001430511,
+      "fcpMs": 1524,
+      "lcpMs": 1524,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1524,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 828,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        }
+      ],
+      "rscResources": [],
+      "server": {
+        "requests": 41,
+        "sumMs": 8238,
+        "spanMs": 5648
+      },
+      "browserApi": {
+        "requests": 0,
+        "sumMs": 0,
+        "spanMs": 0
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 5,
+      "operation": "cold-start",
+      "contentMs": 5081,
+      "recordReadyMs": 5127.850583000007,
+      "tapToReadyMs": null,
+      "feedbackMs": null,
+      "ttfbMs": 820.3999998569489,
+      "fcpMs": 1528,
+      "lcpMs": 1528,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1528,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 821.6999998092651,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1528,
+          "rating": "good",
+          "navigationType": "navigate"
+        }
+      ],
+      "rscResources": [],
+      "server": {
+        "requests": 26,
+        "sumMs": 5237,
+        "spanMs": 5909
+      },
+      "browserApi": {
+        "requests": 8,
+        "sumMs": 1609,
+        "spanMs": 411
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 5,
+      "operation": "baby-calendar",
+      "contentMs": 1665,
+      "recordReadyMs": null,
+      "tapToReadyMs": 1613.7000000476837,
+      "feedbackMs": 17.200000047683716,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1528,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 821.6999998092651,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1528,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1625.1000001430511,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0.0001879127985698481,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 32,
+          "rating": "good",
+          "navigationType": "navigate"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/baby/search",
+          "start": 5058.099999904633,
+          "ttfb": 407,
+          "transfer": 30.40000009536743
+        },
+        {
+          "path": "/children",
+          "start": 5058.099999904633,
+          "ttfb": 407.2999999523163,
+          "transfer": 41.60000014305115
+        },
+        {
+          "path": "/baby/search",
+          "start": 5496.799999952316,
+          "ttfb": 410.7999999523163,
+          "transfer": 34.90000009536743
+        },
+        {
+          "path": "/children",
+          "start": 5507.5,
+          "ttfb": 406.19999980926514,
+          "transfer": 16.600000143051147
+        },
+        {
+          "path": "/calendar",
+          "start": 6099.299999952316,
+          "ttfb": 420.59999990463257,
+          "transfer": 611
+        }
+      ],
+      "server": {
+        "requests": 7,
+        "sumMs": 1409,
+        "spanMs": 1020
+      },
+      "browserApi": {
+        "requests": 2,
+        "sumMs": 403,
+        "spanMs": 1647
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 5,
+      "operation": "calendar-settings",
+      "contentMs": 1623,
+      "recordReadyMs": null,
+      "tapToReadyMs": 1545.9000000953674,
+      "feedbackMs": 12.100000143051147,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1528,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 821.6999998092651,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1528,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1625.1000001430511,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0.0001879127985698481,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 32,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1625.1000001430511,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 1552.9000000953674,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/baby/search",
+          "start": 5058.099999904633,
+          "ttfb": 407,
+          "transfer": 30.40000009536743
+        },
+        {
+          "path": "/children",
+          "start": 5058.099999904633,
+          "ttfb": 407.2999999523163,
+          "transfer": 41.60000014305115
+        },
+        {
+          "path": "/baby/search",
+          "start": 5496.799999952316,
+          "ttfb": 410.7999999523163,
+          "transfer": 34.90000009536743
+        },
+        {
+          "path": "/children",
+          "start": 5507.5,
+          "ttfb": 406.19999980926514,
+          "transfer": 16.600000143051147
+        },
+        {
+          "path": "/calendar",
+          "start": 6099.299999952316,
+          "ttfb": 420.59999990463257,
+          "transfer": 611
+        },
+        {
+          "path": "/settings",
+          "start": 8132.699999809265,
+          "ttfb": 409.60000014305115,
+          "transfer": 625.7999999523163
+        }
+      ],
+      "server": {
+        "requests": 35,
+        "sumMs": 7024,
+        "spanMs": 2801
+      },
+      "browserApi": {
+        "requests": 2,
+        "sumMs": 402,
+        "spanMs": 653
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 5,
+      "operation": "settings-baby",
+      "contentMs": 56,
+      "recordReadyMs": null,
+      "tapToReadyMs": 32.700000047683716,
+      "feedbackMs": 17.100000143051147,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1528,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 821.6999998092651,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1528,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1625.1000001430511,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0.0001879127985698481,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 32,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1625.1000001430511,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 1552.9000000953674,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "LCP",
+          "value": 1552.9000000953674,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/baby/search",
+          "start": 5058.099999904633,
+          "ttfb": 407,
+          "transfer": 30.40000009536743
+        },
+        {
+          "path": "/children",
+          "start": 5058.099999904633,
+          "ttfb": 407.2999999523163,
+          "transfer": 41.60000014305115
+        },
+        {
+          "path": "/baby/search",
+          "start": 5496.799999952316,
+          "ttfb": 410.7999999523163,
+          "transfer": 34.90000009536743
+        },
+        {
+          "path": "/children",
+          "start": 5507.5,
+          "ttfb": 406.19999980926514,
+          "transfer": 16.600000143051147
+        },
+        {
+          "path": "/calendar",
+          "start": 6099.299999952316,
+          "ttfb": 420.59999990463257,
+          "transfer": 611
+        },
+        {
+          "path": "/settings",
+          "start": 8132.699999809265,
+          "ttfb": 409.60000014305115,
+          "transfer": 625.7999999523163
+        },
+        {
+          "path": "/children/sharing",
+          "start": 9681.199999809265,
+          "ttfb": 407.90000009536743,
+          "transfer": 17
+        },
+        {
+          "path": "/baby/medical",
+          "start": 9681.299999952316,
+          "ttfb": 411.7000000476837,
+          "transfer": 25.199999809265137
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 9681.299999952316,
+          "ttfb": 412.2999999523163,
+          "transfer": 48.799999952316284
+        },
+        {
+          "path": "/baby/custom",
+          "start": 9681.399999856949,
+          "ttfb": 411.90000009536743,
+          "transfer": 38
+        },
+        {
+          "path": "/news",
+          "start": 10107,
+          "ttfb": 406.19999980926514,
+          "transfer": 5
+        },
+        {
+          "path": "/children/sharing",
+          "start": 10119,
+          "ttfb": 405.7999999523163,
+          "transfer": 5.3999998569488525
+        },
+        {
+          "path": "/baby/medical",
+          "start": 10131.899999856949,
+          "ttfb": 406.2000000476837,
+          "transfer": 3.299999952316284
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 10143,
+          "ttfb": 405.2999999523163,
+          "transfer": 4.8999998569488525
+        },
+        {
+          "path": "/baby/custom",
+          "start": 10518.899999856949,
+          "ttfb": 407,
+          "transfer": 4.299999952316284
+        },
+        {
+          "path": "/news",
+          "start": 10531,
+          "ttfb": 405.69999980926514,
+          "transfer": 5.400000095367432
+        }
+      ],
+      "server": {
+        "requests": 0,
+        "sumMs": 0,
+        "spanMs": 0
+      },
+      "browserApi": {
+        "requests": 7,
+        "sumMs": 1404,
+        "spanMs": 208
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 5,
+      "operation": "back",
+      "contentMs": 47,
+      "recordReadyMs": null,
+      "tapToReadyMs": null,
+      "feedbackMs": null,
+      "ttfbMs": null,
+      "fcpMs": null,
+      "lcpMs": null,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1528,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 821.6999998092651,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1528,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "FCP",
+          "value": 1625.1000001430511,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0.0001879127985698481,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "INP",
+          "value": 32,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "LCP",
+          "value": 1625.1000001430511,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 1552.9000000953674,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "LCP",
+          "value": 1552.9000000953674,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 37.60000014305115,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "INP",
+          "value": 8,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "LCP",
+          "value": 37.60000014305115,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "FCP",
+          "value": 14.600000143051147,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        },
+        {
+          "name": "CLS",
+          "value": 0,
+          "rating": "good",
+          "navigationType": "soft-navigation"
+        }
+      ],
+      "rscResources": [
+        {
+          "path": "/baby/search",
+          "start": 5058.099999904633,
+          "ttfb": 407,
+          "transfer": 30.40000009536743
+        },
+        {
+          "path": "/children",
+          "start": 5058.099999904633,
+          "ttfb": 407.2999999523163,
+          "transfer": 41.60000014305115
+        },
+        {
+          "path": "/baby/search",
+          "start": 5496.799999952316,
+          "ttfb": 410.7999999523163,
+          "transfer": 34.90000009536743
+        },
+        {
+          "path": "/children",
+          "start": 5507.5,
+          "ttfb": 406.19999980926514,
+          "transfer": 16.600000143051147
+        },
+        {
+          "path": "/calendar",
+          "start": 6099.299999952316,
+          "ttfb": 420.59999990463257,
+          "transfer": 611
+        },
+        {
+          "path": "/settings",
+          "start": 8132.699999809265,
+          "ttfb": 409.60000014305115,
+          "transfer": 625.7999999523163
+        },
+        {
+          "path": "/children/sharing",
+          "start": 9681.199999809265,
+          "ttfb": 407.90000009536743,
+          "transfer": 17
+        },
+        {
+          "path": "/baby/medical",
+          "start": 9681.299999952316,
+          "ttfb": 411.7000000476837,
+          "transfer": 25.199999809265137
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 9681.299999952316,
+          "ttfb": 412.2999999523163,
+          "transfer": 48.799999952316284
+        },
+        {
+          "path": "/baby/custom",
+          "start": 9681.399999856949,
+          "ttfb": 411.90000009536743,
+          "transfer": 38
+        },
+        {
+          "path": "/news",
+          "start": 10107,
+          "ttfb": 406.19999980926514,
+          "transfer": 5
+        },
+        {
+          "path": "/children/sharing",
+          "start": 10119,
+          "ttfb": 405.7999999523163,
+          "transfer": 5.3999998569488525
+        },
+        {
+          "path": "/baby/medical",
+          "start": 10131.899999856949,
+          "ttfb": 406.2000000476837,
+          "transfer": 3.299999952316284
+        },
+        {
+          "path": "/baby/sleep",
+          "start": 10143,
+          "ttfb": 405.2999999523163,
+          "transfer": 4.8999998569488525
+        },
+        {
+          "path": "/baby/custom",
+          "start": 10518.899999856949,
+          "ttfb": 407,
+          "transfer": 4.299999952316284
+        },
+        {
+          "path": "/news",
+          "start": 10531,
+          "ttfb": 405.69999980926514,
+          "transfer": 5.400000095367432
+        }
+      ],
+      "server": {
+        "requests": 2,
+        "sumMs": 400,
+        "spanMs": 401
+      },
+      "browserApi": {
+        "requests": 0,
+        "sumMs": 0,
+        "spanMs": 0
+      }
+    },
+    {
+      "scenario": "slow-network",
+      "trial": 5,
+      "operation": "cold-settings",
+      "contentMs": 4385,
+      "recordReadyMs": null,
+      "tapToReadyMs": null,
+      "feedbackMs": null,
+      "ttfbMs": 832.5999999046326,
+      "fcpMs": 1524,
+      "lcpMs": 1524,
+      "vitals": [
+        {
+          "name": "FCP",
+          "value": 1524,
+          "rating": "good",
+          "navigationType": "navigate"
+        },
+        {
+          "name": "TTFB",
+          "value": 837.5999999046326,
+          "rating": "needs-improvement",
+          "navigationType": "navigate"
+        }
+      ],
+      "rscResources": [],
+      "server": {
+        "requests": 41,
+        "sumMs": 8245,
+        "spanMs": 5623
+      },
+      "browserApi": {
+        "requests": 0,
+        "sumMs": 0,
+        "spanMs": 0
+      }
+    }
+  ],
+  "observed_at": "2026-11-02T07:55:44.564519+00:00"
+}

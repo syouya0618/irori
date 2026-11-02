@@ -1,0 +1,1195 @@
+{
+  "source": "521f2fc295cae077ad1ea54947b53455781e7a6a",
+  "method": "synthetic HTTP, no real auth/database/writes; Chromium/WebKit not iPhone; 200% CSS text approximation not OS text-size",
+  "findings": [
+    {
+      "engine": "chromium",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby/sleep",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby/medical",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "国立健康危機管理研究機構 予防接種スケジュール",
+          "w": 310,
+          "h": 18
+        },
+        {
+          "label": "こども家庭庁 乳幼児健診",
+          "w": 158,
+          "h": 18
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/children/sharing",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/news",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/settings",
+      "overflow": false,
+      "violations": [
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".gap-3.group-data-\\[size\\=sm\\]\\/card\\:px-3[data-slot=\"card-content\"] > .h-8.w-full.dark\\:border-input"
+              ],
+              "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.98 (foreground color: #827c79, background color: #fdfbf9, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        }
+      ],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        },
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/baby",
+      "overflow": true,
+      "violations": [],
+      "overflowElements": [
+        {
+          "tag": "DIV",
+          "cls": "flex items-center gap-1",
+          "right": 360
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "group/button inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-[color,background-color,border-color,outline-color,box-shadow,translate,opacity] duration-200 outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 focus-visible:aria-invalid:ring-ring [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50 rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg size-11",
+          "right": 360
+        },
+        {
+          "tag": "svg",
+          "cls": {},
+          "right": 332
+        },
+        {
+          "tag": "SPAN",
+          "cls": "ml-auto flex items-baseline gap-2",
+          "right": 347
+        },
+        {
+          "tag": "SPAN",
+          "cls": "text-sm text-muted-foreground",
+          "right": 347
+        },
+        {
+          "tag": "A",
+          "cls": "relative flex flex-1 flex-col items-center justify-center gap-0.5 rounded-lg transition-colors duration-200 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary text-muted-foreground hover:text-foreground",
+          "right": 384
+        },
+        {
+          "tag": "SPAN",
+          "cls": "flex h-8 w-16 items-center justify-center rounded-full transition-colors duration-200",
+          "right": 384
+        },
+        {
+          "tag": "svg",
+          "cls": {},
+          "right": 332
+        },
+        {
+          "tag": "path",
+          "cls": {},
+          "right": 328.95635986328125
+        },
+        {
+          "tag": "circle",
+          "cls": {},
+          "right": 323
+        },
+        {
+          "tag": "SPAN",
+          "cls": "text-xs leading-4 font-medium",
+          "right": 344
+        }
+      ],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/baby/sleep",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/baby/medical",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/children/sharing",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/news",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/settings",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        },
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby/sleep",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby/medical",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "国立健康危機管理研究機構 予防接種スケジュール",
+          "w": 310,
+          "h": 18
+        },
+        {
+          "label": "こども家庭庁 乳幼児健診",
+          "w": 158,
+          "h": 18
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/children/sharing",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/news",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/settings",
+      "overflow": false,
+      "violations": [
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".gap-3.group-data-\\[size\\=sm\\]\\/card\\:px-3[data-slot=\"card-content\"] > .h-8.w-full.dark\\:border-input"
+              ],
+              "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.73 (foreground color: #86817d, background color: #fdfbf9, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        }
+      ],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        },
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/baby",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/baby/sleep",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/baby/medical",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "国立健康危機管理研究機構 予防接種スケジュール",
+          "w": 310,
+          "h": 18
+        },
+        {
+          "label": "こども家庭庁 乳幼児健診",
+          "w": 158,
+          "h": 18
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/children/sharing",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/news",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/settings",
+      "overflow": false,
+      "violations": [
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".text-destructive"
+              ],
+              "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.73 (foreground color: #cc2827, background color: #080706, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        }
+      ],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        },
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 390,
+      "route": "/baby",
+      "check": "child-switch",
+      "status": "BLOCKED",
+      "reason": "WebKit on HTTP loopback does not retain production Secure cookie; HTTPS/device acceptance required"
+    },
+    {
+      "engine": "webkit",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby/sleep",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby/medical",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "国立健康危機管理研究機構 予防接種スケジュール",
+          "w": 312,
+          "h": 18
+        },
+        {
+          "label": "こども家庭庁 乳幼児健診",
+          "w": 158,
+          "h": 18
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/children/sharing",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/news",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/settings",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        },
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 320,
+      "route": "/baby",
+      "check": "child-switch",
+      "status": "BLOCKED",
+      "reason": "WebKit on HTTP loopback does not retain production Secure cookie; HTTPS/device acceptance required"
+    },
+    {
+      "engine": "webkit",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/baby",
+      "overflow": true,
+      "violations": [],
+      "overflowElements": [
+        {
+          "tag": "DIV",
+          "cls": "flex items-center gap-1",
+          "right": 360
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "group/button inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-[color,background-color,border-color,outline-color,box-shadow,translate,opacity] duration-200 outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 focus-visible:aria-invalid:ring-ring [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50 rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg size-11",
+          "right": 360
+        },
+        {
+          "tag": "svg",
+          "cls": {},
+          "right": 332
+        },
+        {
+          "tag": "SPAN",
+          "cls": "ml-auto flex items-baseline gap-2",
+          "right": 347
+        },
+        {
+          "tag": "SPAN",
+          "cls": "text-sm text-muted-foreground",
+          "right": 347
+        },
+        {
+          "tag": "A",
+          "cls": "relative flex flex-1 flex-col items-center justify-center gap-0.5 rounded-lg transition-colors duration-200 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary text-muted-foreground hover:text-foreground",
+          "right": 384
+        },
+        {
+          "tag": "SPAN",
+          "cls": "flex h-8 w-16 items-center justify-center rounded-full transition-colors duration-200",
+          "right": 384
+        },
+        {
+          "tag": "svg",
+          "cls": {},
+          "right": 332
+        },
+        {
+          "tag": "path",
+          "cls": {},
+          "right": 328.9565734863281
+        },
+        {
+          "tag": "circle",
+          "cls": {},
+          "right": 323
+        },
+        {
+          "tag": "SPAN",
+          "cls": "text-xs leading-4 font-medium",
+          "right": 344
+        }
+      ],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/baby/sleep",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/baby/medical",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/children/sharing",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/news",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/settings",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        },
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 768,
+      "route": "/baby",
+      "check": "child-switch",
+      "status": "BLOCKED",
+      "reason": "WebKit on HTTP loopback does not retain production Secure cookie; HTTPS/device acceptance required"
+    },
+    {
+      "engine": "webkit",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby/sleep",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby/medical",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "国立健康危機管理研究機構 予防接種スケジュール",
+          "w": 312,
+          "h": 18
+        },
+        {
+          "label": "こども家庭庁 乳幼児健診",
+          "w": 158,
+          "h": 18
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/children/sharing",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/news",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/settings",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        },
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 1280,
+      "route": "/baby",
+      "check": "child-switch",
+      "status": "BLOCKED",
+      "reason": "WebKit on HTTP loopback does not retain production Secure cookie; HTTPS/device acceptance required"
+    },
+    {
+      "engine": "webkit",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/baby",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/baby/sleep",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/baby/medical",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "国立健康危機管理研究機構 予防接種スケジュール",
+          "w": 312,
+          "h": 18
+        },
+        {
+          "label": "こども家庭庁 乳幼児健診",
+          "w": 158,
+          "h": 18
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/children/sharing",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/news",
+      "overflow": false,
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/settings",
+      "overflow": false,
+      "violations": [
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".text-destructive"
+              ],
+              "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.73 (foreground color: #cc2827, background color: #080706, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        }
+      ],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        },
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        }
+      ],
+      "pageErrors": []
+    }
+  ],
+  "observed_at": "2026-11-02T07:15:58.916165+00:00"
+}

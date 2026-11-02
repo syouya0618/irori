@@ -1,0 +1,450 @@
+{
+  "observed_date": "2026-11-02 JST",
+  "worktrees": [
+    {
+      "path": "$HOME/dev/personal/irori",
+      "head_before": "b50c7eaa4b476ac64e68d3e6941f63a0b2b62f31",
+      "branch": "refs/heads/main",
+      "size_mib_before": 24665.5,
+      "status_entries": 39611,
+      "ignored_entries": 21,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "/private/tmp/irori-pwa-cron-ux-20261102",
+      "head_before": "521f2fc295cae077ad1ea54947b53455781e7a6a",
+      "branch": "refs/heads/codex/irori-pwa-cron-ux-hygiene-20261102",
+      "size_mib_before": 17.7,
+      "status_entries": 0,
+      "ignored_entries": 1,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/.codex/worktrees/8236/irori",
+      "head_before": "cd2d44297252f4b110530383f850a0f4d5c968e3",
+      "branch": "refs/heads/codex/irori-product-expansion-20261030",
+      "size_mib_before": 1021.2,
+      "status_entries": 0,
+      "ignored_entries": 7,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/.codex/worktrees/ec9c/irori",
+      "head_before": "638f4690daa07373a9f21e340bf7c1be49da5767",
+      "branch": "detached",
+      "size_mib_before": 16.7,
+      "status_entries": 0,
+      "ignored_entries": 0,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/.codex/worktrees/irori-feeding-push-20261029/irori",
+      "head_before": "638f4690daa07373a9f21e340bf7c1be49da5767",
+      "branch": "refs/heads/codex/irori-feeding-push-prod-20261029",
+      "size_mib_before": 16.7,
+      "status_entries": 0,
+      "ignored_entries": 0,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/.codex/worktrees/irori-feeding-push-sol-20261029/irori",
+      "head_before": "e96878052bd7e137fbf615abdacc0138198fd185",
+      "branch": "refs/heads/codex/irori-feeding-push-prod-sol-20261029",
+      "size_mib_before": 899.9,
+      "status_entries": 0,
+      "ignored_entries": 5,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/agent-a-bottle",
+      "head_before": "610f92c8cb6d0240503e7f8b28c18edbf802bbfb",
+      "branch": "refs/heads/feature/irori-bottle-default-20261025",
+      "size_mib_before": 753.4,
+      "status_entries": 0,
+      "ignored_entries": 5,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/agent-a-ui-ux",
+      "head_before": "d6ea0471f8957a03a2a0137231ec0be25abd4e19",
+      "branch": "refs/heads/worktree-agent-a-ui-ux",
+      "size_mib_before": 1487.5,
+      "status_entries": 1,
+      "ignored_entries": 8,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/agent-b-baby-ux",
+      "head_before": "a779c9cde7931cadb290527388182a7c9d2f6e5d",
+      "branch": "refs/heads/worktree-agent-b-baby-ux",
+      "size_mib_before": 1466.2,
+      "status_entries": 1,
+      "ignored_entries": 7,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/agent-b-feeding-time",
+      "head_before": "cb8bd2072e5fc23aa075a6b8706121e9d764dbd4",
+      "branch": "refs/heads/fix/irori-feeding-time-20261025",
+      "size_mib_before": 753.3,
+      "status_entries": 1,
+      "ignored_entries": 4,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/agent-c-calendar-settings-ux",
+      "head_before": "ce46f82cef02b086f7a0510984c6b5a9e28210fb",
+      "branch": "refs/heads/worktree-agent-c-calendar-settings-ux",
+      "size_mib_before": 1466.4,
+      "status_entries": 1,
+      "ignored_entries": 7,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/agent-c-feedback",
+      "head_before": "a58f47d1a12f6f1fc685764b1adaa3463b92a468",
+      "branch": "refs/heads/feature/irori-feedback-20261025",
+      "size_mib_before": 753.6,
+      "status_entries": 0,
+      "ignored_entries": 3,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/fix-manual-breast-start-20261026",
+      "head_before": "fa514ddff4d811c913fd78bdab20a9c5183230fb",
+      "branch": "refs/heads/worktree-fix-manual-breast-start-20261026",
+      "size_mib_before": 1029.2,
+      "status_entries": 100,
+      "ignored_entries": 5,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/integration-irori-abc-20261025",
+      "head_before": "c18eb2a91bb2a8bfb6d03f6a587e636304f6ceba",
+      "branch": "refs/heads/worktree-integration-irori-abc-20261025",
+      "size_mib_before": 785.1,
+      "status_entries": 88,
+      "ignored_entries": 6,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/integration-irori-abc-20261026",
+      "head_before": "fa514ddff4d811c913fd78bdab20a9c5183230fb",
+      "branch": "refs/heads/worktree-integration-irori-abc-20261026",
+      "size_mib_before": 768.5,
+      "status_entries": 92,
+      "ignored_entries": 5,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/integration-irori-abc-20261026-release",
+      "head_before": "8b69c2bb110c10577f8fe6f87e0145a23063ded2",
+      "branch": "refs/heads/integration/irori-abc-20261026",
+      "size_mib_before": 15.2,
+      "status_entries": 6,
+      "ignored_entries": 0,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/integration-irori-abc-20261026-release-v2",
+      "head_before": "85936d529b844ba10b690032dfdd03032fbc9e3b",
+      "branch": "refs/heads/integration/irori-abc-20261026-v2",
+      "size_mib_before": 15.7,
+      "status_entries": 0,
+      "ignored_entries": 1,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/integration-irori-ui-ux-abc-20261025",
+      "head_before": "1f79ab426fc8acac9cc0da564e04ae008e63e00c",
+      "branch": "refs/heads/integration/irori-ui-ux-abc-20261025",
+      "size_mib_before": 1466.6,
+      "status_entries": 1,
+      "ignored_entries": 8,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/manual-breast-start-delivery-20261027",
+      "head_before": "f23a493b47ce0729243bdfd577ad0ba64d21cd84",
+      "branch": "refs/heads/fix/manual-breast-start-on-record-20261027",
+      "size_mib_before": 762.8,
+      "status_entries": 0,
+      "ignored_entries": 2,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/prod-hardening-2026-10",
+      "head_before": "61ecad29bd0d77e9afdb38cb12aa835aa4e9a34f",
+      "branch": "refs/heads/feature/prod-hardening-2026-10",
+      "size_mib_before": 1578.6,
+      "status_entries": 1,
+      "ignored_entries": 9,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/product-quality-ux-20261027",
+      "head_before": "c64ca32809c446e3a98f7ca6c2cebbbd341b8c28",
+      "branch": "refs/heads/upgrade/product-quality-ux-20261027",
+      "size_mib_before": 2968.8,
+      "status_entries": 0,
+      "ignored_entries": 8,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/security-next-20261026",
+      "head_before": "e7e200af8fc225aa7fd0b324c22be2e4bbd64563",
+      "branch": "refs/heads/security/irori-next-16.4.3-20261026",
+      "size_mib_before": 1499.8,
+      "status_entries": 4,
+      "ignored_entries": 7,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/security-shadcn-20261026",
+      "head_before": "e795858ca575d592f548ed94f9e4140e56cfa837",
+      "branch": "refs/heads/security/irori-proxy-addr-2.0.8-20261026",
+      "size_mib_before": 1509.1,
+      "status_entries": 0,
+      "ignored_entries": 5,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/wf_e693de72-f69-1",
+      "head_before": "324078f0ac9de8f28abdb9d26ac557eeac11d215",
+      "branch": "refs/heads/worktree-wf_e693de72-f69-1",
+      "size_mib_before": 1478.2,
+      "status_entries": 56,
+      "ignored_entries": 3,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/wf_e693de72-f69-2",
+      "head_before": "324078f0ac9de8f28abdb9d26ac557eeac11d215",
+      "branch": "refs/heads/worktree-wf_e693de72-f69-2",
+      "size_mib_before": 1478.2,
+      "status_entries": 67,
+      "ignored_entries": 3,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/orca/workspaces/irori/fulmar",
+      "head_before": "b50c7eaa4b476ac64e68d3e6941f63a0b2b62f31",
+      "branch": "detached",
+      "size_mib_before": 751.8,
+      "status_entries": 0,
+      "ignored_entries": 5,
+      "action": "PRESERVED"
+    },
+    {
+      "path": "$HOME/orca/workspaces/irori/minnow",
+      "head_before": "decc816bc9826bdf7b7018ca35a72de3565a5cdf",
+      "branch": "refs/heads/codex/irori-gap-closure-20261101",
+      "size_mib_before": 1262.2,
+      "status_entries": 0,
+      "ignored_entries": 4,
+      "action": "PRESERVED"
+    }
+  ],
+  "postflight": [
+    {
+      "path": "$HOME/dev/personal/irori",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 8
+    },
+    {
+      "path": "/private/tmp/irori-pwa-cron-ux-20261102",
+      "exists": true,
+      "status_unchanged": false,
+      "protected_exist": true,
+      "protected_count": 0
+    },
+    {
+      "path": "$HOME/.codex/worktrees/8236/irori",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 2
+    },
+    {
+      "path": "$HOME/.codex/worktrees/ec9c/irori",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 0
+    },
+    {
+      "path": "$HOME/.codex/worktrees/irori-feeding-push-20261029/irori",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 0
+    },
+    {
+      "path": "$HOME/.codex/worktrees/irori-feeding-push-sol-20261029/irori",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 1
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/agent-a-bottle",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 0
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/agent-a-ui-ux",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 1
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/agent-b-baby-ux",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 1
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/agent-b-feeding-time",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 1
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/agent-c-calendar-settings-ux",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 1
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/agent-c-feedback",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 0
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/fix-manual-breast-start-20261026",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 1
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/integration-irori-abc-20261025",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 1
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/integration-irori-abc-20261026",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 1
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/integration-irori-abc-20261026-release",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 0
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/integration-irori-abc-20261026-release-v2",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 1
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/integration-irori-ui-ux-abc-20261025",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 1
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/manual-breast-start-delivery-20261027",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 0
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/prod-hardening-2026-10",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 2
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/product-quality-ux-20261027",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 2
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/security-next-20261026",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 1
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/security-shadcn-20261026",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 0
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/wf_e693de72-f69-1",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 0
+    },
+    {
+      "path": "$HOME/dev/personal/irori/.claude/worktrees/wf_e693de72-f69-2",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 0
+    },
+    {
+      "path": "$HOME/orca/workspaces/irori/fulmar",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 1
+    },
+    {
+      "path": "$HOME/orca/workspaces/irori/minnow",
+      "exists": true,
+      "status_unchanged": true,
+      "protected_exist": true,
+      "protected_count": 0
+    }
+  ],
+  "deleted": {
+    "branches": {
+      "syouya0618/minnow": "54bee950ddb40de57d3e985cbbef2aa670c8729c",
+      "worktree-prod-hardening-2026-10": "b50c7eaa4b476ac64e68d3e6941f63a0b2b62f31"
+    },
+    "cache_path": "/private/tmp/irori-gap-baseline/.next/cache",
+    "files": 32,
+    "logical_bytes": 457198862,
+    "allocated_kib": 446560
+  },
+  "predelete_local_manifest_sha256": "dc9dce6e153647cc3f12dde94630147d2dc7cce0d3e9c1b95dd001d8fb8fcb7f"
+}

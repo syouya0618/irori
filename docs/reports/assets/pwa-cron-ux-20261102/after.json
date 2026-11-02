@@ -1,0 +1,1369 @@
+{
+  "source": "7c0358352f3115a69c69fdaf37d7054da1b23687",
+  "method": "synthetic HTTP, no real auth/database/writes; Chromium/WebKit not iPhone; 200% CSS text approximation not OS text-size",
+  "findings": [
+    {
+      "engine": "chromium",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby",
+      "geometry": {
+        "inner": 390,
+        "scroll": 390,
+        "body": 390,
+        "viewport": 390
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby/sleep",
+      "geometry": {
+        "inner": 390,
+        "scroll": 390,
+        "body": 390,
+        "viewport": 390
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby/medical",
+      "geometry": {
+        "inner": 390,
+        "scroll": 390,
+        "body": 390,
+        "viewport": 390
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "国立健康危機管理研究機構 予防接種スケジュール",
+          "w": 310,
+          "h": 18
+        },
+        {
+          "label": "こども家庭庁 乳幼児健診",
+          "w": 158,
+          "h": 18
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/children/sharing",
+      "geometry": {
+        "inner": 390,
+        "scroll": 390,
+        "body": 390,
+        "viewport": 390
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/news",
+      "geometry": {
+        "inner": 390,
+        "scroll": 390,
+        "body": 390,
+        "viewport": 390
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/settings",
+      "geometry": {
+        "inner": 390,
+        "scroll": 390,
+        "body": 390,
+        "viewport": 390
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        },
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/baby",
+      "geometry": {
+        "inner": 320,
+        "scroll": 320,
+        "body": 320,
+        "viewport": 320
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/baby/sleep",
+      "geometry": {
+        "inner": 320,
+        "scroll": 320,
+        "body": 320,
+        "viewport": 320
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/baby/medical",
+      "geometry": {
+        "inner": 320,
+        "scroll": 320,
+        "body": 320,
+        "viewport": 320
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/children/sharing",
+      "geometry": {
+        "inner": 320,
+        "scroll": 320,
+        "body": 320,
+        "viewport": 320
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/news",
+      "geometry": {
+        "inner": 320,
+        "scroll": 320,
+        "body": 320,
+        "viewport": 320
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/settings",
+      "geometry": {
+        "inner": 320,
+        "scroll": 320,
+        "body": 320,
+        "viewport": 320
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        },
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby",
+      "geometry": {
+        "inner": 768,
+        "scroll": 768,
+        "body": 768,
+        "viewport": 768
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby/sleep",
+      "geometry": {
+        "inner": 768,
+        "scroll": 768,
+        "body": 768,
+        "viewport": 768
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby/medical",
+      "geometry": {
+        "inner": 768,
+        "scroll": 768,
+        "body": 768,
+        "viewport": 768
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "国立健康危機管理研究機構 予防接種スケジュール",
+          "w": 310,
+          "h": 18
+        },
+        {
+          "label": "こども家庭庁 乳幼児健診",
+          "w": 158,
+          "h": 18
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/children/sharing",
+      "geometry": {
+        "inner": 768,
+        "scroll": 768,
+        "body": 768,
+        "viewport": 768
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/news",
+      "geometry": {
+        "inner": 768,
+        "scroll": 768,
+        "body": 768,
+        "viewport": 768
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/settings",
+      "geometry": {
+        "inner": 768,
+        "scroll": 768,
+        "body": 768,
+        "viewport": 768
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        },
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/baby",
+      "geometry": {
+        "inner": 1280,
+        "scroll": 1280,
+        "body": 1280,
+        "viewport": 1280
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/baby/sleep",
+      "geometry": {
+        "inner": 1280,
+        "scroll": 1280,
+        "body": 1280,
+        "viewport": 1280
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/baby/medical",
+      "geometry": {
+        "inner": 1280,
+        "scroll": 1280,
+        "body": 1280,
+        "viewport": 1280
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "国立健康危機管理研究機構 予防接種スケジュール",
+          "w": 310,
+          "h": 18
+        },
+        {
+          "label": "こども家庭庁 乳幼児健診",
+          "w": 158,
+          "h": 18
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/children/sharing",
+      "geometry": {
+        "inner": 1280,
+        "scroll": 1280,
+        "body": 1280,
+        "viewport": 1280
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        },
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/news",
+      "geometry": {
+        "inner": 1280,
+        "scroll": 1280,
+        "body": 1280,
+        "viewport": 1280
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 13,
+          "h": 13
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "chromium",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/settings",
+      "geometry": {
+        "inner": 1280,
+        "scroll": 1280,
+        "body": 1280,
+        "viewport": 1280
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        },
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 390,
+      "route": "/baby",
+      "check": "child-switch",
+      "status": "BLOCKED",
+      "reason": "WebKit on HTTP loopback does not retain production Secure cookie; HTTPS/device acceptance required"
+    },
+    {
+      "engine": "webkit",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby",
+      "geometry": {
+        "inner": 390,
+        "scroll": 390,
+        "body": 390,
+        "viewport": 390
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby/sleep",
+      "geometry": {
+        "inner": 390,
+        "scroll": 390,
+        "body": 390,
+        "viewport": 390
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby/medical",
+      "geometry": {
+        "inner": 390,
+        "scroll": 390,
+        "body": 390,
+        "viewport": 390
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "国立健康危機管理研究機構 予防接種スケジュール",
+          "w": 312,
+          "h": 18
+        },
+        {
+          "label": "こども家庭庁 乳幼児健診",
+          "w": 158,
+          "h": 18
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/children/sharing",
+      "geometry": {
+        "inner": 390,
+        "scroll": 390,
+        "body": 390,
+        "viewport": 390
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/news",
+      "geometry": {
+        "inner": 390,
+        "scroll": 390,
+        "body": 390,
+        "viewport": 390
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 390,
+      "scheme": "light",
+      "large": false,
+      "route": "/settings",
+      "geometry": {
+        "inner": 390,
+        "scroll": 390,
+        "body": 390,
+        "viewport": 390
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        },
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 320,
+      "route": "/baby",
+      "check": "child-switch",
+      "status": "BLOCKED",
+      "reason": "WebKit on HTTP loopback does not retain production Secure cookie; HTTPS/device acceptance required"
+    },
+    {
+      "engine": "webkit",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/baby",
+      "geometry": {
+        "inner": 320,
+        "scroll": 320,
+        "body": 320,
+        "viewport": 320
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/baby/sleep",
+      "geometry": {
+        "inner": 320,
+        "scroll": 320,
+        "body": 320,
+        "viewport": 320
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/baby/medical",
+      "geometry": {
+        "inner": 320,
+        "scroll": 320,
+        "body": 320,
+        "viewport": 320
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/children/sharing",
+      "geometry": {
+        "inner": 320,
+        "scroll": 320,
+        "body": 320,
+        "viewport": 320
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/news",
+      "geometry": {
+        "inner": 320,
+        "scroll": 320,
+        "body": 320,
+        "viewport": 320
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 320,
+      "scheme": "dark",
+      "large": true,
+      "route": "/settings",
+      "geometry": {
+        "inner": 320,
+        "scroll": 320,
+        "body": 320,
+        "viewport": 320
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        },
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 768,
+      "route": "/baby",
+      "check": "child-switch",
+      "status": "BLOCKED",
+      "reason": "WebKit on HTTP loopback does not retain production Secure cookie; HTTPS/device acceptance required"
+    },
+    {
+      "engine": "webkit",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby",
+      "geometry": {
+        "inner": 768,
+        "scroll": 768,
+        "body": 768,
+        "viewport": 768
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby/sleep",
+      "geometry": {
+        "inner": 768,
+        "scroll": 768,
+        "body": 768,
+        "viewport": 768
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/baby/medical",
+      "geometry": {
+        "inner": 768,
+        "scroll": 768,
+        "body": 768,
+        "viewport": 768
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "国立健康危機管理研究機構 予防接種スケジュール",
+          "w": 312,
+          "h": 18
+        },
+        {
+          "label": "こども家庭庁 乳幼児健診",
+          "w": 158,
+          "h": 18
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/children/sharing",
+      "geometry": {
+        "inner": 768,
+        "scroll": 768,
+        "body": 768,
+        "viewport": 768
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/news",
+      "geometry": {
+        "inner": 768,
+        "scroll": 768,
+        "body": 768,
+        "viewport": 768
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 768,
+      "scheme": "light",
+      "large": false,
+      "route": "/settings",
+      "geometry": {
+        "inner": 768,
+        "scroll": 768,
+        "body": 768,
+        "viewport": 768
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        },
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 1280,
+      "route": "/baby",
+      "check": "child-switch",
+      "status": "BLOCKED",
+      "reason": "WebKit on HTTP loopback does not retain production Secure cookie; HTTPS/device acceptance required"
+    },
+    {
+      "engine": "webkit",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/baby",
+      "geometry": {
+        "inner": 1280,
+        "scroll": 1280,
+        "body": 1280,
+        "viewport": 1280
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/baby/sleep",
+      "geometry": {
+        "inner": 1280,
+        "scroll": 1280,
+        "body": 1280,
+        "viewport": 1280
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/baby/medical",
+      "geometry": {
+        "inner": 1280,
+        "scroll": 1280,
+        "body": 1280,
+        "viewport": 1280
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "国立健康危機管理研究機構 予防接種スケジュール",
+          "w": 312,
+          "h": 18
+        },
+        {
+          "label": "こども家庭庁 乳幼児健診",
+          "w": 158,
+          "h": 18
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/children/sharing",
+      "geometry": {
+        "inner": 1280,
+        "scroll": 1280,
+        "body": 1280,
+        "viewport": 1280
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        },
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/news",
+      "geometry": {
+        "inner": 1280,
+        "scroll": 1280,
+        "body": 1280,
+        "viewport": 1280
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 12,
+          "h": 12
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "engine": "webkit",
+      "width": 1280,
+      "scheme": "dark",
+      "large": false,
+      "route": "/settings",
+      "geometry": {
+        "inner": 1280,
+        "scroll": 1280,
+        "body": 1280,
+        "viewport": 1280
+      },
+      "overflow": false,
+      "textOverflow": [],
+      "violations": [],
+      "overflowElements": [],
+      "smallTargets": [
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        },
+        {
+          "label": "INPUT",
+          "w": 1,
+          "h": 1
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "check": "actual-service-worker-offline-online",
+      "engine": "chromium",
+      "status": "PASS",
+      "scope": "synthetic local offline document only"
+    }
+  ],
+  "observed_at": "2026-11-02T07:41:13.592000+00:00"
+}

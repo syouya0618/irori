@@ -1,0 +1,22 @@
+{
+  "irori-hygiene-lint-final.log": {
+    "sha256": "aa2e7b33a6c1e15bb1b1c8beb55af70fb9c46c7e681ded16a5b26bfa8a102241",
+    "bytes": 70,
+    "observed_at": "2026-11-02T07:40:39.471962+00:00"
+  },
+  "irori-hygiene-unit-final.log": {
+    "sha256": "827ae04ab11b593240afc86ea7a57885af63729ce7497a0fefcd6212877aec28",
+    "bytes": 994,
+    "observed_at": "2026-11-02T07:41:11.486293+00:00"
+  },
+  "irori-hygiene-build-after.log": {
+    "sha256": "0707dba09d02a9663acc3827e644f97fc0a3c00fca5e52a1998e5485f11cdcf5",
+    "bytes": 1662,
+    "observed_at": "2026-11-02T07:32:32.058032+00:00"
+  },
+  "irori-hygiene-replay.log": {
+    "sha256": "0c3a8e8a5c3f2679c1fb72cbc550cbd22d23d439883b61eb98f660b345d095df",
+    "bytes": 2577,
+    "observed_at": "2026-11-02T06:33:27.865324+00:00"
+  }
+}

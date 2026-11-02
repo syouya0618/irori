@@ -1,0 +1,53 @@
+{
+  "observed_at": "2026-11-02T06:25:40.632152+00:00",
+  "source": "unauthenticated public GitHub metadata",
+  "251": {
+    "state": "closed",
+    "merged_at": "2026-11-01T14:15:50Z",
+    "merge_commit_sha": "54bee950ddb40de57d3e985cbbef2aa670c8729c",
+    "head": "cd2d44297252f4b110530383f850a0f4d5c968e3"
+  },
+  "252": {
+    "state": "closed",
+    "merged_at": "2026-11-02T03:34:15Z",
+    "merge_commit_sha": "521f2fc295cae077ad1ea54947b53455781e7a6a",
+    "head": "decc816bc9826bdf7b7018ca35a72de3565a5cdf"
+  },
+  "runs": [
+    {
+      "name": "E2E",
+      "head_sha": "521f2fc295cae077ad1ea54947b53455781e7a6a",
+      "status": "completed",
+      "conclusion": "success",
+      "event": "push"
+    },
+    {
+      "name": "CodeQL",
+      "head_sha": "521f2fc295cae077ad1ea54947b53455781e7a6a",
+      "status": "completed",
+      "conclusion": "success",
+      "event": "push"
+    },
+    {
+      "name": "CI",
+      "head_sha": "521f2fc295cae077ad1ea54947b53455781e7a6a",
+      "status": "completed",
+      "conclusion": "success",
+      "event": "push"
+    }
+  ],
+  "statuses": [
+    {
+      "context": "Vercel",
+      "state": "success",
+      "updated_at": "2026-11-02T03:35:01Z"
+    }
+  ],
+  "open_pr_numbers": [
+    249,
+    247,
+    246,
+    225,
+    204
+  ]
+}
