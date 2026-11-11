@@ -833,6 +833,15 @@ export type GrocerySyncReport =
 export const GROCERY_SYNC_FAILED_MESSAGE =
   "買い物リストを更新できませんでした。買い物の画面で「献立から更新」を押してください。"
 
+/**
+ * 判定できないアレルギーの登録のために、買い物の自動の更新を止めているときの文（要再確認）。
+ * 同期の応答（`grocery-sync.ts`）と買い物の画面の帯で同じ文を使う。
+ */
+export function groceryAutoHoldMessage(labels: readonly string[]): string {
+  const names = labels.map((label) => `「${label}」`).join("")
+  return `判定できないアレルギーの登録${names === "" ? "" : `（${names}）`}があるため、買い物リストの自動の更新を止めています（要再確認）。今のリスト・購入の記録・手で足した項目はそのままです。設定で一覧から選び直すと、更新できます。`
+}
+
 export interface PlanGapNotice {
   date: string
   role: DishRole

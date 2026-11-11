@@ -661,27 +661,135 @@ describe("使わない食材の設定に当たる確定の料理は、買い物�
     expect(loaded.view.stale).toBe(false)
   })
 
-  it("判定できないアレルギーの登録で保留した料理には、その登録を理由に出す（対照: 確かめられない材料を本当に含む料理は元の理由）", async () => {
+  it("判定できないアレルギーの登録の間は、同期を送らずその名前を理由に返す。選び直すと、確かめられない材料を本当に含む料理だけが元の理由で外れる", async () => {
     const salmon = entryRow(HOUSE, { plan_date: TODAY, recipe_id: "salmon_shioyaki", status: "confirmed" })
     const curry = entryRow(HOUSE, { plan_date: FRIDAY, recipe_id: "curry_rice", status: "confirmed" })
     db.tables.dinner_plan_entries.push(salmon, curry)
-    db.tables.food_exclusions.push(
-      exclusionRow(HOUSE, { reason: "allergy", target_kind: "custom", target_id: null, custom_label: "ぞぞぞ成分" }),
-    )
-    success(await syncGroceryList({ operationId: OP1 }))
-    // どの料理も当たらないと言えないので、どちらの材料も入れない
-    expect(keys().some((key) => String(key).startsWith("salmon|"))).toBe(false)
+    const unknown = exclusionRow(HOUSE, { reason: "allergy", target_kind: "custom", target_id: null, custom_label: "ぞぞぞ成分" })
+    db.tables.food_exclusions.push(unknown)
+    // どの料理も当たらないと言えない。全てを外した必要量で同期せず（未購入の行を消さない）、止めた理由を返す
+    expect(await syncGroceryList({ operationId: OP1 })).toMatchObject({
+      failure: "rejected",
+      error: expect.stringContaining("「ぞぞぞ成分」"),
+    })
+    expect(db.rpcNames()).not.toContain("sync_grocery_auto_items")
+    expect(db.grocery()).toEqual([])
+    const held = await loadShoppingView(db.supabase, HOUSE, { today: TODAY })
+    if (!held.ok) throw new Error("view failed")
+    // 料理ごとに「材料を入れていない」とは言わない（リストは止める前のまま）。止めている理由は全体の 1 か所で言う
+    expect(held.view).toMatchObject({ autoHold: { labels: ["ぞぞぞ成分"] }, heldDishes: [], stale: false })
+
+    // 選び直した: 一覧の品目（卵）で登録し直した
+    db.tables.food_exclusions = db.tables.food_exclusions.filter((row) => row.id !== unknown.id)
+    db.tables.food_exclusions.push(exclusionRow(HOUSE))
+    success(await syncGroceryList({ operationId: OP2 }))
+    // 鮭の塩焼きは確かめられるので材料が入る
+    expect(keys().some((key) => String(key).startsWith("salmon|"))).toBe(true)
     const loaded = await loadShoppingView(db.supabase, HOUSE, { today: TODAY })
     if (!loaded.ok) throw new Error("view failed")
-    const messageOf = (id: unknown) => loaded.view.heldDishes.find((dish) => dish.entryId === id)?.message ?? ""
-    expect(loaded.view.heldDishes.map((dish) => dish.verdict)).toEqual(["label_check", "label_check"])
-    // 鮭の塩焼きそのものに確かめられない材料は無い。保留の理由（判定できない登録）とその名前を言う
-    expect(messageOf(salmon.id)).toContain("「ぞぞぞ成分」")
-    expect(messageOf(salmon.id)).not.toContain("確かめられない材料")
-    // 対照: 商品で原材料が変わる材料を含むカレーは、元の理由のまま
-    expect(messageOf(curry.id)).toBe(
-      "原材料を確かめられない材料があるため、この料理の材料は買い物に入れていません。献立で確かめるか、選び直してください。",
+    expect(loaded.view.autoHold).toBeNull()
+    // 対照: 商品で原材料が変わる材料を含むカレーは、元の理由のまま外れる（卵のアレルギーで「含まない」と言えない）
+    expect(loaded.view.heldDishes).toEqual([
+      expect.objectContaining({
+        entryId: curry.id,
+        verdict: "label_check",
+        message:
+          "原材料を確かめられない材料があるため、この料理の材料は買い物に入れていません。献立で確かめるか、選び直してください。",
+      }),
+    ])
+  })
+
+  it("自動の更新を止めている間も、当たると分かっている料理は「材料がリストに残りうる」と添えて出す（「入れていない」と言わない）", async () => {
+    const oyakodon = entryRow(HOUSE, { plan_date: TODAY, recipe_id: "oyakodon", status: "confirmed" })
+    db.tables.dinner_plan_entries.push(oyakodon, entryRow(HOUSE, { plan_date: FRIDAY, recipe_id: "nikujaga", status: "confirmed" }))
+    success(await syncGroceryList({ operationId: OP1 }))
+    const before = JSON.stringify(db.grocery())
+    db.tables.food_exclusions.push(
+      exclusionRow(HOUSE),
+      exclusionRow(HOUSE, { reason: "allergy", target_kind: "custom", target_id: null, custom_label: "ぞぞぞ成分" }),
     )
+    expect(await syncGroceryList({ operationId: OP2 })).toMatchObject({ failure: "rejected" })
+    expect(JSON.stringify(db.grocery())).toBe(before)
+    const loaded = await loadShoppingView(db.supabase, HOUSE, { today: TODAY })
+    if (!loaded.ok) throw new Error("view failed")
+    expect(loaded.view.autoHold).toEqual({ labels: ["ぞぞぞ成分"] })
+    expect(loaded.view.heldDishes).toEqual([
+      expect.objectContaining({ entryId: oyakodon.id, verdict: "blocked", message: expect.stringContaining("リストに残っていることがあります") }),
+    ])
+    expect(loaded.view.heldDishes[0].message).not.toContain("入れていません")
+  })
+
+  it("未知語の追加 → 解決 → 再計算: 判定できないアレルギーの間は自動の更新を止め、未購入の自動行・購入量・手動項目・充当を失わず、解決後も二重に数えない", async () => {
+    const OP4 = "f2000000-0000-4000-8000-000000000004"
+    const OP5 = "f2000000-0000-4000-8000-000000000005"
+    const tonight = entryRow(HOUSE, { plan_date: TODAY, recipe_id: "nikujaga", status: "confirmed", servings: 4 })
+    db.tables.dinner_plan_entries.push(tonight, entryRow(HOUSE, { plan_date: FRIDAY, recipe_id: "curry_rice", status: "confirmed" }))
+    success(await saveGroceryManualItem({ id: MANUAL, version: null, name: "牛乳", quantity: 1, unit: "l", section: "egg_dairy", note: null }))
+    success(await syncGroceryList({ operationId: OP1 }))
+    // 豚こま 500g（今夜の肉じゃが 300g + 金曜のカレー 200g）のうち 300g を買った
+    expect(pork()).toMatchObject({ required_quantity: 500, purchased_quantity: 0 })
+    success(await setGroceryPurchase({ id: pork().id as string, version: pork().updated_at as string, purchase: { kind: "amount", amount: 300 } }))
+    const unpurchased = db.grocery().filter((row) => row.origin === "auto" && row.purchased_quantity === 0 && row.purchased === false)
+    expect(unpurchased.length).toBeGreaterThan(0)
+    const listBefore = JSON.stringify(db.grocery())
+    const syncCalls = () => db.rpcNames().filter((name) => name === "sync_grocery_auto_items").length
+    const callsBefore = syncCalls()
+
+    // 1. 判定できない語でアレルギーを登録した
+    const unknown = exclusionRow(HOUSE, { reason: "allergy", target_kind: "custom", target_id: null, custom_label: "ぞぞぞ成分" })
+    db.tables.food_exclusions.push(unknown)
+    const held = await syncGroceryList({ operationId: OP2 })
+    // 修正前: 全料理が保留になり、同期が未購入の自動行を消し、買った豚こまを「不要」にして出所を消した
+    expect(db.grocery().filter((row) => row.origin === "auto" && row.still_needed === true)).toHaveLength(
+      unpurchased.length + 1,
+    )
+    expect(JSON.stringify(db.grocery())).toBe(listBefore)
+    expect(syncCalls()).toBe(callsBefore)
+    expect(held).toMatchObject({ failure: "rejected", error: expect.stringContaining("「ぞぞぞ成分」") })
+
+    // 画面: 要再確認（名前を挙げる）。「古い」とも「材料を入れていない」とも言わない。リストはそのまま見える
+    const heldView = await loadShoppingView(db.supabase, HOUSE, { today: TODAY })
+    if (!heldView.ok) throw new Error("view failed")
+    expect(heldView.view.autoHold).toEqual({ labels: ["ぞぞぞ成分"] })
+    expect(heldView.view.stale).toBe(false)
+    expect(heldView.view.heldDishes).toEqual([])
+    expect(heldView.view.toBuyCount).toBe(unpurchased.length + 2) // 未購入の自動行 + 残り 200g の豚こま + 牛乳
+    expect(await viewOf(pork().id)).toMatchObject({ purchasedAmount: 300, remainingAmount: 200 })
+
+    // 2. 止めている間に今夜の肉じゃがを作った（使った 300g は、解決の後に 1 回だけ数える）
+    tonight.status = "cooked"
+    tonight.prior_status = "confirmed"
+    bumpPlanRevision()
+
+    // 3. 解決: 判定できない登録を消し、一覧の食材（はちみつ・苦手）で登録し直した
+    db.tables.food_exclusions = db.tables.food_exclusions.filter((row) => row.id !== unknown.id)
+    db.tables.food_exclusions.push(exclusionRow(HOUSE, { reason: "dislike", target_kind: "ingredient", target_id: "honey" }))
+    success(await syncGroceryList({ operationId: OP3 }))
+    // 購入の事実 300g は残り、豚こまの行は 1 本のまま（作り直さない）。使った 300g は 1 回だけ。残りは金曜の 200g
+    expect(db.grocery().filter((row) => row.item_key === "pork_komagire|mass")).toHaveLength(1)
+    expect(pork()).toMatchObject({ required_quantity: 200, purchased_quantity: 300, consumed_quantity: 300, still_needed: true })
+    expect(await viewOf(pork().id)).toMatchObject({ purchasedAmount: 300, consumedAmount: 300, remainingAmount: 200 })
+    expect(db.grocery().find((row) => row.id === MANUAL)).toMatchObject({
+      origin: "manual",
+      name: "牛乳",
+      required_quantity: 1,
+      unit: "l",
+    })
+    // 未購入の自動行は、同じ行（同じ ID）のまま計算し直される
+    const ids = new Set(db.grocery().map((row) => row.id))
+    for (const row of unpurchased.filter((candidate) => String(candidate.item_key).startsWith("curry_roux|"))) {
+      expect(ids.has(row.id)).toBe(true)
+    }
+
+    // 4. もう一度計算し直しても変わらない（使った分を二重に引かない）
+    const settled = JSON.stringify(db.grocery())
+    success(await syncGroceryList({ operationId: OP4 }))
+    success(await syncGroceryList({ operationId: OP5 }))
+    expect(JSON.stringify(db.grocery())).toBe(settled)
+    const resolvedView = await loadShoppingView(db.supabase, HOUSE, { today: TODAY })
+    if (!resolvedView.ok) throw new Error("view failed")
+    expect(resolvedView.view.autoHold).toBeNull()
+    expect(resolvedView.view.stale).toBe(false)
   })
 
   it("使わない食材の設定を読めないときは、問題なしと見なさずに同期を止め、理由を返す。画面は照合できないと言う", async () => {

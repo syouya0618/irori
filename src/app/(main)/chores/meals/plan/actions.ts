@@ -229,7 +229,8 @@ async function syncAfterPlanChange(actor: DinnerActor, today: string): Promise<G
   try {
     const outcome = await syncGroceryAutoItems(actor, randomUUID(), { today })
     if (outcome.ok) return { ok: true, status: outcome.status }
-    return { ok: false, message: GROCERY_SYNC_FAILED_MESSAGE }
+    // 判定できないアレルギーで止めたときは、その理由を返す（「献立から更新」を押しても同じ理由で止まる）
+    return { ok: false, message: outcome.held === true ? outcome.failure.error : GROCERY_SYNC_FAILED_MESSAGE }
   } catch (err) {
     console.error("[meals] grocery sync threw", {
       userId: actor.userId,
@@ -1497,8 +1498,15 @@ function confirmHoldMessage(conflicts: readonly PlanConflict[], set: ExclusionSe
   return `${parts.join("")}何も確定していません。選び直すか、材料を見直してから確定してください。`
 }
 
-/** 確定を外して提案へ戻したときに添える文。 */
-const DEMOTED_TEXT = "確定を外し、提案へ戻しました（買い物リストからも外れます）。"
+/**
+ * 確定を外して提案へ戻したときに添える文。判定できないアレルギーで買い物の自動の更新を止めている間は、
+ * 同期が走らず材料はリストに残る（「外れます」と言わない。`grocery-sync.ts` の held）。
+ */
+function demotedText(set: Pick<ExclusionSet, "holdsAutoConfirm">): string {
+  return set.holdsAutoConfirm
+    ? "確定を外し、提案へ戻しました（買い物リストの自動の更新を止めているため、材料はリストに残ります。要再確認）。"
+    : "確定を外し、提案へ戻しました（買い物リストからも外れます）。"
+}
 
 /**
  * 1 品の料理の、使わない食材の照合の警告（問題なしなら null）。手動料理の保存・取り消しで使う
@@ -1517,7 +1525,8 @@ function entryExclusionWarning(
   const name =
     entry.recipeId === null ? (entry.customTitle ?? "料理") : (set.view.recipeById.get(entry.recipeId)?.title ?? "料理")
   const title = `「${name}」`
-  const tail = (fix: string) => (demoted ? `${DEMOTED_TEXT}${fix}まで確定できません。` : `このままでは確定できません。${fix}てください。`)
+  const tail = (fix: string) =>
+    demoted ? `${demotedText(set)}${fix}まで確定できません。` : `このままでは確定できません。${fix}てください。`
   if (evaluation.verdict === "blocked") {
     const names = blockedIngredientNames(evaluation.blockedBy, set)
     return {
@@ -1539,7 +1548,7 @@ function entryExclusionWarning(
       message:
         hold === null
           ? `${title}は原材料を確かめられない材料を含みます。${tail("材料を見直し")}`
-          : `${hold}${demoted ? DEMOTED_TEXT : ""}`,
+          : `${hold}${demoted ? demotedText(set) : ""}`,
     }
   }
   return null

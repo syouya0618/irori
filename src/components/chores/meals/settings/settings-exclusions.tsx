@@ -42,7 +42,7 @@ import {
   NATIVE_SELECT_CLASS,
   chipClass,
 } from "../basics/field-classes"
-import { EXCLUSION_REGISTERED_TEXTS, type ExclusionPreviewText } from "./exclusion-lexicon"
+import { EXCLUSION_REGISTERED_TEXTS, type AllergyCategoryCandidate, type ExclusionPreviewText } from "./exclusion-lexicon"
 
 const CARD = "glass flex flex-col gap-3 rounded-2xl p-4 shadow-lg shadow-black/[0.04]"
 
@@ -71,15 +71,85 @@ function ReasonMark({ reason, label }: { reason: ExclusionReason; label: string 
   )
 }
 
+// ── 対象品目（カテゴリー）の候補 ───────────────────────────────────
+
+/**
+ * アレルギーとして登録する食材（豆乳・鶏もも肉）が含む対象品目（大豆・鶏肉）を、品目として別に登録する候補。
+ * 個別の登録が外す範囲と、品目として登録したときに外す範囲（辞書の食材の名前）を並べて示し、選んだときだけ登録する
+ * （既存の登録を黙って広げない）。`mode` = 登録の前（form）か、登録済みの一覧（registered）か。
+ */
+function AllergyCategoryCandidates({
+  candidates,
+  mode,
+  disabled,
+  onRegister,
+}: {
+  candidates: readonly AllergyCategoryCandidate[]
+  mode: "form" | "registered"
+  disabled: boolean
+  onRegister: (candidate: AllergyCategoryCandidate) => void
+}) {
+  if (candidates.length === 0) return null
+  return (
+    <div
+      data-testid="allergy-category-candidates"
+      className="flex flex-col gap-3 rounded-xl border border-border bg-muted/40 p-3 text-sm text-foreground"
+    >
+      {candidates.map((candidate) => {
+        const sources = candidate.sourceNames.map((name) => `「${name}」`).join("")
+        const item = `「${candidate.allergenName}」`
+        return (
+          <div
+            key={candidate.allergenId}
+            data-testid="allergy-category-candidate"
+            data-allergen-id={candidate.allergenId}
+            className="flex flex-col gap-1"
+          >
+            <p className="font-semibold break-words">
+              {sources}は、対象品目の{item}（{TIER_DUTY_LABELS[candidate.tier]}）を含みます。
+            </p>
+            <p className="break-words">
+              {mode === "form"
+                ? `このまま登録すると、${sources}と、それから作る食材だけを外します（${candidate.allergenName}を含むほかの食材は外しません）。`
+                : `この登録は、${sources}と、それから作る食材だけを外しています（${candidate.allergenName}を含むほかの食材は外していません）。`}
+            </p>
+            {candidate.registered ? (
+              <p className="text-muted-foreground">{item}は、品目として登録済みです。</p>
+            ) : (
+              <>
+                <p className="break-words [overflow-wrap:anywhere]">
+                  {candidate.allergenName}全体を外すなら、品目として登録できます。外す範囲（{candidate.allergenName}
+                  を含む食材 {candidate.scopeNames.length} 件）: {candidate.scopeNames.join("・")}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="self-start"
+                  disabled={disabled}
+                  onClick={() => onRegister(candidate)}
+                >
+                  {mode === "form" ? `${item}を品目として登録` : `${item}も品目として登録`}
+                </Button>
+              </>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ── 登録済みの一覧 ─────────────────────────────────────────────────
 
 export function ExclusionList({
   exclusions,
   customNotes = {},
+  categoryNotes = {},
   unreadable,
   disabled,
   busyId,
   onDelete,
+  onRegisterCategory,
 }: {
   exclusions: SettingsExclusionView[]
   /**
@@ -87,12 +157,18 @@ export function ExclusionList({
    * 判定できない除外（何も外せていない・献立の自動の確定を止めている）に印を付ける。
    */
   customNotes?: Record<string, ExclusionPreviewText>
+  /**
+   * アレルギーとして食材で登録した除外（除外の ID →）が含むが、外していない対象品目（まだ品目で登録していないもの）。
+   * 選んだときだけ、同じ「誰の分」で品目として登録する（元の登録は書き換えない）。
+   */
+  categoryNotes?: Record<string, AllergyCategoryCandidate[]>
   /** 読めなかった除外の行の数。 */
   unreadable: number
   disabled: boolean
   /** 削除を送信中の除外の ID。 */
   busyId: string | null
   onDelete: (exclusion: SettingsExclusionView) => void
+  onRegisterCategory?: (exclusion: SettingsExclusionView, candidate: AllergyCategoryCandidate) => void
 }) {
   const [confirming, setConfirming] = useState<string | null>(null)
   return (
@@ -149,6 +225,14 @@ export function ExclusionList({
                       <p className="text-xs text-muted-foreground">
                         今の一覧にない品目です（記号のまま表示しています）。判定には引き続き使います。
                       </p>
+                    )}
+                    {onRegisterCategory !== undefined && (
+                      <AllergyCategoryCandidates
+                        candidates={categoryNotes[exclusion.id] ?? []}
+                        mode="registered"
+                        disabled={disabled}
+                        onRegister={(candidate) => onRegisterCategory(exclusion, candidate)}
+                      />
                     )}
                   </div>
                   <Button
@@ -221,6 +305,7 @@ export function ExclusionForm({
   disabled,
   saving,
   previewCustom,
+  categoryCandidatesFor,
   onSubmit,
   onDraftChange,
 }: {
@@ -235,6 +320,14 @@ export function ExclusionForm({
    * （そのときは「登録の後に一覧で確認」と言う。照合できたとは言わない）。
    */
   previewCustom?: (label: string, reason: ExclusionReason) => ExclusionPreviewText
+  /**
+   * アレルギーとして食材・自由入力を登録するとき、品目（大豆・鶏肉）として別に登録する候補
+   * （`allergyCategoryCandidates`）。語彙を渡されていない画面では undefined（候補は出さない）。
+   */
+  categoryCandidatesFor?: (
+    target: { kind: "ingredient"; ingredientId: string } | { kind: "custom"; label: string },
+    reason: ExclusionReason,
+  ) => AllergyCategoryCandidate[]
   /** 受け付けたら true。`targetLabel` は控えと通知に使う表示名。 */
   onSubmit: (request: SaveFoodExclusionRequest, targetLabel: string) => boolean
   /** 釦だけで変わる未保存の選択（理由・品目のチップ・対象の選び方）に触れたことを伝える。 */
@@ -257,6 +350,15 @@ export function ExclusionForm({
       : null
   const customUndetermined =
     customPreview !== null && (customPreview.kind === "holds" || customPreview.kind === "no_effect")
+  // アレルギーで食材を選んだ・打ったとき、その食材が含むが登録しても広がらない対象品目（苦手には出さない）
+  const categoryCandidates =
+    reason !== "allergy" || categoryCandidatesFor === undefined
+      ? []
+      : kind === "ingredient" && ingredientId !== ""
+        ? categoryCandidatesFor({ kind: "ingredient", ingredientId }, reason)
+        : kind === "custom" && trimmedLabel !== "" && [...trimmedLabel].length <= EXCLUSION_LABEL_MAX
+          ? categoryCandidatesFor({ kind: "custom", label: trimmedLabel }, reason)
+          : []
 
   const tiers = (["mandatory", "recommended"] as const).map((tier) => ({
     tier,
@@ -313,6 +415,28 @@ export function ExclusionForm({
     }
     setError(null)
     onSubmit(request, targetLabel)
+  }
+
+  /** 候補の対象品目を、同じ理由・同じ「誰の分」で品目として登録する（入力中の食材は登録しない）。 */
+  function submitCategory(candidate: AllergyCategoryCandidate) {
+    const subject = subjectOf()
+    if (subject === null) {
+      setError(SETTINGS_INPUT_MESSAGES.subject)
+      return
+    }
+    const request: SaveFoodExclusionRequest = {
+      id: newClientId(),
+      reason: "allergy",
+      target: { kind: "allergen", allergenId: candidate.allergenId },
+      subject,
+    }
+    const issue = saveFoodExclusionIssue(request)
+    if (issue !== null) {
+      setError(SETTINGS_INPUT_MESSAGES[issue])
+      return
+    }
+    setError(null)
+    onSubmit(request, candidate.allergenName)
   }
 
   return (
@@ -576,6 +700,13 @@ export function ExclusionForm({
           <MealNotice kind="customExclusion" />
         </div>
       )}
+
+      <AllergyCategoryCandidates
+        candidates={categoryCandidates}
+        mode="form"
+        disabled={disabled}
+        onRegister={submitCategory}
+      />
 
       {error && (
         <p role="alert" className="text-sm text-destructive">

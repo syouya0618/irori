@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react"
 import Link from "next/link"
-import { AlertCircle, CircleCheck, Loader2, Plus, RefreshCw, ShoppingCart, Trash2 } from "lucide-react"
+import { AlertCircle, ChevronRight, CircleCheck, Loader2, Plus, RefreshCw, ShoppingCart, Trash2 } from "lucide-react"
 
 import { OUTLINE_LINK, PRIMARY_LINK, TEXT_LINK } from "@/components/chores/meals/plan/link-styles"
 import {
@@ -14,7 +14,7 @@ import {
 } from "@/components/chores/meals/plan/meal-request"
 import { planHref, planStartBounds } from "@/components/chores/meals/plan/plan-query"
 import { MealNotice } from "@/components/chores/meals/shared/meal-notices"
-import { MEALS_PANTRY_HREF, MEALS_PLAN_HREF } from "@/components/chores/meals/shared/meal-routes"
+import { MEALS_PANTRY_HREF, MEALS_PLAN_HREF, MEALS_SETTINGS_HREF } from "@/components/chores/meals/shared/meal-routes"
 import { EmptyState } from "@/components/chores/shared/empty-state"
 import { PendingChoreNotice } from "@/components/chores/shared/pending-chore-notice"
 import { RefreshOnVisible } from "@/components/chores/shared/refresh-on-visible"
@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import type { ChoreOwner } from "@/lib/domain/chore-pending"
 import {
+  groceryAutoHoldMessage,
   isGroceryRequest,
   type GroceryPurchaseInput,
   type GroceryRequest,
@@ -272,6 +273,7 @@ export function ShoppingView({ owner, view }: ShoppingViewProps) {
       onToggleSources={() => setExpanded((prev) => ({ ...prev, [item.id]: prev[item.id] !== true }))}
       onOpen={() => openItemSheet(item.id, false)}
       onOpenRestock={() => openItemSheet(item.id, true)}
+      needsRecheck={view.autoHold !== null && item.origin === "auto"}
     />
   )
 
@@ -308,6 +310,26 @@ export function ShoppingView({ owner, view }: ShoppingViewProps) {
           </p>
         )}
 
+        {view.autoHold !== null && (
+          // 判定できないアレルギーの登録のために、自動の更新を止めている。リストは止める前のまま（消していない）
+          <div
+            data-testid="shopping-auto-hold"
+            className="flex flex-col items-start gap-2 rounded-2xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-foreground"
+          >
+            <p className="flex items-start gap-2">
+              <AlertCircle size={16} className="mt-0.5 shrink-0 text-destructive" aria-hidden="true" />
+              <span className="min-w-0 break-words">
+                <span className="font-semibold">要再確認</span>
+                <span className="block">{groceryAutoHoldMessage(view.autoHold.labels)}</span>
+              </span>
+            </p>
+            <Link href={MEALS_SETTINGS_HREF} prefetch={false} className={TEXT_LINK}>
+              使わない食材の設定を開く
+              <ChevronRight size={16} aria-hidden="true" />
+            </Link>
+          </div>
+        )}
+
         {view.exclusionsUnreadable && (
           <p role="alert" className="flex items-start gap-2 text-sm text-foreground" data-testid="shopping-exclusions-unreadable">
             <AlertCircle size={16} className="mt-0.5 shrink-0 text-destructive" aria-hidden="true" />
@@ -322,7 +344,12 @@ export function ShoppingView({ owner, view }: ShoppingViewProps) {
             icon={ShoppingCart}
             // 読めない項目が在るときに「まだありません」と言わない（在る項目を無いと偽らない）
             title={view.unreadableItems > 0 ? "表示できる項目がありません" : "買い物リストはまだありません"}
-            description="献立を作って「この献立で確定」を押すと、必要な材料がここに並びます。手動で項目を足すこともできます。"
+            description={
+              view.autoHold !== null
+                ? // 止めている間は確定も拒まれる。「確定を押すと並ぶ」とは言わない
+                  "判定できないアレルギーの登録を設定で選び直すまで、献立を確定できず、材料は自動では並びません。手動で項目を足すことはできます。"
+                : "献立を作って「この献立で確定」を押すと、必要な材料がここに並びます。手動で項目を足すこともできます。"
+            }
           >
             <Link href={MEALS_PLAN_HREF} prefetch={false} className={PRIMARY_LINK}>
               献立を作る
@@ -379,8 +406,17 @@ export function ShoppingView({ owner, view }: ShoppingViewProps) {
             使わない食材の設定に当たる料理
           </h2>
           <p className="text-sm text-muted-foreground">
-            使わない食材の設定に当たるため、次の料理の材料は入れていません:{" "}
-            {view.heldDishes.map((dish) => dish.title).join("、")}。献立はそのままです。献立の画面で選び直すと、計算に入ります。
+            {view.autoHold !== null ? (
+              // 自動の更新を止めている間は「入れていない」と言えない（止める前のリストに材料が残りうる）
+              <>
+                次の料理は使わない食材の設定に当たります: {view.heldDishes.map((dish) => dish.title).join("、")}。買い物リストの自動の更新を止めているため、材料がリストに残っていることがあります。献立の画面で選び直してください。
+              </>
+            ) : (
+              <>
+                使わない食材の設定に当たるため、次の料理の材料は入れていません:{" "}
+                {view.heldDishes.map((dish) => dish.title).join("、")}。献立はそのままです。献立の画面で選び直すと、計算に入ります。
+              </>
+            )}
           </p>
           <ul className="flex flex-col gap-2">
             {view.heldDishes.map((dish) => (

@@ -31,6 +31,7 @@ import {
   type RpcStatus,
 } from "@/lib/domain/rpc-outcome"
 import { STORE_SECTIONS } from "@/lib/meals/catalog/sections"
+import { outstandingRequired } from "@/lib/meals/grocery"
 import { GROCERY_ITEM_COLUMNS, getMealLookup } from "@/lib/meals/server/context"
 import {
   DINNER_MESSAGES,
@@ -195,7 +196,8 @@ export async function setGroceryPurchase(request: SetGroceryPurchaseRequest): Pr
     if (item === null) return conflictResult("gone", [MESSAGES.goneItem])
 
     const numeric = item.required !== null && item.unit !== null
-    const required = amountOf(item.required)
+    // 今の必要量（作って充当を記録した枠の分は、同期の前でも数えない。画面の「必要」「あと」と同じ値）
+    const required = amountOf(outstandingRequired(item))
     const purchasedNow = amountOf(item.purchased)
     const restocked = amountOf(item.restocked)
     const used = amountOf(item.consumed ?? null)
@@ -367,7 +369,10 @@ export async function restockPantryFromGrocery(request: RestockPantryFromGrocery
     let grocery: GrocerySyncReport
     try {
       const synced = await syncGroceryAutoItems(actor, randomUUID())
-      grocery = synced.ok ? { ok: true, status: synced.status } : { ok: false, message: GROCERY_SYNC_FAILED_MESSAGE }
+      grocery = synced.ok
+        ? { ok: true, status: synced.status }
+        : // 判定できないアレルギーで止めたときは、その理由（要再確認）を返す
+          { ok: false, message: synced.held === true ? synced.failure.error : GROCERY_SYNC_FAILED_MESSAGE }
     } catch (err) {
       console.error("[meals] grocery sync threw", {
         userId: actor.userId,

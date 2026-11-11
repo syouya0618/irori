@@ -1041,7 +1041,8 @@ describe("R45: 人数を変えた後、既に在る献立へ反映するかを�
 
 describe("R01（設定の重なり）: 判定できないアレルギーの登録が原因の「確認が必要」", () => {
   it("重なりの一覧の前に、登録が原因であることを出す（対照: 無ければ出さない）", async () => {
-    const hold = "判定できないアレルギーの登録（「マンゴー」）があるため、料理の原材料を確かめられず、献立を確定できません。設定で一覧から選び直すと、該当する料理だけを外して確定できます。"
+    const hold =
+      "判定できないアレルギーの登録（「マンゴー」）があるため、料理の原材料を確かめられず、献立を確定できません。買い物リストの自動の更新も止めています（今のリストと購入の記録はそのままです）。設定で一覧から選び直すと、該当する料理だけを外して確定できます。"
     const withHold = view(
       {},
       {
@@ -1376,6 +1377,139 @@ describe("R01: 自由入力の「使わない食材」を、登録の前に正�
     view({ exclusions: [exclusion()] }, { exclusionLexicon: wired })
     await ready()
     expect(screen.queryByTestId("settings-undetermined-summary")).not.toBeInTheDocument()
+  })
+})
+
+describe("アレルギーの食材（豆乳・鶏もも）から、対象品目（大豆・鶏肉）を選んで登録できる（黙って広げない）", () => {
+  const wired = JSON.parse(JSON.stringify(buildExclusionLexicon(getMealLookup()))) as ReturnType<typeof buildExclusionLexicon>
+  const savedAs = () =>
+    actions.saveFoodExclusion.mockImplementation(async (request) => ({
+      status: "saved",
+      exclusion: { ...exclusion(), id: request.id, reason: request.reason, target: request.target, subject: request.subject },
+      planConflicts: EMPTY_REPORT,
+    }))
+
+  async function chooseIngredient(reason: "アレルギー" | "苦手", ingredientId: string) {
+    const area = section("使わない食材")
+    await click(within(area).getByRole("button", { name: reason }))
+    await click(within(area).getByRole("button", { name: "食材から" }))
+    fireEvent.change(within(area).getByLabelText("食材"), { target: { value: ingredientId } })
+    return area
+  }
+
+  it("アレルギーで「豆乳」を選ぶと、大豆の候補と、個別の登録・品目の登録それぞれの範囲を出す。候補を押すと品目だけを登録する", async () => {
+    savedAs()
+    view({}, { exclusionLexicon: wired })
+    await ready()
+    const area = await chooseIngredient("アレルギー", "soy_milk")
+    const candidate = within(area).getByTestId("allergy-category-candidate")
+    expect(candidate).toHaveAttribute("data-allergen-id", "soybean")
+    expect(candidate).toHaveTextContent("「豆乳」は、対象品目の「大豆」（表示推奨）を含みます。")
+    expect(candidate).toHaveTextContent("このまま登録すると、「豆乳」と、それから作る食材だけを外します（大豆を含むほかの食材は外しません）。")
+    expect(candidate).toHaveTextContent(/外す範囲（大豆を含む食材 \d+ 件）: .*木綿豆腐.*みそ/)
+    expect(actions.saveFoodExclusion).not.toHaveBeenCalled()
+
+    await click(within(candidate).getByRole("button", { name: "「大豆」を品目として登録" }))
+    await waitFor(() => expect(actions.saveFoodExclusion).toHaveBeenCalledTimes(1))
+    expect(actions.saveFoodExclusion.mock.calls[0][0]).toEqual({
+      id: expect.stringMatching(UUID),
+      reason: "allergy",
+      target: { kind: "allergen", allergenId: "soybean" },
+      subject: { kind: "household" },
+    })
+  })
+
+  it("対照: 苦手で選んだ「豆乳」には候補を出さない（個別の除外のまま）。アレルギーに切り替えると出る", async () => {
+    view({}, { exclusionLexicon: wired })
+    await ready()
+    const area = await chooseIngredient("苦手", "soy_milk")
+    expect(within(area).queryByTestId("allergy-category-candidates")).not.toBeInTheDocument()
+    await click(within(area).getByRole("button", { name: "アレルギー" }))
+    expect(within(area).getByTestId("allergy-category-candidate")).toHaveAttribute("data-allergen-id", "soybean")
+  })
+
+  it("自由入力の「鶏もも」は鶏肉の候補を出す。対照:「大豆」と打てば品目そのものなので候補は出さない", async () => {
+    view({}, { exclusionLexicon: wired })
+    await ready()
+    const area = section("使わない食材")
+    await click(within(area).getByRole("button", { name: "自由に入力" }))
+    fireEvent.change(within(area).getByLabelText(/名前（30文字まで）/), { target: { value: "鶏もも" } })
+    expect(within(area).getByTestId("allergy-category-candidate")).toHaveAttribute("data-allergen-id", "chicken")
+    expect(within(area).getByTestId("allergy-category-candidate")).toHaveTextContent("「鶏もも肉」は、対象品目の「鶏肉」")
+    fireEvent.change(within(area).getByLabelText(/名前（30文字まで）/), { target: { value: "大豆" } })
+    expect(within(area).queryByTestId("allergy-category-candidates")).not.toBeInTheDocument()
+  })
+
+  it("登録済みの「豆乳」（アレルギー）は書き換えず、同じ「誰の分」で大豆を足せる。品目で登録済みなら候補を出さない", async () => {
+    savedAs()
+    const soyMilk = exclusion({
+      id: "c1000000-0000-4000-8000-000000000021",
+      target: { kind: "ingredient", ingredientId: "soy_milk" },
+      subject: { kind: "member", profileId: SPOUSE },
+    })
+    view({ exclusions: [soyMilk] }, { exclusionLexicon: wired })
+    await ready()
+    const [row] = screen.getAllByTestId("settings-exclusion")
+    const note = within(row).getByTestId("allergy-category-candidate")
+    expect(note).toHaveTextContent("この登録は、「豆乳」と、それから作る食材だけを外しています（大豆を含むほかの食材は外していません）。")
+    await click(within(note).getByRole("button", { name: "「大豆」も品目として登録" }))
+    await waitFor(() => expect(actions.saveFoodExclusion).toHaveBeenCalledTimes(1))
+    expect(actions.saveFoodExclusion.mock.calls[0][0]).toMatchObject({
+      reason: "allergy",
+      target: { kind: "allergen", allergenId: "soybean" },
+      subject: { kind: "member", profileId: SPOUSE },
+    })
+    expect(actions.saveFoodExclusion.mock.calls[0][0].id).not.toBe(soyMilk.id)
+    expect(actions.deleteFoodExclusion).not.toHaveBeenCalled()
+
+    // 品目（大豆）で登録済み: 一覧の候補は出さず、フォームでは「登録済み」と言う
+    cleanup()
+    const soybean = exclusion({ id: "c1000000-0000-4000-8000-000000000022", target: { kind: "allergen", allergenId: "soybean" } })
+    view({ exclusions: [soyMilk, soybean] }, { exclusionLexicon: wired })
+    await ready()
+    expect(screen.queryByTestId("allergy-category-candidates")).not.toBeInTheDocument()
+    const area = await chooseIngredient("アレルギー", "soy_milk")
+    const registered = within(area).getByTestId("allergy-category-candidate")
+    expect(registered).toHaveTextContent("「大豆」は、品目として登録済みです。")
+    expect(within(registered).queryByRole("button")).not.toBeInTheDocument()
+  })
+
+  it("素の食材「大豆」をアレルギーで登録済みなら、大豆全体は既に外れておる。「豆乳」の行に候補を出さず、フォームでは登録済みと言う", async () => {
+    view(
+      {
+        exclusions: [
+          exclusion({ id: "c1000000-0000-4000-8000-000000000031", target: { kind: "ingredient", ingredientId: "soybean" } }),
+          exclusion({ id: "c1000000-0000-4000-8000-000000000032", target: { kind: "ingredient", ingredientId: "soy_milk" } }),
+        ],
+      },
+      { exclusionLexicon: wired },
+    )
+    await ready()
+    // 修正前: 品目（allergen）で登録した分しか数えず、豆乳の行に「「大豆」も品目として登録」が出た
+    expect(screen.queryByTestId("allergy-category-candidates")).not.toBeInTheDocument()
+    const area = await chooseIngredient("アレルギー", "soy_milk")
+    expect(within(area).getByTestId("allergy-category-candidate")).toHaveTextContent("「大豆」は、品目として登録済みです。")
+
+    // 対照: 苦手で登録した大豆は、アレルギーの範囲に数えない（豆乳のアレルギーの行に候補を出す）
+    cleanup()
+    view(
+      {
+        exclusions: [
+          exclusion({ id: "c1000000-0000-4000-8000-000000000033", reason: "dislike", target: { kind: "ingredient", ingredientId: "soybean" } }),
+          exclusion({ id: "c1000000-0000-4000-8000-000000000034", target: { kind: "ingredient", ingredientId: "soy_milk" } }),
+        ],
+      },
+      { exclusionLexicon: wired },
+    )
+    await ready()
+    expect(screen.getByTestId("allergy-category-candidate")).toHaveAttribute("data-allergen-id", "soybean")
+  })
+
+  it("対照: 語彙を渡されていない画面では候補を出さない（確かめられない範囲を示さない）", async () => {
+    view({ exclusions: [exclusion({ target: { kind: "ingredient", ingredientId: "soy_milk" } })] })
+    await ready()
+    await chooseIngredient("アレルギー", "soy_milk")
+    expect(screen.queryByTestId("allergy-category-candidates")).not.toBeInTheDocument()
   })
 })
 

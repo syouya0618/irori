@@ -4,7 +4,8 @@
 
 - worktree: `.claude/worktrees/kaji-gomi-souji-gohan-20261110`
 - branch: `worktree-kaji-gomi-souji-gohan-20261110`（基点 `origin/main` = `521f2fc2`、ローカルの追跡 ref。remote の最新は未照会）
-- 変更は未 commit（理由は「外部ブロッカー」）。
+- 人が commit・push・Draft PR を作成済み: `51bd55bc9822eb000ab647c3bf90e172193440d6`、PR #253（https://github.com/syouya0618/irori/pull/253）。
+- その後の追随の修正（下の「2026-11-11 23:30 時点」）は**未 commit**。commit と push は git guard が拒むため人が行う（`handoff.md` §1）。
 
 ## 着手時の確認（2026-11-10〜11）
 
@@ -163,12 +164,87 @@
 
 台帳の修正（重 2・重 3・中 4・軽 6）は pgTAP の §20（53 本）と §21（13 本）で固めた（dinner_tables は 461 本）。修正前は §20 で 15 件、§21 で 4 件が赤。修正を一時的に戻す変異も 7 種でそれぞれ赤を確かめた。
 
-利用者から見える影響（安全側として据え置き）: 判定できないアレルギーの登録が 1 件でも在ると、全料理が未確認になる。献立の確定が止まり、買い物の自動の項目も全部外れる。設定で一覧から選び直せば、該当する料理だけが外れる。画面はその理由と直す場所を出す。
+利用者から見える影響（安全側として据え置き）: 判定できないアレルギーの登録が 1 件でも在ると、全料理が未確認になる。献立の確定が止まり、買い物の自動の項目も全部外れる。設定で一覧から選び直せば、該当する料理だけが外れる。画面はその理由と直す場所を出す。→ **2026-11-11 夜に改めた**: 買い物の自動の項目は外さず、自動の更新を止めて今のリストを残す（下の「2026-11-11 23:30 時点」）。
 | 中 7（③） | ごみの遅れた応答が、別の予定・同じシートの通知の欄を古い値へ戻す | 修正済み。今の編集の回の時だけ、かつ通知の書込が送信中でない時だけ読み直す（修正前は 2 本が赤） |
 | 低 8（⑤） | 「なす科」が「なす」へ縮んで、適用済みに見える | 修正済み。「〜科」は「含む」で解決せず、判定できない語として扱う（修正前は 2 件が赤） |
 
-利用者に決めてほしいこと: 「豆乳」「鶏もも」のように食材止まりで登録したアレルギーを、アレルゲン全体（大豆・鶏肉）へ広げるか。今は R23 の方針どおり食材止まりで、「豆乳」アレルギーでも豆腐の料理は外れない。広げる場合は辞書の `allergySpread` で一括に決める。
+利用者に決めてほしいこと: 「豆乳」「鶏もも」のように食材止まりで登録したアレルギーを、アレルゲン全体（大豆・鶏肉）へ広げるか。今は R23 の方針どおり食材止まりで、「豆乳」アレルギーでも豆腐の料理は外れない。広げる場合は辞書の `allergySpread` で一括に決める。→ **2026-11-11 夜に決定**: 黙って広げず、品目として登録する候補と範囲を示す（下の節）。
+
+## 2026-11-11 23:30 時点の状態（PR #253 の初回 CI を受けた追随。未 commit）
+
+### 初回 CI の結果（利用者の報告。エージェントは `gh` の資格情報を読めず、ログを直に見ておらぬ）
+
+| run | 結果 |
+|---|---|
+| `CI`（43025441100） | 全成功: lint・型検査・329 ファイル 6370 件・production build・追加検査。手元で止まった build の原因は未特定のまま（CI では成功） |
+| `E2E`（43025441011） | 失敗: `supabase test db` の `chores_rpc_security.sql:166` で Postgres が SIGSEGV。175 件中 25 件の後に接続を失った。後続（並行試験・実 Auth・Playwright）は skipped で、実行済みに数えない |
+
+### DB のクラッシュ: 原因と直し方
+
+| 項目 | 確かめたこと（一次資料） |
+|---|---|
+| 原因 | CLI 2.101.0 の既定 `supabase/postgres:17.6.1.106` は supautils 3.2.0 を同梱（supabase/postgres の tag `17.6.1.106` の `nix/ext/supautils.nix`）。3.2.0〜3.2.1 は `supautils.hint_roles`（anon・authenticated・service_role）が EXECUTE を持たぬ関数を呼ぶと、42501 ではなく backend が落ちる（supabase/postgres#2112、supabase/supautils#214。3.2.2 の supabase/supautils#190 で修正。保守者の記述では影響は 17.6.1.099〜.112、修正は 17.6.1.155 以降）。166 行目は anon が EXECUTE の無い RPC を呼ぶ `throws_ok` で、25 件の数も合う |
+| 固定した版 | `17.6.1.156`（supautils 3.4.0。同じ nix 定義）。Docker Hub の index digest `sha256:ca7871b587ca2c401ac0f325df6249c9aa0d25647ded34631158efc51176767f`。この digest は、#2112 の独立報告「amd64 で 42501・2 回同じ結果」の digest と一致する。CLI 本体も 2026-07-29〜08-05 にこの版を既定として出した（CLI の Dockerfile の commit 履歴） |
+| CLI の仕組み | CLI 2.101.0 の `apps/cli-go/pkg/config/config.go` の `Load` は、`supabase/.temp/postgres-version` があればその tag で DB イメージを差し替える（`replaceImageTag` は前後の空白を落とす）。`internal/utils/docker.go` の `DockerPullImageIfNotCached` は、docker.io のとき `supabase/postgres:<tag>` が手元にあれば pull しない。CLI の起動処理の版による分岐は「15.8.1.005 未満か」だけで、106 と 156 は同じ分岐を通る |
+| 直し方（`e2e.yml`） | tag と digest を workflow の env の 1 か所へ置く。`supabase start` の前に、digest で pull して CLI が使う名前で tag を付け、`.temp/postgres-version` を書く。起動後、container の image ID が固定した digest の image ID と一致することを断ずる（違えば赤）。pgTAP の前に stack 上で最小再現の probe を流す。ジョブの最後に DB のログで異常終了 0 件を断ずる。時間の枠は 40 分 |
+| 最小再現（`scripts/test-db-execute-denial.sh`） | 単純な SQL 関数を作って EXECUTE を外し、ロールになって呼ぶ。1 つの transaction の中で作って ROLLBACK するので、関数もロールも残さぬ。別ジョブ `db-image-probe` で、Docker だけで（CLI も stack も通さず）2 版を digest で起こす: 106 は anon・authenticated が signal 11 で落ち、hint_roles に無いロールは 42501（対照）。156 は 4 ロールとも 42501 で、同じ接続も server も生き続ける。どちらかの期待が外れれば赤 |
+| 採らなかった方法 | 権限を足す・拒否試験を消す・静的な権限確認だけにする・skip・continue-on-error。CLI の更新（2.101.0 の固定を保つ）、17.11 系への更新（minor が変わる） |
+| ライブラリの版の記録 | PostgreSQL 17 の supautils は module magic に版を持たぬ（`PG_MODULE_MAGIC_EXT` は 18 以上）。SQL からは版を読めないので、probe は `.so` の sha256 と path を記録し、版は image の nix 定義から言う。決め手は amd64 での挙動 |
+
+手元で行った確認（Docker は sandbox が拒み、`initdb` は `shmget` で止まるので、実の Postgres では走らせておらぬ）:
+
+- `shellcheck`: 警告 0。
+- probe の判定の流れ: `docker` を模した shim で 10 通り、全て期待どおり（正常 2・陰性の対照 5・入力の拒否 3）。陰性の対照は次の 5 つ:
+  - 固定版で「落ちる」を期待すると赤;
+  - anon が落ちるのに「42501」を期待すると赤;
+  - 対照のロールまで落ちると赤;
+  - 接続が切れても server のログに異常終了が無ければ赤;
+  - supautils が読み込まれておらねば赤。
+- probe の SQL: PGlite（PG 17.5）で 4 ロールとも 42501。ROLLBACK の後に関数もロールも残らぬ。supautils が無いので、落ちる経路そのものは PGlite では見られぬ。
+- workflow: YAML を読み、次を確かめた:
+  - 2 ジョブ・22 手順の順序（pin → start → 記録と digest の断定 → probe → pgTAP → 並行試験 → Playwright → 異常終了 0 件）;
+  - `continue-on-error` も条件つきの手順も無い（`if: failure()` の 2 つを除く）。
+
+**CI ではまだ一度も走っておらぬ。** 人が push した後の `E2E` で初めて確かめられる。
+
+### 前回決めた追記の反映
+
+| 件 | 中身 | 赤の証拠 |
+|---|---|---|
+| 未解決アレルギーの保留 | 判定できないアレルギーの登録がある間は、買い物の同期を送らない（`grocery-sync.ts` の `held`）。今のリスト・購入量・手動項目・充当の台帳はそのまま。画面は「要再確認」の帯と自動項目の印、献立を変えた後・補充の後の応答も同じ理由を返す（「献立から更新を押して」とは言わない）。献立の画面は「買い物が古い」と言わず、保留の文に買い物を止めておることを足した | 修正前: 未知語を足した同期で、必要な自動行が 11 → 0 件（買った豚こまは「不要」にされ出所が消えた）。修正を外す変異で赤へ戻る |
+| 未知語の追加 → 解決 → 再計算 | 購入 300g は残り、豚こまの行は 1 本のまま（同じ ID）、止めておる間に作った 300g は 1 回だけ数え、2 回同期し直しても変わらない | shopping/actions.test.ts の同名の試験 |
+| 大豆・鶏肉の品目の候補 | アレルギーで「豆乳」「鶏もも」を選ぶ・打つと、含む対象品目を品目として登録する候補と、個別・品目それぞれで外す範囲を出す。押したときだけ品目を登録（同じ「誰の分」）。登録済みの一覧でも、元の登録は書き換えず「も品目として登録」を出す。苦手には出さぬ | 変異 3 種（苦手にも出す・加工品の値を根拠にする・既に広がる品目も出す）でそれぞれ狙った試験だけが赤 |
+| 「オムレツ」 | 材料の無い手動料理は既に未確認として確定を止める。料理名の辞書は足さぬ | — |
+| 無料 AI の記述 | 「任意」を「アダプター実装済み／実接続は資格情報待ち」へ: README・`env.example`・`CHANGELOG.md`・献立とニュースの runbook。無課金の条件と、資格情報が無いときに呼ばぬ構成は変えておらぬ | — |
+
+### 独立レビュー（3 回目、今回の差分。読むだけで実行はしておらぬ）
+
+| 指摘 | 中身 | 結果 |
+|---|---|---|
+| P2-1 | 止めておる間に料理を「作った」にすると、RPC が充当（300g）を記録するが必要量（500g）は古いまま。「あと 500g」と出て、「必要量まで購入」は 800g を記録しうる | 修正済み。台帳（`consumptions`）で数えておる記録のある枠の出所の量を、今の必要量から引く（`outstandingRequired`）。正しく同期した後は重ならぬので 0。読めない要素・眠った記録は引かない（必要量を減らす側へ倒さない）。修正前は赤（あと 500g）、修正を外す変異で 2 件が赤。前提の形（settle は `sources` を書き換えず、台帳に `k`＝枠の ID・`on=true` の記録を積む。同期は出所の JSON をそのまま保存し、`set_grocery_purchase` は `required_quantity` を使わぬ）は migration の本文で確かめ、pgTAP `dinner_tables.sql` §20 (iii') の 3 件で固定した |
+| P2-2 | 止めておる間に確定の料理を直して提案へ戻すと、文が「今のリストはそのまま」と「買い物リストからも外れます」を同時に言う | 修正済み。止めておる間は「材料はリストに残ります。要再確認」と言う。修正前に赤 |
+| P3 | 「品目で登録済み」を品目の登録だけで数えていた（素の食材「大豆」の登録も大豆全体を外す） | 修正済み。判定と同じ `buildExclusionSet` のアレルゲンの規則で数える。苦手は数えない。修正前に赤 |
+| P3 | 最後の異常終了の確認で、`docker logs` の失敗を grep の「一致なし」として通しうる | 修正済み。ログを先に受け取る（失敗すれば手順が赤） |
+| P3 | 「任意」の残り（ニュースの runbook の 73 行・`env.example`・`CHANGELOG.md`） | 修正済み。変数が省略できる意味の「任意」は残した |
+| P3 | 到達しない分岐（保留の理由の文）、古い文の fixture、空のリストの説明が「確定を押すと並ぶ」と言う | 修正済み。空のリストの説明は、止めておる間は確定できないことを言う（試験を足した） |
+| P3（未検証として） | probe の script が 100644 で commit されると `./scripts/…` で起動できない | 確かめた: `core.fileMode=true`、ファイルは `-rwxr-xr-x`。`git add` で 100755 が記録される |
+
+### ゲート（23:20〜23:25、統括が実行）
+
+| ゲート | 結果 |
+|---|---|
+| `pnpm lint` | 指摘 0 |
+| `pnpm exec tsc --noEmit`（e2e を含む） | エラー 0 |
+| `pnpm exec vitest run` | 330 ファイル 6392 件 全緑 |
+| `check-transition-all.py --strict` / `check-transition-reject-guard.py --strict` | 違反 0（checked 772 / 21） |
+| `shellcheck scripts/test-db-execute-denial.sh` | 警告 0 |
+| probe の shim 10 通り・PGlite の SQL・workflow の構造検査 | 全て期待どおり（scratch） |
+| PGlite（既定）＋本物の pgTAP | migration 58 本、pgTAP 39 ファイル 1947 件 全緑（dinner_tables 464） |
+| `pnpm build` | 手元では再実行しておらぬ（前回まで sandbox で完走せず。51bd55bc の CI では成功） |
+| `supabase test db`・2 接続の並行試験・実 Auth・Playwright（e2e ⑦⑧ を含む）・`db-image-probe` | **未実行**（CI でだけ走る） |
+
+ブラウザの範囲: Playwright の `chromium` は全ての spec（家事を含む）。`webkit-iphone` は `E2E_WEBKIT=1` のとき `webkit-core.spec.ts` の 1 件だけで、家事は含まぬ。暗号化した再送の保存は別の script で Chromium と WebKit の両方。ゆえに**家事の機能を WebKit で確かめたとは言えぬ**。
 
 ## 次の具体的作業（人）
 
-`handoff.md` の順に: commit と push → Draft PR と CI（build・`supabase test db`・Playwright・2 接続の並行試験がここで初めて走る）→ 本番 DB へ migration 3 本 → merge と公開後確認 →（任意）無料 AI の有効化。
+`handoff.md` の順に: 追随の commit と push → `CI` と `E2E`（`db-image-probe`・`supabase test db`・並行試験・実 Auth・Playwright がここで初めて最後まで走る）→ 本番 DB へ migration 3 本 → merge と公開後確認 → 無料 AI の有効化（アダプター実装済み／実接続は資格情報待ち。しなくても全機能が動く）。

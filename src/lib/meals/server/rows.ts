@@ -46,7 +46,7 @@ import type {
   StoreSection,
   UnitId,
 } from "../types"
-import { UNIT_LABELS, areUnitsCompatible, toBaseAmount } from "../units"
+import { UNIT_LABELS, areUnitsCompatible, roundAmount, toBaseAmount } from "../units"
 
 // ── 保存済みの行の型（アプリの型 + 版） ─────────────────────────────
 
@@ -540,6 +540,28 @@ export function recipeIngredientsFromJson(value: unknown): RecipeIngredient[] | 
   return result
 }
 
+/**
+ * 出所のうち、台帳（`consumptions`）に数えておる（`on`）充当の記録がある枠の量（`buy`）の合計（項目の単位）。
+ * 同期はその出所を必要量から外すが、同期の前は必要量に残る（`ExistingGroceryItem.settledRequired`）。
+ * 読めない要素は数えない（必要量を減らす側へ倒さない）。台帳を選んでいない読みでは 0。
+ */
+export function settledSourceAmount(sources: unknown, consumptions: unknown): number {
+  if (!Array.isArray(sources) || !Array.isArray(consumptions)) return 0
+  const settled = new Set<string>()
+  for (const record of consumptions) {
+    if (isRecord(record) && record.on === true && typeof record.k === "string" && record.k !== "settled") {
+      settled.add(record.k)
+    }
+  }
+  let total = 0
+  for (const source of sources) {
+    if (!isRecord(source) || typeof source.entryId !== "string" || !settled.has(source.entryId)) continue
+    const buy = toFiniteNumber(source.buy)
+    if (buy !== null && buy > 0) total += buy
+  }
+  return roundAmount(total)
+}
+
 /** 買い物項目の出所（jsonb）。読めない要素は落とし、落としたことを返す。 */
 export function grocerySourcesFromJson(value: unknown): { sources: GrocerySource[]; dropped: number } {
   if (!Array.isArray(value)) return { sources: [], dropped: value === null || value === undefined ? 0 : 1 }
@@ -725,6 +747,8 @@ export function groceryItemFromRow(
       purchased: positiveQuantity(purchasedAmount, unit),
       restocked: positiveQuantity(restockedAmount, unit),
       consumed: positiveQuantity(consumedAmount, unit),
+      // 同期の前（判定できないアレルギーで止めている間など）に、作った枠の出所が必要量に残っている分
+      settledRequired: origin === "auto" ? positiveQuantity(settledSourceAmount(row.sources, row.consumptions), unit) : null,
       // 画面の印は「購入の印があり、作った料理で使い終えていない」
       checked: row.purchased && !purchaseConsumed,
       note: nonEmptyString(row.note),

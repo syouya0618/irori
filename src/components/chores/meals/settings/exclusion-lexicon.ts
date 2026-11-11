@@ -11,17 +11,19 @@
  * （`resolveExclusionLabel` が読む項目が増えたら、そのテストが落ちる）。
  */
 
-import { resolveExclusionLabel, type ExclusionResolution } from "@/lib/meals/exclusions"
-import { toCatalogView, type CatalogView } from "@/lib/meals/lookup"
-import type { AllergenDef, ExclusionReason, IngredientDef, RecipeDef } from "@/lib/meals/types"
+import { allergySpreadOf, resolveExclusionLabel, type ExclusionResolution } from "@/lib/meals/exclusions"
+import { allergenProfileOf, toCatalogView, type CatalogView } from "@/lib/meals/lookup"
+import type { AllergenDef, AllergenId, ExclusionReason, IngredientDef, RecipeDef } from "@/lib/meals/types"
 
 /**
  * 判定（自由入力の解決）が読む食材の項目: 名前・別名・売場・アレルゲン・総称か（「〜類」の解決に使う）。
  * 由来（`derivedFrom` 等）は、解決した後の「どの料理を外すか」で使う項目で、解決そのものは読まない。
+ * `allergySpread` は、アレルギーとして登録したときに辞書が広げる品目（`allergySpreadOf` で決めた値。素の食材は
+ * 含む品目の全て、加工品は空）。カテゴリーの候補（`allergyCategoryCandidates`）で、既に広がる品目を候補にしない。
  */
 export type LexiconIngredient = Pick<
   IngredientDef,
-  "id" | "name" | "aliases" | "section" | "allergens" | "allergenInfo" | "generic"
+  "id" | "name" | "aliases" | "section" | "allergens" | "allergenInfo" | "generic" | "allergySpread"
 >
 
 export interface ExclusionLexicon {
@@ -29,12 +31,18 @@ export interface ExclusionLexicon {
   /** 料理名の一致（「名前で判定」）に使う。材料・手順は載せない。 */
   recipes: { id: string; title: string }[]
   allergens: AllergenDef[]
+  /**
+   * 対象品目ごとに、品目として登録したときに外す食材の ID（判定と同じ `allergenProfileOf`。由来をたどる）。
+   * カテゴリーの候補の「外す範囲」として、名前を示すのに使う。
+   */
+  allergenScopes: Record<string, string[]>
 }
 
 /** カタログの索引から、判定が読む項目だけを取り出す（素の object。Client Component の props へ渡せる）。 */
 export function buildExclusionLexicon(lookup: Pick<CatalogView, "index" | "recipes" | "allergens">): ExclusionLexicon {
+  const defs = [...lookup.index.byId.values()]
   return {
-    ingredients: [...lookup.index.byId.values()].map((def) => ({
+    ingredients: defs.map((def) => ({
       id: def.id,
       name: def.name,
       aliases: [...def.aliases],
@@ -42,10 +50,80 @@ export function buildExclusionLexicon(lookup: Pick<CatalogView, "index" | "recip
       allergens: [...def.allergens],
       allergenInfo: def.allergenInfo,
       ...(def.generic === true ? { generic: true } : {}),
+      allergySpread: [...allergySpreadOf(def)],
     })),
     recipes: lookup.recipes.map((recipe) => ({ id: recipe.id, title: recipe.title })),
     allergens: lookup.allergens.map((allergen) => ({ id: allergen.id, name: allergen.name, tier: allergen.tier })),
+    allergenScopes: Object.fromEntries(
+      lookup.allergens.map((allergen) => [
+        allergen.id,
+        defs.filter((def) => allergenProfileOf(def.id, lookup.index).allergens.has(allergen.id)).map((def) => def.id),
+      ]),
+    ),
   }
+}
+
+/**
+ * アレルギーとして食材を登録するときの、対象品目（カテゴリー）の候補。
+ * 例: 「豆乳」→「大豆」、「鶏もも肉」→「鶏肉」。
+ */
+export interface AllergyCategoryCandidate {
+  allergenId: AllergenId
+  /** 対象品目の名前（大豆）。 */
+  allergenName: string
+  tier: AllergenDef["tier"]
+  /** 候補の根拠: 入力・選んだ食材のうち、辞書でこの品目を含むもの（豆乳）。 */
+  sourceNames: string[]
+  /** 品目として登録したときに外す食材の名前（判定と同じ範囲。辞書の順）。 */
+  scopeNames: string[]
+  /** 世帯に、この品目がアレルギーとして既に品目で登録されている。 */
+  registered: boolean
+}
+
+/**
+ * アレルギーとして食材（豆乳・鶏もも肉）を登録するとき、その食材が辞書で含む対象品目のうち、登録しても
+ * 広がらない品目（大豆・鶏肉）を、**品目として別に登録する候補**にする。
+ *
+ * - 候補を出すだけで、登録は利用者が選んだときだけ（既存の登録を黙って広げない）。
+ * - 苦手（dislike）には出さない。苦手は個別の除外のまま（品目へ広げると、苦手でない食材まで外れる）。
+ * - 根拠にするのは、原材料が定まった食材（`allergenInfo: "known"`）の辞書の値だけ。商品で原材料が変わる加工品は、
+ *   書かれていない成分を「含まない」と読めないので、根拠にしない。
+ * - 対象品目の一覧（消費者庁）に無い ID・既に広がる品目（素の食材の「大豆」）・入力そのものが指す品目
+ *   （「大豆」と打った）は候補にしない。
+ */
+export function allergyCategoryCandidates(
+  input: { reason: ExclusionReason; ingredientIds: readonly string[]; directAllergenIds?: readonly AllergenId[] },
+  lexicon: ExclusionLexicon,
+  registeredAllergenIds: readonly AllergenId[] = [],
+): AllergyCategoryCandidate[] {
+  if (input.reason !== "allergy") return []
+  const direct = new Set(input.directAllergenIds ?? [])
+  const byId = new Map(lexicon.ingredients.map((ingredient) => [ingredient.id, ingredient]))
+  const found = new Map<AllergenId, AllergyCategoryCandidate>()
+  for (const ingredientId of new Set(input.ingredientIds)) {
+    const def = byId.get(ingredientId)
+    if (def === undefined || def.allergenInfo !== "known") continue
+    const spread = new Set(def.allergySpread ?? [])
+    for (const allergenId of def.allergens) {
+      if (direct.has(allergenId) || spread.has(allergenId)) continue
+      const allergen = lexicon.allergens.find((candidate) => candidate.id === allergenId)
+      if (allergen === undefined) continue
+      const existing = found.get(allergenId)
+      if (existing !== undefined) {
+        if (!existing.sourceNames.includes(def.name)) existing.sourceNames.push(def.name)
+        continue
+      }
+      found.set(allergenId, {
+        allergenId,
+        allergenName: allergen.name,
+        tier: allergen.tier,
+        sourceNames: [def.name],
+        scopeNames: (lexicon.allergenScopes[allergenId] ?? []).map((id) => byId.get(id)?.name ?? id),
+        registered: registeredAllergenIds.includes(allergenId),
+      })
+    }
+  }
+  return [...found.values()]
 }
 
 /** 語彙から、判定に渡すカタログの索引を作る（1 度だけ作って使い回す）。 */

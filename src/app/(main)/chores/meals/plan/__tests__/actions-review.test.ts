@@ -143,6 +143,22 @@ describe("[重 1] 確定済みの手動料理を、使わない食材に当た�
     expect(groceryNames()).toEqual([])
   })
 
+  it("判定できないアレルギーで止めている間に直して提案へ戻したときは「買い物から外れる」と言わない（材料はリストに残る）", async () => {
+    await confirmedSalad()
+    db.tables.food_exclusions.push(
+      exclusionRow(HOUSE, { reason: "allergy", target_kind: "custom", target_id: null, custom_label: "ぞぞぞ成分" }),
+    )
+    const result = success(await saveCustomDish(edit({ title: "サラダ（大盛り）" })))
+    expect(entryById(SALAD)).toMatchObject({ status: "proposed" })
+    const message = result.exclusionWarning?.message ?? ""
+    expect(message).toContain("確定を外し、提案へ戻しました")
+    // 修正前: 同じ文の中で「今のリストはそのまま」と「買い物リストからも外れます」が食い違った
+    expect(message).not.toContain("買い物リストからも外れます")
+    expect(message).toContain("材料はリストに残ります")
+    expect(groceryNames()).toEqual(["レタス"])
+    expect(result.grocery).toMatchObject({ ok: false, message: expect.stringContaining("要再確認") })
+  })
+
   it("料理名を、除外の品目を含む名前（たまごサラダ）にしても、提案へ戻す", async () => {
     await confirmedSalad()
     const result = success(await saveCustomDish(edit({ title: "たまごサラダ" })))

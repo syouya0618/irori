@@ -93,9 +93,13 @@ export const DISH_FEEDBACK_COLUMNS =
 export const DINNER_PLAN_STATE_COLUMNS = "household_id, revision, grocery_revision"
 export const DINNER_PLAN_ENTRY_COLUMNS =
   "id, plan_date, role, position, recipe_id, recipe_version, custom_title, custom_ingredients, servings, pinned, status, prior_status, origin, updated_at"
-/** 充当の台帳そのもの（`consumptions`）は読まない。画面と Action が要るのは合計と印の使い終わりだけ。 */
+/**
+ * 充当の台帳（`consumptions`）は、充当を記録した枠の ID だけを使う（`rows.ts` の `settledSourceAmount`）。
+ * 同期の前（判定できないアレルギーで止めている間など）に、作った枠の出所が必要量に残っている分を引くため。
+ * 量の合計と印の使い終わりは、DB が書いた列（`consumed_quantity` / `purchase_consumed`）を正本にする。
+ */
 export const GROCERY_ITEM_COLUMNS =
-  "id, origin, item_key, ingredient_id, name, section, required_quantity, unit, required_note, needs_stock_check, sources, purchased_quantity, purchased, purchased_at, restocked_quantity, restock_ids, consumed_quantity, purchase_consumed, note, plan_revision, still_needed, updated_at"
+  "id, origin, item_key, ingredient_id, name, section, required_quantity, unit, required_note, needs_stock_check, sources, purchased_quantity, purchased, purchased_at, restocked_quantity, restock_ids, consumed_quantity, consumptions, purchase_consumed, note, plan_revision, still_needed, updated_at"
 
 // ── 結果の型 ───────────────────────────────────────────────────────
 

@@ -734,6 +734,17 @@ describe("R01 献立・今夜: 判定できない除外による保留の理由"
     expect(entryOf(view, salmon.id)).toMatchObject({ title: "鮭の塩焼き", status: "confirmed" })
   })
 
+  it("保留の間は、買い物リストが古くても「献立から更新」を促さない。保留の文が買い物を止めていることを言う（対照: 判定できる除外なら古いと知らせる）", async () => {
+    db.tables.dinner_plan_entries.push(entryRow(HOUSE, { plan_date: TODAY, recipe_id: "salmon_shioyaki", status: "confirmed" }))
+    db.tables.dinner_plan_state.push({ household_id: HOUSE, revision: 4, grocery_revision: 3 })
+    db.tables.food_exclusions.push(unknownAllergy())
+    const held = await planView()
+    expect(held.groceryStale).toBe(false)
+    expect(held.exclusions?.holdMessage).toContain("買い物リストの自動の更新も止めています")
+    db.tables.food_exclusions = [exclusionRow(HOUSE)]
+    expect((await planView()).groceryStale).toBe(true)
+  })
+
   it("対照: 判定できない苦手・判定できるアレルギーでは保留しない（衝突も、保留の文も出さない）", async () => {
     const salmon = entryRow(HOUSE, { plan_date: TODAY, recipe_id: "salmon_shioyaki" })
     db.tables.dinner_plan_entries.push(salmon)

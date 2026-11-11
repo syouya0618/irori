@@ -1,6 +1,6 @@
 "use client"
 
-import { ChevronDown, ChevronUp, CircleHelp, Hand, PackagePlus, SquarePen } from "lucide-react"
+import { AlertCircle, ChevronDown, ChevronUp, CircleHelp, Hand, PackagePlus, SquarePen } from "lucide-react"
 
 import { CheckButton } from "@/components/chores/shared/check-button"
 import { Button } from "@/components/ui/button"
@@ -24,6 +24,11 @@ export interface ShoppingItemRowProps {
   onOpen: () => void
   /** 詳細を、在庫へ追加の区画を先頭にして開く。 */
   onOpenRestock: () => void
+  /**
+   * 判定できないアレルギーの登録のために、買い物の自動の更新を止めている間の自動項目
+   * （必要量は止める前の献立のまま。「要再確認」の印を付ける）。
+   */
+  needsRecheck?: boolean
 }
 
 /**
@@ -44,6 +49,7 @@ export function ShoppingItemRow({
   onToggleSources,
   onOpen,
   onOpenRestock,
+  needsRecheck = false,
 }: ShoppingItemRowProps) {
   const progress = purchaseProgressText(item)
   const sourcesId = `shopping-sources-${item.id}`
@@ -79,6 +85,15 @@ export function ShoppingItemRow({
             <p className="inline-flex w-fit items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-sm font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
               <CircleHelp size={14} aria-hidden="true" />
               在庫量を確認
+            </p>
+          )}
+          {needsRecheck && (
+            <p
+              data-testid="shopping-item-recheck"
+              className="inline-flex w-fit items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-sm font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+            >
+              <AlertCircle size={14} aria-hidden="true" />
+              要再確認
             </p>
           )}
           {item.note !== null && <p className="text-sm break-words text-muted-foreground">メモ: {item.note}</p>}

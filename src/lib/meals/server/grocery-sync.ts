@@ -5,6 +5,10 @@
  * **サーバー専用**（Server Action から呼ぶ。カタログを import するので Client から値 import しない）。
  *
  * ## 契約
+ * - **判定できないアレルギーの登録がある間は、同期そのものを送らない**（`held`。2026-11-11 製品判断）。その間は
+ *   どの料理も当たるかを確かめられず、全ての確定の枠が保留になる。そのまま送ると、RPC が「不要になった」として
+ *   未購入の自動項目を消し、購入した項目を「不要」にして出所を外す。今のリスト・購入量・手動項目・充当の台帳は
+ *   そのまま残し、画面は「要再確認」と出す（`ShoppingView.autoHold`）。設定で選び直した後の同期で計算し直す。
  * - 使わない食材の設定での判定が「問題なし」でない確定の枠（`groceryHeldConflicts`）の材料は入れない（献立の状態は
  *   書き換えない）。除外を読めなければ同期を止める（空の除外で「問題なし」と見なさない）。外した枠の出所は、
  *   通常の「必要量から外れた出所」と同じ扱い（作った・日が過ぎた枠の充当は、除外とは別の事実として残る）。
@@ -33,12 +37,18 @@ import { logSupabaseErrorRedacted } from "@/lib/supabase/log-error"
 import type { Json } from "@/lib/types/database"
 import { isValidYmd, shiftYmd } from "@/lib/utils/date-jst"
 
-import { buildExclusionSet, type ExclusionSet, findPlanConflicts, type PlanConflict } from "../exclusions"
+import {
+  buildExclusionSet,
+  type ExclusionSet,
+  findPlanConflicts,
+  type PlanConflict,
+  undeterminedAllergyLabels,
+} from "../exclusions"
 import { buildGroceryNeeds } from "../grocery"
 import type { CatalogInput } from "../lookup"
 import type { FoodExclusion, PlanEntry } from "../types"
 import { type MealSupabase, loadMealContext } from "./context"
-import { GROCERY_HORIZON_DAYS } from "./plan-requests"
+import { GROCERY_HORIZON_DAYS, groceryAutoHoldMessage } from "./plan-requests"
 import { groceryNeedsToRpc, toFiniteNumber } from "./rows"
 import { mealToday } from "./today"
 
@@ -148,7 +158,11 @@ export function groceryRange(today: string): { from: string; to: string } | null
 
 export type GrocerySyncOutcome =
   | { ok: true; status: "saved" | "replayed"; revision: number | null }
-  | { ok: false; failure: ChoreSaveFailure }
+  /**
+   * `held` = 判定できないアレルギーの登録のために、同期を送らなかった（何も書いていない）。`failure.error` は
+   * 理由と直す場所を言う文（「献立から更新を押して」とは言わない。押しても同じ理由で止まる）。
+   */
+  | { ok: false; failure: ChoreSaveFailure; held?: true }
 
 /**
  * 買い物の自動計算に入れない確定の枠: 使わない食材の設定での判定が「問題なし」でないもの（当たる・確かめられない）。
@@ -223,7 +237,13 @@ export async function syncGroceryAutoItems(
       return { ok: false, failure: rejectedResult(GROCERY_SYNC_MESSAGES.unreadablePlan) }
     }
 
-    const held = groceryHeldConflicts(context.plan.entries, context.exclusions, context.lookup)
+    const set = buildExclusionSet(context.exclusions, context.lookup)
+    // 判定できないアレルギーの間は、どの料理も確かめられない。全てを外した必要量を送ると、RPC が未購入の自動項目を
+    // 消し、購入した項目を「不要」にする。送らずに止め、今のリストを残す（要再確認）
+    if (set.holdsAutoConfirm) {
+      return { ok: false, held: true, failure: rejectedResult(groceryAutoHoldMessage(undeterminedAllergyLabels(set))) }
+    }
+    const held = groceryHeldConflictsIn(context.plan.entries, set)
     const result = buildGroceryNeeds({
       entries: context.plan.entries,
       from: range.from,

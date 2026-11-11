@@ -336,9 +336,28 @@ export interface ExistingGroceryItem {
    * その料理の分だけ戻る。省略・null は 0。
    */
   consumed?: Quantity | null
+  /**
+   * `required` のうち、作った（または確定のまま日が過ぎた）枠の出所の量で、台帳に充当を記録済みのもの（項目の単位）。
+   * 同期はこの出所を必要量から外すが、同期の前（判定できないアレルギーで止めている間・同期の失敗）は必要量に残る。
+   * 充当（`consumed`）だけが進んで残りが膨らまないよう、今の必要量（`outstandingRequired`）からこの量を引く。
+   * 正しく同期した後は、充当を記録した枠は出所に残らないので 0（省略・null も 0）。
+   */
+  settledRequired?: Quantity | null
   /** 画面の購入の印（印があり、作った料理で使い終えていない）。 */
   checked: boolean
   note: string | null
+}
+
+/**
+ * 今の必要量: 必要量 − 台帳に充当を記録済みの出所の量（`settledRequired`）。0 未満にしない。
+ * 単位が食い違うとき・読めないときは引かない（必要量を減らす側へ倒さない）。
+ */
+export function outstandingRequired(item: Pick<ExistingGroceryItem, "required" | "settledRequired">): Quantity | null {
+  const required = item.required
+  const settled = item.settledRequired
+  if (!required || !settled || typeof required.amount !== "number" || typeof settled.amount !== "number") return required
+  if (settled.unit !== required.unit || settled.amount <= 0) return required
+  return { amount: Math.max(0, roundAmount(required.amount - settled.amount)), unit: required.unit }
 }
 
 export interface GroceryUpsert {
@@ -390,16 +409,18 @@ function onHandBase(item: Pick<ExistingGroceryItem, "purchased" | "restocked" | 
 }
 
 /**
- * まだ買っていない量。必要量 −（購入量 − 在庫へ反映済みの量 − 作った料理へ充当した量）。0 未満にはしない。
+ * まだ買っていない量。今の必要量 −（購入量 − 在庫へ反映済みの量 − 作った料理へ充当した量）。0 未満にはしない。
  * 300g 購入後に必要量が 500g へ増えたら 200g。300g 買って 300g 使う料理を作れば、次の料理の分は丸ごと残る。
+ * 今の必要量は、充当を記録済みの出所の量を引いたもの（`outstandingRequired`。同期の前だけ違う）。
  * 数値化できない項目は null。
  */
 export function remainingToBuy(
-  item: Pick<ExistingGroceryItem, "required" | "purchased" | "restocked" | "consumed">,
+  item: Pick<ExistingGroceryItem, "required" | "purchased" | "restocked" | "consumed" | "settledRequired">,
 ): Quantity | null {
-  if (!item.required) return null
-  const required = toBaseAmount(item.required)
-  const unit = baseUnitOf(item.required.unit)
+  const outstanding = outstandingRequired(item)
+  if (!outstanding) return null
+  const required = toBaseAmount(outstanding)
+  const unit = baseUnitOf(outstanding.unit)
   if (required === null || unit === null) return null
   return { amount: Math.max(0, roundAmount(required - onHandBase(item, unit))), unit }
 }

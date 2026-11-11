@@ -7,7 +7,7 @@
 --   U6 = …06: どの世帯にも属さず、世帯 A の子の閲覧招待だけを受諾する人
 -- 権限は migration が入れたものだけを検証する（このファイルは public の表・関数へ GRANT を足さない）。
 BEGIN;
-SELECT plan(461);
+SELECT plan(464);
 
 INSERT INTO households(id,name) VALUES
  ('f5000000-0000-4000-8000-000000000001','synthetic dinner household A'),
@@ -695,6 +695,18 @@ SELECT is((set_grocery_purchase(pg_temp.gid('quail|mass'),pg_temp.gver('quail|ma
 SELECT is((save_dinner_entry('f5000000-0000-4000-8000-0000000000f3',pg_temp.ever('f5000000-0000-4000-8000-0000000000f3'),pg_temp.slot6(0,'main','synthetic_quail','cooked'))->>'status'),'saved','cooked by a direct call, with no sync afterwards');
 SELECT throws_ok($$SELECT restock_pantry_from_grocery(pg_temp.gid('quail|mass'),pg_temp.gver('quail|mass'),'f5000000-0000-4000-8000-0000000000f1',300)$$,'22023',NULL,'finding 3: the 300 g used by a dish cooked without a following sync cannot be restocked');
 SELECT is(pg_temp.cq('quail|mass'),300::numeric,'cooking alone records the use (no sync needed)');
+-- (iii') 同期の前（判定できないアレルギーで同期を止めている間など）の形。アプリ（rows.ts の settledSourceAmount）は
+--   「出所に残る作った枠の buy」と「台帳の on の記録の k」から、今の必要量（必要量 − 作った枠の分）を出す
+SELECT is((SELECT count(*) FROM grocery_items g, jsonb_array_elements(g.sources) s
+           WHERE g.item_key='quail|mass' AND s.value->>'entryId'='f5000000-0000-4000-8000-0000000000f3'
+             AND jsonb_typeof(s.value->'buy')='number' AND (s.value->>'buy')::numeric=300),
+  1::bigint,'before a sync, the cooked dish stays in sources with its entryId and buy (the settle never rewrites sources)');
+SELECT is((SELECT count(*) FROM grocery_items g, jsonb_array_elements(g.consumptions) c
+           WHERE g.item_key='quail|mass' AND c.value->>'k'='f5000000-0000-4000-8000-0000000000f3'
+             AND jsonb_typeof(c.value->'on')='boolean' AND (c.value->>'on')::boolean),
+  1::bigint,'the ledger holds an on record keyed by the cooked entry id (the shape the app reads)');
+SELECT is((SELECT required_quantity FROM grocery_items WHERE item_key='quail|mass'),300::numeric,
+  'until the next sync, the needed amount still counts the cooked dish (the app subtracts it on read)');
 -- (iv) 指摘 3: 日が過ぎて使った扱いになった枠も、補充の前に数える（同期が走っておらずとも）
 SELECT is((save_dinner_entry('f5000000-0000-4000-8000-0000000000f4',NULL,pg_temp.slot6(-1,'soup','synthetic_venison','confirmed'))->>'status'),'saved','§20 seed: a dish confirmed for yesterday');
 SELECT is(pg_temp.sync20('f5000000-0000-4000-8000-00000000d209',pg_temp.need20('venison',-1,'f5000000-0000-4000-8000-0000000000f4',300)),'saved','§20 seed: its 300 g of venison still listed (the list was made before the day passed)');

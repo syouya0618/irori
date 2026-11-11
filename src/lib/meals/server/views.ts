@@ -47,6 +47,7 @@ import {
   evaluateRecipe,
   findPlanConflicts,
   resolveExclusionLabel,
+  undeterminedAllergyLabels,
 } from "../exclusions"
 import { allergenProfileOf, ingredientNameOf } from "../lookup"
 import { type IngredientMatch, type LineState, type MatchReason, type Sufficiency, expiryStateOn } from "../pantry-match"
@@ -253,12 +254,14 @@ export interface ExclusionNoticeView {
 /**
  * 判定できないアレルギーの除外のために、献立を確定できない旨の文（除外の名前を挙げる）。
  * 全料理が未確認になり、確定は自動でも手でも止まる（`confirmDinnerPlan`・1 品の追加）。「自動では」と弱めない。
+ * 買い物リストの自動の更新も止まる（`grocery-sync.ts`。今のリストと購入の記録は残る）ことを同じ文で言う。
  */
 export function describeAutoConfirmHold(set: Pick<ExclusionSet, "holdsAutoConfirm" | "undetermined">): string | null {
   if (!set.holdsAutoConfirm) return null
-  const labels = unique(set.undetermined.filter((item) => item.reason === "allergy").map((item) => item.label))
-  const names = labels.map((label) => `「${label}」`).join("")
-  return `判定できないアレルギーの登録${names === "" ? "" : `（${names}）`}があるため、料理の原材料を確かめられず、献立を確定できません。設定で一覧から選び直すと、該当する料理だけを外して確定できます。`
+  const names = undeterminedAllergyLabels(set)
+    .map((label) => `「${label}」`)
+    .join("")
+  return `判定できないアレルギーの登録${names === "" ? "" : `（${names}）`}があるため、料理の原材料を確かめられず、献立を確定できません。買い物リストの自動の更新も止めています（今のリストと購入の記録はそのままです）。設定で一覧から選び直すと、該当する料理だけを外して確定できます。`
 }
 
 /** 除外の和集合から、画面へ渡す全体の状態を作る（今あるもので・レシピ詳細・献立・今夜・設定で同じ形）。 */

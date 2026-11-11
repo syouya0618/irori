@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { buildGroceryNeeds, groceryItemKey, mergeWithExisting, remainingToBuy } from "../../grocery"
+import { buildGroceryNeeds, groceryItemKey, mergeWithExisting, outstandingRequired, remainingToBuy } from "../../grocery"
 import { DEFAULT_DINNER_SERVINGS } from "../../planner"
 import type { GroceryNeed, PlanEntry } from "../../types"
 import { getMealLookup } from "../context"
@@ -537,6 +537,8 @@ describe("groceryItemFromRow", () => {
       purchased: { amount: 300, unit: "g" },
       restocked: null,
       consumed: null,
+      // 台帳に充当を記録した枠の出所は無い（同期の後の形）
+      settledRequired: null,
       checked: false,
       note: null,
       version: VERSION,
@@ -576,6 +578,46 @@ describe("groceryItemFromRow", () => {
     const fresh = ok(groceryItemFromRow(groceryRow({ purchased: true, purchase_consumed: false }))).value
     expect(fresh).toMatchObject({ consumed: null, checked: true })
     expect(remainingToBuy(fresh)).toEqual({ amount: 200, unit: "g" })
+  })
+
+  it("同期の前に台帳へ充当を記録した枠の出所は、今の必要量に数えない（数えておる記録だけ。読めない要素・眠りは引かない）", () => {
+    const TONIGHT = "e1000000-0000-4000-8000-000000000001"
+    const FRIDAY_ENTRY = "e1000000-0000-4000-8000-000000000002"
+    const sources = [
+      { date: "2026-11-11", recipeId: "nikujaga", title: "肉じゃが", quantity: { amount: 300, unit: "g" }, entryId: TONIGHT, buy: 300 },
+      { date: "2026-11-13", recipeId: "curry_rice", title: "カレーライス", quantity: { amount: 200, unit: "g" }, entryId: FRIDAY_ENTRY, buy: 200 },
+    ]
+    const row = (consumptions: unknown) =>
+      ok(
+        groceryItemFromRow(
+          groceryRow({ required_quantity: 500, purchased_quantity: 300, consumed_quantity: 300, sources, consumptions }),
+        ),
+      ).value
+    const cooked = row([{ k: TONIGHT, q: 300, m: false, on: true }])
+    expect(cooked.settledRequired).toEqual({ amount: 300, unit: "g" })
+    expect(outstandingRequired(cooked)).toEqual({ amount: 200, unit: "g" })
+    // 修正前は 500 −（300 − 300）= 500 と読めた
+    expect(remainingToBuy(cooked)).toEqual({ amount: 200, unit: "g" })
+
+    // 対照: 眠った記録（取り消し・作らなかった）・まとめの記録・壊れた要素・台帳を選んでいない読みは引かない
+    expect(row([{ k: TONIGHT, q: 300, m: false, on: false }]).settledRequired).toBeNull()
+    expect(row([{ k: "settled", q: 300, m: false, on: true }]).settledRequired).toBeNull()
+    expect(row([{ k: 1, q: 300, on: true }, "broken"]).settledRequired).toBeNull()
+    expect(row(undefined).settledRequired).toBeNull()
+    // 手動の項目は出所を持たないので、引かない
+    expect(
+      ok(groceryItemFromRow(groceryRow({ origin: "manual", item_key: null, required_quantity: 500, sources, consumptions: [{ k: TONIGHT, q: 300, on: true }] })))
+        .value.settledRequired,
+    ).toBeNull()
+    // 単位の食い違い・必要量を超える値は、0 未満にも別の単位にもしない
+    expect(outstandingRequired({ required: { amount: 500, unit: "g" }, settledRequired: { amount: 1, unit: "kg" } })).toEqual({
+      amount: 500,
+      unit: "g",
+    })
+    expect(outstandingRequired({ required: { amount: 200, unit: "g" }, settledRequired: { amount: 300, unit: "g" } })).toEqual({
+      amount: 0,
+      unit: "g",
+    })
   })
 
   it("充当量・使い終えた印が読めない行は、0・未使用と言い換えずに読めない行にする", () => {

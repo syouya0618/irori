@@ -12,9 +12,9 @@
 
 既存のSupabase接続だけでRSSの一覧・更新を使える。AI・VAPID・Push許可は記事閲覧の必須条件ではない。通知は本人の明示設定と端末のPush許可、運用側のVAPID設定が揃った場合だけ。既存の5分cronとJST朝8時の配信窓を使い、OSへの8時ちょうどの到着を保証しない。VAPID不足を通知成功とは扱わない。
 
-## 任意のAI補助（既定OFF）
+## AI補助（アダプター実装済み／実接続は資格情報待ち・既定OFF）
 
-AIなしでRSSを閲覧・更新できる。使う場合だけ `NEWS_AI_ENABLED=true`、`NEWS_AI_ACCOUNT_ID`、`NEWS_AI_API_TOKEN` をサーバ側へ設定する。`NEWS_AI_DAILY_CALLS` は1〜20（既定20）。設定不足・429・認証失敗・タイムアウト・不正出力では原文タイトルと出典へ戻り、課金APIへ自動切替しない。
+AIなしでRSSを閲覧・更新できる。資格情報（`NEWS_AI_*`）が未設定の間は呼び出さず、原文タイトルと出典を表示する。使う場合だけ `NEWS_AI_ENABLED=true`、`NEWS_AI_ACCOUNT_ID`、`NEWS_AI_API_TOKEN` をサーバ側へ設定する。`NEWS_AI_DAILY_CALLS` は1〜20（既定20）。設定不足・429・認証失敗・タイムアウト・不正出力では原文タイトルと出典へ戻り、課金APIへ自動切替しない。
 
 既存サーバからCloudflare Workers AIの `@cf/meta/llama-3.2-3b-instruct` を呼ぶ。公開見出しから固定語彙だけを抽出し、家族情報・氏名・本文・認証情報は送らない。補助は「要点（AI補助）」と明示し、日時や制度を生成しない。共有DBキャッシュと日次回数制限を使う。AI設定後に新しく取り込んだ記事が対象で、既存記事を後から再生成しない。検証済みの成功結果だけを共有キャッシュし、推論失敗も日次予算を消費する。次の配信元更新時に予算内で再試行できる。
 
@@ -70,7 +70,7 @@ AIなしでRSSを閲覧・更新できる。使う場合だけ `NEWS_AI_ENABLED=
 - PostgreSQL 17 + pgTAP 1.3.4: Auth/Storage最小shim付き使い捨てDBで全55 migrationの新規導入、既存53本への合成設定・記事・収集履歴を追加したupgrade保持を確認。これは実Supabaseスタックの証明ではない。
 - 低速初回（同じwebpack build条件・Chrome390px・合成API200ms/回、5回）: mainの操作可能中央値5,083ms、範囲5,062〜5,970ms。遅延読込み案は5,792ms、範囲5,771〜5,880msへ悪化したため撤回。内容表示だけの5,034→4,966msを高速化実績としない。起動高速化は未達、取得待ちと初期JSの改善余地は残る。
 - 最終runtimeのローカル検証: lint・型検査・webpack production build・strict4本、258ファイル/3,658 Vitest、35 pgTAPファイル（941 assertions）、暗号化再送Chromium/WebKitが成功。最終buildでもニュース操作の合成Chrome試験を再確認した。DB時刻表現の1件は試験DBのUTC設定を補正して該当ファイルのみ再実行した。
-- 外部依存追加なし。任意AIは固定語彙による分類・短い抽出的要点に限定し、自由文の生成要約や年齢分類は実装していない。
+- 外部依存追加なし。AI補助（アダプター実装済み／実接続は資格情報待ち）は固定語彙による分類・短い抽出的要点に限定し、自由文の生成要約や年齢分類は実装していない。
 - GitHub connectorが利用不能なためpush/Draft PR・同一HEADのhosted CI/CodeQLは未実行。資格情報storeを直接読む方法へ切り替えない。
 
 配送時は、承認されたGitHub経路で `codex/irori-gap-closure-20261101` をpushし、main向けDraft PRを作る。自動Previewを無効にした本ブランチ設定を保持し、CI/E2EとCodeQLの最新HEAD判定を確認する。本番migration・merge・deployは別の承認範囲。

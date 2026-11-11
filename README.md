@@ -30,7 +30,7 @@
 
 家事分担レポート・貢献度のランキング・一般 AI チャットは対象外です。アレルギーについては、献立と提案から「使わない食材」を外す設定だけを持ちます。判定は Irori の食材辞書（一般的な原材料）にもとづき、商品ごとの原材料・製造時の混入は確認できません。診断・治療・新しい食材を始める時期の判断は扱わず、栄養の保証もしません。取り分けの案内は公的機関の公開資料をもとにした独自の要約で、専門家の監修は受けていません（出典と独自作成の範囲は [第三者データ](THIRD_PARTY_DATA.md)）。
 
-生成 AI は**任意・既定 OFF** です。未設定でも全機能が動きます（献立の中核はアプリ内の規則による自動献立）。有効にした場合だけ、地域ニュースは公開見出しからの固定語彙の抽出、献立は希望の文の読み取りと候補の並べ替えを補助します。経路は Cloudflare Workers AI の無料枠への直接呼出しだけで、有料の API・AI Gateway・有料モデルへの切替は実装していません（無料であることは、運用者が対象アカウントが Workers Free だと確認することに依存します）。手順と送るデータは [ニュース運用](docs/runbooks/regional-news.md) と [献立の AI 補助](docs/runbooks/meal-ai.md) を参照してください。
+生成 AI は**アダプター実装済み／実接続は資格情報待ち**（既定 OFF。実 API への呼出しはまだ 0 回）です。資格情報が未設定の間は呼び出さず、全機能が規則ベースで動きます（献立の中核はアプリ内の規則による自動献立）。有効にした場合だけ、地域ニュースは公開見出しからの固定語彙の抽出、献立は希望の文の読み取りと候補の並べ替えを補助します。経路は Cloudflare Workers AI の無料枠への直接呼出しだけで、有料の API・AI Gateway・有料モデルへの切替は実装していません（無料であることは、運用者が対象アカウントが Workers Free だと確認することに依存します）。手順と送るデータは [ニュース運用](docs/runbooks/regional-news.md) と [献立の AI 補助](docs/runbooks/meal-ai.md) を参照してください。
 
 ## 技術スタック
 
@@ -69,6 +69,9 @@ pnpm build | tee /tmp/next-build.log
 ./scripts/check-transition-reject-guard.py --strict
 ./scripts/check-transition-all.py --strict
 # DB と実ブラウザ（Docker が必要。CI では e2e.yml が実行する）
+# CLI 2.101.0 の既定の DB イメージ 17.6.1.106 は、EXECUTE の無い関数を anon 等が呼ぶ拒否試験で backend が落ちる
+# （supautils 3.2.0）。e2e.yml の IRORI_DB_IMAGE_TAG と同じ版へ揃えてから起動する（`supabase link` はこの値を上書きする）
+mkdir -p supabase/.temp && printf '17.6.1.156\n' > supabase/.temp/postgres-version
 supabase start && supabase test db
 pnpm e2e:env && pnpm e2e:build && pnpm e2e
 ```
@@ -103,7 +106,7 @@ pnpm e2e:env && pnpm e2e:build && pnpm e2e
 
 ## 製品拡張の初期構築
 
-複数児、子ども別の閲覧共有、睡眠、予防接種・健診、成長基準帯、世帯の独自項目、年齢別ホーム、任意の地域ニュース、家事（ごみ・掃除・ごはん）を同じNext.js / pnpm / Supabase構成で使えます。追加のクラウド契約・AI APIは不要です（AI 補助は任意で、設定しなくても全機能が動きます）。
+複数児、子ども別の閲覧共有、睡眠、予防接種・健診、成長基準帯、世帯の独自項目、年齢別ホーム、任意の地域ニュース、家事（ごみ・掃除・ごはん）を同じNext.js / pnpm / Supabase構成で使えます。追加のクラウド契約・AI APIは不要です（AI 補助はアダプター実装済み／実接続は資格情報待ちで、資格情報を設定しなくても全機能が規則ベースで動きます）。
 
 専用のローカルSupabaseを起動できる環境では `supabase start` → `supabase db reset` でmigrationを一括適用します。`db reset` はローカルの使い捨て環境専用です。既存環境への適用はバックアップを確認してmigration履歴に一度ずつ追加し、SQLを手作業で再実行しないでください。既存1児データの移行・アプリの戻し方は [拡張計画](docs/plans/product-expansion.md) を参照してください。
 

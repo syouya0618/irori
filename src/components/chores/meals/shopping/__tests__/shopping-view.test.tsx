@@ -77,6 +77,7 @@ function shopping(items: ShoppingItemView[], over: Partial<ShoppingViewData> = {
     uncomputed: [],
     heldDishes: [],
     exclusionsUnreadable: false,
+    autoHold: null,
     stapleAssumed: [],
     unreadableItems: 0,
     ...over,
@@ -732,6 +733,46 @@ describe("不要になった項目・自動計算に入っていない料理", (
     await ready()
     expect(screen.getByTestId("shopping-exclusions-unreadable")).toHaveTextContent("使わない食材の設定を読めないため、献立と照らせていません")
     expect(screen.getByTestId("shopping-exclusions-unreadable")).toHaveAttribute("role", "alert")
+  })
+
+  it("判定できないアレルギーの間は「要再確認」: 名前つきの帯と自動項目の印を出し、リストはそのまま見せる（手動項目には印を付けない）", async () => {
+    const blocked = {
+      entryId: "e2000000-0000-4000-8000-000000000002",
+      date: "2026-11-13",
+      dateLabel: "11/13（金）",
+      title: "親子丼",
+      verdict: "blocked" as const,
+      message: "使わない食材の設定に当たります。買い物リストの自動の更新を止めているため、この料理の材料がリストに残っていることがあります。献立で選び直してください。",
+    }
+    view({ view: shopping([pork(), onion(), paper()], { autoHold: { labels: ["ぞぞぞ成分"] }, heldDishes: [blocked] }) })
+    await ready()
+    const hold = screen.getByTestId("shopping-auto-hold")
+    expect(within(hold).getByText("要再確認")).toBeInTheDocument()
+    expect(hold).toHaveTextContent("「ぞぞぞ成分」")
+    expect(hold).toHaveTextContent("今のリスト・購入の記録・手で足した項目はそのままです")
+    expect(within(hold).getByRole("link", { name: "使わない食材の設定を開く" })).toHaveAttribute("href", "/chores/meals/settings")
+    // 止める前のリストはそのまま見える（消していない）。自動項目にだけ印
+    expect(within(rowOf("豚こま切れ肉")).getByTestId("shopping-item-recheck")).toHaveTextContent("要再確認")
+    expect(within(rowOf("玉ねぎ")).getByTestId("shopping-item-recheck")).toBeInTheDocument()
+    expect(within(rowOf("キッチンペーパー")).queryByTestId("shopping-item-recheck")).toBeNull()
+    // 当たる料理は「入れていない」と言わない（止める前の材料が残りうる）
+    const region = screen.getByRole("region", { name: "使わない食材の設定に当たる料理" })
+    expect(region).toHaveTextContent("材料がリストに残っていることがあります")
+    expect(region).not.toHaveTextContent("材料は入れていません")
+
+    // 空のリスト: 止めている間は確定も拒まれる。「確定を押すと並ぶ」と言わない
+    cleanup()
+    view({ view: shopping([], { autoHold: { labels: ["ぞぞぞ成分"] } }) })
+    await ready()
+    expect(screen.getByText(/選び直すまで、献立を確定できず、材料は自動では並びません/)).toBeInTheDocument()
+    expect(screen.queryByText(/「この献立で確定」を押すと/)).toBeNull()
+
+    // 対照: 止めていなければ、帯も印も出さない
+    cleanup()
+    view({ view: shopping([pork(), paper()]) })
+    await ready()
+    expect(screen.queryByTestId("shopping-auto-hold")).toBeNull()
+    expect(screen.queryByTestId("shopping-item-recheck")).toBeNull()
   })
 })
 

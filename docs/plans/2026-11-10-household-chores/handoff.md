@@ -1,11 +1,12 @@
 # 家事（ごみ・掃除・ごはん）引き継ぎ手順
 
-実装は worktree に未 commit で在る。commit 以降の操作は、実行環境（git guard・sandbox・資格情報）がエージェントからの実行を拒むため、人が行う。ここはその順序と、各段で止める条件だけを書く。状態の正本は `requirements-ledger.md`、経過は `progress.md`。
+最初の実装は人が commit・push 済み（`51bd55bc9822eb000ab647c3bf90e172193440d6`、Draft PR #253）。その後の追随の修正（CI 用 DB のクラッシュ・判定できないアレルギーの保留・品目の候補・AI の記述）は worktree に未 commit で在る。commit 以降の操作は、実行環境（git guard・sandbox・資格情報）がエージェントからの実行を拒むため、人が行う。ここはその順序と、各段で止める条件だけを書く。状態の正本は `requirements-ledger.md`、経過は `progress.md`。
 
 - worktree: repo の根からの `.claude/worktrees/kaji-gomi-souji-gohan-20261110`（絶対パスは引き継ぎの報告に書く。下の手順では `W` に入れて使う）
 - branch: `worktree-kaji-gomi-souji-gohan-20261110`（基点 `521f2fc2` = 着手時の `origin/main` の追跡 ref。remote の最新は未照会）
-- commit message: `commit-message.txt`（同じディレクトリ）
-- PR 本文: `pr-body.md`（同じディレクトリ）
+- PR: https://github.com/syouya0618/irori/pull/253（作り直さない。修正は追随の commit で足す）
+- commit message: `commit-message-ci-db.txt`（CI 用 DB の固定）と `commit-message.txt`（残りの追随）。同じディレクトリ
+- PR 本文: `pr-body.md`（同じディレクトリ。PR の本文を差し替える時に使う）
 - 追加する migration（加算のみ・この順）:
   1. `20261111100001_event_purposes.sql` — 表 `event_purposes`、RPC、既存表 `calendar_events` / `event_reminders` へのトリガ 3 本
   2. `20261111100002_cleaning_routines.sql` — 表 `cleaning_routines` / `cleaning_logs`、RPC
@@ -17,7 +18,8 @@
 
 | 検証 | 実行できなかった理由 | 代わりに行ったこと |
 |---|---|---|
-| `supabase test db`（本物の Supabase local） | Docker 不可 | プロセス内 PGlite（PG 17.5）＋ Supabase スタブ＋本物の pgTAP で migration 58 本と pgTAP 39 ファイル 1944 件を実行し全緑 |
+| `supabase test db`（本物の Supabase local） | Docker 不可 | プロセス内 PGlite（PG 17.5）＋ Supabase スタブ＋本物の pgTAP で migration 58 本と pgTAP 39 ファイル 1944 件を実行し全緑。**51bd55bc の CI では、CLI 既定の DB イメージ（17.6.1.106・supautils 3.2.0）の不具合で 166 行目に SIGSEGV**。追随の commit で 17.6.1.156 へ固定した（未 push） |
+| DB イメージの最小再現（`scripts/test-db-execute-denial.sh`・`db-image-probe` ジョブ） | Docker 不可 | `docker` を模した shim で判定の流れを 10 通り、PGlite で SQL を確認。実の image では未実行 |
 | 本物の Auth → PostgREST → RPC（`e2e/chores-rpc-auth.spec.ts`） | ローカルポート bind 不可 | spec は書いたが**一度も実行していない**。権限の実効は PGlite の `chores_rpc_security.sql`（175 件）で確認 |
 | 2 接続の並行試験（`scripts/test-chores-concurrency.py`） | Postgres を起動できない | 同じ RPC 呼出しを PGlite で順に流し、引数の形と期待する状態を確認（30 件）。**真の並行性は未検証** |
 | Playwright（`e2e/chores-*.spec.ts`、`touch-targets`、`a11y-axe` の追加分） | ローカルポート bind 不可 | **一度も実行していない**。初回の CI で文言・セレクタが落ちる可能性がある |
@@ -27,42 +29,49 @@
 
 `pnpm build` の結果は `progress.md` の最終ゲートの表に書く。
 
-## 1. commit・push・Draft PR（人）
+## 1. 追随の commit・push（人。PR #253 は作り直さない）
 
 ```bash
 W=<repo の根>/.claude/worktrees/kaji-gomi-souji-gohan-20261110
 git -C "$W" status --short
-git -C "$W" fetch origin
-git -C "$W" rev-parse --short origin/main
+git -C "$W" add .github/workflows/e2e.yml scripts/test-db-execute-denial.sh
+git -C "$W" commit -F docs/plans/2026-11-10-household-chores/commit-message-ci-db.txt
 git -C "$W" add -A
 git -C "$W" commit -F docs/plans/2026-11-10-household-chores/commit-message.txt
-git -C "$W" push -u origin worktree-kaji-gomi-souji-gohan-20261110
-gh pr create --repo syouya0618/irori --draft --base main --head worktree-kaji-gomi-souji-gohan-20261110 --title "feat(chores): ごみの日・掃除ルーティーン・献立と買い物" --body-file "$W/docs/plans/2026-11-10-household-chores/pr-body.md"
+git -C "$W" push origin worktree-kaji-gomi-souji-gohan-20261110
 ```
 
-- `status --short` で、家事以外のファイルが混ざっておらぬことを目で確かめる。`.next`・`node_modules`・`test-results`・`playwright-report` は gitignore 済み。`pnpm build` の後に `next-env.d.ts` が変わっておれば、その変更は戻してから add する。
-- `rev-parse` が `521f2fc2` でなければ、`origin/main` が進んでおる。rebase して `pnpm lint`・`pnpm exec tsc --noEmit`・`pnpm test:run` を流し直してから push する（エージェントは fetch できず未照会）。
+- 1 つ目の commit（CI 用 DB の固定）を先の案内で入れておれば、2 つ目の `add` と `commit` だけでよい。その場合、その後に直した `e2e.yml` の 1 か所（異常終了の確認でログを先に受け取る）は 2 つ目に入る（2 つ目の文面には書いておらぬ。1 つ目の文面の範囲の変更）。
+- `status --short` で、家事以外のファイルが混ざっておらぬことを目で確かめる。`scripts/test-db-execute-denial.sh` は実行権限つき（`core.fileMode=true` ゆえ 100755 で入る）。`.next`・`node_modules`・`test-results`・`playwright-report` は gitignore 済み。`supabase/.temp/` も gitignore 済みで、入らない。
+- PR の本文を今の状態へ差し替えるなら、`pr-body.md` の中身で PR #253 の本文を置き換える（GitHub の画面、または `gh pr edit 253 --repo syouya0618/irori --body-file "$W/docs/plans/2026-11-10-household-chores/pr-body.md"`）。
 - 主 checkout（repo 直下。`main` は origin より遅れ、未 commit 変更あり）には触れていない。そちらで `git add -A` をしないこと。
 - force push はしない。追加の修正は新しい commit で足す。
 
 ## 2. CI（Draft PR 上）
 
 - `CI`（lint・tsc・vitest・build・proxy の検査・検出器）と `E2E` が走る。**どちらも緑になるまで 3 へ進まない。** `skipped` は実行済みに数えない。step が 0 件で終わった失敗は、テストの成功にも失敗にも数えない。
-- `E2E` ジョブの中で、次がここで初めて走る:
+- `51bd55bc` の結果: `CI` は全成功（run 43025441100）。`E2E` は `supabase test db` の `chores_rpc_security.sql:166` で DB が SIGSEGV（run 43025441011。CLI 既定の image の不具合）で、後続は skipped。
+- 追随の commit の後、`E2E` の workflow には次の 2 つのジョブがある（`needs` で繋いでおらぬ。並んで走る）:
+  - `db-image-probe`: Docker だけで、既定の 106 と固定した 156 を digest で起こし、最小再現を流す。106 は anon・authenticated が落ち、対照のロールは 42501。156 は全て 42501 で稼働を続ける。どちらかの期待が外れれば赤
+  - `e2e`: `Pin the local database image…` → `supabase start` → `Record isolated database runtime`（image ID が固定した digest と一致することを断ずる）→ stack 上の probe → 下の試験 → 最後に DB の異常終了 0 件を断ずる
+- `E2E` ジョブの中で、次がここで初めて最後まで走る:
   - `supabase test db`: pgTAP 39 ファイル。家事の 4 本（`event_purposes` `cleaning_routines` `dinner_tables` `chores_rpc_security`）を含む
   - `Test chores RPC concurrency on isolated local DB`: 2 接続の並行試験（掃除の同時完了・取り消しと完了・同じ版での変更、買い物の購入と「作った」の取り消し・古い版の購入）
   - Playwright:
     - `chores-rpc-auth`: 実 Auth の JWT で RPC を直に呼ぶ
-    - `chores-cleaning` / `chores-garbage` / `chores-meals`: 5 件の修正と主な流れ、2 アカウントの共有
+    - `chores-cleaning` / `chores-garbage` / `chores-meals`: 5 件の修正と主な流れ、2 アカウントの共有、⑦（判定できないアレルギー → 要再確認 → 解決 → 更新）、⑧（大豆の品目の候補）
     - `touch-targets`: 家事 10 画面の 44px と 360px 幅
     - `a11y-axe`: 家事 4 画面
+  - ブラウザ: 上は全て Chromium。WebKit（`webkit-iphone`）は `webkit-core.spec.ts` の 1 件だけで、家事は含まぬ
 - 落ちやすい箇所:
   - 未実行で書いた e2e の文言とセレクタ
   - 360px での横のはみ出し
-  - E2E ジョブの上限（`timeout-minutes: 25`）
+  - `db-image-probe`: 106 の amd64 で単純な関数の拒否が本当に落ちるか（独立報告は隣の版の amd64 で落ちると言う。落ちなければ、それ自体が切り分けの結果で、probe の期待を見直す）
+  - E2E ジョブの上限（`timeout-minutes: 40` へ上げた）
 
-  上限で切れた時は、テストを削らずに上限を上げる。落ちた時はエージェントへ失敗のログ（Playwright の artifact）を渡せば直す。テストを skip・弱い assert へ変えて通すことはしない。
-- Supabase CLI は `2.101.0` に pin したまま（`setup-cli@v1`）。
+  上限で切れた時は、テストを削らずに上限を上げる。落ちた時はエージェントへ失敗のログ（Playwright の artifact と、`Record isolated database runtime`・probe の出力）を渡せば直す。テストを skip・弱い assert へ変えて通すことはしない。権限を足して拒否試験を通すこともしない。
+- Supabase CLI は `2.101.0` に pin したまま（`setup-cli@v1`）。DB イメージは `e2e.yml` の `IRORI_DB_IMAGE_TAG` / `IRORI_DB_IMAGE_DIGEST` の 1 か所で固定する（無条件に latest へは追随しない）。
+- 手元で `supabase start` するときは、`supabase/.temp/postgres-version` に同じ tag（`17.6.1.156`）を書いてから起動する（README の検証の節）。`.temp` は gitignore ゆえ書かねば 106 のままで、拒否試験で DB が落ちる。`supabase link` はこの値を本番の版で上書きする。
 
 ## 3. 本番 DB への適用（人。merge より前）
 
@@ -104,9 +113,9 @@ select count(*) from information_schema.role_table_grants
 3. 本番で: `/chores` が開く → 既存の `/baby` `/calendar` `/settings` が従来どおり → ごみ分類を 1 件保存して再読込 → 掃除を 1 件作って完了・取り消し → 食材を登録して「今あるもので」。
 4. Push の実端末受信は未確認のまま。家族へ無断のテスト通知は送らない。
 
-## 5. 無料 AI の有効化（任意。しなくても全機能が動く）
+## 5. 無料 AI の有効化（アダプター実装済み／実接続は資格情報待ち。しなくても全機能が動く）
 
-有効化しない間、献立は規則ベースの自動献立で動き、献立ページには「AI 補助は設定されていません。」と出る。
+資格情報を入れない間は呼び出さず、献立は規則ベースの自動献立で動き、献立ページには「AI 補助は設定されていません。」と出る。実 API の呼出しは 0 回。
 
 1. Cloudflare ダッシュボードで、献立に使う Account が **Workers Free**（Paid ではない）であることを人が確認する。Paid なら無料枠の超過分が課金されるので有効化しない。API からは判定できない。
 2. Vercel の production env に `MEAL_AI_ENABLED=true`、`MEAL_AI_ACCOUNT_ID`、`MEAL_AI_API_TOKEN`（Workers AI の実行だけを許す token）を入れて再デプロイ。`MEAL_AI_MODEL` は省略可。AI Gateway・プリペイド・有料モデルは使わない。
@@ -116,7 +125,7 @@ select count(*) from information_schema.role_table_grants
 ## 6. 朝に試す操作
 
 - **食材登録 → 今あるもので → 既存の日へ足す**: 家事 → ごはん → 食材 → まとめ入力に「鶏もも肉 300g、玉ねぎ 2個、卵 6個、お米 2kg」→ 内容を確認して登録 → 設定で常備品（油・塩・しょうゆ等）を選ぶ → 「今あるもので」。常備品を選ばないと、調味料が要る料理は「揃う」に出ない（未登録の調味料を在庫ありと数えないため）。「豚肉」「鶏肉」のような総称で登録した在庫は材料に数えない（部位が分からないため。画面に直す導線が出る）。候補の「献立に入れる」は、料理が在る日にも 1 品だけ足す（在る料理と固定はそのまま）。
-- **使わない食材**: ごはん → 設定 → 使わない食材。一覧（消費者庁の対象品目）か食材名で登録すると献立と在庫提案から必ず外れる。自由入力で判定できない語は「適用済み」と出ず、対象品目・食材から選び直す釦が出る。手で入れた料理は、材料が未登録・使わない食材に当たる時、保存はできるが献立の確定が止まり、理由が出る。確定した後に除外を足すと、当たる料理の材料は「献立から更新」で買い物から外れ、買い物の画面に料理名と理由が出る（献立はそのまま）。判定できない語をアレルギーとして登録すると、選び直すまで献立の確定と自動の買い物項目が全部止まる。
+- **使わない食材**: ごはん → 設定 → 使わない食材。一覧（消費者庁の対象品目）か食材名で登録すると献立と在庫提案から必ず外れる。自由入力で判定できない語は「適用済み」と出ず、対象品目・食材から選び直す釦が出る。手で入れた料理は、材料が未登録・使わない食材に当たる時、保存はできるが献立の確定が止まり、理由が出る。確定した後に除外を足すと、当たる料理の材料は「献立から更新」で買い物から外れ、買い物の画面に料理名と理由が出る（献立はそのまま）。判定できない語をアレルギーとして登録すると、選び直すまで献立の確定と買い物の自動の更新が止まる。買い物のリスト・購入の記録・手で足した項目は残り、「要再確認」と出る。アレルギーで「豆乳」「鶏もも」を選ぶと、「大豆」「鶏肉」を品目として登録する候補と外す範囲が出る（押したときだけ登録。苦手には出ない）。
 - **取り分け**: 設定で子どもの「食事の段階」を保護者が選ぶまで、取り分け案内は出ない（月齢だけでは出さない）。
 - **金曜を固定 → 7 日分 → 買い物 → 家族のアカウントで購入チェック**: 献立 → 日数を 7 日に → 希望に「金曜はカレー」→「希望を反映」→ 読み取り結果（金曜にカレーを固定）を確かめて「この内容で献立を作る」→「この献立で確定」→「買い物リストを見る」。家族のアカウントで同じ世帯に入り、買い物を開いてチェック。相手の端末への反映は、画面へ戻ったときと表示中の定期再取得（即時の push ではない）。
 - **作った → 取り消し**: 一部だけ買った料理を「作った」にしてから取り消すと、買い物の不足が元へ戻る。購入の記録は消えず、在庫は増えない。

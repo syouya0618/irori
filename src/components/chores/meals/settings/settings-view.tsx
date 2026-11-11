@@ -30,8 +30,16 @@ import {
   type DinnerSaveSuccess,
   type DinnerServingsRequest,
 } from "@/lib/meals/server/plan-requests"
-import type { PlanConflictReport } from "@/lib/meals/server/settings-requests"
+import {
+  SETTINGS_INPUT_MESSAGES,
+  saveFoodExclusionIssue,
+  type PlanConflictReport,
+  type SaveFoodExclusionRequest,
+} from "@/lib/meals/server/settings-requests"
+import { buildExclusionSet } from "@/lib/meals/exclusions"
 import type { SettingsView } from "@/lib/meals/server/views"
+import type { ExclusionReason } from "@/lib/meals/types"
+import { newClientId } from "@/lib/utils/client-id"
 
 import {
   isMealBasicsRequest,
@@ -51,9 +59,11 @@ import {
   EXCLUSION_NO_EFFECT,
   EXCLUSION_REGISTERED_TEXTS,
   EXCLUSION_UNDETERMINED_LEAD,
+  allergyCategoryCandidates,
   describeExclusionPreview,
   lexiconCatalog,
   previewExclusionLabel,
+  type AllergyCategoryCandidate,
   type ExclusionLexicon,
   type ExclusionPreviewText,
 } from "./exclusion-lexicon"
@@ -196,6 +206,53 @@ export function MealSettingsView({
   const undeterminedCount = Object.values(customNotes).filter(
     (note) => note.kind === "holds" || note.kind === "no_effect",
   ).length
+  // 対象品目（大豆・鶏肉）の候補。アレルギーの登録で既に品目全体が外れておる品目は「登録済み」と言う（候補にしない）。
+  // 数えるのは判定と同じ規則（`buildExclusionSet` のアレルゲンの規則）: 品目での登録に加え、素の食材（大豆）の登録が
+  // 広げた品目も含む。苦手の登録は数えない
+  const registeredAllergyAllergens = useMemo(() => {
+    if (lexiconView === null) {
+      return view.exclusions.flatMap((exclusion) =>
+        exclusion.reason === "allergy" && exclusion.target.kind === "allergen" ? [exclusion.target.allergenId] : [],
+      )
+    }
+    const rules = buildExclusionSet(view.exclusions, lexiconView).allergenRules
+    return [...new Set(rules.filter((rule) => rule.reason === "allergy").map((rule) => rule.allergenId))]
+  }, [view.exclusions, lexiconView])
+  function categoryCandidatesFor(
+    target: { kind: "ingredient"; ingredientId: string } | { kind: "custom"; label: string },
+    reason: ExclusionReason,
+  ): AllergyCategoryCandidate[] {
+    if (lexiconView === null || exclusionLexicon === undefined || reason !== "allergy") return []
+    if (target.kind === "ingredient") {
+      return allergyCategoryCandidates(
+        { reason, ingredientIds: [target.ingredientId] },
+        exclusionLexicon,
+        registeredAllergyAllergens,
+      )
+    }
+    // 自由入力は、判定と同じ解決で食材へ当たったときだけ（名前の一致・判定できない語には出さない）
+    const resolution = previewExclusionLabel(target.label, reason, lexiconView)
+    if (resolution.status !== "resolved") return []
+    return allergyCategoryCandidates(
+      { reason, ingredientIds: resolution.ingredientIds, directAllergenIds: resolution.allergenIds },
+      exclusionLexicon,
+      registeredAllergyAllergens,
+    )
+  }
+  // 登録済みのアレルギー（食材・自由入力）が含むが、外していない対象品目（黙って広げず、選べるようにする）
+  const categoryNotes: Record<string, AllergyCategoryCandidate[]> = {}
+  for (const exclusion of view.exclusions) {
+    if (exclusion.reason !== "allergy") continue
+    const target = exclusion.target
+    const candidates =
+      target.kind === "ingredient"
+        ? categoryCandidatesFor({ kind: "ingredient", ingredientId: target.ingredientId }, exclusion.reason)
+        : target.kind === "custom"
+          ? categoryCandidatesFor({ kind: "custom", label: target.label }, exclusion.reason)
+          : []
+    const open = candidates.filter((candidate) => !candidate.registered)
+    if (open.length > 0) categoryNotes[exclusion.id] = open
+  }
   // 設定のカード・登録フォームは、保存が確定したら作り直して、サーバーの最新から始める。
   // 作り直すのは保存したカードだけ（ほかのカードの入力途中の値は残す）。家族が先に変えていた時は
   // 3 枚とも作り直す（古い値をもとにした入力で、家族の変更を巻き戻さない）
@@ -622,12 +679,29 @@ export function MealSettingsView({
         <ExclusionList
           exclusions={view.exclusions}
           customNotes={customNotes}
+          categoryNotes={categoryNotes}
           unreadable={view.unreadableExclusions}
           disabled={save.blocked}
           busyId={busyExclusionId}
           onDelete={(exclusion) =>
             send("exclusions", { op: "exclusion_delete", id: exclusion.id }, exclusion.targetLabel)
           }
+          onRegisterCategory={(exclusion, candidate) => {
+            // 元の登録は書き換えず、同じ「誰の分」で品目の登録を足す
+            const request: SaveFoodExclusionRequest = {
+              id: newClientId(),
+              reason: "allergy",
+              target: { kind: "allergen", allergenId: candidate.allergenId },
+              subject: exclusion.subject,
+            }
+            const issue = saveFoodExclusionIssue(request)
+            if (issue !== null) {
+              setArea("exclusions")
+              setNotice({ text: SETTINGS_INPUT_MESSAGES[issue], tone: "alert" })
+              return
+            }
+            send("exclusions", { op: "exclusion_save", ...request }, candidate.allergenName)
+          }}
         />
         {messageAt("exclusions")}
         <PlanConflictPanel report={conflictReport} highlightIds={highlightIds} />
@@ -644,6 +718,9 @@ export function MealSettingsView({
               ? (label, reason) =>
                   describeExclusionPreview(previewExclusionLabel(label, reason, lexiconView), exclusionLexicon)
               : undefined
+          }
+          categoryCandidatesFor={
+            lexiconView !== null && exclusionLexicon !== undefined ? categoryCandidatesFor : undefined
           }
           onSubmit={(request, targetLabel) => send("exclusions", { op: "exclusion_save", ...request }, targetLabel)}
           onDraftChange={setDraft("exclusion_form")}

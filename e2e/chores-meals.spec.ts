@@ -967,3 +967,161 @@ test("ごはん ⑥: 確定した献立に後から卵アレルギーを足す�
     expect(data).toEqual({ status: "confirmed", pinned: true })
   }
 })
+
+interface GroceryRowFacts {
+  id: string
+  name: string
+  purchased_quantity: number
+  still_needed: boolean
+}
+
+async function groceryRows(householdId: string): Promise<GroceryRowFacts[]> {
+  const { data, error } = await adminClient()
+    .from("grocery_items")
+    .select("id, name, purchased_quantity, still_needed")
+    .eq("household_id", householdId)
+    .order("name", { ascending: true })
+  if (error) throw new Error(`grocery_items lookup failed: ${error.message}`)
+  return (data ?? []).map((row) => ({ ...row, purchased_quantity: Number(row.purchased_quantity) }))
+}
+
+test("ごはん ⑦: 判定できないアレルギーを足す → 買い物は「要再確認」で止まり、リストと購入は残る → 消して更新しても購入は失わず二重にならない", async ({
+  page,
+  approvedUser,
+}) => {
+  const householdId = await setupHousehold(page, approvedUser.id, approvedUser.email, "E2Eごはん要再確認世帯")
+  const today = todayJst()
+  const PORK = "豚こま切れ肉"
+  const UNKNOWN = "ぞぞぞ成分"
+
+  // ── 1. 今日に手で 2 品（豚こま切れ肉 500g / 卵 100g）→ 確定 → 豚こまを 300g だけ買う ──────────
+  await page.goto("/chores/meals/plan")
+  const todayCard = page.locator(`[data-testid="plan-day"][data-date="${today}"]`)
+  await expect(todayCard).toHaveCount(1, { timeout: 15_000 })
+  for (const [title, ingredient, amount] of [
+    ["E2E豚の炒め物", PORK, "500"],
+    ["E2E卵焼き", "卵", "100"],
+  ] as const) {
+    await todayCard.getByRole("button", { name: /に料理を手で追加$/ }).click()
+    const sheet = page.getByRole("dialog")
+    await sheet.getByLabel("料理名").fill(title)
+    await sheet.getByRole("button", { name: "材料を足す" }).click()
+    await sheet.getByLabel("材料 1 の名前").fill(ingredient)
+    await sheet.getByLabel("材料 1 の量").fill(amount)
+    await sheet.getByRole("button", { name: "この料理を追加" }).click()
+    await expect(page.getByRole("status").filter({ hasText: `「${title}」を献立へ追加しました。` })).toBeVisible({
+      timeout: 15_000,
+    })
+    await expect(page.getByRole("dialog")).toHaveCount(0)
+  }
+  await page.getByRole("button", { name: "この献立で確定" }).click()
+  await expect(page.getByRole("status").filter({ hasText: "献立を確定しました" })).toBeVisible({ timeout: 30_000 })
+
+  await page.goto("/chores/meals/shopping")
+  const porkRow = page.getByTestId("shopping-item").filter({ hasText: PORK })
+  await expect(porkRow.getByTestId("shopping-progress")).toHaveText("あと 500g", { timeout: 15_000 })
+  await page.getByRole("button", { name: `${PORK}の詳細を開く` }).click()
+  const detail = page.getByRole("dialog")
+  await detail.getByLabel("買った量（合計・g）").fill("300")
+  await detail.getByRole("button", { name: "買った量を保存" }).click()
+  await expect(porkRow.getByTestId("shopping-progress")).toHaveText("購入済み 300g・あと 200g", { timeout: 15_000 })
+  const before = await groceryRows(householdId)
+  expect(before.map((row) => [row.name, row.purchased_quantity, row.still_needed])).toEqual([
+    ["卵", 0, true],
+    [PORK, 300, true],
+  ])
+
+  // ── 2. 設定: 判定できない語でアレルギーを登録する ───────────────────────────────────
+  await page.goto("/chores/meals/settings")
+  const exclusions = page.getByRole("region", { name: "使わない食材" })
+  await expect(exclusions.getByRole("button", { name: "アレルギー" })).toHaveAttribute("aria-pressed", "true", {
+    timeout: 15_000,
+  })
+  await exclusions.getByRole("button", { name: "自由に入力", exact: true }).click()
+  await exclusions.getByLabel(/名前（30文字まで）/).fill(UNKNOWN)
+  await expect(exclusions.getByTestId("exclusion-preview")).toHaveAttribute("data-kind", "holds")
+  const register = exclusions.getByRole("button", { name: "使わない食材に登録" })
+  await expect(register).toBeEnabled({ timeout: 15_000 })
+  await register.click()
+  await expect(async () => {
+    const { data, error } = await adminClient().from("food_exclusions").select("custom_label").eq("household_id", householdId)
+    if (error) throw new Error(`food_exclusions lookup failed: ${error.message}`)
+    if (JSON.stringify(data) !== JSON.stringify([{ custom_label: UNKNOWN }])) throw new Error(`not stored yet: ${JSON.stringify(data)}`)
+  }).toPass({ timeout: 15_000 })
+
+  // ── 3. 買い物: 要再確認。リスト・購入はそのまま。「献立から更新」も理由を言って止まる ───────────
+  await page.goto("/chores/meals/shopping")
+  const hold = page.getByTestId("shopping-auto-hold")
+  await expect(hold).toContainText("要再確認", { timeout: 15_000 })
+  await expect(hold).toContainText(`「${UNKNOWN}」`)
+  await expect(page.getByRole("checkbox", { name: "卵を購入済みにする" })).toBeVisible()
+  await expect(porkRow.getByTestId("shopping-progress")).toHaveText("購入済み 300g・あと 200g")
+  await expect(porkRow.getByTestId("shopping-item-recheck")).toHaveText("要再確認")
+  await expect(page.getByTestId("shopping-stale")).toHaveCount(0)
+  await page.getByRole("button", { name: "献立から更新" }).click()
+  await expect(page.getByRole("alert").filter({ hasText: "買い物リストの自動の更新を止めています" })).toBeVisible({
+    timeout: 15_000,
+  })
+  expect(await groceryRows(householdId)).toEqual(before)
+
+  // ── 4. 解決: 判定できない登録を消す → 「献立から更新」→ 購入 300g は残り、行は増えない ─────────
+  await page.goto("/chores/meals/settings")
+  const row = exclusions.getByTestId("settings-exclusion").filter({ hasText: UNKNOWN })
+  await row.getByRole("button", { name: new RegExp(`${UNKNOWN}（アレルギー・.*）を削除`) }).click()
+  await row.getByRole("button", { name: "削除する", exact: true }).click()
+  await expect(async () => {
+    const { data, error } = await adminClient().from("food_exclusions").select("id").eq("household_id", householdId)
+    if (error) throw new Error(`food_exclusions lookup failed: ${error.message}`)
+    if ((data ?? []).length !== 0) throw new Error("exclusion is not deleted yet")
+  }).toPass({ timeout: 15_000 })
+
+  await page.goto("/chores/meals/shopping")
+  await expect(page.getByTestId("shopping-auto-hold")).toHaveCount(0, { timeout: 15_000 })
+  await page.getByRole("button", { name: "献立から更新" }).click()
+  await expect(page.getByRole("status").filter({ hasText: "買い物リストを、今の献立と食材から計算し直しました" })).toBeVisible({
+    timeout: 15_000,
+  })
+  await expect(porkRow.getByTestId("shopping-progress")).toHaveText("購入済み 300g・あと 200g")
+  // 同じ行（同じ ID）のまま。購入の記録は消えず、二重にもならない
+  expect(await groceryRows(householdId)).toEqual(before)
+  await page.reload()
+  await expect(porkRow.getByTestId("shopping-progress")).toHaveText("購入済み 300g・あと 200g", { timeout: 15_000 })
+  await expect(page.getByTestId("shopping-item-recheck")).toHaveCount(0)
+})
+
+test("ごはん ⑧: アレルギーで「豆乳」を選ぶと「大豆」を品目として登録する候補が出て、押すと品目だけが登録される（苦手には出ない）", async ({
+  page,
+  approvedUser,
+}) => {
+  const householdId = await setupHousehold(page, approvedUser.id, approvedUser.email, "E2Eごはん品目候補世帯")
+  await page.goto("/chores/meals/settings")
+  const exclusions = page.getByRole("region", { name: "使わない食材" })
+  await expect(exclusions.getByRole("button", { name: "アレルギー" })).toHaveAttribute("aria-pressed", "true", {
+    timeout: 15_000,
+  })
+  // 苦手で豆乳を選んでも候補は出ない（個別の除外のまま）
+  await exclusions.getByRole("button", { name: "苦手", exact: true }).click()
+  await exclusions.getByRole("button", { name: "食材から", exact: true }).click()
+  await exclusions.getByLabel("食材", { exact: true }).selectOption({ label: "豆乳" })
+  await expect(exclusions.getByTestId("allergy-category-candidates")).toHaveCount(0)
+
+  await exclusions.getByRole("button", { name: "アレルギー", exact: true }).click()
+  const candidate = exclusions.getByTestId("allergy-category-candidate")
+  await expect(candidate).toHaveAttribute("data-allergen-id", "soybean")
+  await expect(candidate).toContainText("「豆乳」は、対象品目の「大豆」（表示推奨）を含みます。")
+  await expect(candidate).toContainText("木綿豆腐")
+  await candidate.getByRole("button", { name: "「大豆」を品目として登録", exact: true }).click()
+  await expect(async () => {
+    const { data, error } = await adminClient()
+      .from("food_exclusions")
+      .select("reason, target_kind, target_id")
+      .eq("household_id", householdId)
+    if (error) throw new Error(`food_exclusions lookup failed: ${error.message}`)
+    if (JSON.stringify(data) !== JSON.stringify([{ reason: "allergy", target_kind: "allergen", target_id: "soybean" }])) {
+      throw new Error(`soybean is not stored yet: ${JSON.stringify(data)}`)
+    }
+  }).toPass({ timeout: 15_000 })
+  await page.reload()
+  await expect(exclusions.getByTestId("settings-exclusion")).toHaveCount(1, { timeout: 15_000 })
+  await expect(exclusions.getByTestId("settings-exclusion")).toContainText("大豆")
+})

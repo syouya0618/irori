@@ -954,6 +954,72 @@ describe("固定・確定と必須除外（C-55）", () => {
     })
   })
 
+  it("判定できないアレルギーの間は、献立を変えても買い物の自動の更新を止めたまま、その名前を理由に返す（「献立から更新を押して」とは言わない。リストは消さない）", async () => {
+    success(await generateDinnerPlan(generateRequest({ days: 2 })))
+    success(await confirmDinnerPlan({ expectedRevision: 1, startDate: TODAY, days: 2 }))
+    const shape = () =>
+      JSON.stringify(
+        db.grocery().map((row) => [row.id, row.item_key, row.still_needed, row.required_quantity, row.purchased_quantity, row.sources]),
+      )
+    const listBefore = shape()
+    expect(db.grocery().filter((row) => row.still_needed === true).length).toBeGreaterThan(0)
+
+    db.tables.food_exclusions.push(
+      exclusionRow(HOUSE, { reason: "allergy", target_kind: "custom", target_id: null, custom_label: "ぞぞぞ成分" }),
+    )
+    const tomorrow = db.entries().find((entry) => entry.plan_date !== TODAY)
+    if (!tomorrow) throw new Error("tomorrow's entry not found")
+    const result = success(await deleteDinnerEntry({ entryId: tomorrow.id as string, version: tomorrow.updated_at as string }))
+    // 献立の変更そのものは成立する。買い物は止めた理由を返す
+    expect(result).toMatchObject({ status: "saved", grocery: { ok: false, message: expect.stringContaining("「ぞぞぞ成分」") } })
+    expect(result.grocery).not.toEqual({ ok: false, message: GROCERY_SYNC_FAILED_MESSAGE })
+    // 修正前: 全料理が保留になって必要量 0 で同期し、未購入の自動行を消した
+    expect(shape()).toBe(listBefore)
+  })
+
+  it("止めている間に「作った」にしても、残りは膨らまない（必要 200g・あと 200g）。「必要量まで購入」も 500g で、800g と記録しない", async () => {
+    const tonight = entryRow(HOUSE, { plan_date: TODAY, recipe_id: "nikujaga", status: "confirmed", servings: 4 })
+    db.tables.dinner_plan_entries.push(tonight, entryRow(HOUSE, { plan_date: FRIDAY, recipe_id: "curry_rice", status: "confirmed" }))
+    expect(await syncGroceryList({ operationId: OP1 })).toMatchObject({ status: "saved" })
+    const pork = () => {
+      const row = db.grocery().find((item) => item.item_key === "pork_komagire|mass")
+      if (!row) throw new Error("pork row not found")
+      return row
+    }
+    const view = () => {
+      const parsed = groceryItemFromRow(pork())
+      if (!parsed.ok) throw new Error("pork row is unreadable")
+      return toShoppingItemView(parsed.value)
+    }
+    // 豚こま 500g（今夜の肉じゃが 300g + 金曜のカレー 200g）のうち 300g を買った
+    expect(
+      await setGroceryPurchase({ id: pork().id as string, version: pork().updated_at as string, purchase: { kind: "amount", amount: 300 } }),
+    ).toMatchObject({ status: "saved" })
+    db.tables.food_exclusions.push(
+      exclusionRow(HOUSE, { reason: "allergy", target_kind: "custom", target_id: null, custom_label: "ぞぞぞ成分" }),
+    )
+
+    // 止めている間に今夜の肉じゃがを作った: 充当（300g）は RPC が記録するが、同期は走らず必要量は 500g のまま
+    const cooked = success(await markDinnerCooked({ entryId: tonight.id as string, version: tonight.updated_at as string }))
+    expect(cooked.grocery).toMatchObject({ ok: false, message: expect.stringContaining("「ぞぞぞ成分」") })
+    expect(pork()).toMatchObject({ required_quantity: 500, purchased_quantity: 300, consumed_quantity: 300 })
+    // 修正前: 必要 500 −（購入 300 − 使った 300）= あと 500g と出た（実際に要るのは金曜の 200g）
+    expect(view()).toMatchObject({ requiredAmount: 200, purchasedAmount: 300, consumedAmount: 300, remainingAmount: 200, state: "to_buy" })
+
+    // 「必要量まで購入」は、使った 300g の上に今の必要 200g を足した合計 500g（修正前は 500 + 300 = 800g）
+    expect(
+      await setGroceryPurchase({ id: pork().id as string, version: pork().updated_at as string, purchase: { kind: "full" } }),
+    ).toMatchObject({ status: "saved" })
+    expect(pork()).toMatchObject({ purchased_quantity: 500, purchased: true })
+    expect(view()).toMatchObject({ remainingAmount: 0, state: "purchased" })
+
+    // 選び直した後の同期でも、同じ数のまま（必要 200g・購入 500g・使った 300g）。二重に引かない
+    db.tables.food_exclusions = []
+    expect(await syncGroceryList({ operationId: OP2 })).toMatchObject({ status: "saved" })
+    expect(pork()).toMatchObject({ required_quantity: 200, purchased_quantity: 500, consumed_quantity: 300 })
+    expect(view()).toMatchObject({ requiredAmount: 200, remainingAmount: 0, state: "purchased" })
+  })
+
   it("R43: 確定は全部か無しか。通信が途中で切れても一部だけ確定した状態を残さず、同じ操作のやり直しで確定できる", async () => {
     success(await generateDinnerPlan(generateRequest({ days: 3 })))
     expect(db.entries().length).toBeGreaterThanOrEqual(3)

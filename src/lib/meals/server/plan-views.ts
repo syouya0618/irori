@@ -22,8 +22,15 @@ import {
   type ExclusionSet,
   partitionRecipes,
   type PlanConflict,
+  undeterminedAllergyLabels,
 } from "../exclusions"
-import { buildGroceryNeeds, remainingToBuy, restockableAmount, type UncomputedDish } from "../grocery"
+import {
+  buildGroceryNeeds,
+  outstandingRequired,
+  remainingToBuy,
+  restockableAmount,
+  type UncomputedDish,
+} from "../grocery"
 import { ingredientNameOf } from "../lookup"
 import type { IngredientMatch, MatchReason, Sufficiency } from "../pantry-match"
 import { type GapReason, type PinRejection, type PlannedEntry, reviewPlan } from "../planner"
@@ -486,7 +493,9 @@ export function buildDinnerPlanView(
     from: range.from,
     to: range.to,
     revision,
-    groceryStale: groceryRevision !== revision && (groceryRevision !== null || hasConfirmedAhead),
+    // 判定できないアレルギーの間は、買い物の自動の更新を止めている（「献立から更新」を促さない。理由は保留の知らせで言う）
+    groceryStale:
+      !set.holdsAutoConfirm && groceryRevision !== revision && (groceryRevision !== null || hasConfirmedAhead),
     servings: {
       value: settings.servings,
       isStandard: context.settingsMissing,
@@ -623,6 +632,12 @@ export interface ShoppingView {
   heldDishes: HeldDishView[]
   /** 使わない食材の設定を読めず、献立と照らせていない（買い物の更新も止まる）。 */
   exclusionsUnreadable: boolean
+  /**
+   * 判定できないアレルギーの登録のために、買い物の自動の更新を止めている（要再確認）。`labels` はその登録の名前。
+   * 今のリスト・購入の記録・手動項目は、止める前のまま見せる（同期は何も書いていない）。止めている間は
+   * `stale` を立てない（「献立から更新」でも同じ理由で止まる）。止めていなければ null。
+   */
+  autoHold: { labels: string[] } | null
   /** 常備品として買い物に出していない食材の名前。 */
   stapleAssumed: string[]
   /** 読めなかった買い物の行の数。 */
@@ -664,8 +679,10 @@ export function toShoppingItemView(item: StoredGroceryItem): ShoppingItemView {
   else if (numeric) state = remainingAmount !== null && remainingAmount > 0 ? "to_buy" : "purchased"
   else state = item.checked ? "purchased" : "to_buy"
 
+  // 必要量は「今の必要量」（作って充当を記録した枠の分を、同期の前でも数えない）。残りの計算と同じ値
+  const required = outstandingRequired(item)
   const requiredParts: string[] = []
-  if (item.required !== null) requiredParts.push(formatQuantityJa(item.required))
+  if (required !== null) requiredParts.push(formatQuantityJa(required))
   if (item.requiredNote !== null) requiredParts.push(item.requiredNote)
   return {
     id: item.id,
@@ -678,7 +695,7 @@ export function toShoppingItemView(item: StoredGroceryItem): ShoppingItemView {
     numeric,
     unit: item.unit,
     unitLabel: unitLabel(item.unit),
-    requiredAmount: numeric ? rawAmount(item.required) : null,
+    requiredAmount: numeric ? rawAmount(required) : null,
     requiredText: requiredParts.join("・"),
     purchasedAmount: rawAmount(item.purchased),
     restockedAmount: rawAmount(item.restocked),
@@ -748,20 +765,19 @@ const HELD_DISH_MESSAGES = {
     "材料が登録されていないため、使わない食材に当たるかを確かめられません。この料理は買い物の自動計算に入れていません。献立で材料を登録するか、選び直してください。",
   unknownRecipe:
     "この料理は一覧に無いため、使わない食材に当たるかを確かめられません。この料理の材料は買い物に入れていません。献立で選び直してください。",
+  /** 自動の更新を止めている間（要再確認）に、当たると分かっている料理。材料は止める前のリストに残りうる。 */
+  blockedWhileHeld:
+    "使わない食材の設定に当たります。買い物リストの自動の更新を止めているため、この料理の材料がリストに残っていることがあります。献立で選び直してください。",
 } as const
 
 /**
- * 買い物に入れていない料理の理由。献立の画面（`conflictView`）と同じ分け方で、事実と違う理由を出さない
- * （判定できないアレルギーの登録で保留しているだけの料理に「確かめられない材料がある」と言わない）。
+ * 買い物に入れていない料理の理由。献立の画面（`conflictView`）と同じ分け方で、事実と違う理由を出さない。
+ * 判定できないアレルギーの登録がある間はここへ来ない（同期を止めておるので「入れていない」とは言えない。
+ * `buildShoppingView` が `autoHold` と `blockedWhileHeld` で言い分ける）。
  */
-function heldDishMessage(conflict: PlanConflict, set: ExclusionSet): string {
+function heldDishMessage(conflict: PlanConflict): string {
   if (conflict.verdict === "blocked") return HELD_DISH_MESSAGES.blocked
   const reasons = new Set(conflict.unverifiable.map((item) => item.reason))
-  if (reasons.size === 0 && set.holdsAutoConfirm) {
-    const labels = [...new Set(set.undetermined.filter((item) => item.reason === "allergy").map((item) => item.label))]
-    const names = labels.map((label) => `「${label}」`).join("")
-    return `判定できないアレルギーの登録${names === "" ? "" : `（${names}）`}があるため、この料理が当たるかを確かめられません。この料理の材料は買い物に入れていません。設定で一覧から選び直してください。`
-  }
   if (reasons.has("no_ingredients")) return HELD_DISH_MESSAGES.noIngredients
   if (reasons.has("unknown_recipe")) return HELD_DISH_MESSAGES.unknownRecipe
   return HELD_DISH_MESSAGES.label_check
@@ -795,6 +811,25 @@ export function buildShoppingView(
   const views = context.grocery.map(toShoppingItemView).filter((view) => !isUsedUpLeftover(view))
   const byName =(a: ShoppingItemView, b: ShoppingItemView) => a.name.localeCompare(b.name, "ja") || a.id.localeCompare(b.id)
   const toBuy = views.filter((view) => view.state === "to_buy")
+  // 判定できないアレルギーの間、同期は送らない（grocery-sync.ts）。リストは止める前のまま。「入れていない」とは言えない
+  // ので、保留の一覧には当たると分かっている料理だけを、止めていることを添えて出す
+  const autoHold = set !== null && set.holdsAutoConfirm ? { labels: undeterminedAllergyLabels(set) } : null
+  const heldDishes = needs.held
+    .map((dish) => ({ dish, conflict: conflictOf.get(dish.entryId) }))
+    .filter(({ conflict }) => autoHold === null || conflict?.verdict === "blocked")
+    .map(({ dish, conflict }) => ({
+      entryId: dish.entryId,
+      date: dish.date,
+      dateLabel: formatMealDateShort(dish.date),
+      title: dish.title === "" ? "名前のない料理" : dish.title,
+      verdict: conflict?.verdict ?? ("blocked" as const),
+      message:
+        autoHold !== null
+          ? HELD_DISH_MESSAGES.blockedWhileHeld
+          : conflict
+            ? heldDishMessage(conflict)
+            : HELD_DISH_MESSAGES.blocked,
+    }))
   return {
     today,
     from: range.from,
@@ -807,20 +842,15 @@ export function buildShoppingView(
     purchased: views.filter((view) => view.state === "purchased").sort(byName),
     notNeeded: views.filter((view) => view.state === "not_needed").sort(byName),
     toBuyCount: toBuy.length,
-    // 読めない献立の行・読めない除外があるときは比べられない（同期も止まる）。古いとは断定せず、別に知らせる
-    stale: (context.unreadable.plan ?? 0) > 0 || exclusions === null ? false : isAutoListStale(context, needs.needs),
-    heldDishes: needs.held.map((dish) => {
-      const conflict = conflictOf.get(dish.entryId)
-      return {
-        entryId: dish.entryId,
-        date: dish.date,
-        dateLabel: formatMealDateShort(dish.date),
-        title: dish.title === "" ? "名前のない料理" : dish.title,
-        verdict: conflict?.verdict ?? "blocked",
-        message: conflict && set ? heldDishMessage(conflict, set) : HELD_DISH_MESSAGES.blocked,
-      }
-    }),
+    // 読めない献立の行・読めない除外があるとき・自動の更新を止めているときは比べられない（同期も止まる）。
+    // 古いとは断定せず、別に知らせる
+    stale:
+      (context.unreadable.plan ?? 0) > 0 || exclusions === null || autoHold !== null
+        ? false
+        : isAutoListStale(context, needs.needs),
+    heldDishes,
     exclusionsUnreadable: exclusions === null,
+    autoHold,
     uncomputed: needs.uncomputed.map((dish) => ({
       entryId: dish.entryId,
       date: dish.date,

@@ -457,8 +457,9 @@ function addUndetermined(draft: RuleDraft, exclusion: FoodExclusion, label: stri
  * 素の食材（由来が無く、成分が定まっている）は全てのアレルゲンへ広げる（卵 → マヨネーズ）。
  * 加工品（由来がある・商品で原材料が変わる）は広げず、その食材と派生品だけに留める
  * （どの成分が原因かを推測しない）。辞書の `allergySpread` が明示されていれば、それに従う。
+ * 広げない品目は、設定画面で「品目として登録する候補」として示す（`exclusion-lexicon.ts`。黙って広げない）。
  */
-function allergySpreadOf(def: IngredientDef): readonly AllergenId[] {
+export function allergySpreadOf(def: IngredientDef): readonly AllergenId[] {
   if (def.allergySpread !== undefined) return def.allergySpread
   const isPlainRoot = (def.derivedFrom ?? []).length === 0 && def.allergenInfo === "known"
   return isPlainRoot ? def.allergens : []
@@ -561,6 +562,11 @@ export function buildExclusionSet(
     titleNeedles: buildTitleNeedles(draft, view),
     holdsAutoConfirm: draft.undetermined.some((item) => item.reason === "allergy"),
   }
+}
+
+/** 献立の確定と買い物の自動の更新を止めている、判定できないアレルギーの登録の名前（重ねない。登録の順）。 */
+export function undeterminedAllergyLabels(set: Pick<ExclusionSet, "undetermined">): string[] {
+  return [...new Set(set.undetermined.filter((item) => item.reason === "allergy").map((item) => item.label))]
 }
 
 /** 判定の対象にする料理の最小形（カタログのレシピ・手動料理の両方をここへ寄せる）。 */
