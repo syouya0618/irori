@@ -201,14 +201,16 @@ color-mix を落として全開の primary を出す（2026-10-24 に build 後 
 ## コンポーネントパターン
 
 ### BottomNav
-- 3タブ: 育児 / 予定 / 設定（`src/components/common/bottom-nav.tsx`）
+- 4タブ: 育児 / 予定 / 家事 / 設定（`src/components/common/bottom-nav.tsx`）。家事（`/chores`）の下に
+  ごみ・掃除・ごはんを置く。**5 本目は足さぬ**: アイコン裏の帯が 64px 固定ゆえ、320px 幅では 4 本で
+  1 本 80px（余り 16px）、5 本で余りが無くなる。入口を増やす時は既存タブの下位へ置く
 - glass-nav エフェクト。高さ 64px（`h-(--bottom-nav-h)`）+ `safe-bottom`
 - Lucide アイコン（24px）。タブ名は `text-xs`（従来値。14px 規約との扱いは人間判断待ち:
   `docs/plans/2026-07-18-babycare-ux.md` §9 #6）
 - アクティブ: `aria-current="page"` + primary カラー + 太線（strokeWidth 2.5）+ 太字 + アイコン裏の帯 `bg-primary/15`。
   色を抜いても太さの差で分かる。下位ページ（`/baby/search` 等）でも親タブが現在地
 - 非アクティブ: muted-foreground（hover で foreground）
-- タブ全体が押下領域（64px × 画面幅の 1/3）。キーボードは `focus-visible` の 2px 輪郭
+- タブ全体が押下領域（64px × 画面幅の 1/4。320px 幅でも 80px）。キーボードは `focus-visible` の 2px 輪郭
   （`outline-none` を同居させない — Tailwind v4 では輪郭が none に解決する）
 
 ### 状態表現
@@ -237,6 +239,32 @@ color-mix を落として全開の primary を出す（2026-10-24 に build 後 
 - 「保存を確認中」の授乳はダッシュボードのチップ（琥珀）、クイック記録・記録シートは「保存を確認中の記録」の一覧に出る
   （`PendingSavesNotice`）。これは**送信キューではない**: 自動で行うのは照合の読みだけで、送り直しは利用者の操作だけ
 - 例外（fetch の reject）を「サーバに届かなかった」と言わぬ（保存の後で応答だけが失われた形と区別できぬ）
+- 家事（ごみ・掃除・ごはん）の保存は `useChoreSave` + `PendingChoreNotice`（`src/components/chores/shared/`）で同じ契約を使う。
+  結果不明の控えは世帯スコープの端末保存 `irori:chore-request:v1:<user>:<household>:<kind>:<操作ID>`
+  （`src/lib/domain/chore-pending.ts`）。控えが在る間は新しい操作を受けず、「同じ操作で確認」で同じ操作 ID・同じ内容を
+  送り直す。破棄を出すのは、再送が拒否された控えと読めぬ控えだけ（2 段の確認）。交代時は `CacheUserGuard` が消し、
+  更新・ログアウトの確認（`local-work.ts`）が件数を数える
+- 家事の画面の共有部品: `ChoresHeader`（戻る + h1）/ `CheckButton`（`role="checkbox"`・要素自体が 44px）/
+  `SegmentLinks`（下位 route の切替・`aria-current`）/ `EmptyState` / `SectionError`（「ないとは限りません」）/
+  `RefreshOnVisible`（他端末の変更の反映タイミングを文で示す。Realtime には載せておらぬ）
+
+### 家事ハブと、ごみの日の見分け（2026-11）
+
+- **家事ハブ（`/chores`）の入口カード**（`ChoresHubCard`）: glass カード全体が 1 つのリンク（`min-h-11`）。アイコン（丸の地 `bg-primary/10`）+
+  名称 + 一行の説明 + 「今日の要約」。カードの中にボタン・リンクを入れ子にせぬ（要約は文と装飾だけ）
+- **要約は枠ごとに独立**（`src/lib/domain/chores-hub.ts` / `src/lib/supabase/chores-hub-query.ts`）: 読めなんだ枠だけ
+  `AlertCircle` + 「〜を読み込めませんでした。」（`text-destructive`。色だけでなくアイコンと文で示す）。ほかの枠と入口はそのまま出す。
+  失敗を「ありません」「0 件」「未定」と言い換えぬ。読めた分しか数えられぬ時は「表示できない◯◯が n 件あります」を添える。
+  取り直しはカードの外の「今すぐ更新」（`RefreshOnVisible`）
+- **ごみの日は アイコン + 名称 で見分ける。色は補助**（`src/components/chores/garbage/garbage-kind-icon.tsx`・見た目の対応は
+  `src/lib/domain/garbage.ts` の `GARBAGE_KIND_PRESETS`）。種別ごとの色は既存の記録種別と同じ流儀（`bg-*-100 dark:bg-*-900/40` +
+  `text-*-700 dark:text-*-300` の明暗の対）。プリセットに無い名称（自由入力）は汎用のアイコンと灰へ退化する
+  - 月のマス: `GarbageCellMark`（10px のアイコン + 3 文字以内の短い名称 + 「+n」）。印は `aria-hidden` で、正確な名称はマスの
+    `aria-label`（`garbageAriaLabel` の「ごみ（燃えるごみ、古紙）」）が言う。通常の予定の印（丸・帯）とは別の属性（`data-garbage-mark`）
+  - 一覧・カード: `GarbageKindLabel`（「ごみ・燃えるごみ」。文字ゆえ行のアクセシブル名にそのまま入る）
+  - ごみの画面: `GarbageKindAvatar`（`size-9` の丸の地にアイコン。装飾）+ 名称の文字
+  - 予定の削除には `Trash2`、ごみの種別の汎用には `Trash` を使い、同じシートの中で紛れさせぬ
+- 分類を読めなんだ時は予定の表示を倒さず、分類を「不明」として扱う（未分類と偽らぬ）
 
 ### 端末下書き（`src/lib/domain/draft-storage.ts`）
 

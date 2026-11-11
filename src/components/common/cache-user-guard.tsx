@@ -2,6 +2,7 @@
 import { purgeOtherRecordRequests } from "@/lib/domain/record-requests"
 
 import { purgeOtherSleepRequests } from "@/lib/domain/sleep-pending"
+import { clearChorePendingForOtherOwner } from "@/lib/domain/chore-pending"
 import { useEffect } from "react"
 import {
   purgeHouseholdCaches,
@@ -65,6 +66,8 @@ export function CacheUserGuard({ userId, householdId }: { userId: string; househ
     purgeCalendarPendingCreatesNotOwnedBy(owner)
     purgeOwnerScopedKeys([HOME_FOLD_KEY_PREFIX, HANDOFF_KEY_PREFIX, HANDOFF_EVENTS_KEY_PREFIX], owner)
     purgeOtherSleepRequests(owner)
+    // 家事（ごみ・掃除・ごはん）の結果不明の控え。前の利用者・前の世帯の操作を今の持ち主が再送せぬよう消す
+    clearChorePendingForOtherOwner(owner)
     void purgeOtherRecordRequests(owner)
     purgeChildTimers(owner)
     const timer = readPersistedTimer()

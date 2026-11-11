@@ -1,14 +1,17 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
-import { CalendarDays, CloudOff, RotateCw, TriangleAlert } from "lucide-react"
+import { CalendarDays, CircleHelp, CloudOff, RotateCw, TriangleAlert } from "lucide-react"
 
 import { agendaTimeDisplay } from "@/components/calendar/calendar-agenda"
 import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
 import { HomeFoldToggle, HomeFoldedRow } from "@/components/baby/baby-collapsible-section"
-import { CALENDAR_EVENT_COLUMNS } from "@/lib/domain/calendar-event-columns"
+import { CALENDAR_EVENT_COLUMNS_WITH_KEYS } from "@/lib/domain/calendar-event-columns"
 import { eventsForDate } from "@/lib/domain/calendar-grid"
+import { attachEventPurposes, garbageOf, type EventPurposeLoad } from "@/lib/domain/garbage"
+import { fetchEventPurposeLoad } from "@/lib/supabase/event-purpose-query"
+import { GarbageKindLabel } from "@/components/chores/garbage/garbage-kind-icon"
 import { FRESHNESS_RETRY_LABEL } from "@/lib/domain/freshness"
 import {
   eventSeenMark,
@@ -25,8 +28,17 @@ import { formatTimeJst, shiftYmd, todayJstString } from "@/lib/utils/date-jst"
 /** 予定の取り直しの期限（過ぎた応答は待たず、最新を確認できぬとして扱う） */
 export const UPCOMING_FETCH_TIMEOUT_MS = 8_000
 
+/** 分類を使わぬ呼び出し元（省略時）は「分類なし」として描く（従来どおり）。 */
+const NO_PURPOSES: EventPurposeLoad = { status: "ok", rows: [] }
+
 interface UpcomingEventsCardProps {
   initialEvents: CalendarEventRecord[]
+  /**
+   * サーバで読んだ予定の用途（ごみの日）の分類（家事機能 A）。`{ status: "failed" }` は読めなんだ時 —
+   * 予定はそのまま描き、ごみの印は出さぬ（読めぬ分類で「ごみ」とも「通常」とも言い切らぬ）。
+   * **マウント時の値だけを使う**（以後は取り直しで更新する）。
+   */
+  initialPurposes?: EventPurposeLoad
   householdId: string
   /** サーバ描画時点の JST 今日(YYYY-MM-DD)。refetch 時はクライアントで再計算する。 */
   initialToday: string
@@ -73,6 +85,7 @@ function bucketTodayTomorrow(
 
 export function UpcomingEventsCard({
   initialEvents,
+  initialPurposes = NO_PURPOSES,
   householdId,
   initialToday,
   refetchOnMount = false,
@@ -81,7 +94,17 @@ export function UpcomingEventsCard({
   folded = false,
   onFoldChange,
 }: UpcomingEventsCardProps) {
-  const [events, setEvents] = useState(initialEvents)
+  // 取得した行そのもの。画面へ出すのは下の `events`（用途つき）
+  const [rawEvents, setEvents] = useState(initialEvents)
+  // 用途（ごみの日）の分類。取り直しに失敗した時は、前に読めた分類を保つ（予定の表示は倒さぬ）
+  const [purposeLoad, setPurposeLoad] = useState<EventPurposeLoad>(initialPurposes)
+  const events = useMemo(
+    () =>
+      purposeLoad.status === "ok" && purposeLoad.rows.length === 0
+        ? rawEvents
+        : (attachEventPurposes(rawEvents, purposeLoad) as CalendarEventRecord[]),
+    [rawEvents, purposeLoad],
+  )
   const [today, setToday] = useState(initialToday)
   // 取得の状態（C1 鮮度）: 最後に成功した時刻と、直近の取り直しが失敗したか
   const [failed, setFailed] = useState(initialLoadFailed)
@@ -153,12 +176,19 @@ export function UpcomingEventsCard({
     const nextTomorrow = shiftYmd(nextToday, 1)
     try {
       const supabase = createClient()
+      // 用途（ごみの日）の分類を並べて取り直す。予定の取得を待たせぬ別の約束で、throw せぬ
+      // （失敗は failed で返る）。読めた時だけ差し替え、読めなんだ時は前の分類を保つ
+      void fetchEventPurposeLoad(supabase, householdId, controller.signal).then((load) => {
+        if (signal?.aborted || generation !== generationRef.current) return
+        if (load.status === "ok") setPurposeLoad(load)
+      })
       // destructure と同じ一本の鎖に保つ（scripts/check-supabase-error-destructure.py は
       // `.select(` から上の destructure を辿る。変数に組み立ててから別の文で受けると
       // 走査から外れる）。
       const { data, error } = await supabase
         .from("calendar_events")
-        .select(CALENDAR_EVENT_COLUMNS)
+        // 用途を引く鍵つき（足したのは既存の列だけ。calendar-event-columns.ts）
+        .select(CALENDAR_EVENT_COLUMNS_WITH_KEYS)
         .eq("household_id", householdId)
         .gte("end_date", nextToday) // 重なり判定: end_date >= 今日
         .lte("start_date", nextTomorrow) //          AND start_date <= 明日
@@ -318,6 +348,8 @@ export function UpcomingEventsCard({
                 // 時刻語彙は CalendarAgenda(CAL-2) と同一関数に委ねる（二重実装で
                 // 「→」表記が drift するのを防ぐ）。バケットの日付視点で評価する。
                 const time = agendaTimeDisplay(e, b.date)
+                // 用途（ごみの日）。アイコン + 文字で言う（色は補助）。通常の予定の行は従来のまま
+                const garbage = garbageOf(e)
                 return (
                   <li key={e.id} className="flex items-center gap-3">
                     <span className="flex w-14 shrink-0 flex-col text-xs tabular-nums text-muted-foreground">
@@ -329,6 +361,9 @@ export function UpcomingEventsCard({
                       <span className="min-w-0 max-w-full truncate text-sm">
                         {e.title}
                       </span>
+                      {garbage !== null && (
+                        <GarbageKindLabel label={garbage.label} className="max-w-full text-xs" />
+                      )}
                       {markFor(e) && (
                         // いつ・誰が作った/直したかは言わぬ。分かるのは「この端末で見たか」と「見た後に版が
                         // 進んだか」だけ（id と版の記録）
@@ -357,6 +392,30 @@ export function UpcomingEventsCard({
             onClick={retry}
             disabled={retrying}
             aria-label={`予定を${FRESHNESS_RETRY_LABEL}`}
+            className="touch-target shrink-0 cursor-pointer rounded-lg px-2 font-medium text-primary transition-colors duration-200 hover:bg-primary/10 disabled:opacity-50"
+          >
+            {FRESHNESS_RETRY_LABEL}
+          </button>
+        </div>
+      )}
+      {/* 用途（ごみの日）の分類を一度も読めておらぬ: 予定は描いておるが、ごみの印を出せておらぬ。
+          「印が無い = ごみの日ではない」と読ませぬよう、文で言う（カレンダーの帯と同じ扱い）。
+          取り直しで読めれば消える */}
+      {purposeLoad.status === "failed" && (
+        <div
+          role="status"
+          data-testid="upcoming-purpose-unknown"
+          className="flex items-center gap-2 border-t border-border/40 px-4 py-2 text-xs text-muted-foreground"
+        >
+          <CircleHelp size={14} className="shrink-0" aria-hidden="true" />
+          <span className="flex-1">
+            ごみの日の分類を読み込めていません（印のない予定が、ごみの日ではないとは限りません）
+          </span>
+          <button
+            type="button"
+            onClick={retry}
+            disabled={retrying}
+            aria-label={`ごみの日の分類を${FRESHNESS_RETRY_LABEL}`}
             className="touch-target shrink-0 cursor-pointer rounded-lg px-2 font-medium text-primary transition-colors duration-200 hover:bg-primary/10 disabled:opacity-50"
           >
             {FRESHNESS_RETRY_LABEL}

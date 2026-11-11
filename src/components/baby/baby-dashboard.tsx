@@ -59,6 +59,7 @@ import {
 } from "@/lib/domain/handoff"
 import { UpcomingEventsCard } from "@/components/calendar/upcoming-events-card"
 import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
+import type { EventPurposeLoad } from "@/lib/domain/garbage"
 import { HomeTools,useHomeFocus } from "./home-tools"
 import { homeDetailOrder } from "@/lib/domain/home-priority"
 import { ageMonthsAt } from "@/lib/domain/child-age"
@@ -248,6 +249,11 @@ interface BabyDashboardProps {
    */
   initialUpcomingEvents?: CalendarEventRecord[]
   /**
+   * 上の予定の用途（ごみの日）の分類（家事機能 A）。予定カードへそのまま渡す。
+   * `{ status: "failed" }` は読めなんだ時（カードは予定を描き、分類は不明として扱う）。
+   */
+  initialUpcomingPurposes?: EventPurposeLoad
+  /**
    * 世帯員（id と表示名）。タイムラインの各行に記録者を添える（機能 A）。二人以上の
    * 世帯でだけ出す。省略・空なら出さぬ（取得失敗でも画面は成立する）。
    */
@@ -284,6 +290,7 @@ export function BabyDashboard({
   feedingIntervalMin,
   initialBottleDefault,
   initialUpcomingEvents = [],
+  initialUpcomingPurposes,
   members = [],
   initialLoadErrors = {},
 }: BabyDashboardProps) {
@@ -1582,6 +1589,8 @@ export function BabyDashboard({
         <UpcomingEventsCard
           key={today}
           initialEvents={today === initialDate ? initialUpcomingEvents : []}
+          // 用途（ごみの日）の分類は日付の窓を持たぬ（世帯ぶん）ゆえ、日を跨いだ後も使える
+          initialPurposes={initialUpcomingPurposes}
           householdId={householdId}
           initialToday={today}
           refetchOnMount={today !== initialDate}

@@ -1,7 +1,7 @@
 /**
  * BottomNav の契約。
  *
- * - 3 タブが link として在り、タブ名が accessible name（アイコンは装飾）
+ * - 4 タブ（育児 / 予定 / 家事 / 設定）が link として在り、タブ名が accessible name（アイコンは装飾）
  * - 現在地は `aria-current="page"` で示し、下位ページ（/baby/search 等）でも親タブが現在地
  * - 現在地の印は**色だけに頼らぬ**（アイコン裏の帯 `bg-primary/12`）。夜間の一瞥・色弱でも分かる
  * - 高さは globals.css の `--bottom-nav-h` を見る。(main) layout の `pb-nav` と同じ変数ゆえ、
@@ -28,21 +28,34 @@ function activeLinks() {
     .map((a) => a.textContent?.trim())
 }
 
-describe("BottomNav: 3 タブと accessible name", () => {
-  it("育児 / 予定 / 設定 の 3 本が link で、nav に名前がある", () => {
+describe("BottomNav: 4 タブと accessible name", () => {
+  it("育児 / 予定 / 家事 / 設定 の 4 本が link で、nav に名前がある", () => {
     pathname = "/baby"
     render(<BottomNav />)
     expect(screen.getByRole("navigation", { name: "メインナビゲーション" })).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "育児" })).toHaveAttribute("href", "/baby")
     expect(screen.getByRole("link", { name: "予定" })).toHaveAttribute("href", "/calendar")
+    expect(screen.getByRole("link", { name: "家事" })).toHaveAttribute("href", "/chores")
     expect(screen.getByRole("link", { name: "設定" })).toHaveAttribute("href", "/settings")
+  })
+
+  it("並びは 育児 / 予定 / 家事 / 設定（家事は予定と設定の間。既存の 3 本の順は保つ）", () => {
+    pathname = "/baby"
+    render(<BottomNav />)
+    expect(screen.getAllByRole("link").map((a) => a.textContent?.trim())).toEqual([
+      "育児",
+      "予定",
+      "家事",
+      "設定",
+    ])
   })
 
   it("アイコンは装飾（aria-hidden）で、名前に混ざらぬ", () => {
     pathname = "/baby"
     const { container } = render(<BottomNav />)
     const icons = container.querySelectorAll("svg")
-    expect(icons).toHaveLength(3)
+    // 3 → 4: 家事タブの追加（2026-11 家事機能）
+    expect(icons).toHaveLength(4)
     for (const icon of icons) expect(icon).toHaveAttribute("aria-hidden", "true")
   })
 })
@@ -79,6 +92,40 @@ describe("BottomNav: 現在地", () => {
     pathname = "/feedbackx"
     render(<BottomNav />)
     expect(activeLinks()).toEqual([])
+  })
+
+  it("家事（/chores とその下位のごみ・掃除・ごはん）では 家事 だけが現在地", () => {
+    for (const path of [
+      "/chores",
+      "/chores/garbage",
+      "/chores/cleaning",
+      "/chores/meals",
+      "/chores/meals/shopping",
+      "/chores/meals/recipes/abc",
+    ]) {
+      pathname = path
+      render(<BottomNav />)
+      expect(activeLinks(), path).toEqual(["家事"])
+      cleanup()
+    }
+  })
+
+  it("対照: /choresx は家事にせぬ。育児・予定・設定では家事は現在地でない", () => {
+    pathname = "/choresx"
+    render(<BottomNav />)
+    expect(activeLinks()).toEqual([])
+    cleanup()
+    for (const [path, tab] of [
+      ["/baby", "育児"],
+      ["/calendar", "予定"],
+      ["/settings", "設定"],
+    ] as const) {
+      pathname = path
+      render(<BottomNav />)
+      expect(activeLinks(), path).toEqual([tab])
+      expect(screen.getByRole("link", { name: "家事" })).not.toHaveAttribute("aria-current")
+      cleanup()
+    }
   })
 
   it("現在地は帯と太さでも示す（色だけに頼らぬ）。非現在地には帯が無い", () => {

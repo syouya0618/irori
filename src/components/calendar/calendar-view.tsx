@@ -72,6 +72,20 @@ import { CalendarPendingCreatesPanel, useCalendarPendingCreates } from "./calend
 import { useGoogleSyncPoll } from "./use-google-sync-poll"
 import { formatDayJa } from "./calendar-display"
 import { CalendarAddFab } from "./calendar-add-fab"
+// ── 家事機能 A: 予定の用途（ごみの日）──
+import { eventWhenLabel } from "./calendar-display"
+import { submitGarbageRequest } from "@/app/(main)/chores/garbage/actions"
+import {
+  garbageOf,
+  isGarbageRequest,
+  seriesKeyOf,
+  type EventPurposeLoad,
+  type GarbageRequest,
+} from "@/lib/domain/garbage"
+import { CHORE_SAVE_MESSAGES, createChoreEditSessions, useChoreSave } from "@/components/chores/shared/use-chore-save"
+import { PendingChoreNotice } from "@/components/chores/shared/pending-chore-notice"
+import { GarbagePurposeField } from "@/components/chores/garbage/garbage-purpose-field"
+import { GarbageKindIcon } from "@/components/chores/garbage/garbage-kind-icon"
 
 interface CalendarViewProps {
   initialEvents: CalendarEventRecord[]
@@ -106,6 +120,11 @@ interface CalendarViewProps {
    * この画面の間だけ握る（従来どおり）。
    */
   userId?: string
+  /**
+   * サーバで読んだ予定の用途（ごみの日）の分類（家事機能 A）。`{ status: "failed" }` は読めなんだ時
+   * （予定は描き、どれがごみの日かは「不明」として扱う。未分類と偽らぬ）。省略時は分類なし。
+   */
+  initialPurposes?: EventPurposeLoad
 }
 
 /** "YYYY-MM" を "YYYY年M月" へ */
@@ -176,6 +195,7 @@ export function CalendarView({
   defaultReminderMinutes = null,
   initialLoadFailed = false,
   userId,
+  initialPurposes,
 }: CalendarViewProps) {
   const draftOwner = useMemo<DraftOwner | null>(
     () => (userId ? { userId, householdId } : null),
@@ -186,6 +206,7 @@ export function CalendarView({
     householdId,
     initialView,
     initialLoadFailed,
+    initialPurposes,
   })
   const [pending, startTransition] = useTransition()
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -276,6 +297,12 @@ export function CalendarView({
   })
   // 連打で古い応答が新しい選択を踏み潰さぬようにする世代番号。
   const reminderSeq = useRef(0)
+  // 送信中の通知の書込の数と、その間に見送った読み直し（ごみの分類の応答による）。書込より先に返った
+  // 読みで、利用者が選んだ値を変更前の値へ戻さぬため（独立レビュー 7 の同じシートの場合）
+  const reminderWritesRef = useRef(0)
+  const rereadAfterWritesRef = useRef(false)
+  // 開いておる予定の通知の欄を読み直す（描画ごとに今の予定・シートの状態で作り直す）
+  const rereadReminderRef = useRef<() => void>(() => {})
 
   // V7: Google 同期の完了を拾う（Realtime を使わぬ唯一の削除反映経路）。
   useGoogleSyncPoll({
@@ -398,12 +425,36 @@ export function CalendarView({
     if (!target || target.id.startsWith(OPTIMISTIC_EVENT_ID_PREFIX)) return
 
     const seq = (reminderSeq.current += 1)
+    // 書込の送信中は、ごみの分類の応答による読み直しを見送らせる（下の `afterGarbageSaveRef`）
+    reminderWritesRef.current += 1
     startTransition(async () => {
+      try {
+        await writeReminder()
+      } finally {
+        reminderWritesRef.current -= 1
+        // 送信中に見送った読み直しは、全ての書込が終わった後に 1 回だけ行う（書込の後の真値を読む）
+        if (reminderWritesRef.current === 0 && rereadAfterWritesRef.current) {
+          rereadAfterWritesRef.current = false
+          rereadReminderRef.current()
+        }
+      }
+    })
+
+    async function writeReminder() {
+      if (!target) return
       try {
         const res = await setEventReminder({ eventId: target.id }, choice)
         if (res.error) {
           if (reminderSeq.current === seq) setReminder(previous) // 復元
           toast.error(res.error)
+        } else if (
+          target.purpose?.kind === "garbage" ||
+          (target.purpose?.kind === "normal" && target.purpose.seriesLabel !== null)
+        ) {
+          // ごみに分類した予定の通知の付け外しは、DB のトリガが分類の行（この回の明示 OFF の印・
+          // シリーズの通知の既定）を動かす。分類を読み直しておく — 古い版のまま次のごみの保存を
+          // 送ると、RPC が「別の端末が先に更新」と止める
+          void m.refetchCurrent()
         }
       } catch (err) {
         // 例外は結果不明（設定が届いた後に応答だけが失われたかもしれぬ）。「未保存」と決めつけて
@@ -423,7 +474,7 @@ export function CalendarView({
           logOfflineError("[calendar-view] fetchEventReminder(after set)", rereadErr)
         }
       }
-    })
+    }
   }
 
   /**
@@ -449,6 +500,75 @@ export function CalendarView({
       return false
     }
   }
+
+  // ── 家事機能 A: 予定の用途（ごみの日）の保存 ─────────────────────
+  // 予定の本体とは別の保存（通知の欄と同じ）。保存の手順・端末の控え・確かめ直しは家事機能の
+  // 共通 hook が持つ（同じ操作 ID・同じ内容でしか送り直さぬ）。確定したら一覧と分類を取り直し、
+  // 開いておる予定の通知の欄も読み直す（分類の保存は通知設定も書きうる）。
+  const [garbageSettled, setGarbageSettled] = useState(0)
+  const afterGarbageSaveRef = useRef<(rereadReminder: boolean) => void>(() => {})
+  // 予定の欄の分類フォームの編集セッション（R35）。欄のフォームを開くたびに番号を振り、応答の時に
+  // 「送ったフォームが今も開いておるか」を比べる（送った後に閉じた・別の予定で開いたフォームを畳まぬ）
+  const [garbageSessions] = useState(createChoreEditSessions)
+  const garbageSave = useChoreSave<GarbageRequest>({
+    owner: { userId: userId ?? "", householdId },
+    kind: "garbage",
+    run: submitGarbageRequest,
+    isPayload: isGarbageRequest,
+    // 取り直しはこの画面の hook が行う（router.refresh ではこの画面の一覧は更新されぬ）
+    refreshOnSettled: false,
+    sessions: garbageSessions,
+    onOutcome: (outcome) => {
+      if (outcome.kind === "unknown") return
+      const origin = outcome.origin
+      // 畳むのは、送ったフォームが今も開いておる時だけ
+      if (outcome.kind === "settled" && (origin?.current ?? true)) {
+        garbageSessions.close()
+        setGarbageSettled((n) => n + 1)
+      }
+      // 操作した場所が変わった（シートを閉じた・別の予定を開いた）後の拒否・衝突は、欄の中に出さず、
+      // どの操作かを添えて知らせる（保存できた分は一覧の取り直しが映す）
+      if (origin && !origin.inPlace) {
+        const which = `先に送ったごみの分類（${origin.label}）`
+        if (outcome.kind === "rejected") toast.error(`${which}は保存できませんでした。${outcome.error}`)
+        else if (outcome.status === "conflict") toast.error(`${which}: ${CHORE_SAVE_MESSAGES.conflict}`)
+      }
+      // 一覧と分類はいつでも取り直す。開いておる予定の通知の欄を読み直すのは、送ったフォームが今も
+      // 開いておる時（= その予定の保存の応答）だけ。別の予定のシートで通知を変えて送信中に、先の予定の
+      // 応答で読み直すと、読みが書込より先に返った時に変更前の値で止まる（独立レビュー 7）
+      afterGarbageSaveRef.current(origin?.current ?? true)
+    },
+  })
+  useEffect(() => {
+    rereadReminderRef.current = () => {
+      const target = editing
+      if (!sheetOpen || !target || target.id.startsWith(OPTIMISTIC_EVENT_ID_PREFIX)) return
+      const seq = (reminderSeq.current += 1)
+      setReminder({ status: "loading" })
+      void fetchEventReminder(target.id)
+        .then((res) => {
+          if (reminderSeq.current !== seq) return
+          // 判定不能を「なし」と偽らぬ
+          setReminder(res.error ? { status: "unsupported" } : reminderRowToState(res.row))
+        })
+        .catch((err) => {
+          if (reminderSeq.current !== seq) return
+          setReminder({ status: "unsupported" })
+          logOfflineError("[calendar-view] fetchEventReminder(after purpose save)", err)
+        })
+    }
+    afterGarbageSaveRef.current = (rereadReminder) => {
+      void m.refetchCurrent()
+      if (!rereadReminder) return
+      // 通知の書込が送信中なら、今は読み直さず、書込が終わってから 1 回だけ読み直す（書込より先に返った
+      // 読みで、選んだ値を変更前の値へ戻さぬ）
+      if (reminderWritesRef.current > 0) {
+        rereadAfterWritesRef.current = true
+        return
+      }
+      rereadReminderRef.current()
+    }
+  })
 
   /**
    * 保存に失敗した入力を握る（画面内 + 端末の下書き）。`baseVersion` は送った版（新規は null）。
@@ -1001,6 +1121,12 @@ export function CalendarView({
   const isSaving = (e: CalendarEventRecord) =>
     e.id.startsWith(OPTIMISTIC_EVENT_ID_PREFIX) || savingIds.has(e.id)
 
+  // シートの予定の、取り直した後の最新の行（`editing` は開いた時点の写し。分類を保存した後の
+  // 用途は一覧の取り直しで `m.events` に映る）
+  const editingLive = editing ? (m.events.find((e) => e.id === editing.id) ?? editing) : null
+  // 凡例の「ごみの日」は、表示中の範囲にごみの日が在る時だけ出す（無い世帯の画面は従来のまま）
+  const monthHasGarbage = m.events.some((e) => garbageOf(e) !== null)
+
   return (
     // pb-24: 一覧の最後の行が FAB（下端から nav + 1rem + 56px）に隠れぬ余白
     <div className="flex flex-col gap-4 px-4 pt-12 pb-24">
@@ -1072,7 +1198,42 @@ export function CalendarView({
           <span aria-hidden="true" className="size-1.5 rounded-full bg-muted-foreground/60" />
           時刻あり
         </span>
+        {monthHasGarbage && (
+          <span className="flex items-center gap-1.5" data-testid="legend-garbage">
+            <GarbageKindIcon label={null} size={12} className="text-muted-foreground" />
+            ごみの日（名称つき）
+          </span>
+        )}
       </p>
+
+      {/* 用途（ごみの日）の分類を読めておらぬ・古いかもしれぬ時。予定そのものは描いておる —
+          「印が無い = ごみの日ではない」と読ませぬよう、文で言う */}
+      {m.purposeState !== "ok" && (
+        <div
+          role="status"
+          className="flex items-center gap-2 rounded-xl bg-muted/60 px-3 py-2 text-xs text-muted-foreground"
+        >
+          <span className="flex-1">
+            {m.purposeState === "failed"
+              ? "ごみの日の分類を読み込めませんでした。予定は表示していますが、どれがごみの日かは表示できていません。"
+              : "ごみの日の分類が最新でない可能性があります。"}
+          </span>
+          <button
+            type="button"
+            onClick={() => void m.refetchCurrent()}
+            className="touch-target shrink-0 cursor-pointer rounded-lg px-2 font-medium text-primary transition-colors duration-200 hover:bg-primary/10"
+          >
+            読み直す
+          </button>
+        </div>
+      )}
+
+      {/* ごみの分類の保存で、結果を確かめられておらぬ操作（同じ内容で確かめ直す）。文言はシートを
+          閉じておる時の要対応のものだけここに出す（開いておる間はシートの中の欄が出す） */}
+      <PendingChoreNotice
+        save={garbageSave}
+        showMessage={!sheetOpen && garbageSave.messageTone === "alert"}
+      />
 
       {/* 予定の追加の確認（作成ごと。v9 / AC28）。件ごとに送り直す・確認をやめるを選ぶ */}
       <CalendarPendingCreatesPanel
@@ -1130,6 +1291,30 @@ export function CalendarView({
         onDeleteSeries={handleDeleteSeries}
         reminder={reminder}
         onReminderChange={handleReminderChange}
+        // 用途（ごみの日）。持ち主が分からぬ（端末の控えを残せぬ）・作成の応答前の行では出さぬ
+        purposeField={
+          userId && editingLive && !editingLive.id.startsWith(OPTIMISTIC_EVENT_ID_PREFIX) ? (
+            <GarbagePurposeField
+              // 予定ごとに作り直す（開いたフォーム・選択を別の予定へ持ち越さぬ）。シートの本文には
+              // 予定 id を key にした兄弟（下書きの書き手）が居るゆえ、接頭辞で分ける —
+              // 同じ key の兄弟が 2 つ在ると React は欄を二重に描く
+              key={`purpose:${editingLive.id}`}
+              target={{
+                id: editingLive.id,
+                title: editingLive.title,
+                whenLabel: eventWhenLabel(editingLive),
+                isSeries: seriesKeyOf(editingLive) !== null,
+                // 前日 20:00 を過ぎた回に「通知します」と言わぬための基準
+                startDate: editingLive.start_date,
+              }}
+              purpose={editingLive.purpose}
+              save={garbageSave}
+              settledCount={garbageSettled}
+              sessions={garbageSessions}
+              onReload={() => void m.refetchCurrent()}
+            />
+          ) : null
+        }
         initialDraft={sheetDraft}
         draftNotice={sheetDraftNotice}
         draftOwner={draftOwner}

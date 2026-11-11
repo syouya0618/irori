@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import Link from "next/link"
 import {
   AlertCircle,
@@ -156,6 +156,12 @@ interface Props {
   createGuard?: string[] | null
   /** 確認を経て別の予定として作成する（親が確認済みを記録する。続けてシートが保存し直す） */
   onCreateAsSeparate?: () => void
+  /**
+   * 「ごみの日」の欄（家事機能 A）。**既存の予定を開いた時だけ**通知の欄の下に出す（Google の詳細でも）。
+   * 予定の本体とは別の保存で、フォームの値・下書き・保存ボタンには関わらぬ。新規のシートでは出さぬ
+   * （まだ行が無い）。省略すれば何も出さぬ。
+   */
+  purposeField?: ReactNode
 }
 
 /** 下書きの由来。null = 打っただけ（未送信） */
@@ -449,6 +455,7 @@ export function CalendarEventFormSheet({
   onDiscardStaleDraft,
   createGuard = null,
   onCreateAsSeparate,
+  purposeField = null,
 }: Props) {
   // open/editing 変化でフォームを初期化(render-time conditional setState)。
   const [prevKey, setPrevKey] = useState<string | null>(null)
@@ -718,6 +725,8 @@ export function CalendarEventFormSheet({
             </div>
             {/* 本文は read-only でも通知だけは操作できる(B-2 の眼目)。 */}
             <div className="pt-1">{reminderField}</div>
+            {/* 用途（ごみの日）も、本文が read-only のまま付けられる（出どころと用途は別の軸） */}
+            {purposeField}
           </div>
         ) : (
           <div className="flex flex-col gap-5 overflow-y-auto px-4 pb-4">
@@ -951,6 +960,9 @@ export function CalendarEventFormSheet({
             )}
 
             {reminderField}
+
+            {/* 用途（ごみの日）。既存の予定だけ（新規はまだ行が無い） */}
+            {isEditing && purposeField}
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="cal-memo">メモ（任意）</Label>

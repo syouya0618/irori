@@ -68,6 +68,12 @@ import { toastOfflineError } from "@/lib/utils/offline-error"
 import { cn } from "@/lib/utils"
 import { FeedingReminderControl } from "./feeding-reminder-control"
 import type { NotificationHealthView } from "@/lib/domain/notification-health"
+// この端末の状態の判定は中立モジュールへ出してある（ごみの画面の通知の状態と共有。2026-11-11）
+import {
+  DEVICE_CHECK_TIMEOUT_MS,
+  thisDeviceStateOf,
+  type ThisDeviceState,
+} from "@/lib/domain/push-device-state"
 
 export interface PushDeviceView {
   id: string
@@ -108,36 +114,8 @@ interface NotificationCardProps {
   devicesUnknown?: boolean
 }
 
-/**
- * **この端末**の通知の状態。ブラウザの権限（許可）と購読（登録）は別物ゆえ分けて言う。
- * 実際に届いたか（配信）は端末一覧の「最終受信」が担う。
- */
-type ThisDeviceState =
-  | "checking" // 確認中
-  | "check-failed" // 確認が期限内に終わらなんだ（SW の準備が解決せぬ等）
-  | "unconfigured" // 管理者の設定（VAPID）が無い
-  | "unsupported" // この開き方では使えぬ（iOS の Safari タブ等）
-  | "denied" // 権限が拒否されておる
-  | "not-asked" // まだ許可しておらぬ
-  | "granted-unsubscribed" // 許可はあるが、このアプリへの登録が無い
-  | "subscribed" // 登録済み
-
-function thisDeviceStateOf(p: {
-  vapid: boolean
-  supported: boolean | null
-  denied: boolean
-  permission: NotificationPermission | null
-  subscribedHere: boolean
-  checkTimedOut: boolean
-}): ThisDeviceState {
-  if (!p.vapid) return "unconfigured"
-  if (p.supported === false) return "unsupported"
-  if (p.supported === null) return p.checkTimedOut ? "check-failed" : "checking"
-  if (p.denied || p.permission === "denied") return "denied"
-  if (p.subscribedHere) return "subscribed"
-  if (p.permission === "granted") return "granted-unsubscribed"
-  return "not-asked"
-}
+// **この端末**の通知の状態（`ThisDeviceState` / `thisDeviceStateOf`）は
+// `@/lib/domain/push-device-state` に在る（判定は移しただけで変えておらぬ）。
 
 const THIS_DEVICE_TEXT: Record<ThisDeviceState, { title: string; body: string }> = {
   checking: { title: "確認しています", body: "この端末の通知の状態を確認しています。" },
@@ -170,9 +148,6 @@ const THIS_DEVICE_TEXT: Record<ThisDeviceState, { title: string; body: string }>
     body: "届いているかは、下の端末一覧の「最終受信」で確かめられます。",
   },
 }
-
-/** この端末の確認（SW の準備待ち）の期限。過ぎたら「確認できなかった」へ倒す。 */
-const DEVICE_CHECK_TIMEOUT_MS = 10_000
 
 /** `navigator.serviceWorker.ready` を期限つきで待つ。期限切れは null（呼び出し側が文言を出す）。 */
 function readyWithin(ms: number): Promise<ServiceWorkerRegistration | null> {

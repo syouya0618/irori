@@ -14,7 +14,13 @@ import {
   gridRangeOf,
   type CalendarEventLite,
 } from "@/lib/domain/calendar-grid"
-import { CALENDAR_EVENT_COLUMNS } from "@/lib/domain/calendar-event-columns"
+import { CALENDAR_EVENT_COLUMNS_WITH_KEYS } from "@/lib/domain/calendar-event-columns"
+import {
+  attachEventPurposes,
+  type EventPurposeLoad,
+  type ResolvedEventPurpose,
+} from "@/lib/domain/garbage"
+import { fetchEventPurposeLoad } from "@/lib/supabase/event-purpose-query"
 import { useVisibilityRefetch } from "@/lib/hooks/use-visibility-refetch"
 import type { CalendarDateView } from "@/lib/domain/calendar-link"
 import { isValidYmd, todayJstString } from "@/lib/utils/date-jst"
@@ -40,7 +46,30 @@ export interface CalendarEventRecord extends CalendarEventLite {
    * 送り、別の端末が先に直した予定を巻き戻さぬ。作成応答の前の楽観行だけ null。
    */
   updated_at: string | null
+  /**
+   * 用途（ごみの日）を引くための鍵。`CALENDAR_EVENT_COLUMNS_WITH_KEYS` で取得した行だけが持つ
+   * （作成直後の楽観行は持たぬ）。画面はこれを直接読まず、下の `purpose` を読む。
+   */
+  event_uid?: string | null
+  google_calendar_id?: string | null
+  recurring_event_id?: string | null
+  /**
+   * 解決済みの用途（家事機能 A）。取得した行へ `attachEventPurposes` が載せる。
+   * 載っておらぬ行（楽観行・鍵を持たぬ古い呼び出し元）は通常の予定として描く。
+   * `kind: "unknown"` は分類を読めなんだ時 — 「通常」とも「ごみ」とも描かぬ。
+   */
+  purpose?: ResolvedEventPurpose
 }
+
+/**
+ * 用途（ごみの日）の分類の読め具合。
+ * - `ok`: 最新を読めた
+ * - `stale`: 取り直しに失敗した。前に読めた分類で描いておる（新しい分類は映っておらぬかもしれぬ）
+ * - `failed`: 一度も読めておらぬ。どの予定がごみの日かを描けぬ（予定そのものは描く）
+ */
+export type PurposeLoadState = "ok" | "stale" | "failed"
+
+const NO_PURPOSES: EventPurposeLoad = { status: "ok", rows: [] }
 
 // SELECT カラムは中立モジュール（@/lib/domain/calendar-event-columns）に置く。
 // "use client" のこのファイルから値を re-export すると Server Component 側で
@@ -64,6 +93,11 @@ interface UseMonthEventsArgs {
    * （`[]` を「予定はありません」と描かせぬ）。
    */
   initialLoadFailed?: boolean
+  /**
+   * サーバで読んだ用途（ごみの日）の分類。`{ status: "failed" }` は読めなんだ時
+   * （予定は描き、分類は不明として扱う）。省略時は「分類なし」（分類を使わぬ呼び出し元）。
+   */
+  initialPurposes?: EventPurposeLoad
 }
 
 /**
@@ -81,8 +115,24 @@ export function useMonthEvents({
   householdId,
   initialView,
   initialLoadFailed = false,
+  initialPurposes = NO_PURPOSES,
 }: UseMonthEventsArgs) {
-  const [events, setEvents] = useState<CalendarEventRecord[]>(initialEvents)
+  // 取得した行そのもの（用途を載せる前）。画面へ出すのは下の `events`（用途つき）
+  const [rawEvents, setEvents] = useState<CalendarEventRecord[]>(initialEvents)
+  // 用途（ごみの日）の分類。予定とは別に持ち、描く時に合成する — 予定の取得と分類の取得の
+  // どちらが先に返っても、楽観行を足しても、同じ規則で解決される
+  const [purposeLoad, setPurposeLoad] = useState<EventPurposeLoad>(initialPurposes)
+  const [purposeStale, setPurposeStale] = useState(false)
+  const events = useMemo(
+    () =>
+      // 分類が 1 件も無い世帯では行をそのまま返す（用途の載っておらぬ行 = 通常の予定）
+      purposeLoad.status === "ok" && purposeLoad.rows.length === 0
+        ? rawEvents
+        : (attachEventPurposes(rawEvents, purposeLoad) as CalendarEventRecord[]),
+    [rawEvents, purposeLoad],
+  )
+  const purposeState: PurposeLoadState =
+    purposeLoad.status === "failed" ? "failed" : purposeStale ? "stale" : "ok"
   const [loadState, setLoadState] = useState<MonthLoadState>(
     initialLoadFailed ? "error" : "idle",
   )
@@ -141,12 +191,24 @@ export function useMonthEvents({
       const timer = setTimeout(() => controller.abort(), MONTH_FETCH_TIMEOUT_MS)
       const supabase = createClient()
       const { gridStart, gridEnd } = gridRangeOf(targetMonthFirst)
+      // 用途（ごみの日）の分類を並べて取り直す。予定の取得を待たせぬよう別の約束として走らせ、
+      // 返った時点で合成する（`fetchEventPurposeLoad` は throw せぬ。失敗は failed で返る）。
+      // 失敗しても予定の表示は倒さず、前に読めた分類を保って「古いかもしれぬ」とだけ示す
+      void fetchEventPurposeLoad(supabase, householdId, controller.signal).then((load) => {
+        if (generation !== fetchGenerationRef.current || unmountedRef.current) return
+        if (load.status === "ok") {
+          setPurposeLoad(load)
+          setPurposeStale(false)
+        } else {
+          setPurposeStale(true)
+        }
+      })
       let data: unknown[] | null = null
       let failed = false
       try {
         const res = await supabase
           .from("calendar_events")
-          .select(CALENDAR_EVENT_COLUMNS)
+          .select(CALENDAR_EVENT_COLUMNS_WITH_KEYS)
           .eq("household_id", householdId)
           .lte("start_date", gridEnd) // 重なり判定: start_date <= gridEnd
           .gte("end_date", gridStart) //           AND end_date >= gridStart
@@ -325,6 +387,7 @@ export function useMonthEvents({
     goToDate,
     today,
     loadState,
+    purposeState,
     retry,
     refetch,
     refetchCurrent,

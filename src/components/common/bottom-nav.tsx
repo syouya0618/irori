@@ -2,16 +2,21 @@
 
 import Link, { useLinkStatus } from "next/link"
 import { usePathname } from "next/navigation"
-import { Baby, CalendarDays, Settings, Loader2 } from "lucide-react"
+import { Baby, CalendarDays, ListChecks, Settings, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 /**
  * `also` はそのタブの下位として扱う別の path。要望（/feedback）は設定の「使い方と要望」から
  * 入る画面ゆえ、開いている間も「設定」を現在地として示す（どのタブも現在地でない画面を作らぬ）。
+ *
+ * 家事（ごみ・掃除・ごはん）は `/chores` の下位 route に置くゆえ `also` は空でよい。
+ * **タブは 4 本まで**: アイコン裏の帯が 64px 固定で、320px 幅では 4 本で 1 本 80px（余り 16px）。
+ * 5 本にすると余りが無くなり、6 本でははみ出す。入口を足すなら既存タブの下位へ置くこと。
  */
 const tabs = [
   { href: "/baby", label: "育児", icon: Baby, also: ["/children", "/news"] },
   { href: "/calendar", label: "予定", icon: CalendarDays, also: [] },
+  { href: "/chores", label: "家事", icon: ListChecks, also: [] },
   { href: "/settings", label: "設定", icon: Settings, also: ["/feedback"] },
 ] as const
 
@@ -20,14 +25,14 @@ function isUnder(pathname: string, base: string): boolean {
 }
 
 /**
- * ボトムナビ（3 タブ）。
+ * ボトムナビ（4 タブ）。
  *
  * - 高さは `--bottom-nav-h`（globals.css）に固定し、(main) layout の `pb-nav` と同じ値を見る。
  *   以前は中身の高さ任せ（約 55px）で、layout 側の `pb-20` と独立に決まっておった
  * - 現在地は色（primary）・線と文字の太さ・アイコン裏の帯の 3 つで示す。帯は薄い塗り
  *   （輝度差は小さい）ゆえ、色を抜いた時に残る手掛かりは太さの差じゃ
  * - アイコンは DESIGN_SYSTEM.md「Lucide アイコン（24px）」に合わせる（以前は 20px）
- * - タブ全体が押下領域（高さ 64px・幅は 1/3）。44px 契約は余裕で満たす
+ * - タブ全体が押下領域（高さ 64px・幅は 1/4。320px 幅でも 80px）。44px 契約は余裕で満たす
  * - キーボードの輪郭: `outline-none` を**付けぬ**こと。Tailwind v4 の outline-none は
  *   `--tw-outline-style: none` を立て、`focus-visible:outline-2` はその変数を読むゆえ、
  *   同居させると focus 中も輪郭が none に解決する（独立レビューで見つかった退行）

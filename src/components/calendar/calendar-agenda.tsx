@@ -14,6 +14,8 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatTimeJst, toJstDateString } from "@/lib/utils/date-jst"
+import { garbageOf } from "@/lib/domain/garbage"
+import { GarbageKindLabel } from "@/components/chores/garbage/garbage-kind-icon"
 import type { CalendarEventRecord, MonthLoadState } from "./use-month-events"
 import { formatShortDay, multiDayProgress } from "./calendar-display"
 
@@ -195,6 +197,9 @@ export function CalendarAgenda({
             const time = agendaTimeDisplay(e, selectedDate)
             const meta = eventMeta(e, selectedDate)
             const saving = isSaving?.(e) ?? false
+            // 用途（ごみの日）。出どころ（irori / Google）とは別の軸ゆえ、帯の色は変えず補足の行に
+            // アイコン + 文字で足す（行のアクセシブル名に「ごみ・燃えるごみ」が入る）
+            const garbage = garbageOf(e)
             return (
               <li key={e.id}>
                 <button
@@ -220,7 +225,7 @@ export function CalendarAgenda({
                   </span>
                   <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
                     <span className="truncate text-sm font-medium">{e.title}</span>
-                    {(meta.length > 0 || isGoogle || saving) && (
+                    {(meta.length > 0 || isGoogle || saving || garbage !== null) && (
                       <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                         {saving && (
                           <span className="flex items-center gap-1 text-primary">
@@ -228,6 +233,7 @@ export function CalendarAgenda({
                             保存中
                           </span>
                         )}
+                        {garbage !== null && <GarbageKindLabel label={garbage.label} />}
                         {meta.map((m) => (
                           <span key={m} className="flex items-center gap-1">
                             {m === "繰り返し" && <Repeat size={12} aria-hidden="true" />}

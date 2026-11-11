@@ -71,6 +71,13 @@ jobs:
           PGPASSWORD: postgres # Supabase local fixture password; never a hosted credential.
         run: python3 scripts/test-feeding-reminder-concurrency.py --port 54322
 
+      - name: Test chores RPC concurrency on isolated local DB
+        # 掃除の同時完了・取り消し中の完了・古い版、買い物の購入と「作った」の取り消しの競合を、
+        # 利用者の JWT（authenticated）の 2 接続で実際にロック待ちさせて確かめる（PGlite は単一接続で見られぬ）。
+        env:
+          PGPASSWORD: postgres # Supabase local fixture password; never a hosted credential.
+        run: python3 scripts/test-chores-concurrency.py --port 54322
+
       - name: Generate .env.e2e
         run: ./scripts/e2e-env.sh
 

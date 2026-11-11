@@ -12,6 +12,12 @@ import type { Database } from "@/lib/types/database"
  *    `google_calendar_subscriptions.sync_token` の読み書き）。
  * 4. **地域ニュースの明示的更新Action**（認証・承認・世帯所属と保存済み地域を確認後、固定公開RSSの共有キャッシュのみ）。
  * 3. **cron ハンドラ**（CRON_SECRET を検証した**後**）。
+ * 5. **献立 AI の無料枠停止の記録**（`mark_dinner_ai_exhausted` RPC の 1 呼出しだけ）。
+ *    provider が「日次無料枠の枯渇（3036）」を返したとき、次のリセットまで**全世帯**の
+ *    呼出しを止める印を書く。authenticated へ開くと 1 利用者が全世帯の AI を止められるため
+ *    service role 専用。`getAuthContext()` を通過した Server Action の中から、枯渇を
+ *    受けたときにだけ動的 import で生成する。テーブルの読み書きには使わぬ
+ *    （世帯の回数計上は authenticated の RPC が `auth.uid()` から世帯を導出する）。
  *
  * ## 呼んではならぬ場所
  *
