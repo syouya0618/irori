@@ -28,6 +28,10 @@ jobs:
     #   既定の 106: anon・authenticated は backend が signal 11 で落ち、hint_roles に無いロールは 42501（対照）
     #   固定の 156: hint_roles の 3 ロールも対照のロールも 42501 で、同じ接続も server も生き続ける
     # を終了コードで断ずる。どちらかの期待が外れれば赤になる（continue-on-error は置かぬ）。
+    # 準備（ロールと関数を作り EXECUTE を外す）は呼出しと別の接続で済ませ、その間の crash は「準備の失敗」として
+    # 赤にする。期待の crash は、呼んだ接続の PID と呼んだ文を server log で照合して数える。106 の supautils は
+    # `GRANT <role> TO CURRENT_USER` でも落ちる別の不具合を持つ（supabase/supautils#205・#207）ゆえ、準備は
+    # ロール名（postgres）を明示する。
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -112,7 +116,8 @@ jobs:
 
       - name: Refuse EXECUTE for hint_roles without crashing the stack DB
         # 本物の stack で、単純な関数への EXECUTE 拒否が 42501 になり接続も server も生き続けることを
-        # pgTAP の前に確かめる（1 つの transaction の中で作って ROLLBACK。関数もロールも残さぬ）。
+        # pgTAP の前に確かめる（ロールごとに 1 つの transaction の中で作って呼び、ROLLBACK する。何も commit
+        # せぬゆえ、DB が落ちても何も残らぬ。通った接続のたびに、関数もロールも残っておらぬことも断ずる）。
         run: ./scripts/test-db-execute-denial.sh --container supabase_db_irori --expect clean
 
       - name: Run pgTAP database tests (RLS/CHECK 回帰)
