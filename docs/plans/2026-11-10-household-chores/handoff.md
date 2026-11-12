@@ -1,11 +1,24 @@
 # 家事（ごみ・掃除・ごはん）引き継ぎ手順
 
-最初の実装は人が commit・push 済み（`51bd55bc9822eb000ab647c3bf90e172193440d6`、Draft PR #253）。その後の追随の修正（CI 用 DB のクラッシュ・判定できないアレルギーの保留・品目の候補・AI の記述）は worktree に未 commit で在る。commit 以降の操作は、実行環境（git guard・sandbox・資格情報）がエージェントからの実行を拒むため、人が行う。ここはその順序と、各段で止める条件だけを書く。状態の正本は `requirements-ledger.md`、経過は `progress.md`。
+人が commit・push 済みのもの（Draft PR #253）:
+
+- 最初の実装: `51bd55bc9822eb000ab647c3bf90e172193440d6`
+- 1 回目の追随: `35d55586`（CI 用 DB の固定）と `fba35d38`（判定できないアレルギーの保留・品目の候補・AI の記述）
+
+`fba35d38` の CI を受けた 2 回目の追随は、worktree に未 commit で在る:
+
+- `db-image-probe` の準備の不具合
+- Playwright の 1 件の断言
+- 文書
+
+commit 以降の操作は、実行環境（git guard・sandbox・資格情報）がエージェントからの実行を拒むため、人が行う。ここはその順序と、各段で止める条件だけを書く。状態の正本は `requirements-ledger.md`、経過は `progress.md`。
 
 - worktree: repo の根からの `.claude/worktrees/kaji-gomi-souji-gohan-20261110`（絶対パスは引き継ぎの報告に書く。下の手順では `W` に入れて使う）
 - branch: `worktree-kaji-gomi-souji-gohan-20261110`（基点 `521f2fc2` = 着手時の `origin/main` の追跡 ref。remote の最新は未照会）
 - PR: https://github.com/syouya0618/irori/pull/253（作り直さない。修正は追随の commit で足す）
-- commit message: `commit-message-ci-db.txt`（CI 用 DB の固定）と `commit-message.txt`（残りの追随）。同じディレクトリ
+- commit message（同じディレクトリ）:
+  - 2 回目の追随: `commit-message-probe.txt`（probe）、`commit-message-e2e-c24.txt`（Playwright の断言）、`commit-message-docs.txt`（文書）
+  - `commit-message-ci-db.txt` と `commit-message.txt` は 1 回目の追随（`35d55586`・`fba35d38`）で使用済み
 - PR 本文: `pr-body.md`（同じディレクトリ。PR の本文を差し替える時に使う）
 - 追加する migration（加算のみ・この順）:
   1. `20261111100001_event_purposes.sql` — 表 `event_purposes`、RPC、既存表 `calendar_events` / `event_reminders` へのトリガ 3 本
@@ -18,31 +31,60 @@
 
 | 検証 | 実行できなかった理由 | 代わりに行ったこと |
 |---|---|---|
-| `supabase test db`（本物の Supabase local） | Docker 不可 | プロセス内 PGlite（PG 17.5）＋ Supabase スタブ＋本物の pgTAP で migration 58 本と pgTAP 39 ファイル 1944 件を実行し全緑。**51bd55bc の CI では、CLI 既定の DB イメージ（17.6.1.106・supautils 3.2.0）の不具合で 166 行目に SIGSEGV**。追随の commit で 17.6.1.156 へ固定した（未 push） |
-| DB イメージの最小再現（`scripts/test-db-execute-denial.sh`・`db-image-probe` ジョブ） | Docker 不可 | `docker` を模した shim で判定の流れを 10 通り、PGlite で SQL を確認。実の image では未実行 |
-| 本物の Auth → PostgREST → RPC（`e2e/chores-rpc-auth.spec.ts`） | ローカルポート bind 不可 | spec は書いたが**一度も実行していない**。権限の実効は PGlite の `chores_rpc_security.sql`（175 件）で確認 |
-| 2 接続の並行試験（`scripts/test-chores-concurrency.py`） | Postgres を起動できない | 同じ RPC 呼出しを PGlite で順に流し、引数の形と期待する状態を確認（30 件）。**真の並行性は未検証** |
-| Playwright（`e2e/chores-*.spec.ts`、`touch-targets`、`a11y-axe` の追加分） | ローカルポート bind 不可 | **一度も実行していない**。初回の CI で文言・セレクタが落ちる可能性がある |
+| `supabase test db`（本物の Supabase local） | Docker 不可 | 手元は PGlite（下の注 1）。CI の結果は下の注 2 |
+| DB イメージの最小再現（`scripts/test-db-execute-denial.sh`・`db-image-probe` ジョブ） | Docker 不可 | 手元は shim・mutation・PGlite（下の注 3）。CI の結果は下の注 4 |
+| 本物の Auth → PostgREST → RPC（`e2e/chores-rpc-auth.spec.ts`） | ローカルポート bind 不可 | 手元では未実行。`fba35d38` の CI の Playwright で走った。注釈の集計から成功と推すが、spec ごとのログは読めず未確認 |
+| 2 接続の並行試験（`scripts/test-chores-concurrency.py`） | Postgres を起動できない | `fba35d38` の CI で成功（`Test chores RPC concurrency on isolated local DB`） |
+| Playwright（`e2e/chores-*.spec.ts`、`touch-targets`、`a11y-axe` の追加分） | ローカルポート bind 不可 | 手元では未実行。`fba35d38` の CI の結果は下の注 5 |
 | 実ブラウザ（200% 拡大、キーボード、実機） | 同上 | コンポーネントテストのクラス検査まで |
 | 無料 AI の実 API | Cloudflare の資格情報とコネクタが無い。アカウントが Workers Free かを API から判定できない | fetch を差し替えた単体テストのみ。**実 API の呼出しは 0 回** |
 | Push の実端末受信 | 端末が無い。家族へ無断の試験通知は送らない | 既存の通知経路の単体テストまで |
+
+注:
+
+1. 手元の pgTAP: プロセス内 PGlite（PG 17.5）＋ Supabase スタブ＋本物の pgTAP で、migration 58 本と pgTAP 39 ファイル 1947 件を実行し全緑。
+2. CI の pgTAP:
+   - `51bd55bc`: CLI 既定の DB イメージ（17.6.1.106・supautils 3.2.0）の不具合で、166 行目に SIGSEGV。
+   - `fba35d38`: 17.6.1.156 へ固定し、拒否試験 175 件を含めて成功。
+3. 手元の probe（実の image ではない）:
+   - `docker` を模した shim で判定の流れを 27 通り。bash 5.3 と macOS の bash 3.2 の両方で流した。
+   - mutation 10 本。
+   - 独立レビュー 2 周（読むだけ）。1 周目の P1 を直し、2 周目は P1・P2 なし。
+   - PGlite で、script が組み立てる SQL を、非 superuser に見立てたロールから確認。
+4. CI の probe:
+   - 156 の stack: `fba35d38` で成功（旧版の probe）。
+   - 106 の throwaway: 旧版が準備の `GRANT … TO CURRENT_USER` で落ちた（supautils#205。期待の拒否に届かず）。
+   - 直した版は、実の image では未実行。
+   - 直した版では、`--image` は準備を別の接続で commit し、`--container` はロールごとの transaction と ROLLBACK で何も残さぬ。
+5. CI の Playwright（`fba35d38`）: 87 passed・1 failed・1 skipped。
+   - 失敗の 1 件は、ごはん①の断言の誤り（C-24 と食い違い）で、直した。
+   - skip の 1 件は家事以外。
 
 `pnpm build` の結果は `progress.md` の最終ゲートの表に書く。
 
 ## 1. 追随の commit・push（人。PR #253 は作り直さない）
 
+2 回目の追随（`fba35d38` の CI を受けたもの）を 3 つの commit に分ける。`-F` の path は、`git -C "$W"` の下では worktree からの相対で読まれる。
+
 ```bash
 W=<repo の根>/.claude/worktrees/kaji-gomi-souji-gohan-20261110
 git -C "$W" status --short
-git -C "$W" add .github/workflows/e2e.yml scripts/test-db-execute-denial.sh
-git -C "$W" commit -F docs/plans/2026-11-10-household-chores/commit-message-ci-db.txt
-git -C "$W" add -A
-git -C "$W" commit -F docs/plans/2026-11-10-household-chores/commit-message.txt
+git -C "$W" add scripts/test-db-execute-denial.sh .github/workflows/e2e.yml
+git -C "$W" commit -F docs/plans/2026-11-10-household-chores/commit-message-probe.txt
+git -C "$W" add e2e/chores-meals.spec.ts
+git -C "$W" commit -F docs/plans/2026-11-10-household-chores/commit-message-e2e-c24.txt
+git -C "$W" add docs/plans/2026-11-10-household-chores
+git -C "$W" commit -F docs/plans/2026-11-10-household-chores/commit-message-docs.txt
 git -C "$W" push origin worktree-kaji-gomi-souji-gohan-20261110
 ```
 
-- 1 つ目の commit（CI 用 DB の固定）を先の案内で入れておれば、2 つ目の `add` と `commit` だけでよい。その場合、その後に直した `e2e.yml` の 1 か所（異常終了の確認でログを先に受け取る）は 2 つ目に入る（2 つ目の文面には書いておらぬ。1 つ目の文面の範囲の変更）。
-- `status --short` で、家事以外のファイルが混ざっておらぬことを目で確かめる。`scripts/test-db-execute-denial.sh` は実行権限つき（`core.fileMode=true` ゆえ 100755 で入る）。`.next`・`node_modules`・`test-results`・`playwright-report` は gitignore 済み。`supabase/.temp/` も gitignore 済みで、入らない。
+- `status --short` で、次だけが変わっておることを目で確かめる:
+  - `scripts/test-db-execute-denial.sh`
+  - `.github/workflows/e2e.yml`（コメントだけ）
+  - `e2e/chores-meals.spec.ts`
+  - `docs/plans/2026-11-10-household-chores/` の文書と文面
+- `scripts/test-db-execute-denial.sh` は実行権限つき（100755）のまま。
+- `.next`・`node_modules`・`test-results`・`playwright-report`・`supabase/.temp/` は gitignore 済み。
 - PR の本文を今の状態へ差し替えるなら、`pr-body.md` の中身で PR #253 の本文を置き換える（GitHub の画面、または `gh pr edit 253 --repo syouya0618/irori --body-file "$W/docs/plans/2026-11-10-household-chores/pr-body.md"`）。
 - 主 checkout（repo 直下。`main` は origin より遅れ、未 commit 変更あり）には触れていない。そちらで `git add -A` をしないこと。
 - force push はしない。追加の修正は新しい commit で足す。
@@ -50,24 +92,52 @@ git -C "$W" push origin worktree-kaji-gomi-souji-gohan-20261110
 ## 2. CI（Draft PR 上）
 
 - `CI`（lint・tsc・vitest・build・proxy の検査・検出器）と `E2E` が走る。**どちらも緑になるまで 3 へ進まない。** `skipped` は実行済みに数えない。step が 0 件で終わった失敗は、テストの成功にも失敗にも数えない。
-- `51bd55bc` の結果: `CI` は全成功（run 43025441100）。`E2E` は `supabase test db` の `chores_rpc_security.sql:166` で DB が SIGSEGV（run 43025441011。CLI 既定の image の不具合）で、後続は skipped。
-- 追随の commit の後、`E2E` の workflow には次の 2 つのジョブがある（`needs` で繋いでおらぬ。並んで走る）:
-  - `db-image-probe`: Docker だけで、既定の 106 と固定した 156 を digest で起こし、最小再現を流す。106 は anon・authenticated が落ち、対照のロールは 42501。156 は全て 42501 で稼働を続ける。どちらかの期待が外れれば赤
-  - `e2e`: `Pin the local database image…` → `supabase start` → `Record isolated database runtime`（image ID が固定した digest と一致することを断ずる）→ stack 上の probe → 下の試験 → 最後に DB の異常終了 0 件を断ずる
-- `E2E` ジョブの中で、次がここで初めて最後まで走る:
-  - `supabase test db`: pgTAP 39 ファイル。家事の 4 本（`event_purposes` `cleaning_routines` `dinner_tables` `chores_rpc_security`）を含む
-  - `Test chores RPC concurrency on isolated local DB`: 2 接続の並行試験（掃除の同時完了・取り消しと完了・同じ版での変更、買い物の購入と「作った」の取り消し・古い版の購入）
-  - Playwright:
-    - `chores-rpc-auth`: 実 Auth の JWT で RPC を直に呼ぶ
-    - `chores-cleaning` / `chores-garbage` / `chores-meals`: 5 件の修正と主な流れ、2 アカウントの共有、⑦（判定できないアレルギー → 要再確認 → 解決 → 更新）、⑧（大豆の品目の候補）
-    - `touch-targets`: 家事 10 画面の 44px と 360px 幅
-    - `a11y-axe`: 家事 4 画面
-  - ブラウザ: 上は全て Chromium。WebKit（`webkit-iphone`）は `webkit-core.spec.ts` の 1 件だけで、家事は含まぬ
+- `51bd55bc` の結果:
+  - `CI` は全成功（run 43025441100）。
+  - `E2E` は、`supabase test db` の `chores_rpc_security.sql:166` で DB が SIGSEGV（run 43025441011。CLI 既定の image の不具合）。後続は skipped。
+- `fba35d38` の結果:
+  - `CI` は全成功（run 43117184040）。CodeQL も成功。
+  - `E2E`（run 43117183991）は失敗。中身は下の 3 点。
+- `fba35d38` の `E2E` の中身:
+  - `db-image-probe`: 106 の手順が、準備の `GRANT … TO CURRENT_USER`（supautils#205）で赤。156 の手順は skipped。
+  - `e2e` ジョブで成功した手順:
+    - 156 の固定、stack の probe
+    - `supabase test db`（拒否試験 175 件を含む）
+    - 並行試験 2 本、build
+  - `e2e` ジョブで残ったもの:
+    - Playwright: 87 passed・1 failed（ごはん①の断言）・1 skipped（家事以外）
+    - 最後の「異常終了 0 件」の断定は skipped で、一度も走っておらぬ
+- 2 回目の追随の後、次の SHA で初めて確かめるもの:
+  - `db-image-probe`: 実の image で、次を観測する。
+    - 106: 対照のロールが 42501、anon・authenticated が自分の backend の signal 11
+    - 156: 4 ロールとも 42501 で稼働を続ける
+    - 準備で落ちれば「fixture: …」で赤になり、`--image` では落ちた文がログに出る
+  - stack 上の probe（pgTAP の前）に足した 5 つの赤の条件（`progress.md` の「主経路へ足した、未観測の前提」）:
+    - 接続するロールが postgres であること
+    - transaction の中の状態の行が期待と一致すること
+    - 拒否の行が server log に出ること
+    - 通った接続のたびに、残存が 0 であること
+    - 最初の probe 以後の crash 行が 0 であること
+  - Playwright が全て緑。ごはん①は、揃う区画が 0 件・買い足しは別枠で断ずる。
+  - 最後の「異常終了 0 件」の断定。
+- ブラウザ: 家事の Playwright は全て Chromium。WebKit（`webkit-iphone`）は `webkit-core.spec.ts` の 1 件だけで、家事は含まぬ。
 - 落ちやすい箇所:
-  - 未実行で書いた e2e の文言とセレクタ
-  - 360px での横のはみ出し
-  - `db-image-probe`: 106 の amd64 で単純な関数の拒否が本当に落ちるか（独立報告は隣の版の amd64 で落ちると言う。落ちなければ、それ自体が切り分けの結果で、probe の期待を見直す）
-  - E2E ジョブの上限（`timeout-minutes: 40` へ上げた）
+  - `db-image-probe` の 106: 呼出しで落ちる前提は、コード上の経路と #214 の再現から言うもので、実の image ではまだ観測しておらぬ。
+    - 落ちなければ、それ自体が切り分けの結果ゆえ、probe の期待を見直す（期待を弱めて通すことはしない）。
+  - stack 上の probe の「拒否の行が server log に出る」: 根拠は image と CLI の設定を読んだことで、stack ではまだ観測しておらぬ。
+    - ここだけが赤なら、ログの読み方を直す。最後の「異常終了 0 件」の断定も空振りしておったことになる。
+    - 検査を外して通すことはしない。
+  - E2E ジョブの上限（`timeout-minutes: 40`）。
+- push の前に人の端末で probe を確かめるなら（任意。正本は CI の amd64）:
+
+  ```bash
+  docker pull "supabase/postgres@sha256:21ab971149317ea9cd12a8126fe4ebb34def08c8972956b0958cba0924409dab"
+  docker pull "supabase/postgres@sha256:ca7871b587ca2c401ac0f325df6249c9aa0d25647ded34631158efc51176767f"
+  "$W/scripts/test-db-execute-denial.sh" --image "supabase/postgres@sha256:21ab971149317ea9cd12a8126fe4ebb34def08c8972956b0958cba0924409dab" --expect crash
+  "$W/scripts/test-db-execute-denial.sh" --image "supabase/postgres@sha256:ca7871b587ca2c401ac0f325df6249c9aa0d25647ded34631158efc51176767f" --expect clean
+  ```
+
+  - 使い捨ての container を起こして終了時に消す。共有の DB や本番には向けない。
 
   上限で切れた時は、テストを削らずに上限を上げる。落ちた時はエージェントへ失敗のログ（Playwright の artifact と、`Record isolated database runtime`・probe の出力）を渡せば直す。テストを skip・弱い assert へ変えて通すことはしない。権限を足して拒否試験を通すこともしない。
 - Supabase CLI は `2.101.0` に pin したまま（`setup-cli@v1`）。DB イメージは `e2e.yml` の `IRORI_DB_IMAGE_TAG` / `IRORI_DB_IMAGE_DIGEST` の 1 か所で固定する（無条件に latest へは追随しない）。

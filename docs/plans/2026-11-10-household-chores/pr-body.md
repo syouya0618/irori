@@ -2,7 +2,10 @@
 
 家事タブを足し、ごみ・掃除・ごはんの 3 機能を入れる。AI が無くても全機能が動く。AI 補助は**アダプター実装済み／実接続は資格情報待ち**（Cloudflare Workers AI の無料枠だけを使う経路。既定 OFF・実 API への呼出しは 0 回）。
 
-**この PR は Draft。** `CI` と `E2E` が最新の SHA で緑になり、本番 DB へ migration 3 本を入れるまで merge しない。手順と止める条件は `docs/plans/2026-11-10-household-chores/handoff.md`。
+**この PR は Draft。** 次の 2 つが揃うまで merge しない。手順と止める条件は `docs/plans/2026-11-10-household-chores/handoff.md`。
+
+- `CI` と `E2E` が最新の SHA で緑になる。
+- 本番 DB へ migration 3 本を入れる。
 
 ## 中身
 
@@ -12,6 +15,46 @@
   - 食材・今あるもので・7 日の献立・買い物
   - 使わない食材（消費者庁の対象 29 品目＋自由入力）
   - 子どもの取り分けの案内（保護者が食事の段階を選ぶまで出さない）
+
+## 2 回目の CI（`fba35d38`）の後に直したもの
+
+`fba35d38` では `CI` が全成功し、`E2E` は 2 か所が赤だった。
+
+1. **`db-image-probe` の準備**:
+   - 起きたこと: 106 の手順で、関数を作る前に接続が切れた。確かめたい EXECUTE 拒否まで届かなかった。
+   - 原因: 準備の `GRANT … TO CURRENT_USER`。
+     - supautils 3.2.0 は、非 superuser が `CURRENT_USER` を grantee にすると NULL を参照して落ちる（supabase/supautils#205・#207。3.2.3 で修正）。
+     - image の postgres は非 superuser。
+     - 調べたい #214 とは別の不具合。
+   - 直し方（共通）:
+     - 準備はロール名（postgres）を明示する。
+     - 呼ぶ前に、全ロールが EXECUTE を持たぬことを断ずる。
+     - 期待の crash は、呼んだ接続の PID の行と、直後の「呼んでいた文」の行を 1 組として server log で照合して数える。
+     - 42501 の手順は、拒否が server log に出たことも断ずる（ログを読めておる陽性対照）。
+     - 最後に、crash 行の数がちょうど期待どおり（clean は 0、crash は 2）であることを断ずる。
+   - 直し方（mode ごと）:
+     - `--image`（使い捨て。crash を期待できるのはここだけ）: 準備を別の接続で commit し、準備中の crash は「準備の失敗」として赤にする。呼出しも別の接続。
+     - `--container`（pgTAP の前の stack）: ロールごとに 1 つの transaction で作って呼び、ROLLBACK する。何も commit せぬゆえ DB が落ちても何も残らず、通った接続のたびに残存 0 も断ずる。
+   - 期待は変えていない: 106 は対照のロールが 42501、anon・authenticated が signal 11。156 は 4 ロールとも 42501。
+   - 権限の追加・拒否試験の削除・skip・continue-on-error は使っていない。
+2. **Playwright のごはん①**:
+   - 起きたこと: 在庫が空のとき、候補を頁全体で 0 件と断じたが、3 件あった。
+   - 原因: 試験の誤り。要件 C-24 は「揃う候補が 0 件なら、別枠で買い足し候補を示す」で、画面は契約どおり。
+   - 直し方: 次を断ずる。画面は変えていない。
+     - 揃う区画と「分量を確認」の区画は 0 件。
+     - 買い足しの区画の候補は「買い足し」の印を持ち、「揃う」とは言わない。
+     - 頁全体の候補の数は、買い足しの区画の数に等しい。
+
+この差分も独立レビューにかけた（読むだけのレビュー）。
+
+- 1 回目: P1 が 1 件・P3 が 4 件。
+  - P1 は、`--container` で準備を commit すると、DB が落ちた直後の recovery の間は後始末が接続できず、stack にロールと関数が残りうる、というもの。
+  - 模した DB で赤（残る）を再現してから、上の mode の分け方へ直した。
+  - P3（crash の 2 行の組・窓の外の crash・Playwright の頁全体の守り・コメントの正確さ）も直した。
+- 2 回目（script に絞った再レビュー）: P1・P2 は無し。P3 が 2 件で、どちらも直した。
+  - コメントの言い過ぎ: 残存の確認は、通った接続の後だけ。
+  - 接続を失った直後の報告: crash 行を待ってから数える。
+  - 1 回目の P1 は、全ての経路（DB が落ちる・止められる・印を受け取れぬ）で消えたと確かめられた。
 
 ## 初回 CI（`51bd55bc`）の後に直したもの
 
@@ -55,7 +98,7 @@
 
 ## DB
 
-- 加算のみの migration 3 本: `20261111100001_event_purposes` / `20261111100002_cleaning_routines` / `20261111100003_dinner_tables`。今回の追随で migration は変えていない。
+- 加算のみの migration 3 本: `20261111100001_event_purposes` / `20261111100002_cleaning_routines` / `20261111100003_dinner_tables`。追随の commit で migration は変えていない。
 - 既存の表の DROP・rename・型変更・既存ポリシーの変更は無い。
 - 新しい 13 表は **SELECT の RLS だけ**。`anon`/`authenticated` に書き込みの GRANT もポリシーも無い。
 - 書き込みは、利用者・承認・世帯・対象の世帯を確かめる SECURITY DEFINER RPC だけ。RPC は `SET search_path = ''` で、PUBLIC と anon には EXECUTE を与えない。
@@ -63,41 +106,53 @@
 
 ## 検証
 
-`51bd55bc` の CI:
+`fba35d38` の CI（job・step・注釈で確かめた。job のログ本体は読めていない）:
 
-- `CI`: 全成功。lint・型検査・329 ファイル 6370 件・production build・追加検査。
-- `E2E`: 失敗。`supabase test db` の 166 行目で DB が SIGSEGV（上の 1）。後続は skipped で、実行済みに数えない。
+- `CI`: 全成功（lint・型検査・試験・production build・追加検査）。CodeQL も成功。
+- `E2E` で成功した手順:
+  - 156 への固定と image ID の断定
+  - stack 上の probe
+  - `supabase test db`（拒否試験 175 件を含む pgTAP）
+  - 2 接続の並行試験 2 本
+  - build
+- `E2E` で失敗した手順:
+  - `db-image-probe`: 106 の準備で赤（上の 1）。
+  - Playwright: 87 passed・1 failed・1 skipped。失敗はごはん①（上の 2）。skip は家事以外。
+  - spec ごとの合否は名指しできない。
+- `E2E` で未実行: 最後の「異常終了 0 件」の断定（skipped）。
 
-追随の差分を手元で実行し、緑だったもの:
+2 回目の追随を手元で確かめたもの:
 
-- `pnpm lint` / `pnpm exec tsc --noEmit`（e2e を含む）。
-- `vitest`（330 ファイル・6392 件）。
-- transition の検査 2 本。
-- `shellcheck`。
-- PGlite（PostgreSQL 17.5）＋本物の pgTAP: migration 58 本・pgTAP 39 ファイル・1947 件。止めている間に作った料理の分を引く前提の形を、`dinner_tables.sql` §20 で固定した。
-- probe の判定を `docker` の代役で 10 通り。
-- probe の SQL を PGlite で確認。
-- workflow の構造の検査。
+- `shellcheck`・`pnpm lint`・`pnpm exec tsc --noEmit`（e2e を含む）・vitest 全体（330 ファイル・6392 件）。
+- probe の判定: `docker` を模した shim で 27 通り。bash 5.3 と macOS の bash 3.2 の両方で流した。
+  - 旧版は CI と同じ文言で赤。
+  - 1 回目の追随の版は、106 の stack で fixture を残す（赤）。
+  - mutation 10 本。
+- probe の SQL: script が組み立てる SQL そのものを、PGlite（PostgreSQL 17.5）で非 superuser のロールから流した。
+  - 4 ロールとも 42501。
+  - `--container` は接続ごとに残存 0。`--image` は後始末の後に何も残らない。
+  - 対照: GRANT を抜くと、`SET ROLE` が拒まれる。接続の中で commit すると、残存の照会が捉える。
+- ごはん①: 在庫が空の実カタログを jsdom に描いて確かめた。
+  - 旧い断言は 3 件で赤、新しい断言は緑。
+  - C-24 の単体試験 5 ファイル・248 件が緑。
+- workflow の構造の検査（差分はコメントだけ）。
 
-**最新の SHA の CI で初めて走るもの**（手元では未実行。Docker を使えないため）:
+**次の SHA の CI で初めて確かめるもの**（手元では未実行。Docker と port の bind を使えないため）:
 
-- `db-image-probe`（実の image での最小再現）と、固定した image での `supabase test db`
-- 2 接続の並行試験（`scripts/test-chores-concurrency.py`）
-- 実 Auth の JWT で RPC を直に呼ぶ e2e（`e2e/chores-rpc-auth.spec.ts`）
-- 家事の Playwright 一式。中身は次のとおり:
-  - 5 件の修正
-  - 主な流れ
-  - 2 アカウントの共有
-  - 別の世帯と閲覧招待の境界
-  - 360px の画面
-  - ⑦: 判定できないアレルギー → 要再確認 → 解決 → 更新
-  - ⑧: 大豆の候補
+- 実の image での `db-image-probe`（106 の crash と 156 の 42501）
+- Playwright が全て緑になること
+- 最後の「異常終了 0 件」の断定
 
 ブラウザの範囲: 家事の Playwright は **Chromium だけ**。WebKit は `webkit-core.spec.ts`（記録の中核の経路）の 1 件だけで、家事は含まない。家事を WebKit で確かめたとは言わない。
 
 ## 未実施・残る限界
 
 - 本番 DB への適用、merge、公開、公開後の確認は人が行う（`handoff.md` §3〜4）。
+- 106 で hint_roles だけが落ちることは、まだ実の image で観測していない（コード上の経路と upstream の再現から言う）。
+- stack 上の probe（pgTAP の前）に、新しい赤の条件を 5 つ足した。どれも stack ではまだ観測していない。
+  - 条件: 接続するロールが postgres、状態の行が期待どおり、拒否の行が server log に出る、通った接続のたびに残存 0、crash 行 0。
+  - 「拒否の行」と「crash 行 0」は、image と CLI の設定を読んだ根拠だけ。
+  - ここだけが赤なら、検査は外さずにログの読み方を直す。
 - AI 補助は実接続していない（資格情報待ち）。有効化の前に、Account が Workers Free であることを人が確かめる。
 - Push の実端末受信は未確認。
 - 判定できないアレルギーの登録がある間は、全料理が未確認になる（安全側）。その間、献立の確定と買い物の自動の更新が止まる。画面は理由と直す場所を出す。

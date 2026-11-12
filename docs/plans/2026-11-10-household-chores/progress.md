@@ -5,7 +5,8 @@
 - worktree: `.claude/worktrees/kaji-gomi-souji-gohan-20261110`
 - branch: `worktree-kaji-gomi-souji-gohan-20261110`（基点 `origin/main` = `521f2fc2`、ローカルの追跡 ref。remote の最新は未照会）
 - 人が commit・push・Draft PR を作成済み: `51bd55bc9822eb000ab647c3bf90e172193440d6`、PR #253（https://github.com/syouya0618/irori/pull/253）。
-- その後の追随の修正（下の「2026-11-11 23:30 時点」）は**未 commit**。commit と push は git guard が拒むため人が行う（`handoff.md` §1）。
+- 1 回目の追随（下の「2026-11-11 23:30 時点」）も、人が `35d55586`・`fba35d38` として commit・push 済み。
+- 2 回目の追随（下の「2026-11-12 時点」）は**未 commit**。commit と push は git guard が拒むため人が行う（`handoff.md` §1）。
 
 ## 着手時の確認（2026-11-10〜11）
 
@@ -170,7 +171,7 @@
 
 利用者に決めてほしいこと: 「豆乳」「鶏もも」のように食材止まりで登録したアレルギーを、アレルゲン全体（大豆・鶏肉）へ広げるか。今は R23 の方針どおり食材止まりで、「豆乳」アレルギーでも豆腐の料理は外れない。広げる場合は辞書の `allergySpread` で一括に決める。→ **2026-11-11 夜に決定**: 黙って広げず、品目として登録する候補と範囲を示す（下の節）。
 
-## 2026-11-11 23:30 時点の状態（PR #253 の初回 CI を受けた追随。未 commit）
+## 2026-11-11 23:30 時点の状態（PR #253 の初回 CI を受けた追随。→ 人が `35d55586`・`fba35d38` として commit・push 済み）
 
 ### 初回 CI の結果（利用者の報告。エージェントは `gh` の資格情報を読めず、ログを直に見ておらぬ）
 
@@ -187,7 +188,7 @@
 | 固定した版 | `17.6.1.156`（supautils 3.4.0。同じ nix 定義）。Docker Hub の index digest `sha256:ca7871b587ca2c401ac0f325df6249c9aa0d25647ded34631158efc51176767f`。この digest は、#2112 の独立報告「amd64 で 42501・2 回同じ結果」の digest と一致する。CLI 本体も 2026-07-29〜08-05 にこの版を既定として出した（CLI の Dockerfile の commit 履歴） |
 | CLI の仕組み | CLI 2.101.0 の `apps/cli-go/pkg/config/config.go` の `Load` は、`supabase/.temp/postgres-version` があればその tag で DB イメージを差し替える（`replaceImageTag` は前後の空白を落とす）。`internal/utils/docker.go` の `DockerPullImageIfNotCached` は、docker.io のとき `supabase/postgres:<tag>` が手元にあれば pull しない。CLI の起動処理の版による分岐は「15.8.1.005 未満か」だけで、106 と 156 は同じ分岐を通る |
 | 直し方（`e2e.yml`） | tag と digest を workflow の env の 1 か所へ置く。`supabase start` の前に、digest で pull して CLI が使う名前で tag を付け、`.temp/postgres-version` を書く。起動後、container の image ID が固定した digest の image ID と一致することを断ずる（違えば赤）。pgTAP の前に stack 上で最小再現の probe を流す。ジョブの最後に DB のログで異常終了 0 件を断ずる。時間の枠は 40 分 |
-| 最小再現（`scripts/test-db-execute-denial.sh`） | 単純な SQL 関数を作って EXECUTE を外し、ロールになって呼ぶ。1 つの transaction の中で作って ROLLBACK するので、関数もロールも残さぬ。別ジョブ `db-image-probe` で、Docker だけで（CLI も stack も通さず）2 版を digest で起こす: 106 は anon・authenticated が signal 11 で落ち、hint_roles に無いロールは 42501（対照）。156 は 4 ロールとも 42501 で、同じ接続も server も生き続ける。どちらかの期待が外れれば赤 |
+| 最小再現（`scripts/test-db-execute-denial.sh`） | 単純な SQL 関数を作って EXECUTE を外し、ロールになって呼ぶ。1 つの transaction の中で作って ROLLBACK するので、関数もロールも残さぬ（2026-11-12 に改めた。`--image` は準備・呼出し・後始末を別の接続へ分け、`--container` はロールごとの transaction と ROLLBACK のまま。下の「`fba35d38` の CI」の節）。別ジョブ `db-image-probe` で、Docker だけで（CLI も stack も通さず）2 版を digest で起こす: 106 は anon・authenticated が signal 11 で落ち、hint_roles に無いロールは 42501（対照）。156 は 4 ロールとも 42501 で、同じ接続も server も生き続ける。どちらかの期待が外れれば赤 |
 | 採らなかった方法 | 権限を足す・拒否試験を消す・静的な権限確認だけにする・skip・continue-on-error。CLI の更新（2.101.0 の固定を保つ）、17.11 系への更新（minor が変わる） |
 | ライブラリの版の記録 | PostgreSQL 17 の supautils は module magic に版を持たぬ（`PG_MODULE_MAGIC_EXT` は 18 以上）。SQL からは版を読めないので、probe は `.so` の sha256 と path を記録し、版は image の nix 定義から言う。決め手は amd64 での挙動 |
 
@@ -205,7 +206,7 @@
   - 2 ジョブ・22 手順の順序（pin → start → 記録と digest の断定 → probe → pgTAP → 並行試験 → Playwright → 異常終了 0 件）;
   - `continue-on-error` も条件つきの手順も無い（`if: failure()` の 2 つを除く）。
 
-**CI ではまだ一度も走っておらぬ。** 人が push した後の `E2E` で初めて確かめられる。
+**CI ではまだ一度も走っておらぬ。** 人が push した後の `E2E` で初めて確かめられる（→ `fba35d38` で走った結果は下の節）。
 
 ### 前回決めた追記の反映
 
@@ -245,6 +246,205 @@
 
 ブラウザの範囲: Playwright の `chromium` は全ての spec（家事を含む）。`webkit-iphone` は `E2E_WEBKIT=1` のとき `webkit-core.spec.ts` の 1 件だけで、家事は含まぬ。暗号化した再送の保存は別の script で Chromium と WebKit の両方。ゆえに**家事の機能を WebKit で確かめたとは言えぬ**。
 
+## 2026-11-12 時点の状態（`fba35d38` の CI を受けた追随。未 commit）
+
+人が上の節の追随を 2 つの commit にして push した（`35d55586` CI 用 DB の固定、`fba35d38` 保留・候補・AI の記述）。この節は、その SHA の CI で見えた事実と、それを受けた追随じゃ。
+
+### `fba35d38` の CI の結果
+
+確かめ方: 公開 API の job・step・注釈で見た。job のログ本体は 403 で読めぬ。
+
+| run | 結果 |
+|---|---|
+| `CI`（43117184040） | 全成功: lint・型検査・試験・build・proxy の検査・検出器 3 本 |
+| `CodeQL`（43117183941） | 成功 |
+| `E2E`（43117183991）の `db-image-probe` | 失敗。106 の手順が赤で、準備の段階で接続が切れた（利用者の報告とも一致）。156 の手順は skipped で、実行済みに数えない |
+| `E2E` の `e2e` | 成功した手順は下の一覧。Playwright は失敗（注釈の集計: 87 passed・1 failed・1 skipped）。最後の「異常終了 0 件」の断定は skipped で、一度も走っておらぬ |
+
+`e2e` ジョブで成功した手順:
+
+- 156 の固定、stack の起動、image ID の断定
+- stack 上の probe（旧版。156 では 4 ロールとも 42501）
+- `supabase test db`（家事の拒否試験 175 件を含む pgTAP）
+- 並行試験 2 本
+- `.env.e2e` の生成
+- Next.js build
+- 暗号化した再送の保存（Chromium と WebKit）
+
+本命の修正（156 への固定）は、stack の probe と pgTAP の拒否試験で確かめられた。106 で「hint_roles だけが落ちる」ことは、まだ観測しておらぬ（probe が準備で止まったため）。
+
+### probe の準備の失敗: 原因と直し方
+
+| 項目 | 確かめたこと（一次資料） |
+|---|---|
+| 原因 | 下の 4 点。確かめたい #214 とは別の不具合 |
+| 名前を書けば通る理由 | `AccessPriv.priv_name` と `RoleSpec.rolename` は同じ offset にあり、名前の grantee では正しい文字列が読まれる（#205 の説明）。#207 の表でも `GRANT r TO postgres` は通る。`postgres` は `supautils.reserved_roles` に無い |
+| 呼出しで落ちる前提（コード上の経路。未観測） | 下の 4 段。#214 の再現（同じ形の単純な SQL 関数・17.6.1.104）と合う |
+| 直し方 | 下の一覧 |
+| ログの前提 | image は `logging_collector = off`（`postgresql-stdout-log.conf`）で、server log は `docker logs` に出る。CLI 2.101.0 は `postgres -D /etc/postgresql` を引数なしで起動し、`config.toml` に `[db.settings]` は無い。`log_min_messages`・`track_activities` は既定ゆえ、ERROR 行と `Failed process was running` が出る |
+| throwaway の container の前提 | `postgres` は image の migration `20230201083204` で anon・authenticated・service_role を付与されておる。CLI の初期化に依らず `SET LOCAL ROLE` が通る |
+| 期待 | 変えておらぬ。106: 対照のロールは 42501、anon・authenticated は signal 11。156: 4 ロールとも 42501 で稼働を続ける |
+
+原因:
+
+1. 旧 probe は、準備で `GRANT irori_execute_denial_plain TO CURRENT_USER;` を流した。
+2. supautils 3.2.0 の `src/supautils.c`（505〜534 行）の `T_GrantRoleStmt` は、非 superuser のとき grantee の要素を `AccessPriv` として読み、`is_reserved_role(priv->priv_name)` へ渡す。
+3. `CURRENT_USER` の `RoleSpec.rolename` は NULL で、`strcmp(NULL, …)` が落ちる（supabase/supautils#205・#207）。修正は v3.2.3（= #205 の merge commit `d8167fe4`）。
+4. image の postgres は `10000000000000_demote-postgres.sql` で NOSUPERUSER ゆえ、この hook が走る。
+
+呼出しで落ちる前提（コード上の経路。未観測）:
+
+1. 同じ版の `supautils_executor_start` は、hint_roles のロールで 42501 を捕まえると、`find_missing_perm` で relation を探す。
+2. `SELECT f()` には relation の権限情報が無いゆえ、`relid = InvalidOid` のまま残る。
+3. `get_rel_name` は NULL を返す。
+4. `quote_qualified_identifier(NULL, NULL)` で落ちる。
+
+直し方（両方の mode に共通）:
+
+- 準備は `GRANT … TO postgres` にする。接続するロールが postgres であることを前提として断ずる。
+- 準備の後、呼ぶ前に、probe する全ロールが EXECUTE を持たず、postgres が対照のロールになれることを断ずる（`has_function_privilege`・`pg_has_role`）。
+- 期待の crash は、その手順で増えたログ行の中で、次の 2 行を 1 組（PID の行の直後が DETAIL）として照合して数える。
+  - 呼んだ接続の PID の `terminated by signal 11`
+  - `Failed process was running: SELECT public.irori_execute_denial_probe(`
+- 42501 の手順は、拒否が server log に出たことも断ずる（ログを読めておる陽性対照）。
+- PASS の前に、最初の probe 以後の crash 行が、ちょうど期待の数であることを断ずる（clean は 0、crash は 2）。
+
+準備と呼出しの分け方は、mode で変える。
+
+- `--image`（使い捨ての container。crash を期待できるのはここだけ）:
+  - 準備を別の接続で commit する。準備中の crash は「準備の失敗」として赤にし、psql の終了コード（2 と 3）で報告を分ける。
+  - 呼出しは別の接続で行い、最後の接続で後始末して、何も残らぬことを断ずる。
+  - 利用者の求めた「準備の失敗と、期待の SIGSEGV の区別」は、期待の SIGSEGV が在るこの mode で効く。
+- `--container`（pgTAP の前の stack。常に clean）:
+  - ロールごとに 1 つの接続・1 つの transaction で、準備 → 状態の行 → 呼出し → ROLLBACK を行う。
+  - 何も commit しないゆえ、DB が落ちても、script が止められても、何も残らない。
+  - 通った接続のたびに、関数もロールも残っておらぬことも断ずる。
+  - 段は同じ接続の中の印で分ける。状態の行が無ければ「準備の失敗」、状態の行があって接続が切れれば「呼出しで落ちた」と報告する。
+  - 同じ名前が既にあれば、消さずに赤にする（作っておらぬ物は消さない）。
+  - 1 回目のレビューの P1 を受けて、こう改めた（下の表）。準備を commit する形では、DB が落ちた直後の recovery の間は後始末が接続できず、stack に残りうる。
+
+### Playwright の 1 件: 原因と直し方
+
+| 項目 | 中身 |
+|---|---|
+| 失敗 | `chores-meals.spec.ts:125`（ごはん①）。在庫が空のとき `now-candidate` を頁全体で 0 件と断じたが、3 件あった（再試行 2 回も同じ） |
+| 原因 | 試験の断言の誤り（下の 3 点） |
+| 直し方 | 下の一覧。画面は変えておらぬ |
+| 1 skipped | 家事の spec には skip も serial も無い。skip は家事以外の条件つきのものだけ。どの試験かはログが読めず名指しできぬ |
+| 他の家事の試験 | 注釈の集計と上の事実から、成功したと推す。spec ごとの合否は未確認 |
+
+原因:
+
+- 要件 C-24（verified）は「揃う候補が 0 件なら黙って緩めず、別枠で買い足し候補を示す」。
+- 在庫が空でも「買い足せば作れる」に候補が出るのが契約で、`catalog-integration.test.ts`「在庫が空なら「揃う」は 0 件…」ほか 3 本が断じておる。
+- 在庫が空・既定の設定（常備品なし）で実カタログを jsdom に描くと、頁全体で 3 件・全て「買い足し」になった。CI の 3 件と一致する（一時の試験で確かめて消した）。
+
+直した断言:
+
+- 揃う区画と「分量を確認」の区画に、候補が 0 件。
+- 「揃う候補は 0 件です。」と、登録への誘導が出る。
+- 「買い足せば作れる」の候補は 1 件以上で、どれも「買い足し」の印を 1 つ持ち、「揃う」とは言わない。
+- 頁全体の候補の数は、買い足しの区画の数に等しい（区画の外に候補を出さない。1 回目のレビューの P3）。
+- 区画の名前は exact で当てる。
+
+### 手元で行った確認
+
+実 Docker は sandbox が socket を拒み、Playwright は port の bind が拒まれるゆえ、どちらも未実行。
+
+- `shellcheck`: 警告 0。script の index の mode は 100755。
+- probe の判定の流れ: `docker` を模した shim で 27 通り、全て期待どおり（実の image ではない）。
+  - shim は、crash の後の recovery の間、新しい接続を全て拒む。crash 行を遅れて書くこともできる。
+  - bash 5.3.9 と macOS の `/bin/bash` 3.2.57 の両方で流した。
+  - 内訳: 正常 3、陰性の対照 19、入力の拒否 3、赤の再現 2。
+  - 赤の再現（HEAD 版）: CI と同じ「could not set up its function (status 2)」で赤。
+  - 赤の再現（1 回目の追随の版）: 106 の stack で fixture が残った。新しい版は同じ case で赤になり、何も残さぬ。
+- mutation 10 本: 全て、狙った試験の結果を変えた。元の script の sha256 は前後で一致。外した守りは次の 10 個:
+  - 準備を `TO CURRENT_USER` に戻す;
+  - PID を照合しない;
+  - 文を照合しない;
+  - ログの陽性対照を外す;
+  - `--container` の接続の中で fixture を commit する（接続ごとの残存の検査が止める）;
+  - `--container` の状態の確認を外す;
+  - `--image` の状態の確認を外す;
+  - 終了コードで分けない;
+  - 最後の crash 行の数の確認を外す;
+  - 接続を失った失敗の報告の前に、crash 行を待たない（遅れた crash 行が「0 行」と報告される）。
+- probe の SQL: script が組み立てる SQL そのものを抜き出し（定義の部分だけを評価）、PGlite（PG 17.5）で流した。image の postgres に見立てた非 superuser（CREATEROLE）へ `SET SESSION AUTHORIZATION` してから流した。
+  - `--container`: 4 ロールとも、transaction の中の状態の行が期待と一致し、42501 で、同じ接続は続き、接続ごとに残存 0。
+  - `--image`: fixture は commit され、状態の行が期待と一致した。4 ロールとも 42501。後始末の後に何も残らぬ。
+  - default privileges が API ロールへ付与した EXECUTE も外れる。
+  - 対照:
+    - GRANT を抜くと、`SET ROLE` が拒まれ、状態の行も外れる。
+    - superuser のままなら素通りする（見立ての非 superuser が要る理由）。
+    - 接続の中で commit すると、残存の照会が 2 を返す。
+- workflow の構造: 2 ジョブ・22 手順の順序と、`continue-on-error` が無いことは変わらず。差分はコメントだけ。
+- `pnpm lint` 0。`pnpm exec tsc --noEmit`（e2e を含む）0。
+- vitest 全体: 330 ファイル・6392 件が緑。C-24 の単体試験 5 ファイル・248 件も緑。
+- 検出器: `check-transition-reject-guard.py --strict` 0（21 か所）、`check-transition-all.py --strict` 0（772 か所）。`check-supabase-error-destructure.py` は hook が名前で拒んだゆえ手元では未実行（今回の差分は `src` に触れず、`fba35d38` の CI では成功）。
+
+src・migration・pgTAP・並行試験・build の設定は変えておらぬ。
+
+### 独立レビュー（4 回目、今回の差分。読むだけで実行はしておらぬ）
+
+| 指摘 | 中身 | 結果 |
+|---|---|---|
+| P1-1 | `--container` で fixture を commit する形は、106 のままの stack で anon が DB を落とすと、終了時の後始末が recovery 中で接続できず、ロールと関数が残る。commit の後に印を受け取る前に接続が切れても残る。旧版（1 つの transaction で ROLLBACK）には無かった退行 | 修正済み。shim で赤（残った）を再現してから、mode で分けた。`--container` はロールごとの transaction と ROLLBACK に戻し、接続ごとに残存 0 を断ずる。同じ case が赤で何も残らぬことを、bash 5 と 3.2 で確かめた |
+| P3 | crash の 2 行（PID の行と DETAIL）を別々に照合していた | 修正済み。PID の行の直後の行で照合する（変数へ受けて here-string で照合） |
+| P3 | 42501 の手順で、拒否の行が見えた後の crash 行がどの窓にも入らぬ | 修正済み。最初の probe 以後の crash 行の数を、PASS の前にちょうど期待の数（0 か 2）と断ずる。窓の外の crash を模した case と mutation で確かめた |
+| P3 | Playwright の頁全体の守りが消えた | 修正済み。頁全体の候補の数が、買い足しの区画の数に等しいことを断ずる |
+| P3 | コメント: 「3.2.3 で修正」と、影響の範囲（#207 は 17.6.1.147） | 直した。タグ v3.2.3 が #205 の merge commit `d8167fe4` を指すこと（タグの一覧で確かめた）と、#207 が 17.6.1.147 で再現したことを書いた |
+| 未確認として | script の実行権限 | 確かめた: index は 100755 |
+
+### 独立レビュー（5 回目、script に絞った再レビュー。読むだけで実行はしておらぬ）
+
+結果は P1・P2 ともに無く、P3 が 2 件。4 回目の P1 は、全ての経路で消えたと確かめられた。経路は次の 4 つ:
+
+- 途中で DB が落ちる;
+- script が止められる;
+- commit の印を受け取る前に接続が切れる;
+- 他人の物を消す。
+
+`--container` は一度も commit せず、DROP も持たない。
+
+| 指摘 | 中身 | 結果 |
+|---|---|---|
+| P3-1 | コメントは「接続ごとに残存を確かめる」と言うが、確かめるのは通った接続の後だけ（失敗の分岐は先に終わる） | 直した。「何も commit しない。通った接続のたびに残存 0 も断ずる」と書いた（script の頭と `e2e.yml`）。何も commit せぬゆえ害は無かった |
+| P3-2 | 呼出しの失敗の分岐は、ログを待たずに 1 度だけ読む。接続を失った直後は、crash があっても「0 行」と報告しうる（結果の赤は変わらぬ） | 直した。接続を失った時（psql の終了コード 2）は、crash 行を最大 15 秒待ってから報告する（準備と同じ）。crash 行を遅れて書く shim の case と mutation で確かめた |
+| INFO | 106 のままの stack へ `--container` を向けると、anon の呼出しでその DB は落ちる | 落ちること自体が検出で、何も残らぬ。CI では image ID の断定が先に赤にするゆえ届かぬ |
+
+再レビューが答えた問い（コードと一次資料による。実行はしておらぬ）:
+
+- **crash の行の数**: 106 の正しい run では、crash 行はちょうど 2 になる。PG17 の `HandleChildCrash` は、最初の crash の子だけを LOG で記録する。recovery 中に刈られる他の子の終了は DEBUG2 で、既定では出ない。
+- **2 行の組**: PID の行と DETAIL の行は、1 つの ereport を 1 回の write で書く（PIPE_BUF 未満ゆえ分かれぬ）。
+
+### 主経路へ足した、未観測の前提
+
+stack 上の probe（`e2e` ジョブで pgTAP の前）に、新しい赤の条件を 5 つ足した。どれも stack ではまだ一度も観測しておらぬ（`fba35d38` の stack で走ったのは旧版）。
+
+1. 接続するロールが postgres であること（`current_user` と `rolsuper` を読む）。旧版と同じく `psql -U postgres` で接続する。
+2. transaction の中の状態の行が期待と一致すること。
+   - 内容: 4 ロールとも EXECUTE なし、postgres が対照のロールになれる。
+   - 根拠: PGlite で非 superuser から確かめた。image の default privileges も外れる。
+3. 拒否の行が server log（`docker logs`）に出ること。
+4. 通った接続のたびに、残存が 0 であること。PGlite で確かめた。
+5. 最初の probe 以後の crash 行が 0 であること。
+
+3 と 5 の根拠は、image と CLI の設定を読んだことだけじゃ。
+
+- image: `logging_collector = off`、`log_min_messages` は既定。
+- CLI: `postgres -D` を引数なしで起動する。
+
+もし CI で 3 か 5 だけが赤になれば、最後の「異常終了 0 件」の断定も空振りしておったという発見じゃ。検査を外す理由にはしない（ログの読み方を直す）。
+
 ## 次の具体的作業（人）
 
-`handoff.md` の順に: 追随の commit と push → `CI` と `E2E`（`db-image-probe`・`supabase test db`・並行試験・実 Auth・Playwright がここで初めて最後まで走る）→ 本番 DB へ migration 3 本 → merge と公開後確認 → 無料 AI の有効化（アダプター実装済み／実接続は資格情報待ち。しなくても全機能が動く）。
+`handoff.md` の順に進める。
+
+1. 追随の 3 commit と push。
+2. `CI` と `E2E`。ここで初めて次を観測する:
+   - `db-image-probe` で、実の image の 106 の crash と 156 の 42501;
+   - Playwright が全て緑;
+   - 最後の「異常終了 0 件」の断定。
+3. 本番 DB へ migration 3 本。
+4. merge と公開後確認。
+5. 無料 AI の有効化（アダプター実装済み／実接続は資格情報待ち。しなくても全機能が動く）。

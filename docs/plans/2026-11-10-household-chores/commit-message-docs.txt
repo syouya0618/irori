@@ -1,0 +1,17 @@
+docs(chores): fba35d38 の CI の結果と、probe・e2e の追随を記録する
+
+- progress: run 43117183991 で見えた事実、原因と直し方、手元の検証、独立レビュー
+  （4 回目の P1: `--container` で準備を commit すると stack に残りうる → mode を分けて直した。
+  5 回目は P1・P2 なし、P3 2 件を直した）、主経路へ足した未観測の前提。
+  見えた事実:
+  - 156 では、固定・stack の probe・pgTAP・並行試験・build が成功した。
+  - 106 の probe は、準備の段階で赤になった。
+  - Playwright は 87 成功・1 失敗・1 skip。
+  - 最後の「異常終了 0 件」の断定は、まだ走っていない。
+- handoff: 2 回目の追随の commit の手順と、次の SHA で初めて確かめること。
+  手元の Docker で probe を流す任意の手順も足した。
+- pr-body: 2 回目の CI の後に直したものと、検証の範囲。
+- requirements-ledger: C-24 の根拠に、ごはん①の e2e の断言を足す（次の SHA の CI で確認）。
+- commit の文面: probe・e2e・文書の 3 本。
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
