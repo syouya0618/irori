@@ -120,9 +120,21 @@ test("ごはん: 食材を登録すると、「今あるもので」にその食
   await page.getByRole("link", { name: /今あるもので作る/ }).click()
   await expect(page).toHaveURL(/\/chores\/meals\/now$/, { timeout: 15_000 })
 
-  // 食材が無いうちは、候補を捏造せず登録へ誘導する
-  await expect(page.getByText("食材がまだ登録されていません")).toBeVisible()
-  await expect(page.getByTestId("now-candidate")).toHaveCount(0)
+  // 食材が無いうちは「揃う」「分量を確認」に候補を捏造せず、登録へ誘導する。買い足し案は別の枠に、
+  // 「買い足し」の印つきで出る（C-24。0 件を黙って緩めず、別枠で示す）
+  const readyRegion = page.getByRole("region", { name: "食材と量が揃う料理", exact: true })
+  await expect(readyRegion.getByText("食材がまだ登録されていません")).toBeVisible()
+  await expect(page.getByTestId("now-ready-count")).toHaveText("揃う候補は 0 件です。")
+  await expect(readyRegion.getByTestId("now-candidate")).toHaveCount(0)
+  await expect(page.getByRole("region", { name: "分量を確認", exact: true }).getByTestId("now-candidate")).toHaveCount(0)
+  const buyCandidates = page.getByRole("region", { name: "買い足せば作れる", exact: true }).getByTestId("now-candidate")
+  await expect(buyCandidates.first()).toBeVisible()
+  for (const card of await buyCandidates.all()) {
+    await expect(card.getByText("買い足し", { exact: true })).toHaveCount(1)
+    await expect(card.getByText("揃う", { exact: true })).toHaveCount(0)
+  }
+  // 頁の候補は、買い足しの区画にあるものだけ（区画の外に候補を出さない）
+  await expect(page.getByTestId("now-candidate")).toHaveCount(await buyCandidates.count())
   await page.getByRole("link", { name: /食材を登録する/ }).click()
   await expect(page).toHaveURL(/\/chores\/meals\/pantry$/, { timeout: 15_000 })
 
