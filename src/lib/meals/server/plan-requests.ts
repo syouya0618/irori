@@ -770,8 +770,10 @@ function isOpRequest<Op extends string>(
   guards: Readonly<Record<Op, (value: unknown) => boolean>>,
 ): boolean {
   if (!isRecord(value) || typeof value.op !== "string") return false
-  if (!Object.prototype.hasOwnProperty.call(guards, value.op)) return false
-  return guards[value.op as Op](withoutOp(value as { op: string }))
+  // 許可された関数だけを選択し、外部入力から直接呼び出さない。
+  const guard = Object.entries(guards).find(([name]) => name === value.op)?.[1]
+  if (typeof guard !== "function") return false
+  return guard(withoutOp(value as { op: string }))
 }
 
 export function isDinnerRequest(value: unknown): value is DinnerRequest {
