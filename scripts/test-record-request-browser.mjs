@@ -141,8 +141,20 @@ for(const [name,engine] of Object.entries({chromium,webkit})){
  },id)
  const written=await Promise.all([parallel(page,"e9000000-0000-4000-8000-000000000005"),parallel(second,"e9000000-0000-4000-8000-000000000006")])
  if(!written.every(Boolean))throw Error("parallel writes")
- const restored=await page.evaluate(async()=>{const m=await import("/src/lib/domain/record-requests.js");return m.readRecordRequests({userId:"parallel-fixture",householdId:"parallel-household"})})
- if(restored.items.length!==2||restored.unreadable)throw Error("parallel key creation lost a ciphertext")
+ // 別タブのlocalStorage通知は書込のPromise解決より遅れて見えることがある。
+ // 同じ2件を再送せず、読み戻しのみ最大2秒観測する。最後まで欠ければ失敗にする。
+ let restored
+ for(let i=0;i<20;i++){
+  restored=await page.evaluate(async()=>{
+   const m=await import("/src/lib/domain/record-requests.js")
+   return m.readRecordRequests({userId:"parallel-fixture",householdId:"parallel-household"})
+  })
+  if(restored.items.length===2&&restored.unreadable===0)break
+  if(i<19)await new Promise(resolve=>setTimeout(resolve,100))
+ }
+ if(restored.items.length!==2||restored.unreadable){
+  throw Error("parallel key creation readback incomplete: count="+restored.items.length+" unreadable="+restored.unreadable)
+ }
  results.push({browser:name,checks:["parallel-tabs-key-creation","cold-owner-marker-initialization"]})
  results.push({browser:name,checks:await page.evaluate(async()=>{
   const m=await import("/src/lib/domain/record-requests.js"),owner={userId:"parallel-fixture",householdId:"parallel-household",childId:"e9000000-0000-4000-8000-000000000001"}
