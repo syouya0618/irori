@@ -95,12 +95,12 @@ export function GarbageCellMark({ labels }: { labels: readonly string[] }) {
     <span
       data-garbage-mark={visible[0]}
       aria-hidden="true"
-      className="mt-0.5 flex max-w-full items-center justify-center gap-1"
+      className="mt-0.5 flex max-w-full items-center justify-center gap-0.5"
     >
       {visible.map((label) => {
         const visual = garbageKindVisual(label)
         const Icon = ICONS[visual.icon]
-        return <Icon key={label} size={14} className={cn("shrink-0", visual.tone.text)} />
+        return <Icon key={label} size={12} className={cn("shrink-0", visual.tone.text)} />
       })}
     </span>
   )
