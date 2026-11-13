@@ -279,6 +279,46 @@ describe("分類を読めなんだ時（予定の表示を倒さぬ・未分類�
   })
 })
 
+describe("公開後回帰: 既存のごみ予定の保存と読み戻し", () => {
+  it("既存のGoogle予定を分類した後、古いクライアント取得が空でもサーバーで確認した用途を表示する", async () => {
+    const google = ev({
+      id: GOOGLE_ROW, title: "燃えるごみ", source: "google",
+      event_uid: "cal@example.invalid|garbage-2026",
+      google_calendar_id: "cal@example.invalid", recurring_event_id: null,
+    })
+    db.rows = [google]
+    db.purposes = [] // clientの古い値。保存後にここが更新されなくても表示すべき
+    render(<CalendarView {...base} initialEvents={[google]} initialPurposes={ok()} />)
+    await openEvent("燃えるごみ")
+    await openForm("ごみの日にする")
+    fireEvent.click(within(field()).getByRole("button", { name: "燃えるごみ" }))
+    submit.mockResolvedValueOnce({
+      status: "saved",
+      purposeLoad: ok(purposeRow({ targetKey: "cal@example.invalid|garbage-2026" })),
+    })
+    await act(async () => {
+      fireEvent.click(within(field()).getByRole("button", { name: "分類を保存" }))
+    })
+    await waitFor(() => expect(within(field()).getByText("ごみ・燃えるごみ")).toBeInTheDocument())
+    expect(within(field()).queryByText("ごみの日ではありません。")).toBeNull()
+  })
+
+  it("保存後の分類読み戻しが失敗したら『ごみの日ではありません』に戻さず、読み直しを案内する", async () => {
+    const original = ev({ id: GARBAGE_EVENT, title: "可燃ごみ" })
+    db.rows = [original]
+    render(<CalendarView {...base} initialEvents={[original]} initialPurposes={ok()} />)
+    await openEvent("可燃ごみ")
+    await openForm("ごみの日にする")
+    fireEvent.click(within(field()).getByRole("button", { name: "燃えるごみ" }))
+    submit.mockResolvedValueOnce({ status: "saved", purposeLoad: { status: "failed" } })
+    await act(async () => {
+      fireEvent.click(within(field()).getByRole("button", { name: "分類を保存" }))
+    })
+    await waitFor(() => expect(within(field()).getByText(/分類を読み込めていません/)).toBeInTheDocument())
+    expect(within(field()).queryByText("ごみの日ではありません。")).toBeNull()
+  })
+})
+
 describe("予定のシートから分類する（A-02 / A-03）", () => {
   it("Google の予定（本体は閲覧のみ）も分類でき、保存の後に一覧へ映る", async () => {
     const google = ev({

@@ -3,7 +3,14 @@
 import { revalidatePath } from "next/cache"
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
-import { isGarbageRequest, type GarbageRequest } from "@/lib/domain/garbage"
+import {
+  isGarbageRequest,
+  parseEventPurposeRow,
+  type GarbageRequest,
+  type GarbageSaveSuccess,
+} from "@/lib/domain/garbage"
+import { fetchEventPurposeLoad } from "@/lib/supabase/event-purpose-query"
+import { isRecord } from "@/lib/domain/child-sharing"
 import type { Database } from "@/lib/types/database"
 import {
   failureOfRpcError,
@@ -74,7 +81,7 @@ function saveArgs(
  *   家族の新しい分類と通知を黙って消さぬ）。版の照合は RPC がロックの中で行う — ここで読んでから
  *   比べると、読みと書きの間に別の保存が挟まる
  */
-export async function submitGarbageRequest(input: unknown): Promise<ChoreSaveResult> {
+export async function submitGarbageRequest(input: unknown): Promise<ChoreSaveResult<GarbageSaveSuccess>> {
   const auth = await getAuthContext()
   if (auth.error !== null) return rejectedResult(auth.error)
   if (!isGarbageRequest(input)) return rejectedResult("入力内容を確認してください。")
@@ -95,9 +102,36 @@ export async function submitGarbageRequest(input: unknown): Promise<ChoreSaveRes
       console.error("[garbage] RPC の戻り値を読めぬ", { householdId, op: input.op })
       return unknownResult()
     }
-    // conflict（何も書いておらぬ）でも、画面が最新を読み直せるよう無効化する
+    // 保存後の認証済みサーバーで必ず読み戻す。クライアント側の取り直しが
+    // 遅い・失敗する場合でも、古い「未分類」の表示を真値として残さぬ。
     revalidateGarbageConsumers()
-    return { status }
+    if (input.op === "delete-orphan") return { status }
+    const purposeLoad = await fetchEventPurposeLoad(supabase, householdId)
+    if (input.op === "save" && input.action === "garbage" && status !== "conflict") {
+      const receipt = isRecord(data) ? parseEventPurposeRow(data.purpose) : null
+      const confirmed =
+        receipt !== null &&
+        receipt.scope === input.scope &&
+        receipt.purpose === "garbage" &&
+        receipt.garbageKind === input.garbageKind &&
+        purposeLoad.status === "ok" &&
+        purposeLoad.rows.some(
+          (row) =>
+            row.id === receipt.id &&
+            row.scope === receipt.scope &&
+            row.targetKey === receipt.targetKey &&
+            row.purpose === "garbage" &&
+            row.garbageKind === input.garbageKind,
+        )
+      if (!confirmed) {
+        // RPCが保存済みと言っても画面に未分類を表示せぬ。書込みは再送しない。
+        console.error("[garbage] classification readback mismatch", {
+          householdId, scope: input.scope, status, readbackStatus: purposeLoad.status,
+        })
+        return { status, purposeLoad: { status: "failed" } }
+      }
+    }
+    return { status, purposeLoad }
   } catch (err) {
     // 要求が届いたかどうかを区別できぬ（保存の後で応答だけが失われたかもしれぬ）
     console.error("[garbage] RPC が throw", {

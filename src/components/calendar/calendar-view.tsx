@@ -81,6 +81,7 @@ import {
   seriesKeyOf,
   type EventPurposeLoad,
   type GarbageRequest,
+  type GarbageSaveSuccess,
 } from "@/lib/domain/garbage"
 import { CHORE_SAVE_MESSAGES, createChoreEditSessions, useChoreSave } from "@/components/chores/shared/use-chore-save"
 import { PendingChoreNotice } from "@/components/chores/shared/pending-chore-notice"
@@ -506,11 +507,11 @@ export function CalendarView({
   // 共通 hook が持つ（同じ操作 ID・同じ内容でしか送り直さぬ）。確定したら一覧と分類を取り直し、
   // 開いておる予定の通知の欄も読み直す（分類の保存は通知設定も書きうる）。
   const [garbageSettled, setGarbageSettled] = useState(0)
-  const afterGarbageSaveRef = useRef<(rereadReminder: boolean) => void>(() => {})
+  const afterGarbageSaveRef = useRef<(rereadReminder: boolean, readback?: EventPurposeLoad) => void>(() => {})
   // 予定の欄の分類フォームの編集セッション（R35）。欄のフォームを開くたびに番号を振り、応答の時に
   // 「送ったフォームが今も開いておるか」を比べる（送った後に閉じた・別の予定で開いたフォームを畳まぬ）
   const [garbageSessions] = useState(createChoreEditSessions)
-  const garbageSave = useChoreSave<GarbageRequest>({
+  const garbageSave = useChoreSave<GarbageRequest, GarbageSaveSuccess>({
     owner: { userId: userId ?? "", householdId },
     kind: "garbage",
     run: submitGarbageRequest,
@@ -522,7 +523,8 @@ export function CalendarView({
       if (outcome.kind === "unknown") return
       const origin = outcome.origin
       // 畳むのは、送ったフォームが今も開いておる時だけ
-      if (outcome.kind === "settled" && (origin?.current ?? true)) {
+      if (outcome.kind === "settled" && outcome.status !== "conflict" &&
+          outcome.result.purposeLoad?.status !== "failed" && (origin?.current ?? true)) {
         garbageSessions.close()
         setGarbageSettled((n) => n + 1)
       }
@@ -536,7 +538,13 @@ export function CalendarView({
       // 一覧と分類はいつでも取り直す。開いておる予定の通知の欄を読み直すのは、送ったフォームが今も
       // 開いておる時（= その予定の保存の応答）だけ。別の予定のシートで通知を変えて送信中に、先の予定の
       // 応答で読み直すと、読みが書込より先に返った時に変更前の値で止まる（独立レビュー 7）
-      afterGarbageSaveRef.current(origin?.current ?? true)
+      if (outcome.kind === "settled" && outcome.result.purposeLoad?.status === "failed") {
+        toast.error("分類の保存後の表示を確認できません。読み直して状態を確かめてください。")
+      }
+      afterGarbageSaveRef.current(
+        origin?.current ?? true,
+        outcome.kind === "settled" ? outcome.result.purposeLoad : undefined,
+      )
     },
   })
   useEffect(() => {
@@ -557,8 +565,10 @@ export function CalendarView({
           logOfflineError("[calendar-view] fetchEventReminder(after purpose save)", err)
         })
     }
-    afterGarbageSaveRef.current = (rereadReminder) => {
-      void m.refetchCurrent()
+    afterGarbageSaveRef.current = (rereadReminder, readback) => {
+      // 更新後の認証済みサーバーの読み戻しを採用し、古いclient取得で戻さぬ。
+      if (readback) m.acceptPurposeLoad(readback)
+      else void m.refetchCurrent()
       if (!rereadReminder) return
       // 通知の書込が送信中なら、今は読み直さず、書込が終わってから 1 回だけ読み直す（書込より先に返った
       // 読みで、選んだ値を変更前の値へ戻さぬ）
@@ -1307,7 +1317,7 @@ export function CalendarView({
                 // 前日 20:00 を過ぎた回に「通知します」と言わぬための基準
                 startDate: editingLive.start_date,
               }}
-              purpose={editingLive.purpose}
+              purpose={m.purposeState === "stale" ? { kind: "unknown" } : editingLive.purpose}
               save={garbageSave}
               settledCount={garbageSettled}
               sessions={garbageSessions}

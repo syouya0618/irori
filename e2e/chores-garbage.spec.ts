@@ -222,6 +222,49 @@ test("ごみの日: 同じ日の予定と区別でき、分類 → 再読込 →
   await expect(dayCell(page, today)).toHaveAttribute("aria-label", /、予定2件$/)
 })
 
+test("既存のGoogle同期済みごみ予定: シリーズ分類が保存直後・家事・再読込へ反映し、通知は変えない", async ({ page, approvedUser }) => {
+  const today = todayJst()
+  const next = shiftYmd(today, 7)
+  await loginAndOpenCalendar(page, approvedUser.email)
+  const householdId = await householdOf(approvedUser.id)
+  const googleCalendarId = "existing-garbage@example.invalid"
+  const recurringEventId = `existing-${crypto.randomUUID()}`
+  const events = [
+    { id: crypto.randomUUID(), household_id: householdId, title: "既存の燃えるごみ", source: "google",
+      is_all_day: true, start_date: today, end_date: today,
+      google_calendar_id: googleCalendarId, google_event_id: `occ-a-${crypto.randomUUID()}`, recurring_event_id: recurringEventId },
+    { id: crypto.randomUUID(), household_id: householdId, title: "既存の燃えるごみ", source: "google",
+      is_all_day: true, start_date: next, end_date: next,
+      google_calendar_id: googleCalendarId, google_event_id: `occ-b-${crypto.randomUUID()}`, recurring_event_id: recurringEventId },
+  ]
+  const { error: seedError } = await adminClient().from("calendar_events").insert(events)
+  expect(seedError, "existing Google events seed").toBeNull()
+  await reloadHydrated(page)
+
+  await openOverlay(agenda(page).getByText("既存の燃えるごみ").first(), page.getByRole("heading", { name: "予定の詳細" }))
+  const field = page.getByTestId("garbage-purpose-field")
+  await expect(field).toContainText("ごみの日ではありません。")
+  await field.getByRole("button", { name: "ごみの日にする" }).click()
+  await field.getByRole("button", { name: "シリーズ全体" }).click()
+  await field.getByRole("button", { name: "燃えるごみ", exact: true }).click()
+  await field.getByRole("button", { name: "通知設定は変えない" }).click()
+  await field.getByRole("button", { name: "分類を保存" }).click()
+
+  await waitForPurposes(approvedUser.id, [
+    { scope: "series", purpose: "garbage", garbage_kind: "燃えるごみ", remind_default: "none" },
+  ])
+  await waitForReminders(approvedUser.id, [])
+  await expect(field).toContainText("繰り返しのすべての回に付けた分類です。")
+  await page.goto("/chores/garbage")
+  const collections = page.getByTestId("garbage-collections")
+  await expect(collections.getByRole("listitem")).toHaveCount(2)
+  await expect(collections).toContainText("燃えるごみ")
+  await page.reload()
+  await expect(page.getByTestId("garbage-collections").getByRole("listitem")).toHaveCount(2)
+  await page.goto("/calendar")
+  await expect(dayCell(page, today)).toHaveAttribute("aria-label", /ごみ（燃えるごみ）$/)
+})
+
 test("ごみの日: シリーズ全体の分類と、この回だけ通常へ戻す例外", async ({ page, approvedUser }) => {
   const today = todayJst()
   const second = shiftYmd(today, 7)

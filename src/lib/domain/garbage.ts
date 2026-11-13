@@ -113,6 +113,13 @@ export type EventPurposeLoad =
   | { status: "ok"; rows: EventPurposeRow[] }
   | { status: "failed" }
 
+/** 保存結果と、同じ利用者の権限で読み戻したごみ分類の状態。 */
+export interface GarbageSaveSuccess {
+  status: "saved" | "replayed" | "conflict"
+  /** 読み戻せない時は failed。保存自体の成否とは別に扱う。 */
+  purposeLoad?: EventPurposeLoad
+}
+
 /** Supabase の応答（data / error）から取得結果を組む。読めぬ行が混ざっておれば全体を不明にする。 */
 export function eventPurposeLoadOf(data: unknown, failed: boolean): EventPurposeLoad {
   if (failed) return { status: "failed" }
