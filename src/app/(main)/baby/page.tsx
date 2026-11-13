@@ -7,7 +7,8 @@ import type { CalendarEventRecord } from "@/components/calendar/use-month-events
 import { FEEDING_INTERVAL_DEFAULT } from "@/lib/domain/baby-feeding-interval"
 import { decodeBottleDefault } from "@/lib/domain/bottle-default"
 import { resolveBabyDate, type BabySearchParams } from "@/lib/domain/baby-link"
-import { CALENDAR_EVENT_COLUMNS } from "@/lib/domain/calendar-event-columns"
+import { CALENDAR_EVENT_COLUMNS_WITH_KEYS } from "@/lib/domain/calendar-event-columns"
+import { fetchEventPurposeLoad } from "@/lib/supabase/event-purpose-query"
 import {
   selectBabyLogsOfDay,
   selectBabyLogsOfWeek,
@@ -49,6 +50,7 @@ export default async function BabyPage({
     { data: lastNursingData, error: lastNursingError },
     { data: upcomingEvents, error: upcomingError },
     { data: members, error: membersError },
+    upcomingPurposes,
   ] = await Promise.all([
       selectBabyLogsOfDay(supabase, householdId, selectedDate),
       selectBabyLogsOfWeek(supabase, householdId, todayJst),
@@ -69,7 +71,8 @@ export default async function BabyPage({
       // が /baby になったため旧 /meals から移設）。他クエリと並列ゆえ往復は増えない。
       supabase
         .from("calendar_events")
-        .select(CALENDAR_EVENT_COLUMNS)
+        // 用途（ごみの日）を引く鍵つき。足したのは既存の列だけ（calendar-event-columns.ts）
+        .select(CALENDAR_EVENT_COLUMNS_WITH_KEYS)
         .eq("household_id", householdId)
         .gte("end_date", todayJst) // 重なり判定: end_date >= 今日
         .lte("start_date", tomorrowJst) //          AND start_date <= 明日
@@ -80,6 +83,9 @@ export default async function BabyPage({
         .from("profiles")
         .select("id, display_name")
         .eq("household_id", householdId),
+      // 家事機能 A: 予定の用途（ごみの日）。throw せぬ（失敗は { status: "failed" }）—
+      // 読めぬ時は予定カードを倒さず、分類を「不明」として扱う（未分類と偽らぬ）
+      fetchEventPurposeLoad(supabase, householdId),
     ])
 
   // children is already required and validated by getChildContext. Reuse the same selected row.
@@ -166,6 +172,7 @@ export default async function BabyPage({
       initialUpcomingEvents={
         (upcomingEvents as unknown as CalendarEventRecord[]) ?? []
       }
+      initialUpcomingPurposes={upcomingPurposes}
       members={(members ?? []).map((m) => ({
         id: m.id,
         displayName: m.display_name ?? "",

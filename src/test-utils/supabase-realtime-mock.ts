@@ -244,6 +244,13 @@ export type RefetchRealtimeMockState<TRow> = {
   abortSignalMock?: ViFn | undefined
   /** 次に `.order()` が resolve する data。テスト側で `setRefetchData(state, rows)` で更新 */
   currentResolveData: TRow[]
+  /**
+   * `from("event_purposes")`（予定の用途の分類）が返す行（DB の列名のまま）。省略時は 0 行。
+   * 予定の鎖とは別に返すゆえ、既存の selectMock / eqMock の記録には現れぬ。
+   */
+  purposeRows?: unknown[]
+  /** 置くと、分類の取得だけを失敗させる（予定の取得は成功のまま）。 */
+  purposeError?: { message: string; code?: string } | null
 }
 
 /**
@@ -309,7 +316,22 @@ export function buildRefetchSupabaseMock<TRow>(
   state.gteMock = viMod.fn(() => ({ lte: state.lteMock }))
   state.eqMock = viMod.fn(() => ({ gte: state.gteMock }))
   state.selectMock = viMod.fn(() => ({ eq: state.eqMock }))
-  state.fromMock = viMod.fn(() => ({ select: state.selectMock }))
+  // 予定の用途（ごみの日）の分類は別表を別の鎖（`.select().eq().abortSignal()`）で読む
+  // （家事機能 A。`fetchEventPurposeLoad`）。予定の鎖の記録（selectMock / eqMock…）へ混ぜず、
+  // `state.purposeRows`（省略時は 0 行）を返す。`purposeError` を置けばその取得だけ失敗させられる。
+  const purposeChain = {
+    select: () => ({
+      eq: () =>
+        makeChainThenable(() =>
+          state.purposeError
+            ? { data: null, error: state.purposeError }
+            : { data: state.purposeRows ?? [], error: null },
+        ),
+    }),
+  }
+  state.fromMock = viMod.fn((table: unknown) =>
+    table === "event_purposes" ? purposeChain : { select: state.selectMock },
+  )
 
   return {
     createClient: () => {
@@ -369,6 +391,8 @@ export function resetRefetchMockState<TRow>(
 ): void {
   state.listeners.length = 0
   state.currentResolveData = []
+  state.purposeRows = undefined
+  state.purposeError = null
   state.removeChannelMock?.mockClear()
   state.channelNameMock?.mockClear()
   state.fromMock?.mockClear()

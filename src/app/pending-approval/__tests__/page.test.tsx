@@ -108,7 +108,9 @@ describe("/pending-approval: 世帯キャッシュ破棄の条件（F1 / F3 / RE
 
     expect(purgeHouseholdCaches).not.toHaveBeenCalled()
     expect(console.error).toHaveBeenCalledWith(
-      "[pending-approval] profile lookup failed",
+      "[%s] %s",
+      "pending-approval",
+      "profile lookup failed",
       expect.objectContaining({ userId: "user-1", message: "upstream timeout" }),
     )
   })

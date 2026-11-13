@@ -1,6 +1,8 @@
+import { format } from "node:util"
+
 import { describe, it, expect, vi, afterEach } from "vitest"
 import type { PostgrestError } from "@supabase/supabase-js"
-import { logSupabaseError } from "../log-error"
+import { logSupabaseError, logSupabaseErrorRedacted } from "../log-error"
 
 const sampleError = {
   name: "PostgrestError",
@@ -23,7 +25,7 @@ describe("logSupabaseError", () => {
     })
 
     expect(spy).toHaveBeenCalledTimes(1)
-    expect(spy).toHaveBeenCalledWith("[auth-context] profile lookup failed", {
+    expect(spy).toHaveBeenCalledWith("[%s] %s", "auth-context", "profile lookup failed", {
       userId: "u-123",
       message: "row not found",
       code: "PGRST116",
@@ -37,7 +39,7 @@ describe("logSupabaseError", () => {
 
     logSupabaseError("home", "lookup failed", sampleError)
 
-    expect(spy).toHaveBeenCalledWith("[home] lookup failed", {
+    expect(spy).toHaveBeenCalledWith("[%s] %s", "home", "lookup failed", {
       message: "row not found",
       code: "PGRST116",
       details: "Results contain 0 rows",
@@ -53,7 +55,7 @@ describe("logSupabaseError", () => {
       code: "FAKE",
     })
 
-    expect(spy.mock.calls[0][1]).toMatchObject({
+    expect(spy.mock.calls[0][3]).toMatchObject({
       message: "row not found",
       code: "PGRST116",
     })
@@ -67,9 +69,29 @@ describe("logSupabaseError", () => {
       pathname: "/invite/abc",
     })
 
-    expect(spy.mock.calls[0][1]).toMatchObject({
+    expect(spy.mock.calls[0][3]).toMatchObject({
       userId: "u-1",
       pathname: "/invite/abc",
     })
+  })
+
+  it("外部の書式指定子を解釈しない", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {})
+    logSupabaseError("%o", "%d", sampleError)
+    const [template, scope, summary, fields] = spy.mock.calls[0]
+    expect(template).toBe("[%s] %s")
+    expect(format(template as string, scope, summary, fields)).toContain("[%o] %d")
+    expect(fields).toMatchObject({ code: "PGRST116" })
+  })
+
+  it("redacted版でも固定書式を使い、detailsとhintを除外する", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {})
+    logSupabaseErrorRedacted("%o", "%d", sampleError, { userId: "u-456" })
+    const [template, scope, summary, fields] = spy.mock.calls[0]
+    expect(template).toBe("[%s] %s")
+    expect(format(template as string, scope, summary, fields)).toContain("[%o] %d")
+    expect(fields).toMatchObject({ userId: "u-456", code: "PGRST116" })
+    expect(fields).not.toHaveProperty("details")
+    expect(fields).not.toHaveProperty("hint")
   })
 })

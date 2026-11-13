@@ -22,7 +22,7 @@ export function logSupabaseError(
   context?: Record<string, unknown>,
 ): void {
   const asRecord = error as Partial<PostgrestError> & Partial<AuthError>
-  console.error(`[${scope}] ${summary}`, {
+  console.error("[%s] %s", scope, summary, {
     ...context,
     message: error.message,
     code: asRecord.code,
@@ -47,7 +47,7 @@ export function logSupabaseErrorRedacted(
   context?: Record<string, unknown>,
 ): void {
   const asRecord = error as Partial<PostgrestError> & Partial<AuthError>
-  console.error(`[${scope}] ${summary}`, {
+  console.error("[%s] %s", scope, summary, {
     ...context,
     message: error.message,
     code: asRecord.code,

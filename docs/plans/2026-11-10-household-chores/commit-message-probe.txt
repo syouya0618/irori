@@ -1,0 +1,43 @@
+ci(e2e): name the probe's grantee and keep its fixture from tripping or outliving it
+
+fba35d38 の E2E（run 43117183991）で、db-image-probe の 106 の手順が赤。関数を作る前に
+接続が切れ、確かめたい EXECUTE 拒否まで届かなかった。原因は準備の
+`GRANT irori_execute_denial_plain TO CURRENT_USER;`。
+
+- supautils 3.2.0 の GrantRoleStmt の hook は、非 superuser が実行すると grantee を
+  AccessPriv として読む。image の postgres は 10000000000000_demote-postgres で NOSUPERUSER。
+- CURRENT_USER の rolename は NULL で、is_reserved_role の strcmp が落ちる
+  （supabase/supautils#205・#207。タグ v3.2.3 が #205 の merge commit を指す。#207 は
+  17.6.1.147 でも再現した）。
+- 調べたい #214 とは別の不具合。
+
+変更:
+- 準備はロール名（postgres）を明示して GRANT する。接続するロールが postgres であることを
+  前提として断ずる。
+- 準備の後、probe する全ロールが EXECUTE を持たず、postgres が対照のロールになれることを、
+  has_function_privilege と pg_has_role で断じてから呼ぶ。
+- --image（使い捨ての container。crash を期待できるのはここだけ）:
+  - 準備を別の接続で commit する。その間の crash は「準備の失敗」として赤にし、psql の
+    終了コード（2 = 接続の喪失、3 = 文の誤り）で報告を分ける。
+  - 呼出しは別の接続で行い、最後の接続で後始末して何も残らぬことを断ずる。
+- --container（pgTAP の前の stack。常に clean）:
+  - ロールごとに 1 つの transaction で作って呼び、ROLLBACK する。
+  - 何も commit しないゆえ、DB が落ちても、script が止められても、何も残らない。
+  - 通った接続のたびに、関数もロールも残っておらぬことも断ずる。
+- 期待の crash は、その手順で増えたログ行の中で、次の 2 行を 1 組として照合して数える。
+  前の crash や他の backend の crash では通らない。
+  - 呼んだ接続の backend PID の「terminated by signal 11」
+  - 直後の「Failed process was running: SELECT public.irori_execute_denial_probe(」
+- 42501 の手順は、拒否が server log に出たことも断ずる（ログを読めておる陽性対照）。
+- 接続を失った失敗（psql の終了コード 2）は、crash 行を最大 15 秒待ってから報告する。
+- PASS の前に、最初の probe 以後の crash 行が、ちょうど期待の数であることを断ずる
+  （clean は 0、crash は 2）。
+- 変数への照合は here-string にする。pipefail の下で、grep -q の早い終了を失敗と取り違えぬため。
+- 期待は変えていない。
+  - 106: 対照のロールは 42501、anon・authenticated は signal 11。
+  - 156: 4 ロールとも 42501 で稼働を続ける。
+- e2e.yml はコメントだけを直した。
+
+権限の追加、拒否試験の削除、skip、continue-on-error は使っていない。
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

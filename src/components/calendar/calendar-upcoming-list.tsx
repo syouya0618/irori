@@ -3,6 +3,8 @@
 import { useState } from "react"
 import { ChevronDown, ChevronUp, ListOrdered, Lock } from "lucide-react"
 import { gridRangeOf } from "@/lib/domain/calendar-grid"
+import { garbageOf } from "@/lib/domain/garbage"
+import { GarbageKindLabel } from "@/components/chores/garbage/garbage-kind-icon"
 import type { CalendarEventRecord, MonthLoadState } from "./use-month-events"
 import { eventWhenLabel, formatShortDay } from "./calendar-display"
 
@@ -117,6 +119,8 @@ export function CalendarUpcomingList({
               <ul className="flex flex-col divide-y divide-border/40">
                 {items.map((e) => {
                   const date = e.start_date < today ? today : e.start_date
+                  // 用途（ごみの日）はアイコン + 文字で言う（通常の予定の行は従来のまま）
+                  const garbage = garbageOf(e)
                   return (
                     <li key={e.id}>
                       <button
@@ -129,6 +133,9 @@ export function CalendarUpcomingList({
                           <span className="text-xs tabular-nums text-muted-foreground">
                             {eventWhenLabel(e)}
                           </span>
+                          {garbage !== null && (
+                            <GarbageKindLabel label={garbage.label} className="text-xs" />
+                          )}
                         </span>
                         {e.source === "google" && (
                           <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">

@@ -10,7 +10,7 @@ it("starts closed, opens published changes newest first, and closes with the sam
   expect(screen.queryByRole("heading")).not.toBeInTheDocument()
   fireEvent.click(button)
   expect(button).toHaveAttribute("aria-expanded", "true")
-  expect(screen.getAllByRole("heading").map((heading) => heading.textContent)).toEqual(["2026年11月の子育て機能の更新", "2026年10月28日の更新"])
+  expect(screen.getAllByRole("heading").map((heading) => heading.textContent)).toEqual(["2026年11月の家事機能の追加", "2026年11月の子育て機能の更新", "2026年10月28日の更新"])
   fireEvent.click(button)
   expect(screen.queryByRole("heading")).not.toBeInTheDocument()
 })

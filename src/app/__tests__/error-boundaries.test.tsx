@@ -1,5 +1,5 @@
 /**
- * error.tsx 3 本の「もう一度試す」が**本物の Next の境界**から渡る関数に繋がっておるかの検証（P2-01）。
+ * error.tsx 4 本（ルート / (main) / 育児 / 家事）の「もう一度試す」が**本物の Next の境界**から渡る関数に繋がっておるかの検証（P2-01）。
  *
  * ## 直した欠陥
  * Next 16.3 で再試行の prop は `unstable_retry` → `retry` へ改名された
@@ -26,6 +26,7 @@ import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.
 import GlobalError from "../error"
 import MainError from "../(main)/error"
 import BabyError from "../(main)/baby/error"
+import ChoresError from "../(main)/chores/error"
 
 /** refresh が呼ばれるまで throw し続ける子（一度きりの throw は React の同期再描画で隠れうる）。 */
 let shouldThrow = true
@@ -73,6 +74,11 @@ const cases: { name: string; component: ComponentType<never>; heading: RegExp }[
     name: "(main)/baby/error.tsx",
     component: BabyError as ComponentType<never>,
     heading: /育児ログの読み込みに失敗しました/,
+  },
+  {
+    name: "(main)/chores/error.tsx",
+    component: ChoresError as ComponentType<never>,
+    heading: /家事の読み込みに失敗しました/,
   },
 ]
 

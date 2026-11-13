@@ -71,6 +71,157 @@ export interface Database {
       news_articles:{Row:{ai_category:string|null;ai_summary:string|null;region_key:string;id:string;title:string;url:string;published_at:string|null;source_key:string;first_seen_at:string;min_months:number|null;max_months:number|null};Insert:{ai_category?:string|null;ai_summary?:string|null;region_key:string;id:string;title:string;url:string;published_at:string|null;source_key:string;min_months?:number|null;max_months?:number|null};Update:{ai_category?:string|null;ai_summary?:string|null};Relationships:[]}
       news_source_runs:{Row:{region_key:string;source_key:string;claimed_at:string;last_success_at:string|null;last_error_at:string|null};Insert:never;Update:{last_success_at?:string;last_error_at?:string|null};Relationships:[]}
       news_deliveries:{Row:{id:string;recipient_id:string;household_id:string;region_key:string;day:string;subscription_id:string|null;article_ids:string[];sent_at:string|null;accepted_at:string|null;skipped_at:string|null};Insert:never;Update:{sent_at?:string|null;accepted_at?:string|null;skipped_at?:string|null};Relationships:[]}
+      // ── ごみ（予定の用途）ここから: supabase/migrations/20261111100001_event_purposes.sql ──
+      /**
+       * 予定の用途（ごみの日）と前日通知の既定。世帯単位・authenticated は SELECT のみ
+       * （書込は下の Functions の `save_event_purpose` 等だけ）。
+       *
+       * `calendar_events` とは鍵で結び **FK は張らぬ**（Google の 410 完全再同期が行を
+       * DELETE→INSERT し直すため）:
+       *   - `scope: "event"` … `target_key` = `calendar_events.event_uid`
+       *   - `scope: "series"` … native は `series_id`、google は `google_calendar_id|recurring_event_id`
+       *
+       * `scope` / `purpose` / `remind_default` は DB では text + CHECK。読む側は未知の値を
+       * 退化させること（`src/lib/domain/garbage.ts` の `parseEventPurposeRow`）。ここの型は
+       * migration 時点の値域を書いておるだけで、将来の値を拒む根拠にせぬ。
+       */
+      event_purposes: {
+        Row: {
+          id: string
+          household_id: string
+          scope: string
+          target_key: string
+          /** "garbage" / "normal"（この回だけ通常へ戻す）/ null（通知の明示 OFF だけを持つ行） */
+          purpose: string | null
+          /** ごみの名称（1〜20 文字）。purpose が "garbage" の時だけ非 null */
+          garbage_kind: string | null
+          /** series だけが持つ。"prev_day_20" / "none" */
+          remind_default: string | null
+          /** event だけが意味を持つ。この回の通知を明示的に止めた印 */
+          reminder_opt_out: boolean
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // ── ごみ（予定の用途）ここまで ──
+      // ── ごはん（献立・在庫・買い物）ここから: supabase/migrations/20261111100003_dinner_tables.sql ──
+      // 全表が世帯単位。authenticated は SELECT のみ（書込は下の Functions の RPC だけ）。
+      // 版は updated_at（PostgREST の表記のまま運ぶ）。numeric / bigint 列は JSON の number で届く。
+      /** 世帯のごはん設定。行が無い世帯は既定値（2 人分・汁物なし・時間上限なし・常備品なし）として扱う。 */
+      dinner_settings: {
+        Row: { household_id: string; servings: number; include_soup: boolean; max_cook_minutes: number | null; staples: string[]; child_stages: Json; updated_by: string | null; updated_at: string; created_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      /** 在庫。`ingredient_id` が null の行は食材辞書へ未解決（名前のまま扱い、提案の材料に数えない）。 */
+      pantry_items: {
+        Row: { id: string; household_id: string; ingredient_id: string | null; name: string; quantity: number | null; unit: string | null; status: "have" | "low" | "out"; use_soon: boolean; storage: "fridge" | "freezer" | "pantry" | null; expires_on: string | null; confirmed_on: string; created_by: string | null; updated_at: string; created_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      /** 必須除外（アレルギー・苦手）。正規メンバーなら誰でも登録・削除できる。`dedupe_key` は DB の生成列。 */
+      food_exclusions: {
+        Row: { id: string; household_id: string; subject_kind: "household" | "member" | "child"; subject_profile_id: string | null; subject_child_id: string | null; reason: "allergy" | "dislike"; target_kind: "allergen" | "ingredient" | "custom"; target_id: string | null; custom_label: string | null; created_by: string | null; updated_at: string; created_at: string; dedupe_key: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      /** 好み（採点用）。`scope='personal'` は `profile_id` の本人だけが変更・削除できる（読むのは世帯の正規メンバー全員）。 */
+      food_preferences: {
+        Row: { id: string; household_id: string; scope: "household" | "personal"; profile_id: string | null; target_kind: "recipe" | "ingredient" | "tag"; target_id: string; sentiment: "like" | "dislike"; updated_at: string; created_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      /** 食後評価（本人・料理・日付で 1 件）。本人だけが書ける。`dish_key` は DB の生成列。 */
+      dish_feedback: {
+        Row: { id: string; household_id: string; profile_id: string; recipe_id: string | null; dish_title: string; eaten_on: string; taste: number | null; effort: number | null; again: boolean | null; exclude_from_learning: boolean; updated_at: string; created_at: string; dish_key: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      /** 献立全体の版。行が無い世帯の版は 0。`grocery_revision` は買い物の自動項目を最後に同期したときの献立の版。 */
+      dinner_plan_state: {
+        Row: { household_id: string; revision: number; last_operation_id: string | null; last_request_hash: string | null; grocery_operation_id: string | null; grocery_request_hash: string | null; grocery_revision: number | null; updated_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      /** 献立の 1 枠。`recipe_id`（+ `recipe_version`）か `custom_title` のどちらか一方。`custom_ingredients` はアプリの `RecipeIngredient[]`。 */
+      dinner_plan_entries: {
+        /** `prior_status` = 「作った」「作らなかった」にする直前の状態（取り消しで戻す先）。RPC が遷移の時に保持する。 */
+        Row: { id: string; household_id: string; plan_date: string; role: "main" | "side" | "staple" | "soup"; position: number; recipe_id: string | null; recipe_version: number | null; custom_title: string | null; custom_ingredients: Json | null; servings: number; pinned: boolean; status: "proposed" | "confirmed" | "cooked" | "skipped"; prior_status: "proposed" | "confirmed" | null; origin: "auto" | "manual" | "ai_assisted"; created_by: string | null; updated_at: string; created_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      /**
+       * 買い物項目。`origin='auto'` は `item_key`（食材ID|単位族）で再計算のたびに upsert され、`origin='manual'` は `'manual|' + id`。
+       * `section` は利用者の上書き（null = 食材辞書の既定）。
+       * `purchased_quantity` / `purchased` は**購入の事実**（購入の操作だけが書く。「作った」・同期では書き換えない）。
+       * `purchase_updated_at` = 購入の事実か、その意味（品名・単位）を最後に変えた時刻（null = 一度も変えていない）。
+       *   `set_grocery_purchase` は送られた版が「これ以後で、今の `updated_at` を超えない」なら通す（購入の事実と意味が
+       *   変わっていなければ、必要量・充当・補充・メモだけが変わった後の画面からも購入を記録できる）。
+       * `consumptions` / `consumed_quantity` は作った料理へ充当した量の台帳と合計（`irori_private.dinner_grocery_settle`
+       *   だけが書く。同期・献立の状態の保存・購入・補充の RPC が書く前に呼ぶ）。要素は
+       *   `{ k: 枠 ID | "settled", q: 量, m: 印のまとまりか, d?: 枠の日付, on: 充当中か, pc?: 眠らせた時に印を戻したか }`。
+       *   `on=false` は眠り（数えない。枠がまた消費済みになれば起こす）。`consumed_quantity` は `on` の `q` の合計。
+       *   `purchase_consumed` = 購入の印を作った料理で使い終えたか（画面の印 = `purchased && !purchase_consumed`）。
+       * 残り（不足）= `required_quantity −（purchased_quantity − restocked_quantity − consumed_quantity）`（後者は 0 未満にしない）。
+       * `still_needed=false` は献立からは不要になったが購入・メモ・補充・充当の記録があるので残っている自動項目。
+       * `sources` はアプリの `GrocerySource[]`、`restock_ids` は在庫へ反映済みの在庫行 ID。
+       * Insert / Update は `never`（authenticated に書込の GRANT もポリシーも無い。書込は RPC だけ）。
+       */
+      grocery_items: {
+        Row: { id: string; household_id: string; origin: "auto" | "manual"; item_key: string; ingredient_id: string | null; name: string; section: string | null; required_quantity: number | null; unit: string | null; required_note: string | null; needs_stock_check: boolean; sources: Json; purchased_quantity: number; purchased: boolean; purchased_at: string | null; purchased_by: string | null; purchase_updated_at: string | null; restocked_quantity: number; restock_ids: string[]; consumptions: Json; consumed_quantity: number; purchase_consumed: boolean; note: string | null; plan_revision: number | null; still_needed: boolean; created_by: string | null; updated_at: string; created_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      /** AI 補助の回数計上（世帯 × UTC 日）。authenticated には GRANT なし（RPC 経由のみ）。 */
+      dinner_ai_usage: {
+        Row: { household_id: string; usage_day: string; calls: number }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      /** 無料枠の枯渇による全世帯の停止（単一行）。authenticated には GRANT なし。 */
+      dinner_ai_provider_state: {
+        Row: { id: boolean; exhausted_until: string | null; updated_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // ── ごはん ここまで ──
+      // ── 掃除（ルーティーンと履歴）ここから: supabase/migrations/20261111100002_cleaning_routines.sql ──
+      // 両表とも世帯単位。authenticated は SELECT のみ（書込は下の Functions の RPC だけ）。
+      // 版は updated_at（PostgREST の表記のまま運ぶ）。date 列は "YYYY-MM-DD"。
+      // cadence_unit / schedule_mode / kind は DB では text + CHECK。読む側は未知の値を退化させること
+      // （`src/lib/domain/cleaning.ts` の `parseCleaningRoutine` / `parseCleaningLog`）。
+      /** 掃除の項目の定義。前回実施日は持たぬ（正本は cleaning_logs の有効な done）。 */
+      cleaning_routines: {
+        Row: { id: string; household_id: string; name: string; location: string | null; cadence_unit: string; cadence_interval: number; schedule_mode: string; anchor_date: string; postponed_occurrence: string | null; postponed_until: string | null; paused_at: string | null; resume_floor: string | null; archived: boolean; cadence_epoch: number; created_by: string | null; updated_by: string | null; updated_at: string; created_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      /**
+       * 掃除の履歴。`occurrence` は閉じた回の鍵（過去日の追記は null）。`scheduled_on` はスキップした回の
+       * 予定日（skip だけが持つ。DB の record_cleaning_log が計算して入れる）。取り消しは `voided_at`（行は残る）。
+       */
+      cleaning_logs: {
+        Row: { id: string; household_id: string; routine_id: string; kind: string; done_on: string | null; occurrence: string | null; scheduled_on: string | null; cadence_epoch: number; note: string | null; voided_at: string | null; voided_by: string | null; created_by: string | null; updated_at: string; created_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // ── 掃除 ここまで ──
       custom_fields: {
         Row:{id:string;household_id:string;label:string;value_type:"number"|"boolean"|"text"|"datetime"|"choice";options:Json;archived:boolean;updated_at:string;created_at:string}
         Insert:never
@@ -823,6 +974,112 @@ export interface Database {
       claim_news_source:{Args:{p_region:string;p_now:string};Returns:boolean}
       prepare_news_deliveries:{Args:{p_now:string};Returns:number}
       claim_news_delivery:{Args:{p_id:string;p_now:string};Returns:Json}
+      // ── ごみ（予定の用途）ここから: supabase/migrations/20261111100001_event_purposes.sql ──
+      // 世帯は auth.uid() から導出（引数で受けない）。正規メンバーでなければ 42501、入力不正は 22023。
+      /**
+       * 予定の分類と、その時に選んだ通知の扱いを書く。→ `{ status, purpose: 行 | null }`。
+       * p_scope: "event" | "series" / p_action: "garbage" | "normal" | "clear" /
+       * p_reminder: "prev_day_20" | "off" | "keep"。鍵（event_uid / シリーズの鍵）はサーバが引く。
+       * `conflict` は「通常へ戻す」の元になるシリーズ既定が既に無い時、または画面が見ていた版
+       * （p_seen_series / p_seen_event = event_purposes.updated_at。行が無ければ null）が今の版と違い、
+       * 適用すると何かが変わる時（何も書いておらぬ）。
+       */
+      save_event_purpose: { Args: { p_event_id: string; p_scope: string; p_action: string; p_garbage_kind: string | null; p_reminder: string; p_seen_series: string | null; p_seen_event: string | null }; Returns: Json }
+      /** 予定が見つからぬ分類の手動整理。→ `{ status }`（saved = 消した / replayed = 既に無い / conflict = 予定が在るので消さぬ）。 */
+      delete_orphan_event_purpose: { Args: { p_id: string }; Returns: Json }
+      /** 利用者が native の予定を削除した直後の掃除（予定が 1 つも無い鍵の行だけ消す）。→ 消した行数。 */
+      cleanup_deleted_event_purposes: { Args: { p_event_ids: string[]; p_series_id: string | null }; Returns: number }
+      // ── ごみ（予定の用途）ここまで ──
+      // ── ごはん（献立・在庫・買い物）ここから: supabase/migrations/20261111100003_dinner_tables.sql ──
+      // 全て jsonb を返す。保存系は { status: "saved" | "replayed" | "conflict", ... }。
+      //   * 世帯は auth.uid() から導出（引数で受けない）。正規メンバーでなければ 42501、入力不正は 22023。
+      //   * 版つきで送った行が既に無い（別端末が削除した・献立の作り直しで置き換わった）ときは
+      //     { status: "conflict", <entity>: { id, deleted: true } }。行の列は載らないので、列を読む前に `deleted` を見ること。
+      //   * delete_* は行が既に無ければ { status: "replayed", id }。
+      /** → { status, settings }。p_staples は重複を除き昇順で保存。p_child_stages は { [childId]: 食事段階 }（世帯の子だけ）。 */
+      save_dinner_settings: { Args: { p_version: string | null; p_servings: number; p_include_soup: boolean; p_max_cook_minutes: number | null; p_staples: string[]; p_child_stages: Json }; Returns: Json }
+      /** → { status, item }。p_item: { ingredient_id, name, quantity, unit, status, use_soon, storage, expires_on, confirmed_on }（未知の鍵は 22023）。 */
+      save_pantry_item: { Args: { p_id: string; p_version: string | null; p_item: Json }; Returns: Json }
+      /** → { status, id } / 版違いは { status: "conflict", item }。 */
+      delete_pantry_item: { Args: { p_id: string; p_version: string }; Returns: Json }
+      /** まとめ入力（1〜50 件・1 トランザクション）。p_items: [{ id, ...p_item }]。→ { status, saved, replayed, items }。同じ id で内容が違えば 23505。 */
+      add_pantry_items: { Args: { p_items: Json }; Returns: Json }
+      /** → { status, exclusion }。別の id で同じ除外が既にあれば conflict（既存行を返す）。同じ id で内容を変えると 23505。世帯外の対象者は 42501。 */
+      save_food_exclusion: { Args: { p_id: string; p_subject_kind: string; p_subject_profile_id: string | null; p_subject_child_id: string | null; p_reason: string; p_target_kind: string; p_target_id: string | null; p_custom_label: string | null }; Returns: Json }
+      delete_food_exclusion: { Args: { p_id: string }; Returns: Json }
+      /** → { status, preference }。personal の持ち主は常に呼び手。他人の personal 行は 42501。同じ対象が別の id で既にあれば conflict。 */
+      save_food_preference: { Args: { p_id: string; p_version: string | null; p_scope: string; p_target_kind: string; p_target_id: string; p_sentiment: string }; Returns: Json }
+      delete_food_preference: { Args: { p_id: string }; Returns: Json }
+      /** → { status, feedback }。本人だけが書ける（他人の行は 42501）。食べた日は今日（JST）以前。料理・日付は作成後に変えられない。 */
+      save_dish_feedback: { Args: { p_id: string; p_version: string | null; p_recipe_id: string | null; p_dish_title: string; p_eaten_on: string; p_taste: number | null; p_effort: number | null; p_again: boolean | null; p_exclude_from_learning: boolean }; Returns: Json }
+      delete_dish_feedback: { Args: { p_id: string }; Returns: Json }
+      /**
+       * 範囲（最大 7 日）内の「固定でも調理済みでもない」枠を置き換える。→ { status, revision, entries, skipped }。
+       * p_entries: [{ id, plan_date, role, position, recipe_id, recipe_version, custom_title, custom_ingredients, servings, pinned, status, origin }]。
+       * 固定・調理済みの枠を指す要素は書かず `skipped`（{ id, kept_id, plan_date, role, position, reason }）で返す。
+       * 版違いは conflict（最新の revision と範囲内の行）。同じ p_operation_id の再送は replayed、内容が違えば 23505。
+       */
+      apply_dinner_plan: { Args: { p_operation_id: string; p_expected_revision: number; p_range_start: string; p_range_end: string; p_entries: Json }; Returns: Json }
+      /** 1 枠の作成・編集。→ { status, entry, revision }。p_entry は apply_dinner_plan の要素から id を除いた形。移動先の枠が埋まっていれば 23505。 */
+      save_dinner_entry: { Args: { p_id: string; p_version: string | null; p_entry: Json }; Returns: Json }
+      /** → { status, id, revision } / 版違いは { status: "conflict", entry, revision }。 */
+      delete_dinner_entry: { Args: { p_id: string; p_version: string }; Returns: Json }
+      /**
+       * 提案（proposed）の枠を 1 トランザクションで確定にする。→ { status: "saved", revision, confirmed }。
+       * p_entries: [{ id, version }]（1〜300 件 = 7 日 × 1 日の枠の上限を覆う）。献立の版が違う・枠が無い・枠の版が違う・提案でない枠が 1 つでも在れば、
+       * 何も書かずに { status: "conflict", revision, detail: "stale_plan" | "gone" | "row_changed" }。成功で版は 1 回だけ進む。
+       */
+      confirm_dinner_entries: { Args: { p_expected_revision: number; p_entries: Json }; Returns: Json }
+      /**
+       * 自動項目を item_key で upsert（冪等）。→ { status, revision, synced, retained, removed, used }（conflict / replayed は { status, revision }）。
+       * p_items: [{ item_key, ingredient_id, name, required_quantity, unit, required_note, needs_stock_check, sources }]（最大 200 件）。
+       * sources の要素: { date, recipeId, title, quantity, entryId?, buy? }（entryId = 献立の枠、buy = その枠が買い物へ載せた正味量）。
+       * 購入の事実・補充・メモ・売場の上書き・手動項目は保持する。新しい必要量から外れた出所のうち「作った」枠・確定のまま
+       * 日が過ぎた枠は、充当の台帳（consumptions）へ 1 回だけ記録する（量 = min(buy, その時点で充てられる購入)）。
+       * 取り消し・作らなかった・再び必要量に載った枠の記録は、その記録だけを外す（献立の変更で外れた分は記録しない）。
+       * p_plan_revision が現在の献立の版と違えば conflict。
+       */
+      sync_grocery_auto_items: { Args: { p_operation_id: string; p_plan_revision: number; p_items: Json }; Returns: Json }
+      /** → { status, item }。 */
+      save_grocery_manual_item: { Args: { p_id: string; p_version: string | null; p_name: string; p_quantity: number | null; p_unit: string | null; p_section: string | null; p_note: string | null }; Returns: Json }
+      /** 手動項目と still_needed=false の自動項目だけ消せる（必要な自動項目は 23514）。→ { status, id }。 */
+      delete_grocery_item: { Args: { p_id: string; p_version: string }; Returns: Json }
+      /**
+       * p_purchased_quantity は購入の**事実の合計量**（0 で取り消し。充てられる量・残りを合計として送らない）。
+       * 同じ内容の判定は (量の事実, purchased && !purchase_consumed)。書けば purchase_consumed は false。→ { status, item }。
+       */
+      set_grocery_purchase: { Args: { p_id: string; p_version: string; p_purchased_quantity: number; p_purchased: boolean }; Returns: Json }
+      /** → { status, item }。 */
+      update_grocery_item_meta: { Args: { p_id: string; p_version: string; p_note: string | null; p_section: string | null }; Returns: Json }
+      /** 確認した量を新しい在庫行（id = p_pantry_item_id）として 1 度だけ反映。→ { status, item, pantry_item }。同じ p_pantry_item_id の再送は replayed。 */
+      restock_pantry_from_grocery: { Args: { p_grocery_id: string; p_grocery_version: string; p_pantry_item_id: string; p_quantity: number | null }; Returns: Json }
+      /** → { status: "ok", used, limit } | { status: "household_limit", used, limit } | { status: "provider_exhausted", resets_at }。p_limit は 1..10。 */
+      claim_dinner_ai_call: { Args: { p_limit: number }; Returns: Json }
+      /** 表示用（計上しない）。→ { used, provider_exhausted, resets_at }。 */
+      dinner_ai_status: { Args: Record<string, never>; Returns: Json }
+      /** service_role 専用。p_until は今より後・26 時間以内。 */
+      mark_dinner_ai_exhausted: { Args: { p_until: string }; Returns: Json }
+      // ── ごはん ここまで ──
+      // ── 掃除（ルーティーンと履歴）ここから: supabase/migrations/20261111100002_cleaning_routines.sql ──
+      // 世帯は auth.uid() から導出（引数で受けない）。正規メンバーでなければ 42501、入力不正は 22023。
+      /** 定義の作成（p_version null）・編集・アーカイブ。→ `{ status, routine }`。同内容は版を見ずに replayed。 */
+      save_cleaning_routine: { Args: { p_id: string; p_version: string | null; p_name: string; p_location: string | null; p_cadence_unit: string; p_cadence_interval: number; p_schedule_mode: string; p_anchor_date: string; p_archived: boolean }; Returns: Json }
+      /** p_action: "pause" | "resume" | "postpone" | "clear_postpone"。p_occurrence / p_until は postpone の時だけ。→ `{ status, routine }`。 */
+      set_cleaning_routine_state: { Args: { p_id: string; p_version: string | null; p_action: string; p_occurrence: string | null; p_until: string | null }; Returns: Json }
+      /**
+       * 完了（done）・スキップ（skip）・過去日の追記（done で p_occurrence が null）。
+       * → `{ status: "saved" | "replayed" | "conflict" | "already_closed", log?, routine }`。
+       * `already_closed` は同じ回を閉じる有効な履歴が既に在る時（行を作らず既存行を返す）。
+       * 同じ p_id で内容が違えば 23505。p_done_on は今日（JST）以前。
+       */
+      record_cleaning_log: { Args: { p_id: string; p_routine_id: string; p_routine_version: string | null; p_kind: string; p_done_on: string | null; p_occurrence: string | null; p_note: string | null }; Returns: Json }
+      /** 実施日・メモの訂正（閉じた回の鍵は変えぬ）。→ `{ status, log }`。 */
+      update_cleaning_log: { Args: { p_id: string; p_version: string | null; p_done_on: string | null; p_note: string | null }; Returns: Json }
+      /** 取り消し（行は残す）。→ `{ status, log }`。既に取り消し済みなら replayed。 */
+      void_cleaning_log: { Args: { p_id: string; p_version: string | null }; Returns: Json }
+      /** 有効な履歴の要約（SECURITY INVOKER = RLS が効く）。p_routine_id を省けば世帯の全項目。 */
+      cleaning_log_marks: { Args: { p_routine_id?: string | null }; Returns: { routine_id: string; last_done_on: string | null; max_occurrence: string | null; max_skip_occurrence: string | null; last_skip_scheduled_on: string | null }[] }
+      // ── 掃除 ここまで ──
       save_custom_field:{Args:{p_id:string;p_version:string|null;p_label:string;p_type:string;p_options:Json;p_archived:boolean};Returns:Json}
       save_custom_record:{Args:{p_id:string;p_child:string;p_version:string|null;p_field:string;p_value:Json;p_logged_at:string;p_memo:string|null;p_voided:boolean};Returns:Json}
       export_child_records:{Args:{p_child:string;p_from?:string|null;p_to?:string|null};Returns:Json}

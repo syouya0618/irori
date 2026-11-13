@@ -1,5 +1,6 @@
 import { countRecordRequests,unreadableRecordCount } from "./record-requests"
 import { listPendingSleep } from "@/lib/domain/sleep-pending"
+import { listChorePending } from "@/lib/domain/chore-pending"
 import { ownedChildTimerIds, readPersistedTimer, summarizePersistedTimer } from "@/lib/domain/feeding-timer-storage"
 import { countHouseholdPendingSaves, listPendingSaves } from "@/lib/domain/pending-saves-storage"
 import { countOwnedDrafts } from "@/lib/domain/draft-storage"
@@ -28,6 +29,8 @@ export interface LocalWorkSummary {
   timer: { pendingSave: boolean; stale: boolean } | null
   /** 応答不明の作成（クイック記録・記録シート） */
   pendingSaves: number
+  /** 家事（ごみ・掃除・ごはん）の結果不明の操作（`chore-pending.ts`。世帯スコープ） */
+  chorePending: number
   /** 予定の作成の控えのうち、保存されておりうるもの（送信中・確認中。v9） */
   calendarCreates: number
   /** 予定の作成の控えのうち、1 度きりの送信が拒まれ保存されておらぬもの（入力に戻って直せる。v9） */
@@ -50,7 +53,9 @@ function canReadStorage(): boolean {
 export function summarizeLocalWork(owner: SaveOwner, nowMs: number = Date.now()): LocalWorkSummary {
   const storageReadable = canReadStorage()
   const sleep = listPendingSleep(owner)
-  const unreadable = sleep.unreadable || unreadableRecordCount(owner)>0
+  // 家事の控えは世帯スコープ（子どもで絞らぬ）。読めぬ控えも「何もない」と言い換えぬ
+  const chores = listChorePending({ userId: owner.userId, householdId: owner.householdId })
+  const unreadable = sleep.unreadable || unreadableRecordCount(owner)>0 || chores.unreadable>0
   const childIds = ownedChildTimerIds(owner)
   const timer = summarizePersistedTimer(readPersistedTimer(owner.childId), owner, nowMs) ?? childIds.map(childId => summarizePersistedTimer(readPersistedTimer(childId), { ...owner, childId }, nowMs)).find(Boolean)
   const storedCreates = listCalendarPendingCreates(owner, nowMs)
@@ -62,6 +67,7 @@ export function summarizeLocalWork(owner: SaveOwner, nowMs: number = Date.now())
     ...(unreadable?{unreadableSaves:true}:{}),
     timer: timer ? { pendingSave: timer.pendingSave, stale: timer.stale } : null,
     pendingSaves: (owner.childId ? listPendingSaves(owner, nowMs).length : countHouseholdPendingSaves(owner, nowMs)) + sleep.items.length + countRecordRequests(owner),
+    chorePending: chores.items.length,
     calendarCreates: creates.filter((e) => e.status !== "rejected").length,
     calendarCreatesRejected: creates.filter((e) => e.status === "rejected").length,
     calendarCreatesMemoryOnly: memoryCreates.length,
@@ -75,6 +81,7 @@ export function hasLocalWork(summary: LocalWorkSummary): boolean {
     summary.unreadableSaves === true ||
     summary.timer !== null ||
     summary.pendingSaves > 0 ||
+    summary.chorePending > 0 ||
     summary.calendarCreates > 0 ||
     summary.calendarCreatesRejected > 0 ||
     summary.drafts > 0
@@ -89,6 +96,7 @@ export function describeLocalWork(summary: LocalWorkSummary): string | null {
     parts.push(summary.timer.pendingSave ? "保存を確認中の授乳" : "授乳の計測")
   }
   if (summary.pendingSaves > 0) parts.push(`保存を確認中の記録 ${summary.pendingSaves}件`)
+  if (summary.chorePending > 0) parts.push(`保存を確認中の家事の操作 ${summary.chorePending}件`)
   if (summary.calendarCreates > 0) parts.push(`保存を確認中の予定 ${summary.calendarCreates}件`)
   if (summary.calendarCreatesRejected > 0) parts.push(`保存できなかった予定 ${summary.calendarCreatesRejected}件`)
   if (summary.drafts > 0) parts.push(`下書き ${summary.drafts}件`)

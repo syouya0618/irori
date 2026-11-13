@@ -19,6 +19,8 @@ import {
   PENDING_SAVE_SCHEMA_VERSION,
 } from "@/lib/domain/pending-saves-storage"
 import { readPersistedTimer, writePersistedTimer } from "@/lib/domain/feeding-timer-storage"
+import { listChorePending, putChorePending, type ChoreKind } from "@/lib/domain/chore-pending"
+import { hasLocalWork, summarizeLocalWork } from "@/lib/domain/local-work"
 
 const ID_A = "6f1e2d3c-4b5a-4c6d-8e9f-0a1b2c3d4e5f"
 const ID_B = "7f1e2d3c-4b5a-4c6d-8e9f-0a1b2c3d4e5f"
@@ -112,5 +114,52 @@ describe("CacheUserGuard と端末の未確定作業", () => {
     expect(readDraft({ userId: "a", householdId: "h1" }, { kind: "diary", date: "2026-10-27" }, isText).status).toBe("found")
     expect(listPendingSaves({ userId: "a", householdId: "h1" })).toHaveLength(1)
     expect(readPersistedTimer()).not.toBeNull()
+  })
+})
+
+/**
+ * 家事（ごみ・掃除・ごはん）の結果不明の控え（chore-pending。2026-11 家事機能）の 3 箇所配線:
+ * 持ち主交代の破棄（CacheUserGuard）・更新とログアウト前の件数（local-work）・読む側の持ち主絞り込み。
+ */
+describe("CacheUserGuard と家事の控え", () => {
+  function chore(userId: string, householdId: string, id: string, kind: ChoreKind = "cleaning") {
+    expect(
+      putChorePending({
+        schema: 1,
+        id,
+        owner: { userId, householdId },
+        kind,
+        label: "浴室の掃除を完了",
+        payload: { id: ID_A },
+        phase: "unknown",
+        firstAttemptAt: "2026-11-11T00:00:00.000Z",
+      }),
+    ).toBe(true)
+  }
+
+  it("別の利用者に替わったら前の利用者の控えを消し、今の利用者のものは残す", () => {
+    chore("a", "h1", ID_A)
+    chore("a", "h1", ID_B, "meal")
+    chore("b", "h1", ID_B)
+    render(<CacheUserGuard userId="b" householdId="h1" />)
+    expect(listChorePending({ userId: "a", householdId: "h1" }).items).toHaveLength(0)
+    expect(listChorePending({ userId: "b", householdId: "h1" }).items).toHaveLength(1)
+    expect(Object.keys(localStorage).filter((k) => k.startsWith("irori:chore-request:v1:a:"))).toEqual([])
+  })
+
+  it("同じ利用者が別の世帯へ移った時も、前の世帯の控えは消す", () => {
+    chore("a", "h1", ID_A)
+    render(<CacheUserGuard userId="a" householdId="h2" />)
+    expect(listChorePending({ userId: "a", householdId: "h1" }).items).toHaveLength(0)
+    expect(hasLocalWork(summarizeLocalWork({ userId: "a", householdId: "h2" }))).toBe(false)
+  })
+
+  it("対照: 同じ利用者・同じ世帯なら残り、更新・ログアウト前の件数に数えられる", () => {
+    chore("a", "h1", ID_A)
+    render(<CacheUserGuard userId="a" householdId="h1" />)
+    expect(listChorePending({ userId: "a", householdId: "h1" }).items).toHaveLength(1)
+    const summary = summarizeLocalWork({ userId: "a", householdId: "h1" })
+    expect(summary.chorePending).toBe(1)
+    expect(hasLocalWork(summary)).toBe(true)
   })
 })

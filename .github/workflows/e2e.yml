@@ -5,14 +5,56 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: e2e-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # 使い捨ての local DB のイメージを固定する（正本はここ 1 か所）。
+  # CLI 2.101.0 の既定 supabase/postgres:17.6.1.106 は supautils 3.2.0 を同梱し、supautils.hint_roles
+  # （anon / authenticated / service_role）が EXECUTE を持たぬ関数を呼ぶと 42501 ではなく backend が
+  # SIGSEGV で落ち、DB 全体が recovery に入る（supabase/postgres#2112・supabase/supautils#214。
+  # 3.2.0〜3.2.1 の不具合で 3.2.2 以降が修正 = supabase/supautils#190。影響は 17.6.1.099〜.112）。
+  # 17.6.1.156 は supautils 3.4.0 を同梱（supabase/postgres の tag 17.6.1.156 の nix/ext/supautils.nix）し、
+  # CLI 本体も 2026-07-29〜08-05 に既定として出した版。tag の付け替えに追随せぬよう digest で取る。
+  IRORI_DB_IMAGE_TAG: "17.6.1.156"
+  IRORI_DB_IMAGE_DIGEST: "sha256:ca7871b587ca2c401ac0f325df6249c9aa0d25647ded34631158efc51176767f"
+  # 対照に使う既定の 17.6.1.106（supautils 3.2.0）。最小再現が落ちることを確かめるためだけに起こす。
+  IRORI_DB_IMAGE_KNOWN_BAD_DIGEST: "sha256:21ab971149317ea9cd12a8126fe4ebb34def08c8972956b0958cba0924409dab"
+
 jobs:
+  db-image-probe:
+    # 最小再現の切り分け（CLI も stack も通さぬ単体の container）。単純な関数への EXECUTE 拒否だけで、
+    #   既定の 106: anon・authenticated は backend が signal 11 で落ち、hint_roles に無いロールは 42501（対照）
+    #   固定の 156: hint_roles の 3 ロールも対照のロールも 42501 で、同じ接続も server も生き続ける
+    # を終了コードで断ずる。どちらかの期待が外れれば赤になる（continue-on-error は置かぬ）。
+    # 準備（ロールと関数を作り EXECUTE を外す）は呼出しと別の接続で済ませ、その間の crash は「準備の失敗」として
+    # 赤にする。期待の crash は、呼んだ接続の PID と呼んだ文を server log で照合して数える。106 の supautils は
+    # `GRANT <role> TO CURRENT_USER` でも落ちる別の不具合を持つ（supabase/supautils#205・#207）ゆえ、準備は
+    # ロール名（postgres）を明示する。
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Pull the known-bad and the pinned database images by digest
+        run: |
+          docker pull "supabase/postgres@${IRORI_DB_IMAGE_KNOWN_BAD_DIGEST}"
+          docker pull "supabase/postgres@${IRORI_DB_IMAGE_DIGEST}"
+
+      - name: Known-bad 17.6.1.106 crashes on EXECUTE denial for hint_roles only
+        run: ./scripts/test-db-execute-denial.sh --image "supabase/postgres@${IRORI_DB_IMAGE_KNOWN_BAD_DIGEST}" --expect crash
+
+      - name: Pinned image refuses EXECUTE with 42501 and stays up
+        run: ./scripts/test-db-execute-denial.sh --image "supabase/postgres@${IRORI_DB_IMAGE_DIGEST}" --expect clean
+
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 家事の pgTAP・2 接続の並行試験・実 Auth の RPC・Playwright 一式が加わった。試験を削らず時間の枠を広げる。
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
         with:
@@ -47,6 +89,17 @@ jobs:
         # CLI 2.101.0 supports docker.io with the same pinned upstream image tags.
         run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io" >> "$GITHUB_ENV"
 
+      - name: Pin the local database image to a supautils-fixed build
+        # CLI 2.101.0 は supabase/.temp/postgres-version があればその tag で DB イメージを差し替え
+        # （apps/cli-go/pkg/config/config.go の Load）、docker.io のとき "supabase/postgres:<tag>" が手元に
+        # あれば pull し直さぬ（internal/utils/docker.go の DockerPullImageIfNotCached）。ゆえに digest で
+        # 取った image にその名前を付ける。.temp は gitignore 済みで、`supabase link` が書く場所と同じ。
+        run: |
+          docker pull "supabase/postgres@${IRORI_DB_IMAGE_DIGEST}"
+          docker tag "supabase/postgres@${IRORI_DB_IMAGE_DIGEST}" "supabase/postgres:${IRORI_DB_IMAGE_TAG}"
+          mkdir -p supabase/.temp
+          printf '%s\n' "${IRORI_DB_IMAGE_TAG}" > supabase/.temp/postgres-version
+
       - name: Start Supabase local stack
         # E2E に不要なサービスは除外して起動を軽くする
         # (-x の有効値は `supabase start --help` 参照。analytics = Logflare)
@@ -54,10 +107,21 @@ jobs:
 
       - name: Record isolated database runtime
         # Only this job's disposable local DB. Never inspect container Env/auth keys.
+        # 固定した digest の image で起きたことを断ずる（黙って 106 へ戻っていれば赤）。
         run: |
           docker inspect --format 'image={{.Config.Image}} image_id={{.Image}}' supabase_db_irori
           docker image inspect --format 'digests={{json .RepoDigests}}' "$(docker inspect --format '{{.Image}}' supabase_db_irori)"
           docker exec supabase_db_irori psql -X -U postgres -d postgres -c "SELECT version(); SELECT name, setting FROM pg_settings WHERE name IN ('session_preload_libraries', 'supautils.hint_roles');"
+          expected_id="$(docker image inspect --format '{{.Id}}' "supabase/postgres@${IRORI_DB_IMAGE_DIGEST}")"
+          echo "pinned=supabase/postgres:${IRORI_DB_IMAGE_TAG}@${IRORI_DB_IMAGE_DIGEST} expected_image_id=${expected_id}"
+          test "$(docker inspect --format '{{.Config.Image}}' supabase_db_irori)" = "supabase/postgres:${IRORI_DB_IMAGE_TAG}"
+          test "$(docker inspect --format '{{.Image}}' supabase_db_irori)" = "${expected_id}"
+
+      - name: Refuse EXECUTE for hint_roles without crashing the stack DB
+        # 本物の stack で、単純な関数への EXECUTE 拒否が 42501 になり接続も server も生き続けることを
+        # pgTAP の前に確かめる（ロールごとに 1 つの transaction の中で作って呼び、ROLLBACK する。何も commit
+        # せぬゆえ、DB が落ちても何も残らぬ。通った接続のたびに、関数もロールも残っておらぬことも断ずる）。
+        run: ./scripts/test-db-execute-denial.sh --container supabase_db_irori --expect clean
 
       - name: Run pgTAP database tests (RLS/CHECK 回帰)
         # supabase start がマイグレーション適用済みの DB に対し supabase/tests/*.sql を
@@ -70,6 +134,13 @@ jobs:
         env:
           PGPASSWORD: postgres # Supabase local fixture password; never a hosted credential.
         run: python3 scripts/test-feeding-reminder-concurrency.py --port 54322
+
+      - name: Test chores RPC concurrency on isolated local DB
+        # 掃除の同時完了・取り消し中の完了・古い版、買い物の購入と「作った」の取り消しの競合を、
+        # 利用者の JWT（authenticated）の 2 接続で実際にロック待ちさせて確かめる（PGlite は単一接続で見られぬ）。
+        env:
+          PGPASSWORD: postgres # Supabase local fixture password; never a hosted credential.
+        run: python3 scripts/test-chores-concurrency.py --port 54322
 
       - name: Generate .env.e2e
         run: ./scripts/e2e-env.sh
@@ -100,6 +171,16 @@ jobs:
           E2E_OFFLINE: "1"
           E2E_WEBKIT: "1"
         run: pnpm exec playwright test
+
+      - name: Assert the isolated database never crashed
+        # 試験の再試行が隠しうる、間欠的な backend の異常終了も拾う（ここまで全て通った時だけ走る）。
+        # ログを先に受け取る（`docker logs` 自体の失敗を、grep の「一致なし」として黙って通さない）
+        run: |
+          logs="$(docker logs supabase_db_irori 2>&1)"
+          if printf '%s\n' "$logs" | grep -E 'terminated by signal'; then
+            echo "the isolated database had a backend crash during this job" >&2
+            exit 1
+          fi
 
       - name: Upload Playwright artifacts
         if: failure()

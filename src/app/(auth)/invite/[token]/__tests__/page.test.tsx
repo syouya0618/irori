@@ -193,7 +193,9 @@ describe("世帯に参加済みの利用者（F2 / UX-04）", () => {
     expect(text).toContain("すでに世帯に参加しています")
     expect(text).not.toContain("別の世帯")
     expect(console.error).toHaveBeenCalledWith(
-      "[invite] invitation lookup failed",
+      "[%s] %s",
+      "invite",
+      "invitation lookup failed",
       expect.objectContaining({ userId: "user-1", message: "timeout" }),
     )
   })

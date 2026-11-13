@@ -29,6 +29,27 @@ const SCREENS = [
   ["予定", "/calendar"],
   ["設定", "/settings"],
   ["要望", "/feedback"],
+  // 家事ハブ（2026-11）。ボトムナビの 4 タブ目と、ごみ・掃除・ごはんへの入口カード
+  ["家事", "/chores"],
+  // 掃除（2026-11）。空の案内・追加の釦・更新の釦。項目つきの実測は e2e/chores-cleaning.spec.ts
+  ["掃除", "/chores/cleaning"],
+  // ごみ（2026-11）。未登録の案内（カレンダーへの導線）・通知の状態・更新の釦。
+  // 分類つきの画面とフォームの実測は e2e/chores-garbage.spec.ts
+  ["ごみ", "/chores/garbage"],
+  // ごはん（2026-11）。今夜（主な 2 つの操作・買い物への導線）・献立（開始日と日数・作成・7 日の
+  // カード・手で追加）・買い物（空の案内・献立から更新・項目を追加）。料理・項目つきの画面と
+  // シートの実測は e2e/chores-meals.spec.ts
+  ["ごはん（今夜）", "/chores/meals"],
+  ["ごはん（献立）", "/chores/meals/plan"],
+  ["ごはん（買い物）", "/chores/meals/shopping"],
+  // ごはん（2026-11）。食材（まとめ入力・空の案内）・今あるもので（0 件の案内と、食材・常備品への
+  // 導線）・設定（人数の増減・常備品とアレルゲンの札・登録の釦・出典のリンク）・レシピ詳細
+  // （出典のリンク）。新しい世帯には食材も子どもも無いゆえ、行つきの一覧・編集シート・取り分けの
+  // 案内（子どもごとの出典リンク）の実測はここに含まれぬ
+  ["ごはん（食材）", "/chores/meals/pantry"],
+  ["ごはん（今あるもので）", "/chores/meals/now"],
+  ["ごはん（設定）", "/chores/meals/settings"],
+  ["ごはん（レシピ）", "/chores/meals/recipes/sweet_potato_honey_lemon"],
 ] as const
 
 test("押下対象はどの画面でも 44x44px 以上ある（実ブラウザ実測）", async ({
@@ -78,4 +99,37 @@ test("押下対象はどの画面でも 44x44px 以上ある（実ブラウザ�
     `44px 未満の押下対象が見つかった。片手操作での誤タップは ` +
       `DESIGN_SYSTEM.md:15-16 が名指しする失敗モードじゃ:\n  ${violations.join("\n  ")}`
   ).toEqual([])
+})
+
+// 家事（2026-11）: 狭い Android 端末の幅（360px）で、どの家事の画面も横へはみ出さぬ。
+// 同じ幅の検査は e2e/baby-bottle-default.spec.ts が育児の画面に持つ。料理・項目つきの画面の
+// 390px の操作は e2e/chores-{garbage,cleaning,meals}.spec.ts が持つ。
+test("家事の画面は 360px 幅でも横へはみ出さない（実ブラウザ実測）", async ({
+  page,
+  approvedUser,
+}) => {
+  await loginViaMagicLink(page, approvedUser.email)
+  await expect(page).toHaveURL(/\/setup/, { timeout: 15_000 })
+  await page.getByLabel("世帯名").fill("狭い画面検査世帯")
+  await page.getByRole("button", { name: "世帯を作成する" }).click()
+  await expect(page).toHaveURL(/\/baby/, { timeout: 15_000 })
+
+  await page.setViewportSize({ width: 360, height: 760 })
+
+  const choreScreens = SCREENS.filter(([, path]) => path.startsWith("/chores"))
+  // 対照: 家事の画面を一つも測らずに緑にならぬよう、数を確かめる
+  expect(choreScreens.length).toBeGreaterThanOrEqual(10)
+
+  const overflows: string[] = []
+  for (const [label, path] of choreScreens) {
+    await page.goto(path)
+    await page.waitForLoadState("networkidle")
+    await expect(page.getByRole("main")).toBeVisible()
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    )
+    if (overflow > 0) overflows.push(`${label}(${path}): ${overflow}px`)
+  }
+
+  expect(overflows, `360px で横にはみ出した画面:\n  ${overflows.join("\n  ")}`).toEqual([])
 })

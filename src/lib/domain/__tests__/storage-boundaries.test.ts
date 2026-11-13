@@ -4,6 +4,7 @@ import { beforeEach, expect, it } from "vitest"
 import { readPersistedTimer, writePersistedTimer, type PersistedTimerState } from "../feeding-timer-storage"
 import { listRecordRequests, storeRecordRequest, purgeOtherRecordRequests, unreadableRecordCount, type RecordRequest } from "../record-requests"
 import { MEDICAL_SOURCES } from "../medical"
+import { CHORE_PENDING_PREFIX, listChorePending, putChorePending, type ChorePending } from "../chore-pending"
 
 const childId = "e9000000-0000-4000-8000-000000000001"
 const id = "e9000000-0000-4000-8000-000000000002"
@@ -131,4 +132,44 @@ it("preserves each custom scalar, field options and exact child-create strings",
     expect(await storeRecordRequest(r)).toBe(true)
     expect(await listRecordRequests(owner)).toEqual([r])
   }
+})
+
+// 家事（ごみ・掃除・ごはん）の控え（chore-pending。2026-11）。世帯スコープの平文控え。
+const chore: ChorePending = {
+  schema: 1, id, owner: { userId: owner.userId, householdId: owner.householdId }, kind: "meal",
+  label: "synthetic shopping check", payload: { id: childId, version: "2026-10-31T00:00:00.123456+00:00", checked: true },
+  phase: "unknown", firstAttemptAt: at,
+}
+
+it("projects a chore envelope to its documented fields without losing the replay body", () => {
+  const input = {
+    ...chore, password: unexpected, session: { access_token: unexpected },
+    owner: { ...chore.owner, childId, access_token: unexpected },
+  }
+  expect(putChorePending(input as ChorePending)).toBe(true)
+  const raw = localStorage.getItem(Object.keys(localStorage).find(k=>k.startsWith(CHORE_PENDING_PREFIX))!)
+  expect(raw).not.toContain(unexpected)
+  // 世帯スコープの控えゆえ、持ち主に子どもの ID を残さぬ
+  expect(raw).not.toContain('"childId"')
+  expect(listChorePending(chore.owner)).toEqual({ items: [chore], unreadable: 0, storageReadable: true })
+  // 版（updated_at）は表記のまま運ぶ（丸めぬ）
+  expect(listChorePending(chore.owner).items[0].payload.version).toBe("2026-10-31T00:00:00.123456+00:00")
+})
+
+it("never invokes a toJSON hook hidden in a chore replay body, and stores nothing for it", () => {
+  const hooked = { ...chore, payload: { id: childId, hook: { toJSON: () => ({ password: unexpected }) } } }
+  expect(putChorePending(hooked as unknown as ChorePending)).toBe(false)
+  expect(Object.keys(localStorage).filter(k=>k.startsWith(CHORE_PENDING_PREFIX))).toHaveLength(0)
+})
+
+it("does not read a chore envelope for another owner, and keeps unreadable bytes for explicit recovery", () => {
+  expect(putChorePending(chore)).toBe(true)
+  expect(listChorePending({ userId: "another-fixture-user", householdId: owner.householdId }).items).toEqual([])
+  expect(listChorePending({ userId: owner.userId, householdId: "another-fixture-household" }).items).toEqual([])
+  const key = CHORE_PENDING_PREFIX + owner.userId + ":" + owner.householdId + ":meal:" + childId
+  const future = JSON.stringify({ ...chore, id: childId, schema: 99 })
+  localStorage.setItem(key, future)
+  expect(listChorePending(chore.owner)).toEqual({ items: [chore], unreadable: 1, storageReadable: true })
+  expect(putChorePending({ ...chore, id: childId })).toBe(false)
+  expect(localStorage.getItem(key)).toBe(future)
 })

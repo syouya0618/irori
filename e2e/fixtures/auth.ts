@@ -79,13 +79,18 @@ export function uniqueEmail(workerIndex: number): string {
   return `e2e-w${workerIndex}-${Date.now()}@example.com`
 }
 
-/** auth.users を作る（handle_new_user トリガが profiles 行を生成する）。 */
-async function createAuthUser(email: string): Promise<string> {
+/**
+ * auth.users を作る（handle_new_user トリガが profiles 行を生成する）。
+ * `password` は、実 Auth（GoTrue）でサインインして利用者の JWT で PostgREST を叩く試験だけが渡す
+ * （使い捨てのローカルスタック専用の合成値。保存も出力もせぬ）。
+ */
+async function createAuthUser(email: string, password?: string): Promise<string> {
   const admin = adminClient()
 
   const { data, error } = await admin.auth.admin.createUser({
     email,
     email_confirm: true,
+    ...(password === undefined ? {} : { password }),
   })
   if (error || !data.user) {
     throw new Error(
@@ -157,6 +162,53 @@ export async function createUnapprovedUser(email: string): Promise<E2eUser> {
   }
 
   return { id: userId, email }
+}
+
+/**
+ * パスワードでサインインできる利用者を作る（承認は `approved` のときだけ service_role で立てる）。
+ * 実 Auth → PostgREST → RPC を、Server Action を通さず利用者の JWT で直に叩く試験用
+ * （`e2e/chores-rpc-auth.spec.ts`）。世帯は作らぬ — 世帯の作成・参加は試験側が利用者の RPC で行う。
+ */
+export async function createPasswordUser(
+  email: string,
+  password: string,
+  options: { approved: boolean },
+): Promise<E2eUser> {
+  const admin = adminClient()
+  const userId = await createAuthUser(email, password)
+  if (options.approved) {
+    const { data: updated, error: updateError } = await admin
+      .from("profiles")
+      .update({ is_approved: true })
+      .eq("id", userId)
+      .select("id")
+      .single()
+    if (updateError || !updated) {
+      throw new Error(`profiles approve failed for ${userId}: ${formatSupabaseError(updateError)}`)
+    }
+  }
+  return { id: userId, email }
+}
+
+/**
+ * 利用者としてサインインした supabase-js クライアント（anon キー + 利用者のセッション）。
+ * service_role へ切り替えず、RLS と RPC の認可をそのまま通る。`password` を渡さねば未ログインの anon。
+ */
+export async function userClient(email?: string, password?: string): Promise<SupabaseClient> {
+  const env = loadE2eEnv()
+  const url = env.NEXT_PUBLIC_SUPABASE_URL
+  const anonKey = env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  if (!url || !anonKey) {
+    throw new Error(".env.e2e に NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY がありません。`pnpm e2e:env` を再実行してください。")
+  }
+  if (url !== "http://127.0.0.1:54321") throw new Error("E2E user clients require the disposable loopback Supabase stack")
+  const client = createClient(url, anonKey, { auth: { autoRefreshToken: false, persistSession: false } })
+  if (email === undefined || password === undefined) return client
+  const { data, error } = await client.auth.signInWithPassword({ email, password })
+  if (error || !data.session) {
+    throw new Error(`signInWithPassword failed for ${email}: ${formatSupabaseError(error)}`)
+  }
+  return client
 }
 
 /** Delete only users created by this worker, on the disposable loopback stack.

@@ -53,10 +53,15 @@ import {
  * **呼び出し側に 5 箇所へ素で書かせぬのは、6 箇所目を足す者が忘れるからじゃ。**
  * 表と読者の対応はこの 1 箇所に閉じておく（`calendar_events` を読むページを
  * 増やしたら、ここへ足せば全経路に効く）。
+ *
+ * 家事機能 A（2026-11-11）: ごみの画面（`/chores/garbage`）は予定から次の収集日を組み、
+ * 家事ハブ（`/chores`）はその要約を出す。どちらも `calendar_events` の読者じゃ。
  */
 function revalidateCalendarConsumers() {
   revalidatePath("/calendar")
   revalidatePath("/baby")
+  revalidatePath("/chores/garbage")
+  revalidatePath("/chores")
 }
 
 export interface CalendarEventActionInput {
@@ -593,7 +598,9 @@ export async function deleteCalendarEvent(id: string) {
     .eq("id", id)
     .eq("household_id", householdId)
     .eq("source", "native")
-    .select("id")
+    // series_id は、消した回がシリーズの最後の 1 回だった時に、シリーズ既定の分類
+    // （event_purposes の series 行）も片付けるために読む（既存の列）
+    .select("id, series_id")
 
   if (error) {
     logSupabaseError("calendar", "delete failed", error, { id, householdId })
@@ -606,6 +613,8 @@ export async function deleteCalendarEvent(id: string) {
   // 通知設定を掃除する。**予定を消した後**に撃つのが順序の要点じゃ（先に消すと
   // 予定の削除が失敗したとき通知だけ失われる）。native 行の event_uid は id そのもの。
   await cleanupRemindersFor(supabase, householdId, [id], "delete")
+  // ごみの分類（event_purposes）も同じ位置・同じ失敗の扱いで片付ける
+  await cleanupPurposesFor(supabase, householdId, [id], data[0]?.series_id ?? null, "delete")
 
   revalidateCalendarConsumers()
   return { error: null }
@@ -647,9 +656,71 @@ export async function deleteCalendarEventSeries(seriesId: string) {
     data.map((r) => r.id),
     "delete series",
   )
+  // ごみの分類: 消した各回の例外（event 行）と、シリーズ既定（series 行）を片付ける
+  await cleanupPurposesFor(
+    supabase,
+    householdId,
+    data.map((r) => r.id),
+    seriesId,
+    "delete series",
+  )
 
   revalidateCalendarConsumers()
   return { error: null, count: data.length }
+}
+
+/** `cleanup_deleted_event_purposes` へ 1 回で渡す予定 id の上限（RPC 側の上限 1000 と同じ）。 */
+const PURPOSE_CLEANUP_CHUNK_SIZE = 1000
+
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * 予定を削除した後に、その予定へ付いていた**ごみの分類**（`event_purposes`）を掃除する
+ * （家事機能 A）。`cleanupRemindersFor` と同じ理由・同じ扱いじゃ:
+ *
+ * - 「本物の削除」を知っておるのは削除した当人の経路だけ。分類は予定へ FK を張っておらぬ
+ *   （Google の 410 完全再同期をまたぐため）ゆえ、同期や配信の側では掃除させぬ
+ * - **失敗しても利用者の削除は成功として返す**（予定は既に消えておる。残った分類は、ごみの
+ *   画面の「予定が見つからない分類」から手で整理できる）。例外も握る — ここで throw すると、
+ *   消えた予定を「削除できたか分からぬ」と告げることになる
+ * - 消すかどうかは RPC が決める: **その鍵を持つ予定が 1 つも無い行だけ**（シリーズの回が
+ *   残っておればシリーズ既定は残る）。世帯は RPC が `auth.uid()` から導く
+ * - `seriesId` はクライアント由来の文字列でありうるゆえ、UUID の形でなければ渡さぬ
+ *   （RPC の引数は uuid。形の合わぬ値で掃除ごと 22P02 にせぬ）
+ */
+async function cleanupPurposesFor(
+  supabase: AuthContext["supabase"],
+  householdId: string,
+  eventIds: readonly string[],
+  seriesId: string | null,
+  scope: string,
+): Promise<void> {
+  const ids = eventIds.filter((id) => UUID_SHAPE.test(id))
+  const series = seriesId !== null && UUID_SHAPE.test(seriesId) ? seriesId : null
+  if (ids.length === 0 && series === null) return
+  try {
+    // シリーズ既定は、回の例外を片付けた最後の 1 回で渡す（どの回でも結果は同じ。往復を増やさぬ）
+    for (let i = 0; i < Math.max(ids.length, 1); i += PURPOSE_CLEANUP_CHUNK_SIZE) {
+      const part = ids.slice(i, i + PURPOSE_CLEANUP_CHUNK_SIZE)
+      const isLast = i + PURPOSE_CLEANUP_CHUNK_SIZE >= ids.length
+      const { error } = await supabase.rpc("cleanup_deleted_event_purposes", {
+        p_event_ids: part,
+        p_series_id: isLast ? series : null,
+      })
+      if (error) {
+        logSupabaseError("calendar", `${scope}: ごみの分類の掃除に失敗`, error, {
+          householdId,
+          ids: part.length,
+        })
+        return
+      }
+    }
+  } catch (err) {
+    console.error(`[calendar] ${scope}: ごみの分類の掃除が throw`, {
+      householdId,
+      message: err instanceof Error ? err.message : String(err),
+    })
+  }
 }
 
 // ============================================================

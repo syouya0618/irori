@@ -2,7 +2,8 @@ import { getAuthContext } from "@/lib/supabase/auth-context"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { CalendarView } from "@/components/calendar/calendar-view"
 import type { CalendarEventRecord } from "@/components/calendar/use-month-events"
-import { CALENDAR_EVENT_COLUMNS } from "@/lib/domain/calendar-event-columns"
+import { CALENDAR_EVENT_COLUMNS_WITH_KEYS } from "@/lib/domain/calendar-event-columns"
+import { fetchEventPurposeLoad } from "@/lib/supabase/event-purpose-query"
 import { gridRangeOf } from "@/lib/domain/calendar-grid"
 import {
   resolveCalendarDateView,
@@ -58,11 +59,12 @@ export default async function CalendarPage({
   //
   // 月グリッドの取得と並行に走らせる（直列にすると TTFB が 1 往復ぶん伸びる）。
   // `after()` の予約は描画スコープ内で起きるためこの形でよい。
-  const [{ data: events, error }, sync, { data: prefs, error: prefsError }] =
+  const [{ data: events, error }, sync, { data: prefs, error: prefsError }, purposes] =
     await Promise.all([
       supabase
         .from("calendar_events")
-        .select(CALENDAR_EVENT_COLUMNS)
+        // 用途（ごみの日）を引く鍵つき。足したのは既存の列だけ（calendar-event-columns.ts）
+        .select(CALENDAR_EVENT_COLUMNS_WITH_KEYS)
         .eq("household_id", householdId)
         .lte("start_date", gridEnd) // 重なり判定: start_date <= gridEnd
         .gte("end_date", gridStart) //           AND end_date >= gridStart
@@ -76,6 +78,10 @@ export default async function CalendarPage({
         .select("event_default_minutes")
         .eq("user_id", userId)
         .maybeSingle(),
+      // 家事機能 A: 予定の用途（ごみの日）。世帯ぶんを一括で読み、画面で予定と合成する。
+      // **throw せぬ**（失敗は { status: "failed" }）— 分類を読めぬだけで予定の表示は倒さず、
+      // 画面は「未分類」ではなく「不明」として扱う。他のクエリと並列ゆえ往復は増えぬ。
+      fetchEventPurposeLoad(supabase, householdId),
     ])
 
   if (error) {
@@ -106,6 +112,7 @@ export default async function CalendarPage({
       // events は null で `[]` に倒れる。旗を渡さねば、通知から開いた日が黙って
       // 「予定はありません」になる（設定画面の P2-31 と同じ筋）。
       initialLoadFailed={Boolean(error)}
+      initialPurposes={purposes}
       // 予定フォームの端末下書きの持ち主（利用者 × 世帯。2026-10-27 テーマ B）
       userId={userId}
     />

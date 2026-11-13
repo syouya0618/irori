@@ -1,0 +1,25 @@
+ci(e2e): pin the local DB image to a supautils-fixed build
+
+CLI 2.101.0 の既定 supabase/postgres:17.6.1.106 は supautils 3.2.0 を同梱し、
+hint_roles（anon/authenticated/service_role）が EXECUTE を持たぬ関数を呼ぶと
+42501 ではなく backend が SIGSEGV で落ちる（supabase/postgres#2112、
+supabase/supautils#214、修正は supabase/supautils#190）。
+chores_rpc_security.sql:166 の anon の拒否試験がこれを踏み、E2E は 25 件の後に
+接続を失った。
+
+- supabase/.temp/postgres-version（CLI 2.101.0 の config Load が読む）で
+  17.6.1.156（supautils 3.4.0）へ差し替える。digest で取った image に CLI が使う
+  名前を付ける（同じ名前が手元にあれば CLI は pull し直さぬ）。
+- 起動した DB の image ID が、固定した digest と一致することを断ずる。
+- scripts/test-db-execute-denial.sh: 単純な関数への EXECUTE 拒否の最小再現。
+  - db-image-probe ジョブ:
+    - 106 では hint_roles だけが signal 11 で落ち、hint_roles に無いロールは
+      42501 になる。
+    - 156 では全ロールが 42501 で、DB は稼働を続ける。
+  - stack でも pgTAP の前に同じ probe を走らせる。
+- ジョブの最後に、DB の異常終了が 0 件であることを断ずる（ログを読めなければ赤）。
+  E2E の時間枠を 40 分へ。
+
+権限の追加、拒否試験の削除、skip、continue-on-error は使っていない。
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

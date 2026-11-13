@@ -4,6 +4,8 @@ import { useEffect, useRef, type KeyboardEvent } from "react"
 import { cn } from "@/lib/utils"
 import { shiftYmd } from "@/lib/utils/date-jst"
 import type { CalendarGridCell } from "@/lib/domain/calendar-grid"
+import { garbageAriaLabel, garbageOf } from "@/lib/domain/garbage"
+import { GarbageCellMark } from "@/components/chores/garbage/garbage-kind-icon"
 import type { CalendarEventRecord } from "./use-month-events"
 import { formatDayJa } from "./calendar-display"
 
@@ -67,11 +69,29 @@ function EventMarks({ events }: { events: CalendarEventRecord[] }) {
  * セルの読み上げ名: 「10月24日（土）、今日、予定 3 件」。ISO の生値は読ませぬ。
  * 月を読めておらぬ間（読み込み中・失敗）は件数を言わぬ —— 「予定なし」と偽らぬ。
  */
-function cellLabel(cell: CalendarGridCell, count: number, countsUnknown: boolean): string {
+function cellLabel(
+  cell: CalendarGridCell,
+  count: number,
+  countsUnknown: boolean,
+  garbageLabels: readonly string[],
+): string {
   const parts = [formatDayJa(cell.date)]
   if (cell.isToday) parts.push("今日")
   parts.push(countsUnknown ? "予定を確認できません" : count > 0 ? `予定${count}件` : "予定なし")
+  // ごみの日は種別まで言う（マスの中の印は aria-hidden。色やアイコンが見えずとも分かるように）。
+  // 件数が当てにならぬ間（読み込み中・失敗）は種別も言わぬ。ごみの無い日の文は従来のまま
+  if (!countsUnknown && garbageLabels.length > 0) parts.push(garbageAriaLabel(garbageLabels))
   return parts.join("、")
+}
+
+/** その日のごみの名称（重複を除く。並びは予定の並びのまま）。 */
+function garbageLabelsOf(events: readonly CalendarEventRecord[]): string[] {
+  const labels: string[] = []
+  for (const e of events) {
+    const garbage = garbageOf(e)
+    if (garbage && !labels.includes(garbage.label)) labels.push(garbage.label)
+  }
+  return labels
 }
 
 const KEY_DELTAS: Record<string, number> = {
@@ -160,6 +180,7 @@ export function CalendarMonthView({
           const dayEvents = eventsByDate.get(cell.date) ?? []
           const isSelected = cell.date === selectedDate
           const dayNum = Number(cell.date.slice(8, 10))
+          const garbageLabels = countsUnknown ? [] : garbageLabelsOf(dayEvents)
           return (
             <button
               key={cell.date}
@@ -168,7 +189,7 @@ export function CalendarMonthView({
               onClick={() => onSelectDate(cell.date)}
               onKeyDown={(e) => handleKeyDown(e, cell.date)}
               tabIndex={cell.date === tabStop ? 0 : -1}
-              aria-label={cellLabel(cell, dayEvents.length, countsUnknown)}
+              aria-label={cellLabel(cell, dayEvents.length, countsUnknown, garbageLabels)}
               aria-pressed={isSelected}
               aria-current={cell.isToday ? "date" : undefined}
               className={cn(
@@ -189,6 +210,9 @@ export function CalendarMonthView({
                 {dayNum}
               </span>
               <EventMarks events={dayEvents} />
+              {/* ごみの日はアイコン + 短い名称を 1 行足す（予定の印は従来どおり全件ぶん出す =
+                  通常の予定も数えられる）。色は補助で、種別は名称とマスの読み上げが運ぶ */}
+              <GarbageCellMark labels={garbageLabels} />
             </button>
           )
         })}

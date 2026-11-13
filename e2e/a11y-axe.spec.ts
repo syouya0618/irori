@@ -71,4 +71,54 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(page.getByRole("group", { name: /ログアウト/ })).toBeVisible()
     await expectNoViolations(page, testInfo, `settings-${colorScheme}`)
   })
+
+  // 家事（2026-11）。下ナビの 4 本目から入り、ハブ（3 枠の今日の要約）と、ごみ・掃除・ごはんの
+  // 最初の画面（新しい世帯の空の状態）を検査する。項目つきの画面・シートの操作は
+  // e2e/chores-{garbage,cleaning,meals}.spec.ts が持つ（axe は掛けておらぬ）。
+  test(`axe: 家事ハブ・ごみ・掃除・ごはん（${colorScheme}・390px）`, async ({
+    page,
+    approvedUser,
+  }, testInfo) => {
+    await page.emulateMedia({ colorScheme })
+    await page.setViewportSize({ width: 390, height: 844 })
+    await loginViaMagicLink(page, approvedUser.email)
+    await expect(page).toHaveURL(/\/setup/, { timeout: 15_000 })
+    await page.getByLabel("世帯名").fill(`E2E axe chores ${colorScheme}`)
+    await page.getByRole("button", { name: "世帯を作成する" }).click()
+    await expect(page).toHaveURL(/\/baby/, { timeout: 15_000 })
+
+    // 下ナビ → 家事ハブ。育児・予定・設定の入口は残っておる（既存の導線を保つ）
+    const nav = page.getByRole("navigation", { name: "メインナビゲーション" })
+    await expect(nav.getByRole("link")).toHaveText(["育児", "予定", "家事", "設定"])
+    await nav.getByRole("link", { name: "家事", exact: true }).click()
+    await expect(page).toHaveURL(/\/chores$/, { timeout: 15_000 })
+    await expect(page.getByRole("heading", { level: 1, name: "家事" })).toBeVisible({ timeout: 15_000 })
+    await expect(nav.getByRole("link", { name: "家事", exact: true })).toHaveAttribute("aria-current", "page")
+
+    // 3 枠の要約は読めておる（新しい世帯の空の状態。「読み込めませんでした」ではない）
+    const hub = page.getByRole("navigation", { name: "家事の機能" })
+    await expect(hub.getByRole("link")).toHaveCount(3)
+    await expect(hub.getByRole("link", { name: /^ごみ/ })).toContainText("ごみの日はまだ登録されていません。")
+    await expect(hub.getByRole("link", { name: /^掃除/ })).toContainText("掃除の項目はまだありません。")
+    await expect(hub.getByRole("link", { name: /^ごはん/ })).toContainText("今夜の献立は未定")
+    await expect(hub.getByRole("link", { name: /^ごはん/ })).toContainText("まだ買うものはありません")
+    await expect(hub).not.toContainText("読み込めませんでした")
+    await expectNoViolations(page, testInfo, `chores-hub-${colorScheme}`)
+
+    await hub.getByRole("link", { name: /^ごみ/ }).click()
+    await expect(page).toHaveURL(/\/chores\/garbage$/, { timeout: 15_000 })
+    await expect(page.getByRole("heading", { level: 1, name: "ごみ" })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText("ごみの日はまだ登録されていません")).toBeVisible()
+    await expectNoViolations(page, testInfo, `chores-garbage-${colorScheme}`)
+
+    await page.goto("/chores/cleaning")
+    await expect(page.getByRole("heading", { level: 1, name: "掃除" })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText("掃除の項目がまだありません")).toBeVisible()
+    await expectNoViolations(page, testInfo, `chores-cleaning-${colorScheme}`)
+
+    await page.goto("/chores/meals")
+    await expect(page.getByRole("heading", { level: 1, name: "ごはん" })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId("tonight-state")).toBeVisible()
+    await expectNoViolations(page, testInfo, `chores-meals-${colorScheme}`)
+  })
 }

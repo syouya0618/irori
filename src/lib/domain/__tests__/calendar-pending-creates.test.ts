@@ -5,7 +5,7 @@
  * - 作成ごとに別の鍵（1 件の書き・消しが他の控えに触れぬ）
  * - 持ち主・形・鍵の id の検証、期限、上限で他の控えを押し出さぬ
  */
-import { describe, it, expect, beforeEach, vi } from "vitest"
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest"
 
 // node 環境の localStorage（jsdom を使わぬ）
 class MemoryStorage {
@@ -78,14 +78,31 @@ const payload = (title: string, clientId: string): CalendarCreatePayload => ({
   endAt: null,
   clientId,
 })
-function begin(owner: typeof A, clientId: string, title = "検診", now = new Date("2026-10-28T00:00:00Z")) {
+/** `begin` の既定の押下時刻。壁時計もこの時刻へ固定する（下の beforeEach） */
+const PRESSED_AT = new Date("2026-10-28T00:00:00Z")
+function begin(owner: typeof A, clientId: string, title = "検診", now = PRESSED_AT) {
   return beginCalendarCreateAttempt(
     { owner, clientId, payload: payload(title, clientId), formValue: form(title), reminderChoice: "none" },
     now,
   )
 }
 
-beforeEach(() => storage.clear())
+/**
+ * 壁時計を `begin` の既定の押下時刻へ固定する（Date だけ。タイマーは偽にせぬ）。
+ *
+ * 本体は now を省くと実時計を読む（`readCalendarPendingCreate` / `listCalendarPendingCreates` の
+ * `Date.now()`、`settleCalendarCreateAttempt` の `new Date()`）。固定せねば、2026-10-28 に作った控えが
+ * 実時計の 7 日の期限（2026-11-04 以降）で「期限切れ」として読む時に消え、期限と無関係な 5 件が赤になる
+ * （時限式の失敗。2026-11-11 に発覚）。期限そのものの検証は、now を明示して渡すテストが持つ。
+ */
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] })
+  vi.setSystemTime(PRESSED_AT)
+  storage.clear()
+})
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe("状態は単調（T2 の根）", () => {
   it("1 度きりの送信の拒否は rejected（行は無い）。対照: 結果不明の後の拒否は unknown のまま理由だけ残す", () => {

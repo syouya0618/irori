@@ -15,3 +15,18 @@
  */
 export const CALENDAR_EVENT_COLUMNS =
   "id, title, memo, is_all_day, start_date, end_date, start_at, end_at, source, series_id, updated_at, child_id, medical_record_id"
+
+/**
+ * 上の一式に、予定の**用途（ごみの日）を引くための鍵**を足したもの（`src/lib/domain/garbage.ts`
+ * の `seriesKeyOf` / `eventKeyOf` が読む）。予定を一覧で描く 4 箇所（カレンダーの SSR / client
+ * refetch、育児ホームの SSR / client refetch）が使う。
+ *
+ * **足したのは既存の列だけ**じゃ（`event_uid` は 20260808100002、`google_calendar_id` は
+ * 20260709000002、`recurring_event_id` は 20260802100001）。家事機能の migration より先に
+ * コードが出ても、この SELECT は落ちぬ（新設の表 `event_purposes` は別のクエリで引き、
+ * 失敗しても予定の表示は倒さぬ）。新設の列をここへ足してはならぬ — 足した瞬間、migration が
+ * 未適用の環境で 4 画面が同時に落ちる。
+ *
+ * 既存の `CALENDAR_EVENT_COLUMNS` は変えぬ（鍵を要らぬ呼び出し元・既存のテストの期待をそのまま保つ）。
+ */
+export const CALENDAR_EVENT_COLUMNS_WITH_KEYS = `${CALENDAR_EVENT_COLUMNS}, event_uid, google_calendar_id, recurring_event_id`
