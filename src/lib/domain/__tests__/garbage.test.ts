@@ -686,7 +686,7 @@ describe("既存カレンダー予定の候補（明示確認・通知無変更�
     const list = suggestGarbageCandidates([ordinary, garbage], [])
     expect(list).toHaveLength(1)
     expect(list[0].event.id).toBe(E2)
-    expect(list[0].suggestedKind).toBeNull()
+    expect(list[0].suggestedKind).toBe("資源") // 推奨表示だけ。保存するかは利用者が選ぶ
     expect(list[0].current.kind).toBe("normal")
   })
 })
