@@ -29,6 +29,7 @@ import {
   purposeLookupKey,
   resolveEventPurpose,
   seriesKeyOf,
+  suggestGarbageCandidates,
   UNCLASSIFIED_PURPOSE,
   upcomingGarbageCollections,
   type EventPurposeRow,
@@ -654,5 +655,38 @@ describe("ごみの画面が読む予定の行", () => {
     expect(parseGarbageEventRow(raw)).toMatchObject({ id: SINGLE, event_uid: SINGLE, series_id: null })
     expect(parseGarbageEventRow({ ...raw, start_date: "2026-02-30" })).toBeNull()
     expect(parseGarbageEventRow({ ...raw, title: null })).toBeNull()
+  })
+})
+
+describe("既存カレンダー予定の候補（明示確認・通知無変更）", () => {
+  it("同じGoogle繰り返しの2回を1候補に畳み、既に分類済みの予定を除外する", () => {
+    const recurring = google("a", { title: "燃えるごみ", recurring_event_id: "recA" })
+    const next = google("b", { title: "燃えるごみ", recurring_event_id: "recA", start_date: "2026-11-19" })
+    const classified = native(E2, { title: "資源ごみ" })
+    const rows = [purpose({ id: P1, scope: "event", targetKey: E2 })]
+    const list = suggestGarbageCandidates([recurring, next, classified], rows)
+    expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({
+      event: { id: recurring.id, isSeries: true, source: "google" },
+      current: { kind: "normal", seen: { series: null, event: null } },
+      suggestedKind: "燃えるごみ",
+    })
+  })
+  it("医療イベント・ごみ箱掃除・ごみ当番・明示的な通常例外は候補にしない", () => {
+    const medical = native(E1, { title: "燃えるごみ", medical_record_id: P2 })
+    const clean = native(E2, { title: "ごみ箱掃除" })
+    const duty = native(E3, { title: "ゴミ当番" })
+    const exception = native(SINGLE, { title: "不燃ごみ" })
+    const row = purpose({ id: P3, scope: "event", targetKey: SINGLE, purpose: "normal", garbageKind: null })
+    expect(suggestGarbageCandidates([medical, clean, duty, exception], [row])).toEqual([])
+  })
+  it("ごみの意味が弱い一般予定は候補にせず、タイトルから自動で登録もしない", () => {
+    const ordinary = native(E1, { title: "病院と買い物" })
+    const garbage = native(E2, { title: "資源回収" })
+    const list = suggestGarbageCandidates([ordinary, garbage], [])
+    expect(list).toHaveLength(1)
+    expect(list[0].event.id).toBe(E2)
+    expect(list[0].suggestedKind).toBeNull()
+    expect(list[0].current.kind).toBe("normal")
   })
 })
