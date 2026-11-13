@@ -24,6 +24,7 @@ import {
   type GarbageEventSummary,
   type GarbagePurposeEntry,
   type GarbageRequest,
+  type GarbageSaveSuccess,
   type ResolvedEventPurpose,
 } from "@/lib/domain/garbage"
 import type { GarbagePageData } from "@/lib/supabase/garbage-overview-query"
@@ -124,7 +125,7 @@ export function GarbageView({ owner, data }: GarbageViewProps) {
     sessions.close()
     setEditing(null)
   }
-  const save = useChoreSave<GarbageRequest>({
+  const save = useChoreSave<GarbageRequest, GarbageSaveSuccess>({
     owner,
     kind: "garbage",
     run: submitGarbageRequest,
@@ -133,7 +134,11 @@ export function GarbageView({ owner, data }: GarbageViewProps) {
     onOutcome: (outcome) => {
       const origin = outcome.origin
       // 確定（保存・拒否）したら、送ったシートだけを閉じる。結果不明の間は開いたまま、控えの一覧で確かめさせる
-      if (outcome.kind !== "unknown" && (origin?.current ?? true)) closeEditor()
+      if (outcome.kind === "settled" && outcome.status !== "conflict" &&
+          outcome.result.purposeLoad?.status !== "failed" && (origin?.current ?? true)) closeEditor()
+      if (outcome.kind === "settled" && outcome.result.purposeLoad?.status === "failed") {
+        setEarlier({ text: "分類の保存結果は届きましたが、読み直しを確認できません。画面を再読込して確認してください。", tone: "alert" })
+      }
       // 操作した場所が変わった（シートを閉じた・別のシートを開いた）時は、結果をどの操作かを添えてシートの外に出す
       // （結果不明は控えの一覧が、どの操作かを添えて伝える）
       if (origin && !origin.inPlace && outcome.kind !== "unknown") {
