@@ -4,7 +4,15 @@
 
 AI 補助は**アダプター実装済み・実接続は未実施・既定 OFF**。Cloudflare Workers AI の無料枠だけを使う経路で、実 API への呼出しは 0 回。Workers Free の契約の確認は未完了。
 
-## 状態（2026-11-12）
+## 状態（2026-11-13）
+
+- 追加検証 `e005eac7` で、実 Auth の利用者JWTから PostgREST → RPC を直接呼び、負の数量・購入量超過補充・補充済み購入量の引き下げを `22023` で拒否し、状態不変を確認。X-07 は verified。
+- `e005eac7` の CI 43335009948・E2E 43335009962（DB probe含む）・CodeQL 43335009964 が成功。
+- Vercel `irori` の本番接続を確認済み。Productionは `main` でREADY、配信JSのSupabase URLは本番migrationを適用した `irori-prod` と一致。PRはまだDraft、未merge。
+- バックアップは利用者の判断で取得しない。復旧可能なバックアップが存在すると主張しない。
+- 下の「2026-11-12」の履歴には、その時点の状態を残す。最新状況は本節を優先。
+
+## 状態（2026-11-12、当時の記録）
 
 - 最後にコードを変えた commit `314fbd9c` で、`CI`・`E2E`・`CodeQL` が成功した。`main` の必須チェックは `ci` と `e2e`。
 - 本番 DB（Supabase `irori-prod`）へ、migration 3 本を 2026-11-12 に適用した。以下は、人が行った適用と監査の報告による。

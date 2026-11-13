@@ -1,6 +1,15 @@
 # 家事（ごみ・掃除・ごはん）進捗記録
 
-## 現在地（2026-11-12 夕方）
+## 現在地（2026-11-13、公開直前）
+
+- PR #253 は Draft・未 merge。新機能の本番配信と家族端末での確認は未実施。
+- `e005eac7` で X-07 の利用者JWT直呼びによる数量検査を追加した。負の在庫・買い物・購入数量、超過補充、補充済み購入の引下げは `22023`、拒否後の状態は不変。
+- 上記 HEAD の CI 43335009948、E2E 43335009962（db-image-probe を含む）、CodeQL 43335009964 が成功。検証対象はCIの隔離Supabaseで、本番DBへテストデータは投入していない。
+- Vercel個人チームの `irori` プロジェクトを直接照合済み。Productionは `main` の `521f2fc2`、READY。配信中のJavaScript内のSupabase URLが、3本のmigrationを入れた `irori-prod` と一致した。Previewは `e4d7e37b` で READY を確認済み。
+- 本番DBバックアップは利用者が取得しないと決定した。バックアップや復元試験を実施したとは扱わない。
+- 次は、この文書更新の新SHAでCIとE2Eを再確認し、PRを通常mergeして本番デプロイと公開後の画面動作を検証する。iPhone Safari実機・Push実受信・無料AI接続は未実施。
+
+## 現在地（2026-11-12 夕方。以下は当時の履歴）
 
 - worktree: `.claude/worktrees/kaji-gomi-souji-gohan-20261110`
 - branch: `worktree-kaji-gomi-souji-gohan-20261110`（基点 `521f2fc2`。`main` もまだ `521f2fc2` のまま。GitHub の公開 API で確認）

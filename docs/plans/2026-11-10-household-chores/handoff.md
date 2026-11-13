@@ -2,7 +2,15 @@
 
 この文書の冒頭が、今の公開の手順じゃ。§0〜§3 は済んだ段の記録として残す。ただし §2 の「参考」と §3 の「戻し方」は今も使う。§4〜§6 は今の手順の一部。状態の正本は `requirements-ledger.md`、経過は `progress.md`。
 
-## 今の状態（2026-11-12）
+## 最新の公開判定（2026-11-13）
+
+- PR #253 は Draft・未 merge。X-07 の追加テスト（`e005eac7`）は実 Auth の利用者JWTを用いて `22023` の数量拒否と状態不変を確認。CI 43335009948、E2E 43335009962（`db-image-probe` 含む）、CodeQL 43335009964 は全成功。
+- Production のVercelプロジェクト `irori` は GitHub `syouya0618/irori` の `main` に接続し、旧HEAD `521f2fc2` がREADY。Productionで実際に配信されたJSのSupabase URLは、migration適用済みの `irori-prod` と一致。まだ新機能は本番未公開。
+- バックアップは利用者の判断で **取得しない**。復旧バックアップが未確認であるリスクを了承して進む（復元可能と記録しない）。
+- 文書4本のcommit `e4d7e37b` とPR本文更新は完了した。この記録の新commitをpushしたら、その最新SHAでCI・E2E・CodeQLを再確認する。
+- 最新SHAで全てPASSなら、Draft解除 → mainへ通常merge → Vercel本番のmerge SHAがREADY → 本番スモークテスト（§4）へ。無断のPushテストを行わない。iPhone Safari実機・無料AI実接続は未確認のまま、公開後の別受け入れとする。
+
+## 今の状態（2026-11-12、以下は当時の記録）
 
 エージェントが GitHub の公開 API で確かめたもの:
 
@@ -28,7 +36,7 @@
 - Push の実端末での受信の確認。
 - 無料 AI の実接続。アダプターは実装済みで、既定 OFF。Workers Free の契約の確認は未完了。
 
-## 今の公開の手順（人。この順）
+## 2026-11-12に作った公開手順（記録。上の2026-11-13更新を優先）
 
 エージェントは、commit・push・PR の更新・Draft の解除・merge・デプロイ・本番 DB の操作を行わぬ。
 
