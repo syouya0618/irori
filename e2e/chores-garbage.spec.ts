@@ -181,7 +181,9 @@ test("ごみの日: 同じ日の予定と区別でき、分類 → 再読込 →
   // 4. 再読込（SSR）: 月のマスの読み上げと一覧の行で、ごみと通常の予定を区別できる
   await reloadHydrated(page)
   await expect(dayCell(page, today)).toHaveAttribute("aria-label", /、予定2件、ごみ（燃えるごみ）$/)
-  await expect(dayCell(page, today).locator("[data-garbage-mark]")).toContainText("燃える")
+  await expect(dayCell(page, today).locator("[data-garbage-mark] svg")).toHaveCount(1)
+  await expect(dayCell(page, today).locator("[data-mark]")).toHaveCount(1)
+  await expect(dayCell(page, today).locator("[data-garbage-mark]")).toHaveText("")
   const garbageRow = agenda(page).getByRole("button", { name: /収集の日/ })
   const normalRow = agenda(page).getByRole("button", { name: /歯医者/ })
   await expect(garbageRow).toContainText("ごみ・燃えるごみ")

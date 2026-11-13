@@ -28,7 +28,8 @@ interface CalendarMonthViewProps {
 }
 
 /**
- * 1 日あたり最大 3 個の印。**色と形の両方**で意味を運ぶ:
+ * ごみ以外の予定だけを、1 日あたり最大 3 個の印で表す。
+ * ごみの日は別のアイコンで描くため、通常予定の帯・丸を重ねない。
  * - 形: 終日・複数日 = 横長の帯 / 時刻付き = 丸
  * - 色: irori の予定 = warm orange / Google 由来 = 灰
  *
@@ -36,8 +37,10 @@ interface CalendarMonthViewProps {
  * オレンジの輪になって irori の予定と見分けられなかった。色の指定は source だけで決める。
  */
 function EventMarks({ events }: { events: CalendarEventRecord[] }) {
-  const shown = events.slice(0, 3)
-  const overflow = events.length - shown.length
+  const regularEvents = events.filter((event) => garbageOf(event) === null)
+  if (regularEvents.length === 0) return null
+  const shown = regularEvents.slice(0, 3)
+  const overflow = regularEvents.length - shown.length
   return (
     <span className="mt-0.5 flex h-2 items-center justify-center gap-0.5" aria-hidden="true">
       {shown.map((e) => {
@@ -210,8 +213,8 @@ export function CalendarMonthView({
                 {dayNum}
               </span>
               <EventMarks events={dayEvents} />
-              {/* ごみの日はアイコン + 短い名称を 1 行足す（予定の印は従来どおり全件ぶん出す =
-                  通常の予定も数えられる）。色は補助で、種別は名称とマスの読み上げが運ぶ */}
+              {/* ごみの日は種別アイコンだけ。通常予定の帯・丸は維持し、
+                  種別の名称は日付の読み上げと日別の予定一覧に残す。 */}
               <GarbageCellMark labels={garbageLabels} />
             </button>
           )

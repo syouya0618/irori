@@ -84,25 +84,24 @@ export function GarbageKindAvatar({ label }: { label: string | null | undefined 
 }
 
 /**
- * 月のマスに出す印（アイコン + 短い名称）。マスは狭いゆえ短い名称を切り詰めて出し、
- * 正確な名称はマスの読み上げ（`aria-label`）が言う。ここは `aria-hidden`。
+ * 月のマスに置くごみの種別アイコン。短い文字・予定の帯は出さない。
+ * 正確な名称はマスの読み上げと日別の予定一覧で確認できる。
  */
 export function GarbageCellMark({ labels }: { labels: readonly string[] }) {
   if (labels.length === 0) return null
-  const first = labels[0]
-  const visual = garbageKindVisual(first)
-  const Icon = ICONS[visual.icon]
-  const extra = labels.length - 1
+  const unique = Array.from(new Set(labels))
+  const visible = unique.slice(0, 3)
   return (
     <span
-      // `data-mark` は予定の印（丸・帯）の数え上げに使われておる。別の属性にして混ぜぬ
-      data-garbage-mark={first}
+      data-garbage-mark={visible[0]}
       aria-hidden="true"
-      className="mt-0.5 flex max-w-full items-center justify-center gap-0.5 overflow-hidden px-0.5 text-[10px] leading-none text-foreground"
+      className="mt-0.5 flex max-w-full items-center justify-center gap-0.5"
     >
-      <Icon size={10} className={cn("shrink-0", visual.tone.text)} />
-      <span className="overflow-hidden whitespace-nowrap">{visual.short}</span>
-      {extra > 0 && <span className="shrink-0 text-muted-foreground">+{extra}</span>}
+      {visible.map((label) => {
+        const visual = garbageKindVisual(label)
+        const Icon = ICONS[visual.icon]
+        return <Icon key={label} size={12} className={cn("shrink-0", visual.tone.text)} />
+      })}
     </span>
   )
 }
