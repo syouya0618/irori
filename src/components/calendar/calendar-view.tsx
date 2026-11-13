@@ -213,6 +213,7 @@ export function CalendarView({
   const [sheetOpen, setSheetOpen] = useState(false)
   const router = useRouter()
   const [editing, setEditing] = useState<CalendarEventRecord | null>(null)
+  const [deleteRequestedId, setDeleteRequestedId] = useState<string | null>(null)
   // 保存の往復中の予定 id（一覧に「保存中」を出す。作成の楽観行は id の prefix で分かる）
   const [savingIds, setSavingIds] = useState<ReadonlySet<string>>(() => new Set())
   const markSaving = (id: string, on: boolean) =>
@@ -322,6 +323,7 @@ export function CalendarView({
    * `reworkId` は「保存できなかった」作成を直す時（その作成の入力、または直しかけの下書きから始める）
    */
   const openNew = (reworkId: string | null = null) => {
+    setDeleteRequestedId(null)
     setEditing(null)
     setStaleDraft(null)
     setCreateGuard(null)
@@ -351,6 +353,7 @@ export function CalendarView({
   }
 
   const openEvent = (event: CalendarEventRecord) => {
+    setDeleteRequestedId(null)
     if(event.medical_record_id){ router.push(`/baby/medical?child=${encodeURIComponent(event.child_id??"")}`);return }
     setEditing(event)
     setSheetDraft(null)
@@ -411,6 +414,13 @@ export function CalendarView({
         setReminder({ status: "unsupported" })
         toastOfflineError("[calendar-view] fetchEventReminder", err)
       })
+  }
+
+  /** 一覧の削除アイコンから既存の確認パネルへ直行。DBへの削除は確定するまで送らない。 */
+  const requestDelete = (event: CalendarEventRecord) => {
+    if (event.source !== "native" || event.medical_record_id || savingIds.has(event.id) || event.id.startsWith(OPTIMISTIC_EVENT_ID_PREFIX)) return
+    openEvent(event)
+    setDeleteRequestedId(event.id)
   }
 
   /**
@@ -1267,6 +1277,7 @@ export function CalendarView({
         events={m.selectedEvents}
         selectedDate={m.selectedDate}
         onTapEvent={openEvent}
+        onRequestDelete={requestDelete}
         isToday={selectedIsToday}
         loadState={m.loadState}
         onRetry={() => void m.retry()}
@@ -1294,6 +1305,7 @@ export function CalendarView({
         open={sheetOpen}
         onOpenChange={setSheetOpen}
         editing={editing}
+        confirmDeleteOnOpen={editing !== null && editing.id === deleteRequestedId}
         defaultDate={m.selectedDate}
         saving={pending}
         onSubmit={handleSubmit}
