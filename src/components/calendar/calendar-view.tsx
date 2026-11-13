@@ -1211,7 +1211,7 @@ export function CalendarView({
         {monthHasGarbage && (
           <span className="flex items-center gap-1.5" data-testid="legend-garbage">
             <GarbageKindIcon label={null} size={12} className="text-muted-foreground" />
-            ごみの日（名称つき）
+            ごみの日（アイコン）
           </span>
         )}
       </p>

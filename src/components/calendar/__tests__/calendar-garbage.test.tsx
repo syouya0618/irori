@@ -218,6 +218,22 @@ describe("同じ日に通常の予定とごみの予定が在る時の表示（A
     expect(cell.getAttribute("aria-label")).toContain("資源")
   })
 
+  it("ごみ4種類以上は2アイコンと残数を出す。名称は読み上げにすべて残す", () => {
+    const labels = ["燃えるごみ", "資源", "古紙", "プラスチック"]
+    const ids = [GARBAGE_EVENT, NORMAL_EVENT, OTHER_EVENT, SERIES]
+    const dayEvents = ids.map((id) => ev({ id, title: "収集" }))
+    const purposeRows = ids.map((id, i) => purposeRow({
+      id: `d7000000-0000-4000-8000-${String(100 + i).padStart(12, "0")}`,
+      targetKey: id, garbageKind: labels[i],
+    }))
+    render(<CalendarView {...base} initialEvents={dayEvents} initialPurposes={ok(...purposeRows)} />)
+    const cell = dayCell(DAY)
+    expect(cell.querySelectorAll("[data-mark]")).toHaveLength(0)
+    expect(cell.querySelectorAll("[data-garbage-mark] svg")).toHaveLength(2)
+    expect(cell.querySelector("[data-garbage-overflow]")).toHaveTextContent("+2")
+    for (const label of labels) expect(cell.getAttribute("aria-label")).toContain(label)
+  })
+
   it("ごみの無い日のマスは従来のまま（対照）", () => {
     render(<CalendarView {...base} initialEvents={events} initialPurposes={purposes} />)
     const cell = dayCell(OTHER_DAY)
@@ -236,7 +252,7 @@ describe("同じ日に通常の予定とごみの予定が在る時の表示（A
     expect(normalRow).toHaveAccessibleName(/歯医者/)
     expect(normalRow.textContent).not.toContain("ごみ")
     // 凡例にも足す（ごみの日が在る時だけ）
-    expect(screen.getByTestId("legend-garbage")).toHaveTextContent("ごみの日")
+    expect(screen.getByTestId("legend-garbage")).toHaveTextContent("ごみの日（アイコン）")
   })
 
   it("題が「燃えるごみ」でも、分類しておらねばごみの日として描かぬ（自動で確定せぬ）", () => {
