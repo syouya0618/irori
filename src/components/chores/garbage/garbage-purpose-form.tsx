@@ -56,6 +56,8 @@ interface GarbagePurposeFormProps {
   lockedScope?: EventPurposeScope
   /** 最初に選んでおく操作（省略時は「ごみの日にする」） */
   initialMode?: GarbageAction
+  /** 既存予定の候補確認では通知を変更しないことを初期値にする。通常の編集は従来どおり。 */
+  initialReminder?: GarbageReminderChoice
   /** 新しい保存を受けられぬ（送信中・確認待ち）。保存ボタンを止める */
   disabled?: boolean
   onSubmit: (request: GarbageRequest, label: string) => void
@@ -104,6 +106,7 @@ export function GarbagePurposeForm({
   current,
   lockedScope,
   initialMode = "garbage",
+  initialReminder,
   disabled = false,
   onSubmit,
   onCancel,
@@ -169,7 +172,9 @@ export function GarbagePurposeForm({
     startLabel === null ? null : isPreset(startLabel) ? startLabel : CUSTOM,
   )
   const [customText, setCustomText] = useState(startLabel !== null && !isPreset(startLabel) ? startLabel : "")
-  const [reminder, setReminder] = useState<GarbageReminderChoice>(defaultReminder(startMode, initialScope))
+  const [reminder, setReminder] = useState<GarbageReminderChoice>(
+    initialReminder ?? defaultReminder(startMode, initialScope),
+  )
   const [error, setError] = useState<string | null>(null)
   // 見ておった分類の版は、開いた時点で固定する（開いたままの間に props が新しい版へ差し替わっても、
   // 「開いた時点の入力 + 最新の版」を送って家族の変更を黙って上書きせぬ）
@@ -186,7 +191,7 @@ export function GarbagePurposeForm({
     const nextMode = modesFor(next).includes(mode) ? mode : "garbage"
     setScope(next)
     setMode(nextMode)
-    setReminder(defaultReminder(nextMode, next))
+    setReminder(nextMode === "garbage" && initialReminder ? initialReminder : defaultReminder(nextMode, next))
     // その範囲で保存済みの名称が在れば、そこから始める（別の範囲の名称を持ち越して上書きさせぬ）
     const saved = labelAt(next)
     if (saved !== null) {
@@ -198,7 +203,7 @@ export function GarbagePurposeForm({
 
   const chooseMode = (next: FormMode) => {
     setMode(next)
-    setReminder(defaultReminder(next, scope))
+    setReminder(next === "garbage" && initialReminder ? initialReminder : defaultReminder(next, scope))
     setError(null)
   }
 
