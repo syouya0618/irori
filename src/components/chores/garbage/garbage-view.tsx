@@ -306,7 +306,7 @@ export function GarbageView({ owner, data }: GarbageViewProps) {
         <section aria-labelledby="garbage-candidates-heading" className={SECTION} data-testid="garbage-candidates">
           <h2 id="garbage-candidates-heading" className={HEADING}>既存の予定から候補を確認</h2>
           <p className="text-xs text-muted-foreground">
-            予定名から見つけた候補じゃ。ごみの日と決めつけず、1件ずつ確認して分類する。
+            予定名から見つけた候補です。ごみの日と決めつけず、1件ずつ確認して分類してください。
             通知は「変えない」が初期値。予定そのものは変更しない。
           </p>
           <ul className="flex flex-col gap-2">
