@@ -90,7 +90,9 @@ export function GarbageKindAvatar({ label }: { label: string | null | undefined 
 export function GarbageCellMark({ labels }: { labels: readonly string[] }) {
   if (labels.length === 0) return null
   const unique = Array.from(new Set(labels))
-  const visible = unique.slice(0, 3)
+  // 3種まではアイコンを全部出す。4種以上なら2種+残数にして、狭い日付セルでもはみ出さぬ。
+  const visible = unique.length > 3 ? unique.slice(0, 2) : unique
+  const remaining = unique.length - visible.length
   return (
     <span
       data-garbage-mark={visible[0]}
@@ -102,6 +104,7 @@ export function GarbageCellMark({ labels }: { labels: readonly string[] }) {
         const Icon = ICONS[visual.icon]
         return <Icon key={label} size={12} className={cn("shrink-0", visual.tone.text)} />
       })}
+      {remaining > 0 && <span data-garbage-overflow className="shrink-0 text-[9px] leading-none text-muted-foreground">+{remaining}</span>}
     </span>
   )
 }
