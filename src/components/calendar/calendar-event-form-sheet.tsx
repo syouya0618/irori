@@ -97,6 +97,8 @@ interface Props {
   onOpenChange: (open: boolean) => void
   /** null = 新規、native = 編集、google = read-only 詳細 */
   editing: CalendarEventRecord | null
+  /** 一覧のゴミ箱から開いた場合、最初に削除の確認を表示する。 */
+  confirmDeleteOnOpen?: boolean
   defaultDate: string
   saving: boolean
   onSubmit: (value: CalendarEventFormValue) => void
@@ -436,6 +438,7 @@ export function CalendarEventFormSheet({
   open,
   onOpenChange,
   editing,
+  confirmDeleteOnOpen = false,
   defaultDate,
   saving,
   onSubmit,
@@ -460,7 +463,7 @@ export function CalendarEventFormSheet({
   // open/editing 変化でフォームを初期化(render-time conditional setState)。
   const [prevKey, setPrevKey] = useState<string | null>(null)
   const currentKey = open
-    ? `${editing?.id ?? `new:${defaultDate}`}${initialDraft ? ":draft" : ""}`
+    ? `${editing?.id ?? `new:${defaultDate}`}${initialDraft ? ":draft" : ""}${confirmDeleteOnOpen && editing?.source === "native" ? ":delete" : ""}`
     : null
   const [value, setValue] = useState<CalendarEventFormValue>(() =>
     initialDraft ?? initialValue(editing, defaultDate),
@@ -479,7 +482,7 @@ export function CalendarEventFormSheet({
     if (open) {
       setValue(initialDraft ?? initialValue(editing, defaultDate))
       setError(null) // 前回の失敗を新しいフォームへ持ち越さない
-      setPanel(null)
+      setPanel(confirmDeleteOnOpen && editing?.source === "native" ? "delete" : null)
       setDraftRestored(initialDraft !== null)
       setDraftFailure(null)
     }
