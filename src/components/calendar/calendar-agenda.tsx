@@ -3,6 +3,13 @@
 import {
   AlertCircle,
   CalendarDays,
+  ChevronRight,
+  Clock3,
+  Eye,
+  NotebookPen,
+  Pencil,
+  Stethoscope,
+  Trash2,
   CloudOff,
   Loader2,
   Lock,
@@ -15,7 +22,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatTimeJst, toJstDateString } from "@/lib/utils/date-jst"
 import { garbageOf } from "@/lib/domain/garbage"
-import { GarbageKindLabel } from "@/components/chores/garbage/garbage-kind-icon"
+import { GarbageKindIcon, GarbageKindLabel } from "@/components/chores/garbage/garbage-kind-icon"
 import type { CalendarEventRecord, MonthLoadState } from "./use-month-events"
 import { formatShortDay, multiDayProgress } from "./calendar-display"
 
@@ -25,6 +32,8 @@ interface CalendarAgendaProps {
   /** アジェンダの対象日(YYYY-MM-DD, JST)。多日イベントの表示分岐に使う。 */
   selectedDate: string
   onTapEvent: (event: CalendarEventRecord) => void
+  /** 一覧から削除の確認を開く。Google・医療記録由来の予定には表示しない。 */
+  onRequestDelete?: (event: CalendarEventRecord) => void
   /** 選択日が今日か（見出しに「今日」を添える）。 */
   isToday?: boolean
   /** 月の取得状態。loading / error の間は「予定はありません」と言わぬ。 */
@@ -102,6 +111,7 @@ export function CalendarAgenda({
   events,
   selectedDate,
   onTapEvent,
+  onRequestDelete,
   isToday = false,
   loadState = "idle",
   onRetry,
@@ -115,6 +125,7 @@ export function CalendarAgenda({
   return (
     <section className="flex flex-col gap-2" aria-labelledby={headingId}>
       <div className="flex min-h-8 items-center gap-2 px-1">
+        <CalendarDays size={17} className="shrink-0 text-primary" aria-hidden="true" />
         <h2 id={headingId} className="text-sm font-semibold">
           {dateLabel}
           <span className="sr-only"> の予定</span>
@@ -200,14 +211,16 @@ export function CalendarAgenda({
             // 用途（ごみの日）。出どころ（irori / Google）とは別の軸ゆえ、帯の色は変えず補足の行に
             // アイコン + 文字で足す（行のアクセシブル名に「ごみ・燃えるごみ」が入る）
             const garbage = garbageOf(e)
+            const canRemove = !!onRequestDelete && !isGoogle && !e.medical_record_id
             return (
               <li key={e.id}>
-                <button
+                <div className="glass flex items-stretch rounded-xl">
+                  <button
                   type="button"
                   onClick={() => onTapEvent(e)}
                   aria-busy={saving || undefined}
                   className={cn(
-                    "glass flex min-h-14 w-full items-stretch gap-3 rounded-xl py-2 pr-3 pl-2 text-left transition-colors duration-200",
+                    "flex min-h-14 min-w-0 flex-1 items-stretch gap-2 rounded-xl py-2 pr-2 pl-2 text-left transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-ring",
                     "cursor-pointer hover:bg-muted/50 dark:hover:bg-muted/20",
                   )}
                 >
@@ -224,8 +237,29 @@ export function CalendarAgenda({
                     {time.secondary && <span>{time.secondary}</span>}
                   </span>
                   <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
-                    <span className="truncate text-sm font-medium">{e.title}</span>
-                    {(meta.length > 0 || isGoogle || saving || garbage !== null) && (
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "flex size-7 shrink-0 items-center justify-center rounded-lg",
+                          isGoogle ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary",
+                        )}
+                      >
+                        {garbage !== null ? (
+                          <GarbageKindIcon label={garbage.label} size={16} />
+                        ) : e.medical_record_id ? (
+                          <Stethoscope size={16} />
+                        ) : e.memo?.trim() ? (
+                          <NotebookPen size={16} />
+                        ) : e.is_all_day ? (
+                          <CalendarDays size={16} />
+                        ) : (
+                          <Clock3 size={16} />
+                        )}
+                      </span>
+                      <span className="truncate text-sm font-medium">{e.title}</span>
+                    </span>
+                    {(meta.length > 0 || isGoogle || saving || garbage !== null || Boolean(e.memo?.trim())) && (
                       <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                         {saving && (
                           <span className="flex items-center gap-1 text-primary">
@@ -234,6 +268,12 @@ export function CalendarAgenda({
                           </span>
                         )}
                         {garbage !== null && <GarbageKindLabel label={garbage.label} />}
+                        {e.memo?.trim() && (
+                          <span className="flex items-center gap-1">
+                            <NotebookPen size={12} aria-hidden="true" />
+                            メモあり
+                          </span>
+                        )}
                         {meta.map((m) => (
                           <span key={m} className="flex items-center gap-1">
                             {m === "繰り返し" && <Repeat size={12} aria-hidden="true" />}
@@ -249,7 +289,29 @@ export function CalendarAgenda({
                       </span>
                     )}
                   </span>
-                </button>
+                  {e.medical_record_id ? (
+                    <ChevronRight size={16} className="shrink-0 self-center text-muted-foreground" aria-hidden="true" />
+                  ) : isGoogle ? (
+                    <Eye size={16} className="shrink-0 self-center text-muted-foreground" aria-hidden="true" />
+                  ) : (
+                    <Pencil size={16} className="shrink-0 self-center text-muted-foreground" aria-hidden="true" />
+                  )}
+                  </button>
+                  {canRemove && (
+                    <div className="flex shrink-0 items-center pr-1">
+                      <button
+                        type="button"
+                        aria-label={`「${e.title}」を削除`}
+                        title="削除"
+                        onClick={() => onRequestDelete?.(e)}
+                        disabled={saving}
+                        className="flex size-11 cursor-pointer items-center justify-center rounded-xl text-muted-foreground transition-colors duration-200 hover:bg-destructive/10 hover:text-destructive focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <Trash2 size={18} aria-hidden="true" />
+                      </button>
+                    </div>
+                  )}
+                </div>
               </li>
             )
           })}
