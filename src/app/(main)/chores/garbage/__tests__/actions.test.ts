@@ -16,12 +16,31 @@ vi.mock("@/lib/supabase/auth-context", () => ({
   getAuthContext: () => getAuthContext(),
 }))
 
+vi.mock("@/lib/supabase/event-purpose-query", () => ({
+  fetchEventPurposeLoad: vi.fn(),
+}))
+import { fetchEventPurposeLoad } from "@/lib/supabase/event-purpose-query"
 import { submitGarbageRequest } from "../actions"
 
 const HOUSEHOLD = "aa000000-0000-4000-8000-000000000001"
 const OTHER_HOUSEHOLD = "bb000000-0000-4000-8000-000000000002"
 const EVENT = "c2000000-0000-4000-8000-000000000010"
 const PURPOSE = "d3000000-0000-4000-8000-000000000020"
+const TARGET_KEY = "series-existing-garbage"
+const savedPurpose = {
+  id: PURPOSE, scope: "series", target_key: TARGET_KEY, purpose: "garbage",
+  garbage_kind: "燃えるごみ", remind_default: "none", reminder_opt_out: false,
+  updated_at: "2026-11-13T01:02:03.123456+00:00",
+}
+const verifiedLoad = {
+  status: "ok" as const,
+  rows: [{
+    id: PURPOSE, scope: "series" as const, targetKey: TARGET_KEY,
+    purpose: "garbage" as const, garbageKind: "燃えるごみ",
+    remindDefault: "none" as const, reminderOptOut: false,
+    updatedAt: "2026-11-13T01:02:03.123456+00:00",
+  }],
+}
 
 type RpcResult = { data: unknown; error: unknown }
 
@@ -52,6 +71,7 @@ const CONSUMERS = ["/baby", "/calendar", "/chores", "/chores/garbage"]
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(fetchEventPurposeLoad).mockResolvedValue(verifiedLoad)
   vi.spyOn(console, "error").mockImplementation(() => {})
 })
 
@@ -91,7 +111,7 @@ describe("submitGarbageRequest: 認証と入力", () => {
   })
 
   it("RPC へ渡すのは予定の行 id と選択だけ（世帯 id も鍵も渡さぬ）", async () => {
-    const rpc = setContext({ data: { status: "saved", purpose: { id: PURPOSE } }, error: null })
+    const rpc = setContext({ data: { status: "saved", purpose: savedPurpose }, error: null })
     await submitGarbageRequest(save)
     expect(rpc.mock.calls).toEqual([
       [
@@ -123,7 +143,7 @@ describe("submitGarbageRequest: 認証と入力", () => {
     }
     const r = await submitGarbageRequest(stale)
     // RPC が版の違いで止めた（何も書いておらぬ）。Action は conflict をそのまま返す
-    expect(r).toEqual({ status: "conflict" })
+    expect(r).toEqual({ status: "conflict", purposeLoad: verifiedLoad })
     expect(rpc.mock.calls[0][1]).toMatchObject({
       p_seen_series: "2026-11-01T00:00:00.000001+00:00",
       p_seen_event: "2026-11-02T00:00:00.999999+00:00",
@@ -137,9 +157,9 @@ describe("submitGarbageRequest: RPC の結果", () => {
   it.each(["saved", "replayed", "conflict"] as const)(
     "%s をそのまま返し、分類を読む 4 画面を無効化する",
     async (status) => {
-      setContext({ data: { status, purpose: null }, error: null })
+      setContext({ data: { status, purpose: savedPurpose }, error: null })
       const r = await submitGarbageRequest(save)
-      expect(r).toEqual({ status })
+      expect(r).toEqual({ status, purposeLoad: verifiedLoad })
       expect(revalidatePath.mock.calls.map(([p]) => p).sort()).toEqual(CONSUMERS)
     },
   )
@@ -147,8 +167,44 @@ describe("submitGarbageRequest: RPC の結果", () => {
   it("解除（purpose が null の応答）も saved として読める", async () => {
     const rpc = setContext({ data: { status: "saved", purpose: null }, error: null })
     const r = await submitGarbageRequest({ ...save, action: "clear", garbageKind: null, reminder: "keep" })
-    expect(r).toEqual({ status: "saved" })
+    expect(r).toEqual({ status: "saved", purposeLoad: verifiedLoad })
     expect(rpc.mock.calls[0][1]).toMatchObject({ p_action: "clear", p_garbage_kind: null, p_reminder: "keep" })
+  })
+
+  it("既存のシリーズにごみ分類を保存し、同じ世帯の読み戻しまで一致した時だけ分類済みと報告する", async () => {
+    const rpc = setContext({ data: { status: "saved", purpose: savedPurpose }, error: null })
+    const result = await submitGarbageRequest(save)
+    expect(result).toEqual({ status: "saved", purposeLoad: verifiedLoad })
+    expect(rpc).toHaveBeenCalledTimes(1)
+    expect(fetchEventPurposeLoad).toHaveBeenCalledWith(expect.anything(), HOUSEHOLD)
+  })
+
+  it("保存RPCは成功でも分類の読み戻しが空なら『未分類』と断定しない", async () => {
+    setContext({ data: { status: "saved", purpose: savedPurpose }, error: null })
+    vi.mocked(fetchEventPurposeLoad).mockResolvedValueOnce({ status: "ok", rows: [] })
+    expect(await submitGarbageRequest(save)).toEqual({ status: "saved", purposeLoad: { status: "failed" } })
+    expect(revalidatePath).toHaveBeenCalledTimes(4)
+  })
+
+  it("分類の読み戻しが通信失敗なら再保存せず、表示は確認不能として返す", async () => {
+    const rpc = setContext({ data: { status: "saved", purpose: savedPurpose }, error: null })
+    vi.mocked(fetchEventPurposeLoad).mockResolvedValueOnce({ status: "failed" })
+    expect(await submitGarbageRequest(save)).toEqual({ status: "saved", purposeLoad: { status: "failed" } })
+    expect(rpc).toHaveBeenCalledTimes(1)
+  })
+
+  it("違う世帯・鍵・名称の分類を読み戻しても保存済みと見なさない", async () => {
+    setContext({ data: { status: "replayed", purpose: savedPurpose }, error: null })
+    vi.mocked(fetchEventPurposeLoad).mockResolvedValueOnce({
+      status: "ok",
+      rows: [{ ...verifiedLoad.rows[0], targetKey: "different-event" }],
+    })
+    expect(await submitGarbageRequest(save)).toEqual({ status: "replayed", purposeLoad: { status: "failed" } })
+  })
+
+  it("競合は保存済みと言わず、現在の分類の読み戻しだけを渡す", async () => {
+    setContext({ data: { status: "conflict", purpose: null }, error: null })
+    expect(await submitGarbageRequest(save)).toEqual({ status: "conflict", purposeLoad: verifiedLoad })
   })
 
   it("別世帯の予定 id（RPC が 42501）は rejected。存在を言い分けぬ文を返す", async () => {
