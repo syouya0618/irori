@@ -9,6 +9,7 @@
  *   * 別世帯・子ども閲覧招待の受諾者（viewer）・未ログイン（anon）の RPC は 42501
  *   * 表への直接 DML は 42501（書込は RPC だけ）
  *   * 同じ操作の再送は replayed、古い版は conflict、同じ回の同時完了は 1 行（already_closed）
+ *   * 不正な数量・購入量を超える補充・補充済み量を下回る購入の書換えは 22023（保存状態も不変）
  * - PGlite の pgTAP（単一接続・認証スタブ）では見えぬ、本物の GoTrue の JWT と PostgREST の権限解決を通す。
  *   2 接続の真の競合は `scripts/test-chores-concurrency.py`（CI の E2E ジョブ）が別に見る。
  */
@@ -43,6 +44,11 @@ function statusOf(result: RpcResult, label: string): string {
 function expectDenied(result: RpcResult, label: string): void {
   expect(result.error, `${label} must be refused`).not.toBeNull()
   expect(result.error?.code, `${label}: ${JSON.stringify(result.error)}`).toBe("42501")
+}
+
+function expectInvalidQuantity(result: RpcResult, label: string): void {
+  expect(result.data, `${label}: unexpected successful payload`).toBeNull()
+  expect(result.error?.code, `${label}: ${JSON.stringify(result.error)}`).toBe("22023")
 }
 
 function field<T>(result: RpcResult, key: string, inner: string): T {
@@ -211,6 +217,15 @@ test.describe("家事の RPC（実 Auth・PostgREST・利用者の JWT）", () =
         const direct = await a2.from("pantry_items").insert({ id: randomUUID(), household_id: householdA, name: "synthetic direct", status: "have", use_soon: false, confirmed_on: today })
         expectDenied({ data: null, error: direct.error }, "member inserts into pantry_items directly")
 
+        // 利用者JWT → PostgREST → SECURITY DEFINER RPC: JS の入力検査を通らない負の数量も拒む。
+        const invalidPantryId = randomUUID()
+        expectInvalidQuantity(await rpc(a1, "save_pantry_item", {
+          p_id: invalidPantryId, p_version: null, p_item: { ...pantryItem, quantity: -1 },
+        }), "owner cannot save negative pantry quantity")
+        const { data: invalidPantryRows, error: invalidPantryReadError } = await a1.from("pantry_items").select("id").eq("id", invalidPantryId)
+        expect(invalidPantryReadError).toBeNull()
+        expect(invalidPantryRows).toHaveLength(0)
+
         const updated = await rpc(a2, "save_pantry_item", { p_id: pantryId, p_version: pantryVersion, p_item: { ...pantryItem, quantity: 1 } })
         expect(statusOf(updated, "member updates with the current version")).toBe("saved")
         const stalePantry = await rpc(a1, "save_pantry_item", { p_id: pantryId, p_version: pantryVersion, p_item: { ...pantryItem, quantity: 5 } })
@@ -228,6 +243,21 @@ test.describe("家事の RPC（実 Auth・PostgREST・利用者の JWT）", () =
         })
         expect(statusOf(grocery, "owner adds a shopping item")).toBe("saved")
         const groceryVersion = field<string>(grocery, "item", "updated_at")
+        const invalidGroceryId = randomUUID()
+        expectInvalidQuantity(await rpc(a1, "save_grocery_manual_item", {
+          p_id: invalidGroceryId, p_version: null, p_name: "synthetic invalid grocery", p_quantity: -1,
+          p_unit: "本", p_section: null, p_note: null,
+        }), "owner cannot add a negative shopping quantity")
+        const { data: invalidGroceryRows, error: invalidGroceryReadError } = await a1.from("grocery_items").select("id").eq("id", invalidGroceryId)
+        expect(invalidGroceryReadError).toBeNull()
+        expect(invalidGroceryRows).toHaveLength(0)
+        expectInvalidQuantity(await rpc(a2, "set_grocery_purchase", {
+          p_id: groceryId, p_version: groceryVersion, p_purchased_quantity: -1, p_purchased: false,
+        }), "member cannot record a negative purchased quantity")
+        const { data: purchaseBefore, error: purchaseBeforeError } = await a1.from("grocery_items").select("purchased_quantity").eq("id", groceryId).single()
+        expect(purchaseBeforeError).toBeNull()
+        expect(Number(purchaseBefore?.purchased_quantity)).toBe(0)
+
         const bought = await rpc(a2, "set_grocery_purchase", { p_id: groceryId, p_version: groceryVersion, p_purchased_quantity: 1, p_purchased: true })
         expect(statusOf(bought, "member marks it bought")).toBe("saved")
         expect(statusOf(await rpc(a2, "set_grocery_purchase", { p_id: groceryId, p_version: groceryVersion, p_purchased_quantity: 1, p_purchased: true }), "member resends")).toBe("replayed")
@@ -238,6 +268,34 @@ test.describe("家事の RPC（実 Auth・PostgREST・利用者の JWT）", () =
         expect((shared as { purchased: boolean }).purchased).toBe(true)
         expectDenied(await rpc(b1, "set_grocery_purchase", { p_id: groceryId, p_version: groceryVersion, p_purchased_quantity: 0, p_purchased: false }), "other household edits A's shopping")
         expectDenied(await rpc(viewer, "set_grocery_purchase", { p_id: groceryId, p_version: groceryVersion, p_purchased_quantity: 0, p_purchased: false }), "viewer edits shopping")
+
+        // 購入の事実は1本。2本を補充すると 22023 となり、在庫行も購入記録も変わらない。
+        const purchasedVersion = field<string>(bought, "item", "updated_at")
+        const invalidRestockId = randomUUID()
+        expectInvalidQuantity(await rpc(a2, "restock_pantry_from_grocery", {
+          p_grocery_id: groceryId, p_grocery_version: purchasedVersion,
+          p_pantry_item_id: invalidRestockId, p_quantity: 2,
+        }), "member cannot restock more than was bought")
+        const { data: invalidRestockRows, error: invalidRestockReadError } = await a1.from("pantry_items").select("id").eq("id", invalidRestockId)
+        expect(invalidRestockReadError).toBeNull()
+        expect(invalidRestockRows).toHaveLength(0)
+
+        const restock = await rpc(a1, "restock_pantry_from_grocery", {
+          p_grocery_id: groceryId, p_grocery_version: purchasedVersion,
+          p_pantry_item_id: randomUUID(), p_quantity: 1,
+        })
+        expect(statusOf(restock, "owner restocks exactly the purchased quantity")).toBe("saved")
+        const restockedVersion = field<string>(restock, "item", "updated_at")
+        expectInvalidQuantity(await rpc(a2, "set_grocery_purchase", {
+          p_id: groceryId, p_version: restockedVersion,
+          p_purchased_quantity: 0, p_purchased: false,
+        }), "member cannot erase a purchase already restocked")
+        const { data: preserved, error: preservedError } = await a1.from("grocery_items")
+          .select("purchased_quantity,purchased,restocked_quantity").eq("id", groceryId).single()
+        expect(preservedError).toBeNull()
+        expect(Number(preserved?.purchased_quantity)).toBe(1)
+        expect(preserved?.purchased).toBe(true)
+        expect(Number(preserved?.restocked_quantity)).toBe(1)
       })
 
       await test.step("ごみの分類: 閲覧招待・未ログインは拒まれる", async () => {
