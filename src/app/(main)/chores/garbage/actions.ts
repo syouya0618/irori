@@ -105,6 +105,7 @@ export async function submitGarbageRequest(input: unknown): Promise<ChoreSaveRes
     // 保存後の認証済みサーバーで必ず読み戻す。クライアント側の取り直しが
     // 遅い・失敗する場合でも、古い「未分類」の表示を真値として残さぬ。
     revalidateGarbageConsumers()
+    if (input.op === "delete-orphan") return { status }
     const purposeLoad = await fetchEventPurposeLoad(supabase, householdId)
     if (input.op === "save" && input.action === "garbage" && status !== "conflict") {
       const receipt = isRecord(data) ? parseEventPurposeRow(data.purpose) : null
