@@ -7,6 +7,8 @@ import {
   parseGarbageEventRow,
   purposeLookupKey,
   seriesKeyOf,
+  suggestGarbageCandidates,
+  type GarbageCandidate,
   type EventPurposeRow,
   type GarbageEventRow,
   type GarbageOverview,
@@ -71,6 +73,8 @@ export interface GarbagePageData {
    */
   events: "ok" | "failed" | "truncated"
   overview: GarbageOverview
+  /** 既存予定からの未分類候補（読み取り専用。存在しないときは候補非表示）。 */
+  candidates?: GarbageCandidate[]
   /** 並べた収集日の通知設定（鍵 = event_uid）。行が無い鍵 = 通知なし */
   reminders:
     | { status: "ok"; byEventKey: Record<string, GarbageReminderRow> }
@@ -155,6 +159,7 @@ export async function loadGarbagePage(
     purposes: "ok",
     events,
     overview,
+    candidates: events === "failed" ? [] : suggestGarbageCandidates(windowEvents, rows),
     reminders: await lookupReminders(
       supabase,
       householdId,
