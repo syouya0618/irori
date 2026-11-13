@@ -123,6 +123,8 @@ export function useMonthEvents({
   // どちらが先に返っても、楽観行を足しても、同じ規則で解決される
   const [purposeLoad, setPurposeLoad] = useState<EventPurposeLoad>(initialPurposes)
   const [purposeStale, setPurposeStale] = useState(false)
+  // 保存後にサーバーで確認した分類へ、先に始まった取得が逆戻りさせぬようにする。
+  const purposeReceiptGenerationRef = useRef(0)
   const events = useMemo(
     () =>
       // 分類が 1 件も無い世帯では行をそのまま返す（用途の載っておらぬ行 = 通常の予定）
@@ -182,6 +184,7 @@ export function useMonthEvents({
   const refetch = useCallback(
     async (targetMonthFirst: string, opts: { foreground?: boolean } = {}) => {
       const generation = ++fetchGenerationRef.current
+      const receiptGeneration = purposeReceiptGenerationRef.current
       if (opts.foreground) setLoadState("loading")
       // 取得には期限とキャンセルを付ける（2026-10-27）。新しい取得が始まれば前の取得を止め、
       // 期限を過ぎれば失敗として扱う（応答を待ち続けて「読み込み中」に張り付かせぬ）
@@ -195,7 +198,8 @@ export function useMonthEvents({
       // 返った時点で合成する（`fetchEventPurposeLoad` は throw せぬ。失敗は failed で返る）。
       // 失敗しても予定の表示は倒さず、前に読めた分類を保って「古いかもしれぬ」とだけ示す
       void fetchEventPurposeLoad(supabase, householdId, controller.signal).then((load) => {
-        if (generation !== fetchGenerationRef.current || unmountedRef.current) return
+        if (generation !== fetchGenerationRef.current || unmountedRef.current ||
+            receiptGeneration !== purposeReceiptGenerationRef.current) return
         if (load.status === "ok") {
           setPurposeLoad(load)
           setPurposeStale(false)
@@ -332,6 +336,12 @@ export function useMonthEvents({
     () => refetch(monthFirstRef.current),
     [refetch],
   )
+  /** RPC保存後に同じ認証で読み戻した分類を即座に反映する。 */
+  const acceptPurposeLoad = useCallback((load: EventPurposeLoad) => {
+    purposeReceiptGenerationRef.current += 1
+    setPurposeLoad(load)
+    setPurposeStale(false)
+  }, [])
   /** 「読み込めませんでした」からの再試行（利用者の操作ゆえ foreground）。 */
   const retry = useCallback(
     () => refetch(monthFirstRef.current, { foreground: true }),
@@ -391,6 +401,7 @@ export function useMonthEvents({
     retry,
     refetch,
     refetchCurrent,
+    acceptPurposeLoad,
     upsertOptimistic,
     removeOptimistic,
     replaceOptimisticId,
