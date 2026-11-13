@@ -296,6 +296,50 @@ describe("CalendarEventFormSheet - 削除の確認（誤操作の防止）", () 
   })
 })
 
+describe("CalendarEventFormSheet - 一覧からの直接削除確認", () => {
+  it("既存の予定をゴミ箱から開くと確認を先に表示し、押すまでは削除しない", () => {
+    const onDelete = vi.fn()
+    render(
+      <CalendarEventFormSheet
+        open
+        onOpenChange={() => {}}
+        editing={ev({ id: "note", title: "自分用のメモ", source: "native" })}
+        confirmDeleteOnOpen
+        defaultDate="2026-07-15"
+        saving={false}
+        onSubmit={vi.fn()}
+        onDelete={onDelete}
+        onDeleteSeries={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole("group", { name: /削除/ })).toHaveTextContent(
+      "「自分用のメモ」を削除しますか？",
+    )
+    expect(screen.getByRole("button", { name: "キャンセル" })).toHaveFocus()
+    expect(onDelete).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "キャンセル" }))
+    expect(screen.getByRole("button", { name: "更新" })).toBeInTheDocument()
+    expect(onDelete).not.toHaveBeenCalled()
+  })
+
+  it("Google由来の予定は直接削除確認を要求されても表示しない", () => {
+    render(
+      <CalendarEventFormSheet
+        open
+        onOpenChange={() => {}}
+        editing={ev({ id: "google-note", title: "Google予定", source: "google" })}
+        confirmDeleteOnOpen
+        defaultDate="2026-07-15"
+        saving={false}
+        onSubmit={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteSeries={vi.fn()}
+      />,
+    )
+    expect(screen.queryByRole("group", { name: /削除/ })).not.toBeInTheDocument()
+  })
+})
+
 describe("CalendarEventFormSheet - 入力途中で閉じない", () => {
   function renderWithOpenChange(editing: CalendarEventRecord | null = null) {
     const onOpenChange = vi.fn()
