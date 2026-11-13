@@ -25,6 +25,7 @@ import {
   type GarbagePurposeEntry,
   type GarbageRequest,
   type GarbageSaveSuccess,
+  type GarbageReminderChoice,
   type ResolvedEventPurpose,
 } from "@/lib/domain/garbage"
 import type { GarbagePageData } from "@/lib/supabase/garbage-overview-query"
@@ -49,6 +50,7 @@ interface Editing {
   current: Exclude<ResolvedEventPurpose, { kind: "unknown" }>
   lockedScope?: EventPurposeScope
   initialMode?: GarbageAction
+  initialReminder?: GarbageReminderChoice
   /** 開くたびに増える編集セッション（R35。同じ予定を開き直しても別の番号） */
   session: number
 }
@@ -155,6 +157,7 @@ export function GarbageView({ owner, data }: GarbageViewProps) {
   })
 
   const { overview, today } = data
+  const candidates = data.purposes === "ok" && data.events !== "failed" ? (data.candidates ?? []) : []
   const linked = overview.entries.filter((e) => e.state !== "orphan")
   const orphans = overview.entries.filter((e) => e.state === "orphan")
   const eventsReadable = data.events !== "failed"
@@ -162,7 +165,7 @@ export function GarbageView({ owner, data }: GarbageViewProps) {
   const openEditor = (
     event: GarbageEventSummary,
     current: ResolvedEventPurpose | null,
-    options: { lockedScope?: EventPurposeScope; initialMode?: GarbageAction } = {},
+    options: { lockedScope?: EventPurposeScope; initialMode?: GarbageAction; initialReminder?: GarbageReminderChoice } = {},
   ) => {
     if (current === null || current.kind === "unknown") return
     setEditing({ target: targetOf(event), current, ...options, session: sessions.begin() })
@@ -297,6 +300,40 @@ export function GarbageView({ owner, data }: GarbageViewProps) {
           </>
         )}
       </section>
+
+      {/* ── 既存カレンダー予定の確認（自動登録・通知変更をしない）── */}
+      {candidates.length > 0 && (
+        <section aria-labelledby="garbage-candidates-heading" className={SECTION} data-testid="garbage-candidates">
+          <h2 id="garbage-candidates-heading" className={HEADING}>既存の予定から候補を確認</h2>
+          <p className="text-xs text-muted-foreground">
+            予定名から見つけた候補じゃ。ごみの日と決めつけず、1件ずつ確認して分類する。
+            通知は「変えない」が初期値。予定そのものは変更しない。
+          </p>
+          <ul className="flex flex-col gap-2">
+            {candidates.map((candidate) => (
+              <li key={candidate.event.id} className={CARD}>
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="break-words text-sm font-medium">{candidate.event.title}</p>
+                    <p className="text-xs text-muted-foreground">{formatDayJa(candidate.event.start_date)}{candidate.event.isSeries ? "・繰り返し" : ""}{candidate.event.source === "google" ? "・Google" : ""}</p>
+                    {candidate.suggestedKind && <p className="text-xs text-muted-foreground">名称の候補: {candidate.suggestedKind}（未確定）</p>}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="shrink-0"
+                    onClick={() => openEditor(candidate.event, candidate.current, { initialReminder: "keep" })}
+                  >
+                    確認して分類
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {data.events === "truncated" && <p className="text-xs text-muted-foreground">予定が多いため候補は一部だけかもしれません。</p>}
+          <p className="text-xs text-muted-foreground">直近{data.windowDays}日以内の候補を最大20件表示。候補に出ない予定もカレンダーから分類できる。</p>
+        </section>
+      )}
 
       {/* ── 分類の一覧 ── */}
       {data.purposes === "ok" && linked.length > 0 && (
@@ -452,6 +489,7 @@ export function GarbageView({ owner, data }: GarbageViewProps) {
                 current={editing.current}
                 lockedScope={editing.lockedScope}
                 initialMode={editing.initialMode}
+                initialReminder={editing.initialReminder}
                 disabled={save.blocked}
                 onSubmit={(request, label) => {
                   save.send(request, label, editing.session)
