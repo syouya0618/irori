@@ -5,7 +5,8 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest"
-import { render, screen, cleanup } from "@testing-library/react"
+import { render, screen, cleanup, fireEvent, within } from "@testing-library/react"
+import { vi } from "vitest"
 import { CalendarAgenda } from "../calendar-agenda"
 import type { CalendarEventRecord } from "../use-month-events"
 import { jstWallClockToIso } from "@/lib/utils/date-jst"
@@ -136,5 +137,66 @@ describe("CalendarAgenda 時刻表示の6分岐", () => {
     )
     expect(screen.getByText("→")).toBeInTheDocument()
     expect(screen.queryByText("14:00")).not.toBeInTheDocument()
+  })
+})
+
+describe("CalendarAgenda - 見つけやすいアイコンと安全な削除", () => {
+  afterEach(() => cleanup())
+
+  it("個人のメモ付き予定はメモの印と削除アイコンを表示し、押すと削除確認要求だけを通知", () => {
+    const onTapEvent = vi.fn()
+    const onRequestDelete = vi.fn()
+    render(
+      <CalendarAgenda
+        dateLabel="7月15日"
+        events={[ev({ id: "memo-1", title: "買い忘れ", memo: "牛乳を買う", source: "native" })]}
+        selectedDate="2026-07-15"
+        onTapEvent={onTapEvent}
+        onRequestDelete={onRequestDelete}
+      />,
+    )
+    expect(screen.getByText("メモあり")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "「買い忘れ」を削除" }))
+    expect(onRequestDelete).toHaveBeenCalledWith(expect.objectContaining({ id: "memo-1" }))
+    expect(onTapEvent).not.toHaveBeenCalled()
+  })
+
+  it("Google予定と医療記録から生成した予定は削除アイコンを表示しない", () => {
+    render(
+      <CalendarAgenda
+        dateLabel="7月15日"
+        events={[
+          ev({ id: "google-1", title: "同期予定", source: "google" }),
+          ev({ id: "medical-1", title: "受診", source: "native", medical_record_id: "medical-1" }),
+        ]}
+        selectedDate="2026-07-15"
+        onTapEvent={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    )
+    expect(screen.queryByRole("button", { name: /削除/ })).not.toBeInTheDocument()
+  })
+
+  it("保存中は削除アイコンが押せない。行を開く操作はそのまま残す", () => {
+    const onTapEvent = vi.fn()
+    const onRequestDelete = vi.fn()
+    const item = ev({ id: "inflight", title: "保存中の予定", source: "native" })
+    render(
+      <CalendarAgenda
+        dateLabel="7月15日"
+        events={[item]}
+        selectedDate="2026-07-15"
+        onTapEvent={onTapEvent}
+        onRequestDelete={onRequestDelete}
+        isSaving={() => true}
+      />,
+    )
+    const row = screen.getByRole("listitem")
+    const deleteButton = within(row).getByRole("button", { name: "「保存中の予定」を削除" })
+    expect(deleteButton).toBeDisabled()
+    fireEvent.click(deleteButton)
+    expect(onRequestDelete).not.toHaveBeenCalled()
+    fireEvent.click(within(row).getByRole("button", { name: /保存中の予定/ }))
+    expect(onTapEvent).toHaveBeenCalledWith(item)
   })
 })
