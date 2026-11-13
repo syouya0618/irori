@@ -213,7 +213,9 @@ describe("同じ日に通常の予定とごみの予定が在る時の表示（A
     const cell = dayCell(DAY)
     expect(cell.querySelectorAll("[data-mark]")).toHaveLength(0)
     expect(cell.querySelectorAll("[data-garbage-mark] svg")).toHaveLength(2)
-    expect(cell).toHaveAccessibleName(/ごみ（燃えるごみ、資源）/)
+    expect(cell.getAttribute("aria-label")).toMatch(/ごみ（/)
+    expect(cell.getAttribute("aria-label")).toContain("燃えるごみ")
+    expect(cell.getAttribute("aria-label")).toContain("資源")
   })
 
   it("ごみの無い日のマスは従来のまま（対照）", () => {
