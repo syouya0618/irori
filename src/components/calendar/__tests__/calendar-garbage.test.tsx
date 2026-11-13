@@ -291,7 +291,7 @@ describe("公開後回帰: 既存のごみ予定の保存と読み戻し", () =>
     render(<CalendarView {...base} initialEvents={[google]} initialPurposes={ok()} />)
     await openEvent("燃えるごみ")
     await openForm("ごみの日にする")
-    fireEvent.click(within(field()).getByRole("button", { name: "燃えるごみ", exact: true }))
+    fireEvent.click(within(field()).getByRole("button", { name: "燃えるごみ" }))
     submit.mockResolvedValueOnce({
       status: "saved",
       purposeLoad: ok(purposeRow({ targetKey: "cal@example.invalid|garbage-2026" })),
@@ -309,7 +309,7 @@ describe("公開後回帰: 既存のごみ予定の保存と読み戻し", () =>
     render(<CalendarView {...base} initialEvents={[original]} initialPurposes={ok()} />)
     await openEvent("可燃ごみ")
     await openForm("ごみの日にする")
-    fireEvent.click(within(field()).getByRole("button", { name: "燃えるごみ", exact: true }))
+    fireEvent.click(within(field()).getByRole("button", { name: "燃えるごみ" }))
     submit.mockResolvedValueOnce({ status: "saved", purposeLoad: { status: "failed" } })
     await act(async () => {
       fireEvent.click(within(field()).getByRole("button", { name: "分類を保存" }))
