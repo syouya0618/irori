@@ -35,7 +35,7 @@ jobs:
     # 赤にする。期待の crash は、呼んだ接続の PID と呼んだ文を server log で照合して数える。106 の supautils は
     # `GRANT <role> TO CURRENT_USER` でも落ちる別の不具合を持つ（supabase/supautils#205・#207）ゆえ、準備は
     # ロール名（postgres）を明示する。
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -52,7 +52,9 @@ jobs:
         run: ./scripts/test-db-execute-denial.sh --image "supabase/postgres@${IRORI_DB_IMAGE_DIGEST}" --expect clean
 
   e2e:
-    runs-on: ubuntu-latest
+    # ubuntu-latest が 26.04 へ進み、Playwright WebKit 2311 が libicudata.so.74 不足で起動できなかった（2026-11-13 main）。
+    # ブラウザ・Supabase・pgTAP を同じ検証済みOSに固定する。
+    runs-on: ubuntu-24.04
     # 家事の pgTAP・2 接続の並行試験・実 Auth の RPC・Playwright 一式が加わった。試験を削らず時間の枠を広げる。
     timeout-minutes: 40
     steps:
