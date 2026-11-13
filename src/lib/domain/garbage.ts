@@ -781,6 +781,48 @@ function summarize(event: GarbageEventRow): GarbageEventSummary {
   }
 }
 
+/** 既存カレンダー予定から提案する、ごみ分類の候補。推測だけでは保存しない。 */
+export interface GarbageCandidate {
+  event: GarbageEventSummary
+  current: Extract<ResolvedEventPurpose, { kind: "normal" }>
+  suggestedKind: string | null
+}
+
+/**
+ * 直近の予定から候補を探す（読み取り専用）。Google再同期でも同じ繰り返しは1候補に畳む。
+ * 「ごみ箱を洗う」等の家事は除外。種別は推定表示のみで、分類RPCへは利用者の選択が必要。
+ */
+export function suggestGarbageCandidates(
+  events: readonly GarbageEventRow[],
+  purposeRows: readonly EventPurposeRow[],
+  limit = 20,
+): GarbageCandidate[] {
+  const index = buildEventPurposeIndex(purposeRows)
+  const result: GarbageCandidate[] = []
+  const seen = new Set<string>()
+  const sorted = [...events].sort((a, b) =>
+    a.start_date === b.start_date ? a.id.localeCompare(b.id) : a.start_date.localeCompare(b.start_date)
+  )
+  for (const event of sorted) {
+    if (event.medical_record_id) continue
+    const title = event.title.trim()
+    if (/ごみ箱|ゴミ箱|ゴミ袋|ごみ袋|ごみ当番|ゴミ当番/.test(title)) continue
+    if (!/(?:ごみ|ゴミ|可燃|不燃|資源回収|古紙|ペットボトル|プラごみ|プラスチック|びん.?缶)/.test(title)) continue
+    const purpose = resolveEventPurpose(event, index)
+    if (purpose.kind !== "normal" || purpose.exception) continue
+    const seriesKey = seriesKeyOf(event)
+    const eventKey = eventKeyOf(event)
+    if (eventKey === null) continue
+    const groupKey = seriesKey ? `series:\u0000${seriesKey}` : `event:\u0000${eventKey}`
+    if (seen.has(groupKey)) continue
+    seen.add(groupKey)
+    const suggestion = GARBAGE_KIND_PRESETS.find((preset) => title.includes(preset.label))
+    result.push({ event: summarize(event), current: purpose, suggestedKind: suggestion?.label ?? null })
+    if (result.length >= Math.max(0, limit)) break
+  }
+  return result
+}
+
 /** 次の収集日の 1 行。 */
 export interface GarbageCollectionView {
   event: GarbageEventSummary
