@@ -50,12 +50,17 @@ it("retains the original unknown operation when a later retry is rejected, then 
  await screen.findByText("保存結果を確認できません。同じ操作で確認し直してください")
  const frozen=vi.mocked(saveMedical).mock.calls[0][0]
  vi.mocked(saveMedical).mockResolvedValueOnce({error:"synthetic expired login",failure:"rejected"})
+ // 保存結果の文が見えても React Transition が収束する前の釦はdisabledのことがある。
+ await waitFor(()=>expect(screen.getByRole("button",{name:"保存結果を同じ操作で確認"})).toBeEnabled())
  await act(async()=>fireEvent.click(screen.getByRole("button",{name:"保存結果を同じ操作で確認"})))
+ await waitFor(()=>expect(vi.mocked(saveMedical)).toHaveBeenCalledTimes(2))
  expect(vi.mocked(saveMedical).mock.calls[1][0]).toEqual(frozen)
  expect(await listRecordRequests(owner)).toHaveLength(1)
  expect(screen.getByRole("button",{name:"保存する"})).toBeDisabled()
  vi.mocked(saveMedical).mockResolvedValueOnce({status:"replayed"})
+ await waitFor(()=>expect(screen.getByRole("button",{name:"保存結果を同じ操作で確認"})).toBeEnabled())
  await act(async()=>fireEvent.click(screen.getByRole("button",{name:"保存結果を同じ操作で確認"})))
+ await waitFor(()=>expect(vi.mocked(saveMedical)).toHaveBeenCalledTimes(3))
  expect(vi.mocked(saveMedical).mock.calls[2][0]).toEqual(frozen)
  expect(await listRecordRequests(owner)).toEqual([])
 })
