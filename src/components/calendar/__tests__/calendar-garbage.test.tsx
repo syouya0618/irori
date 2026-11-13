@@ -176,18 +176,44 @@ describe("同じ日に通常の予定とごみの予定が在る時の表示（A
   ]
   const purposes = ok(purposeRow({ targetKey: GARBAGE_EVENT }))
 
-  it("月のマス: 読み上げに件数と種別が入り、アイコン + 短い名称が出る。予定の印は全件ぶんのまま", () => {
+  it("月のマス: ごみの帯と文字を出さずアイコンだけ、通常の予定の印と件数は維持する", () => {
     render(<CalendarView {...base} initialEvents={events} initialPurposes={purposes} />)
     const cell = dayCell(DAY)
     expect(cell).toHaveAccessibleName(`${formatDayJa(DAY)}、予定2件、ごみ（燃えるごみ）`)
-    // 通常の予定の印（丸・帯）は 2 件ぶん残る = 通常の予定も数えられる
-    expect(cell.querySelectorAll("[data-mark]")).toHaveLength(2)
+    // 通常の予定の丸だけ。ごみの終日予定に付いていた帯は消す。
+    expect(cell.querySelectorAll("[data-mark]")).toHaveLength(1)
+    expect(cell.querySelector('[data-mark="band"]')).toBeNull()
     const mark = cell.querySelector("[data-garbage-mark]")
     expect(mark).not.toBeNull()
-    expect(mark).toHaveTextContent("燃える")
-    expect(mark!.querySelector("svg")).not.toBeNull()
+    expect(mark!.querySelectorAll("svg")).toHaveLength(1)
+    expect(mark).toHaveTextContent("")
+    expect(cell.textContent).not.toContain("燃える")
     // マスの中の印は読み上げから外し、種別はマスの名前が運ぶ
     expect(mark).toHaveAttribute("aria-hidden", "true")
+  })
+
+  it("ごみだけの日はラインも余白用の印もなく、アイコンだけが残る", () => {
+    render(<CalendarView {...base} initialEvents={[events[1]]} initialPurposes={purposes} />)
+    const cell = dayCell(DAY)
+    expect(cell).toHaveAccessibleName(`${formatDayJa(DAY)}、予定1件、ごみ（燃えるごみ）`)
+    expect(cell.querySelectorAll("[data-mark]")).toHaveLength(0)
+    expect(cell.querySelector("[data-garbage-mark] svg")).not.toBeNull()
+    expect(cell.textContent).not.toContain("燃える")
+  })
+
+  it("同日にごみが複数種類ならアイコンを並べ、ラインは付けない", () => {
+    const second = ev({ id: NORMAL_EVENT, title: "資源の日" })
+    const secondPurpose = purposeRow({
+      id: "d7000000-0000-4000-8000-000000000099",
+      targetKey: NORMAL_EVENT,
+      garbageKind: "資源",
+    })
+    render(<CalendarView {...base} initialEvents={[events[1], second]}
+      initialPurposes={ok(purposeRow({ targetKey: GARBAGE_EVENT }), secondPurpose)} />)
+    const cell = dayCell(DAY)
+    expect(cell.querySelectorAll("[data-mark]")).toHaveLength(0)
+    expect(cell.querySelectorAll("[data-garbage-mark] svg")).toHaveLength(2)
+    expect(cell).toHaveAccessibleName(/ごみ（燃えるごみ、資源）/)
   })
 
   it("ごみの無い日のマスは従来のまま（対照）", () => {
