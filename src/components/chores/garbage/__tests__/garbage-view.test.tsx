@@ -23,6 +23,13 @@ import {
   type EventPurposeRow,
   type GarbageEventRow,
 } from "@/lib/domain/garbage"
+import {
+  buildGarbageBatch,
+  initialBatchChoice,
+  markGarbageBatchSending,
+  resumeGarbageBatch,
+  settleGarbageBatchItem,
+} from "@/lib/domain/garbage-batch"
 import type { GarbagePageData } from "@/lib/supabase/garbage-overview-query"
 import { GarbageView } from "../garbage-view"
 
@@ -206,6 +213,163 @@ describe("GarbageView: 既存予定の候補を手動で分類する", () => {
     render(<GarbageView owner={OWNER} data={pageData({ patch: { candidates, candidatesMore: true } })} />)
     await settle()
     expect(screen.getByTestId("garbage-candidates")).toHaveTextContent("ほかにも候補があります（近い順に1件を表示しています）")
+  })
+})
+
+describe("GarbageView: 既存予定の候補をまとめて分類する", () => {
+  const B1 = "b9000000-0000-4000-8000-0000000000b1"
+  const B2 = "b9000000-0000-4000-8000-0000000000b2"
+  const B3 = "b9000000-0000-4000-8000-0000000000b3"
+  const BATCH_SERIES = "b9000000-0000-4000-8000-0000000000bf"
+  const batchCandidates = () =>
+    suggestGarbageCandidates(
+      [
+        event(B1, { title: "燃えるごみ", series_id: BATCH_SERIES, start_date: "2026-11-12" }),
+        event(B2, { title: "資源", start_date: "2026-11-13" }),
+        event(B3, { title: "ゴミ出し", start_date: "2026-11-14" }),
+      ],
+      [],
+    )
+  const saved = { status: "saved" as const, purposeLoad: { status: "ok" as const, rows: [] } }
+
+  async function chooseAllAndConfirm() {
+    const panel = screen.getByTestId("garbage-candidates")
+    for (const name of ["燃えるごみ", "資源", "ゴミ出し"]) {
+      fireEvent.click(within(panel).getByRole("checkbox", { name: new RegExp(`^予定「${name}」`) }))
+    }
+    fireEvent.click(within(panel).getByRole("button", { name: "選んだ3件をまとめて分類" }))
+    const confirm = await screen.findByTestId("garbage-batch-confirm")
+    return confirm
+  }
+
+  it("選んで確認するまで何も送らず、確認の画面で件数・範囲・名称・通知を変えないことを示す", async () => {
+    render(<GarbageView owner={OWNER} data={pageData({ patch: { candidates: batchCandidates() } })} />)
+    await settle()
+    const confirm = await chooseAllAndConfirm()
+    expect(confirm).toHaveTextContent("3件をごみの日にします")
+    expect(confirm).toHaveTextContent("通知は変えません（今の通知設定のまま）")
+    expect(confirm).toHaveTextContent("1件ずつ順に保存します")
+    const choices = within(confirm).getAllByTestId("garbage-batch-choice")
+    expect(choices[0]).toHaveTextContent("範囲: 繰り返しのすべての回")
+    expect(choices[1]).toHaveTextContent("範囲: この予定だけ")
+    // 題から推した名称は初期選択（選び直せる）。推せぬ件は選ぶまで分類できぬ
+    expect(within(confirm).getByRole("combobox", { name: /燃えるごみ」.*のごみの名称/ })).toHaveValue("燃えるごみ")
+    const unknownKind = within(confirm).getByRole("combobox", { name: /ゴミ出し」.*のごみの名称/ })
+    expect(unknownKind).toHaveValue("")
+    expect(within(confirm).getByRole("button", { name: "3件を分類する" })).toBeDisabled()
+    fireEvent.change(unknownKind, { target: { value: "粗大ごみ" } })
+    expect(within(confirm).getByRole("button", { name: "3件を分類する" })).toBeEnabled()
+    fireEvent.click(within(confirm).getByRole("button", { name: "やめる" }))
+    await waitFor(() => expect(screen.queryByTestId("garbage-batch-confirm")).toBeNull())
+    expect(submit).not.toHaveBeenCalled()
+  })
+
+  it("1件ずつ送り、結果不明が出たら残りを送らず、件ごとに分けて言う。確認の後に続きを送れる", async () => {
+    submit.mockResolvedValueOnce(saved).mockRejectedValueOnce(new Error("synthetic network loss"))
+    render(<GarbageView owner={OWNER} data={pageData({ patch: { candidates: batchCandidates() } })} />)
+    await settle()
+    const confirm = await chooseAllAndConfirm()
+    fireEvent.change(within(confirm).getByRole("combobox", { name: /ゴミ出し」.*のごみの名称/ }), {
+      target: { value: "粗大ごみ" },
+    })
+    fireEvent.click(within(confirm).getByRole("button", { name: "3件を分類する" }))
+
+    const summary = await screen.findByTestId("garbage-batch-summary")
+    await waitFor(() =>
+      expect(summary).toHaveTextContent(
+        "3件のうち、保存を確かめたのは1件です。1件は保存できたか確認できていません（「同じ操作で確認」で確かめてください。確認をやめた時は、一覧で保存されたかを確かめてください）。1件は送っていません。",
+      ),
+      // 1 件ずつの送信と応答を順に待つ（負荷の高い時の既定 1 秒では足りぬ。断言の中身は変えぬ）
+      { timeout: 5_000 },
+    )
+    // 2件だけ送った（3件目は送っておらぬ）。通知は「変えない」、範囲は繰り返し=シリーズ全体・単発=この予定
+    expect(submit).toHaveBeenCalledTimes(2)
+    expect(submit.mock.calls[0][0]).toEqual({
+      op: "save", eventId: B1, scope: "series", action: "garbage", garbageKind: "燃えるごみ", reminder: "keep",
+      seen: { series: null, event: null },
+    })
+    expect(submit.mock.calls[1][0]).toMatchObject({ eventId: B2, scope: "event", garbageKind: "資源", reminder: "keep" })
+    const statuses = () =>
+      within(screen.getByTestId("garbage-batch")).getAllByRole("listitem").map((li) => li.getAttribute("data-batch-status"))
+    expect(statuses()).toEqual(["saved", "unknown", "stopped"])
+    // 全件成功とは言わぬ
+    expect(summary).not.toHaveTextContent("すべて")
+
+    // 結果不明の件は端末の控えから「同じ操作で確認」で同じ内容を送り直す（先の送信は届いておった = replayed）
+    submit.mockResolvedValueOnce({ status: "replayed", purposeLoad: { status: "ok", rows: [] } })
+    fireEvent.click(await screen.findByRole("button", { name: "同じ操作で確認" }))
+    await waitFor(() => expect(statuses()).toEqual(["saved", "unchanged", "stopped"]), { timeout: 5_000 })
+    expect(submit).toHaveBeenCalledTimes(3)
+    expect(submit.mock.calls[2][0]).toEqual(submit.mock.calls[1][0])
+
+    // 送っていない件だけを続けて送る（結果の出た件は送り直さぬ）
+    submit.mockResolvedValueOnce(saved)
+    fireEvent.click(await screen.findByRole("button", { name: "送っていない予定を続けて分類" }))
+    await waitFor(() => expect(summary).toHaveTextContent("3件すべてを、ごみの日として保存しました。"), { timeout: 5_000 })
+    expect(submit).toHaveBeenCalledTimes(4)
+    expect(submit.mock.calls[3][0]).toMatchObject({ eventId: B3, scope: "event", garbageKind: "粗大ごみ", reminder: "keep" })
+    expect(statuses()).toEqual(["saved", "unchanged", "saved"])
+  })
+
+  it("一括が終わった後に同じ予定をシートから分類した応答は、シートの扱いへ回す（一括の結果に吸い込まぬ）", async () => {
+    submit.mockResolvedValue(saved)
+    const candidates = suggestGarbageCandidates([event(B2, { title: "資源", start_date: "2026-11-13" })], [])
+    render(<GarbageView owner={OWNER} data={pageData({ patch: { candidates } })} />)
+    await settle()
+    const panel = screen.getByTestId("garbage-candidates")
+    fireEvent.click(within(panel).getByRole("checkbox", { name: /^予定「資源」/ }))
+    fireEvent.click(within(panel).getByRole("button", { name: "選んだ1件をまとめて分類" }))
+    const confirm = await screen.findByTestId("garbage-batch-confirm")
+    fireEvent.click(within(confirm).getByRole("button", { name: "1件を分類する" }))
+    await waitFor(
+      () => expect(screen.getByTestId("garbage-batch-summary")).toHaveTextContent("1件すべてを、ごみの日として保存しました。"),
+      { timeout: 5_000 },
+    )
+    // 確認の画面の案内どおり、同じ予定の通知をシートから付ける
+    fireEvent.click(within(screen.getByTestId("garbage-candidates")).getByRole("button", { name: /^予定「資源」.*を確認して分類$/ }))
+    const form = await screen.findByTestId("garbage-purpose-form")
+    fireEvent.click(within(form).getByRole("button", { name: "資源" }))
+    fireEvent.click(within(form).getByRole("button", { name: "前日 20:00 に通知する" }))
+    fireEvent.click(within(form).getByRole("button", { name: "分類を保存" }))
+    await waitFor(() => expect(screen.queryByTestId("garbage-purpose-form")).toBeNull(), { timeout: 5_000 })
+    expect(submit).toHaveBeenCalledTimes(2)
+    expect(submit.mock.calls[1][0]).toMatchObject({ eventId: B2, reminder: "prev_day_20" })
+    expect(screen.getByTestId("garbage-batch-summary")).toHaveTextContent("1件すべてを、ごみの日として保存しました。")
+  })
+
+  it("止めた後にシートで分類した予定は、続けて分類で送り直さぬ（候補でなくなった件は送らぬ）", () => {
+    // 純関数の層: 候補に残っておる件だけを順番待ちへ戻す
+    const list = batchCandidates()
+    const built = buildGarbageBatch([initialBatchChoice(list[0]), initialBatchChoice(list[1]), { candidate: list[2], kind: "粗大ごみ" }])!
+    let stopped = settleGarbageBatchItem(markGarbageBatchSending(built, B1), B1, { kind: "unknown" })
+    expect(stopped.items.map((item) => item.status)).toEqual(["unknown", "stopped", "stopped"])
+    stopped = settleGarbageBatchItem(stopped, B1, { kind: "settled", status: "replayed", readbackFailed: false })
+    const resumed = resumeGarbageBatch(stopped, (eventId) => eventId !== B2)
+    expect(resumed.items.map((item) => item.status)).toEqual(["unchanged", "skipped", "waiting"])
+  })
+
+  it("保存の応答の後に読み直せなんだ件は『保存を確かめた』に数えず、衝突は『保存していない』と言う", async () => {
+    submit
+      .mockResolvedValueOnce({ status: "saved", purposeLoad: { status: "failed" } })
+      .mockResolvedValueOnce({ status: "conflict", purposeLoad: { status: "ok", rows: [] } })
+      .mockResolvedValueOnce(saved)
+    render(<GarbageView owner={OWNER} data={pageData({ patch: { candidates: batchCandidates() } })} />)
+    await settle()
+    const confirm = await chooseAllAndConfirm()
+    fireEvent.change(within(confirm).getByRole("combobox", { name: /ゴミ出し」.*のごみの名称/ }), {
+      target: { value: "粗大ごみ" },
+    })
+    fireEvent.click(within(confirm).getByRole("button", { name: "3件を分類する" }))
+    const summary = await screen.findByTestId("garbage-batch-summary")
+    await waitFor(() =>
+      expect(summary).toHaveTextContent(
+        "3件のうち、保存を確かめたのは1件です。1件は保存の応答がありましたが、読み直しで確かめられていません（画面を再読込して確かめてください）。1件は保存していません。",
+      ),
+      { timeout: 5_000 },
+    )
+    expect(submit).toHaveBeenCalledTimes(3)
+    // 一括の件の応答で、ほかの保存の文言（「先に送った操作」）を出さぬ
+    expect(screen.queryByText(/先に送った操作/)).toBeNull()
   })
 })
 

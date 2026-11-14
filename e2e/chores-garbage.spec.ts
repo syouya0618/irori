@@ -340,6 +340,110 @@ test("既存の予定の候補: 表示だけでは書かず、確認して分類
   await expect(page.getByTestId("garbage-candidates")).toHaveCount(0)
 })
 
+test("既存の予定の候補: まとめての分類は確認の後に1件ずつ保存し、通知を変えず、結果不明なら残りを送らない", async ({ page, approvedUser }) => {
+  const today = todayJst()
+  const first = shiftYmd(today, 1)
+  await loginAndOpenCalendar(page, approvedUser.email)
+  const householdId = await householdOf(approvedUser.id)
+  const admin = adminClient()
+  const googleCalendarId = "batch-garbage@example.invalid"
+  const recurringEventId = `batch-${crypto.randomUUID()}`
+  const firstGoogleEventId = `occ-a-${crypto.randomUUID()}`
+  const resourceId = crypto.randomUUID()
+  const bulkyId = crypto.randomUUID()
+  const { error: seedError } = await admin.from("calendar_events").insert([
+    { id: crypto.randomUUID(), household_id: householdId, title: "燃えるゴミ", source: "google",
+      is_all_day: true, start_date: first, end_date: first,
+      google_calendar_id: googleCalendarId, google_event_id: firstGoogleEventId, recurring_event_id: recurringEventId },
+    { id: crypto.randomUUID(), household_id: householdId, title: "燃えるゴミ", source: "google",
+      is_all_day: true, start_date: shiftYmd(today, 8), end_date: shiftYmd(today, 8),
+      google_calendar_id: googleCalendarId, google_event_id: `occ-b-${crypto.randomUUID()}`, recurring_event_id: recurringEventId },
+    { id: resourceId, household_id: householdId, title: "資源", source: "native",
+      is_all_day: true, start_date: shiftYmd(today, 2), end_date: shiftYmd(today, 2) },
+    { id: bulkyId, household_id: householdId, title: "粗大ごみ", source: "native",
+      is_all_day: true, start_date: shiftYmd(today, 3), end_date: shiftYmd(today, 3) },
+  ])
+  expect(seedError, "既存の予定の seed").toBeNull()
+  const { error: reminderError } = await admin.from("event_reminders").insert({
+    household_id: householdId,
+    event_uid: `${googleCalendarId}|${firstGoogleEventId}`,
+    remind_kind: "prev_day_20",
+    remind_minutes_before: null,
+  })
+  expect(reminderError, "既存の通知の seed").toBeNull()
+
+  await page.goto("/chores/garbage")
+  const panel = page.getByTestId("garbage-candidates")
+  await expect(panel.getByRole("listitem")).toHaveCount(3, { timeout: 15_000 })
+  // 選ぶ（読み込み直後の押下が届かなんだ時に備え、印が付くまで押し直す）
+  for (const name of ["燃えるゴミ", "資源", "粗大ごみ"]) {
+    const box = panel.getByRole("checkbox", { name: new RegExp(`^予定「${name}」`) })
+    await expect(async () => {
+      if ((await box.getAttribute("aria-checked")) !== "true") await box.click({ timeout: 2_000 })
+      await expect(box).toHaveAttribute("aria-checked", "true", { timeout: 1_000 })
+    }).toPass({ timeout: 15_000 })
+  }
+  const confirm = page.getByTestId("garbage-batch-confirm")
+  await openOverlay(panel.getByRole("button", { name: "選んだ3件をまとめて分類" }), confirm)
+  await expect(confirm).toContainText("3件をごみの日にします")
+  await expect(confirm).toContainText("通知は変えません（今の通知設定のまま）")
+  await expect(confirm.getByTestId("garbage-batch-choice")).toHaveCount(3)
+  // 選んで確かめるまでは何も書かぬ
+  await waitForPurposes(approvedUser.id, [])
+
+  // 2 件目の保存（Server Action の POST）だけを、サーバーへ届く前に落とす = 結果不明・未保存
+  let saves = 0
+  await page.route("**/chores/garbage", async (route) => {
+    const request = route.request()
+    if (request.method() === "POST" && request.headers()["next-action"] && (request.postData() ?? "").includes('"op":"save"')) {
+      saves += 1
+      if (saves === 2) {
+        await route.abort("failed")
+        return
+      }
+    }
+    await route.fallback()
+  })
+  await confirm.getByRole("button", { name: "3件を分類する" }).click()
+
+  const summary = page.getByTestId("garbage-batch-summary")
+  await expect(summary).toHaveText(
+    "3件のうち、保存を確かめたのは1件です。1件は保存できたか確認できていません（「同じ操作で確認」で確かめてください。確認をやめた時は、一覧で保存されたかを確かめてください）。1件は送っていません。",
+    { timeout: 30_000 },
+  )
+  const statuses = () => page.getByTestId("garbage-batch").locator("[data-batch-status]").evaluateAll((items) => items.map((item) => item.getAttribute("data-batch-status")))
+  expect(await statuses()).toEqual(["saved", "unknown", "stopped"])
+  expect(saves).toBe(2)
+  // DB: 届いた 1 件だけ。通知は seed の 1 件のまま
+  await waitForPurposes(approvedUser.id, [
+    { scope: "series", purpose: "garbage", garbage_kind: "燃えるごみ", remind_default: "none" },
+  ])
+  await waitForReminders(approvedUser.id, [{ remind_kind: "prev_day_20", remind_at: prevDay20Jst(first) }])
+  await page.unroute("**/chores/garbage")
+
+  // 結果不明の件を同じ操作で確かめ、送っていない件だけを続けて送る
+  await page.getByRole("button", { name: "同じ操作で確認" }).click()
+  await expect.poll(statuses, { timeout: 15_000 }).toEqual(["saved", "saved", "stopped"])
+  await page.getByRole("button", { name: "送っていない予定を続けて分類" }).click()
+  await expect(summary).toHaveText("3件すべてを、ごみの日として保存しました。", { timeout: 30_000 })
+
+  await expect(async () => {
+    const { data, error } = await admin
+      .from("event_purposes")
+      .select("scope, target_key, garbage_kind, remind_default")
+      .eq("household_id", householdId)
+    if (error) throw new Error(`purpose lookup failed: ${error.message}`)
+    const byScope = (data ?? []).map((row) => `${row.scope}:${row.target_key === resourceId ? "資源" : row.target_key === bulkyId ? "粗大" : "series"}:${row.garbage_kind}:${row.remind_default}`).sort()
+    expect(byScope).toEqual(["event:粗大:粗大ごみ:null", "event:資源:資源:null", "series:series:燃えるごみ:none"])
+  }).toPass({ timeout: 15_000 })
+  await waitForReminders(approvedUser.id, [{ remind_kind: "prev_day_20", remind_at: prevDay20Jst(first) }])
+  // 読み直し（SSR）: 候補は消え、3 つとも収集日に並ぶ
+  await page.reload()
+  await expect(page.getByTestId("garbage-collections")).toContainText("資源", { timeout: 15_000 })
+  await expect(page.getByTestId("garbage-collections")).toContainText("粗大ごみ")
+  await expect(page.getByTestId("garbage-candidates")).toHaveCount(0)
+})
+
 test("ごみの日: シリーズ全体の分類と、この回だけ通常へ戻す例外", async ({ page, approvedUser }) => {
   const today = todayJst()
   const second = shiftYmd(today, 7)
