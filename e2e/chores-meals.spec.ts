@@ -942,9 +942,12 @@ test("ごはん ⑥: 確定した献立に後から卵アレルギーを足す�
   // ── 3. 買い物: 卵焼きは外す理由が出る。「献立から更新」で卵が外れ、豚こま切れ肉は残る ──────────
   await page.goto("/chores/meals/shopping")
   const held = page.getByRole("region", { name: "使わない食材の設定に当たる料理" })
-  await expect(held).toContainText(`使わない食材の設定に当たるため、次の料理の材料は入れていません: ${EGG_DISH}`, {
+  // 更新の前は、保存済みのリストに卵が残っておる。画面は「入れていない」と言わず、残りうると言う（監査 F1）
+  await expect(held).toContainText(`次の料理は使わない食材の設定に当たります: ${EGG_DISH}。このリストは古い可能性があり、材料がリストに残っていることがあります`, {
     timeout: 15_000,
   })
+  await expect(held).not.toContainText("材料は入れていません")
+  await expect(page.getByRole("checkbox", { name: "卵を購入済みにする" })).toBeVisible()
   // 今日の料理は、献立の画面の既定（今日から）へつなぐ
   await expect(held.getByRole("link", { name: new RegExp(`${EGG_DISH}を献立の画面で選び直す$`) })).toHaveAttribute(
     "href",
@@ -959,6 +962,8 @@ test("ごはん ⑥: 確定した献立に後から卵アレルギーを足す�
   await expect(page.getByRole("checkbox", { name: "豚こま切れ肉を購入済みにする" })).toBeVisible()
   await expect(held).toContainText(EGG_DISH)
   await expect(page.getByTestId("shopping-stale")).toHaveCount(0)
+  // 更新の後は、事実どおり「入れていません」
+  await expect(held).toContainText(`使わない食材の設定に当たるため、次の料理の材料は入れていません: ${EGG_DISH}`)
   {
     const { data, error } = await adminClient()
       .from("grocery_items")

@@ -1,8 +1,46 @@
 # 家事（ごみ・掃除・ごはん）公開の手順と引き継ぎ
 
-この文書の冒頭が、今の公開の手順じゃ。§0〜§3 は済んだ段の記録として残す。ただし §2 の「参考」と §3 の「戻し方」は今も使う。§4〜§6 は今の手順の一部。状態の正本は `requirements-ledger.md`、経過は `progress.md`。
+この文書の冒頭が、今の手順じゃ。2026-11-13 以前の節は済んだ段の記録として残す。ただし §2 の「参考」と §3 の「戻し方」は今も使う。§4〜§6 は今の手順の一部。状態の正本は `requirements-ledger.md`、経過は `progress.md`。
 
-## 最新の公開判定（2026-11-13）
+## 最新（2026-11-14、全面監査の後）
+
+### 今の状態（エージェントが GitHub の公開 API で確かめたもの）
+
+- `main` は `c18d91f0`（#258 の merge）。#253・#254・#255・#257・#258 は merge 済み。#256 は merge せずに閉じてある。`c18d91f0` の `ci`・`e2e`・`db-image-probe`・CodeQL は成功。
+- 本番: GitHub の Deployments（作成者 `vercel[bot]`、環境 Production）の最新は `c18d91f0` で、状態は success（2026-11-13T05:53:35Z）。`c18d91f0` は家事の機能（#253）を含む。#253 の merge（`645241012c`）の Production は 2026-11-13T00:31:58Z に作られた（その回の状態は確かめておらぬ）。エージェントは Vercel を直には読めておらぬ（コネクタにこの team の権限が無い）。
+- PR #260（Draft）: head `98dbd9b4` は全て成功。PR #259（Draft）: head `5ca04014` は E2E の step 19（暗号化した控えのブラウザ試験）で落ち、**Playwright（step 20）は skipped**。#259 の画面は一度も Playwright で走っておらぬ。
+- 本番での実操作（既存画面の回帰・ごみ・掃除・ごはん）、iPhone Safari 実機、Push の実受信、無料 AI の実接続は、記録が無く**未確認**。本番 DB のバックアップは利用者の判断で取得しておらぬ（復元できるとは記録しない）。
+
+### 用意したパッチ（未 commit・未 push。エージェントは git の取得・commit・push と gh を使えぬ）
+
+置き場: 2026-11-14 の作業の最終報告に書いた所（作業した worktree の、git が無視する `.agent-state/` の下。手順の全文は同じ所の `apply-commands.md`）。公開 repo ゆえ、手元の絶対パスはここに書かぬ。
+
+| パッチ | 当てる先 | 中身 |
+|---|---|---|
+| `pr260-readback-epoch.patch` | #260 の branch（`98dbd9b4`） | 控えの読み取りが、持ち主の印（epoch）の差し替えの間に控えを数えずに「空」を返していた不具合を直す（読み直す・続けば読めぬ控えとして止める）。ブラウザ試験を「自分のタブ・別のタブ・開き直し」に分けて断言し、失敗の理由を注記に出す |
+| `pr259-candidates.patch` | #259 の branch（main を merge した後） | 候補の題の判定（資源・プラ・缶・びん・ビン・カン等と、ごみ拾い・当番・見学等の除外。複数の種類に当たる題は名称を推さぬ）、期間内のどれか 1 回かシリーズの既定に分類・通知 OFF の行が在る予定・シリーズは出さぬ、探した範囲（今日から 62 日・題だけ）を常に言う、ボタンの読み上げ名、Chromium の E2E |
+| `audit-display-fixes.patch` | #260 の merge の後の `main` から新しい branch | 解除したごみの印が復元の後に戻る不具合、育児ホームの一覧が古い分類を断定する不具合、読み込み中にごみの印だけ消える不具合、Realtime の正常な購読解除を異常として報告する不具合、買い物の「材料は入れていません」がリストの古い間も出る不具合（アレルゲン）。この文書の更新もここに入る |
+| `garbage-bulk-classify.patch` | #259 を merge した後の `main` から新しい branch | 候補を選んでまとめて分類（確認の画面・1 件ずつ送る・結果不明で止める・件ごとの結果・続きから送る）。migration は無い |
+
+### 人の手順（この順。各段で必須チェックが緑になってから次へ）
+
+```bash
+R=<irori の repo の根>
+P=<パッチの置き場>
+git -C "$R" fetch origin --prune
+```
+
+1. **#260**: `apply-commands.md` の A 節。push の後、新しい head で `ci`・`e2e`（`db-image-probe` を含む）・CodeQL が緑なら Draft を解き、通常 merge。
+2. **#259**: 同じく B 節。#260 の merge の後の `main` を branch へ merge してからパッチを当てる（rebase・force push はせぬ）。緑なら通常 merge。
+3. **監査の修正**: C 節。#260 の merge の**後の** `main` から新しい Draft PR を作る（今の `main` の暗号化した控えの試験は揺れて E2E を止め、Playwright を skipped にしうる）。#259 とは同じファイルを触らぬ。
+4. **一括の分類**: D 節（#259 の merge の後の `main` から新しい Draft PR）。
+5. merge のたびに、本番の Deployments が新しい merge の SHA で success になることを確かめる。§4 のチェックリストで、既存画面の回帰と、ごみ（候補の確認・まとめての分類は**試し用の予定だけ**で）・掃除・ごはんを実際に操作する。家族へ無断の試験通知は送らぬ。
+
+止める条件: どの段でも、必須チェックが赤・skipped・0 step なら merge せぬ。E2E の失敗の理由は、#260 のパッチを当てた後は暗号化した控えの試験が注記（`::error title=Encrypted replay storage::`）に出す。
+
+赤の時の扱い: まず注記で、どの試験が落ちたかを確かめる。手元で負荷により揺れた既存の 2 本（ごはんの設定 `settings-view.test.tsx`、予定の作成の控え `calendar-pending-creates.test.tsx` の storage イベントの 1 件）だけが落ちたなら、1 回だけ再実行してよい。それ以外が落ちた・再実行でも落ちたなら止めて、原因を確かめる（試験を skip したり、断言を緩めたりして通さぬ）。
+
+## 公開判定（2026-11-13。以下は当時の記録）
 
 - PR #253 は Draft・未 merge。X-07 の追加テスト（`e005eac7`）は実 Auth の利用者JWTを用いて `22023` の数量拒否と状態不変を確認。CI 43335009948、E2E 43335009962（`db-image-probe` 含む）、CodeQL 43335009964 は全成功。
 - Production のVercelプロジェクト `irori` は GitHub `syouya0618/irori` の `main` に接続し、旧HEAD `521f2fc2` がREADY。Productionで実際に配信されたJSのSupabase URLは、migration適用済みの `irori-prod` と一致。まだ新機能は本番未公開。

@@ -728,6 +728,29 @@ describe("不要になった項目・自動計算に入っていない料理", (
     expect(screen.queryByRole("region", { name: "使わない食材の設定に当たる料理" })).toBeNull()
   })
 
+  it("リストが古い間（除外を足した後、更新の前）は、当たる料理の材料を『入れていない』と言わず、残りうると言う", async () => {
+    view({
+      view: shopping([pork()], {
+        stale: true,
+        heldDishes: [
+          {
+            entryId: "e2000000-0000-4000-8000-000000000002",
+            date: "2026-11-13",
+            dateLabel: "11/13（金）",
+            title: "親子丼",
+            verdict: "blocked",
+            message: "使わない食材の設定に当たります（または確かめられません）。このリストは古い可能性があり、この料理の材料が残っていることがあります。",
+          },
+        ],
+      }),
+    })
+    await ready()
+    const region = screen.getByRole("region", { name: "使わない食材の設定に当たる料理" })
+    expect(region).toHaveTextContent("次の料理は使わない食材の設定に当たります: 親子丼。このリストは古い可能性があり、材料がリストに残っていることがあります")
+    expect(region).not.toHaveTextContent("材料は入れていません")
+    expect(screen.getByTestId("shopping-stale")).toBeInTheDocument()
+  })
+
   it("使わない食材の設定を読めないときは、照らせていないことと、更新を止めていることを知らせる", async () => {
     view({ view: shopping([pork()], { exclusionsUnreadable: true }) })
     await ready()

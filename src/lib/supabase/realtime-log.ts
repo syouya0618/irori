@@ -9,9 +9,13 @@
  *
  * 判定の指針:
  * - `SUBSCRIBED` … ジョイン成功。
- * - `CLOSED`     … セッション途中の socket 死。「無操作で更新されず・
- *   リロードで直る」症状の最有力候補 (join 後 WS が静かに切れる) を確定させる。
- * - `CHANNEL_ERROR` / `TIMED_OUT` … 購読層の失敗。
+ * - `CLOSED`     … 2 通りある。realtime-js は **`removeChannel` / `unsubscribe` でも** subscribe の
+ *   callback を `CLOSED` で呼ぶ（画面を離れた・作り直した時の正常な終了）。片付けの**前**に届いた
+ *   CLOSED だけが異常（サーバ側の終了・join の不一致など。届いた後は自動では入り直さぬ）。
+ *   呼び出し側は `createRealtimeStatusLogger` を使い、片付けの直前に `dispose()` を呼ぶこと —
+ *   片付けの後の CLOSED は異常として報告せぬ（2026-11-14: 本番で /baby → /calendar の移動ごとに
+ *   baby_logs の CLOSED が「異常」として記録され、1 タブ 1 回の報告枠を正常な終了が使い切っておった）。
+ * - `CHANNEL_ERROR` / `TIMED_OUT` … 購読層の失敗（片付けの後でも報告する）。
  * さらに [logRealtimeEvent] のイベント entry ログが出るのに UI が古ければ
  * state/refetch 経路、一度も出なければ受信/dispatch 層、と切り分けられる。
  *
@@ -38,17 +42,28 @@ const REPORTABLE_STATUSES = new Set(["CLOSED", "CHANNEL_ERROR", "TIMED_OUT"])
  */
 let anomalyReported = false
 
+export interface RealtimeStatusContext {
+  /** この端末が購読を片付けた後か（`removeChannel` の直前に立てる）。片付けの後の CLOSED は正常な終了 */
+  disposed?: boolean
+}
+
 /** 購読ステータスの構造化ログ。`subscribe((status, err) => ...)` から呼ぶ。 */
 export function logRealtimeStatus(
   channel: string,
   status: string,
   err?: Error,
+  context: RealtimeStatusContext = {},
 ): void {
   const payload = {
     channel,
     status,
     at: new Date().toISOString(),
     error: err?.message,
+  }
+  if (status === "CLOSED" && context.disposed) {
+    // 自分で片付けた購読の終了（画面を離れた・作り直した）。異常ではないゆえ報告せず、枠も使わぬ
+    console.info(`[realtime] ${channel} closed by unsubscribe`, payload)
+    return
   }
   if (status === "SUBSCRIBED") {
     console.info(`[realtime] ${channel} subscribed`, payload)
@@ -59,6 +74,24 @@ export function logRealtimeStatus(
   }
 
   reportAnomalyOnce(channel, status, err)
+}
+
+/**
+ * 購読 1 本ぶんの status の受け口。`subscribe((status, err) => logger.onStatus(status, err))` で受け、
+ * 片付けでは **`removeChannel` の直前に** `dispose()` を呼ぶ（realtime-js は removeChannel の中で
+ * CLOSED を呼ぶゆえ、後に立てると間に合わぬ）。
+ */
+export function createRealtimeStatusLogger(channel: string): {
+  onStatus: (status: string, err?: Error) => void
+  dispose: () => void
+} {
+  let disposed = false
+  return {
+    onStatus: (status, err) => logRealtimeStatus(channel, status, err, { disposed }),
+    dispose: () => {
+      disposed = true
+    },
+  }
 }
 
 /**

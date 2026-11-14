@@ -5,7 +5,7 @@ import { useChildScope } from "./child-scope"
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
-import { logRealtimeStatus, logRealtimeEvent } from "@/lib/supabase/realtime-log"
+import { createRealtimeStatusLogger, logRealtimeEvent } from "@/lib/supabase/realtime-log"
 import { logSupabaseError } from "@/lib/supabase/log-error"
 import { BabyAgeHeader } from "./baby-age-header"
 import { BabyDateNav } from "./baby-date-nav"
@@ -588,6 +588,8 @@ export function BabyDashboard({
   // Realtime subscription
   useEffect(() => {
     const supabase = createClient(childId)
+    // 片付けの後の CLOSED（/baby を離れた・子や日付で作り直した）を異常として報告せぬ
+    const statusLog = createRealtimeStatusLogger("baby_logs")
     const isRelevantToCurrentWeek = (log: BabyLogData) => {
       const logDate = toJstDateString(log.logged_at)
       return (
@@ -666,7 +668,7 @@ export function BabyDashboard({
         },
       )
       .subscribe((status, err) => {
-        logRealtimeStatus("baby_logs", status, err)
+        statusLog.onStatus(status, err)
         if (status !== "SUBSCRIBED") return
         // 初回を含むすべての SUBSCRIBED で取り直す（P1-04）。postgres_changes は購読が
         // 生きる前と切断中のイベントを再送しない。初回はマウント時の取得（下）から購読
@@ -676,6 +678,8 @@ export function BabyDashboard({
       })
 
     return () => {
+      // removeChannel の中で CLOSED が届くゆえ、先に片付けの印を立てる
+      statusLog.dispose()
       supabase.removeChannel(channel)
     }
   }, [householdId, childId, applyUpdatedLog])
@@ -687,6 +691,7 @@ export function BabyDashboard({
   // DELETE（配偶者の空保存）は date-nav refetch と下の visibilitychange refetch で回収する。
   useEffect(() => {
     const supabase = createClient(childId)
+    const statusLog = createRealtimeStatusLogger("baby_diaries")
     const channel = supabase
       .channel("baby_diaries")
       .on(
@@ -721,10 +726,11 @@ export function BabyDashboard({
         },
       )
       .subscribe((status, err) => {
-        logRealtimeStatus("baby_diaries", status, err)
+        statusLog.onStatus(status, err)
       })
 
     return () => {
+      statusLog.dispose()
       supabase.removeChannel(channel)
     }
   }, [householdId, childId])

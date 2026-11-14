@@ -771,6 +771,31 @@ const HELD_DISH_MESSAGES = {
 } as const
 
 /**
+ * リストが古い間（除外を足した後、「献立から更新」の前）の文。今の計算では外しておるが、保存済みのリストには
+ * この料理の材料が残っておりうる — 「入れていない」と言わぬ（2026-11-14 監査 F1: アレルゲンについて事実と逆の文）。
+ * 理由（当たる・原材料・材料なし・一覧に無い）は残し、何をすれば直るかを失わせぬ。
+ */
+const HELD_DISH_STALE_REASONS = {
+  blocked: "使わない食材の設定に当たる材料があります。",
+  label_check: "原材料を確かめられない材料があります。",
+  noIngredients: "材料が登録されていないため、使わない食材に当たるかを確かめられません。",
+  unknownRecipe: "この料理は一覧に無いため、使わない食材に当たるかを確かめられません。",
+} as const
+const HELD_DISH_STALE_SUFFIX =
+  "このリストは古い可能性があり、この料理の材料が残っていることがあります。「献立から更新」を押すと、まだ買っていない分をリストから外します。献立で選び直すこともできます。"
+
+function heldDishStaleMessage(conflict: PlanConflict | undefined): string {
+  if (!conflict || conflict.verdict === "blocked") return HELD_DISH_STALE_REASONS.blocked + HELD_DISH_STALE_SUFFIX
+  const reasons = new Set(conflict.unverifiable.map((item) => item.reason))
+  const reason = reasons.has("no_ingredients")
+    ? HELD_DISH_STALE_REASONS.noIngredients
+    : reasons.has("unknown_recipe")
+      ? HELD_DISH_STALE_REASONS.unknownRecipe
+      : HELD_DISH_STALE_REASONS.label_check
+  return reason + HELD_DISH_STALE_SUFFIX
+}
+
+/**
  * 買い物に入れていない料理の理由。献立の画面（`conflictView`）と同じ分け方で、事実と違う理由を出さない。
  * 判定できないアレルギーの登録がある間はここへ来ない（同期を止めておるので「入れていない」とは言えない。
  * `buildShoppingView` が `autoHold` と `blockedWhileHeld` で言い分ける）。
@@ -814,6 +839,12 @@ export function buildShoppingView(
   // 判定できないアレルギーの間、同期は送らない（grocery-sync.ts）。リストは止める前のまま。「入れていない」とは言えない
   // ので、保留の一覧には当たると分かっている料理だけを、止めていることを添えて出す
   const autoHold = set !== null && set.holdsAutoConfirm ? { labels: undeterminedAllergyLabels(set) } : null
+  // 読めない献立の行・読めない除外があるとき・自動の更新を止めているときは比べられない（同期も止まる）。
+  // 古いとは断定せず、別に知らせる
+  const stale =
+    (context.unreadable.plan ?? 0) > 0 || exclusions === null || autoHold !== null
+      ? false
+      : isAutoListStale(context, needs.needs)
   const heldDishes = needs.held
     .map((dish) => ({ dish, conflict: conflictOf.get(dish.entryId) }))
     .filter(({ conflict }) => autoHold === null || conflict?.verdict === "blocked")
@@ -826,9 +857,11 @@ export function buildShoppingView(
       message:
         autoHold !== null
           ? HELD_DISH_MESSAGES.blockedWhileHeld
-          : conflict
-            ? heldDishMessage(conflict)
-            : HELD_DISH_MESSAGES.blocked,
+          : stale
+            ? heldDishStaleMessage(conflict)
+            : conflict
+              ? heldDishMessage(conflict)
+              : HELD_DISH_MESSAGES.blocked,
     }))
   return {
     today,
@@ -842,12 +875,7 @@ export function buildShoppingView(
     purchased: views.filter((view) => view.state === "purchased").sort(byName),
     notNeeded: views.filter((view) => view.state === "not_needed").sort(byName),
     toBuyCount: toBuy.length,
-    // 読めない献立の行・読めない除外があるとき・自動の更新を止めているときは比べられない（同期も止まる）。
-    // 古いとは断定せず、別に知らせる
-    stale:
-      (context.unreadable.plan ?? 0) > 0 || exclusions === null || autoHold !== null
-        ? false
-        : isAutoListStale(context, needs.needs),
+    stale,
     heldDishes,
     exclusionsUnreadable: exclusions === null,
     autoHold,

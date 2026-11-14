@@ -121,6 +121,45 @@ describe("logRealtimeStatus: 異常のみサーバへ 1 回だけ報告する", 
     expect(reportRealtimeAnomaly).not.toHaveBeenCalled()
   })
 
+  it("片付けの後の CLOSED（画面を離れた）は報告せず枠も使わぬ。その後の本物の異常は報告される", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {})
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    vi.spyOn(console, "error").mockImplementation(() => {})
+    const mod = await freshModule()
+
+    // realtime-js は removeChannel の中で subscribe の callback を CLOSED で呼ぶ
+    const logger = mod.createRealtimeStatusLogger("baby_logs")
+    logger.dispose()
+    logger.onStatus("CLOSED")
+    expect(reportRealtimeAnomaly).not.toHaveBeenCalled()
+    expect(warn).not.toHaveBeenCalled()
+    expect(info.mock.calls.some(([message]) => String(message).includes("closed by unsubscribe"))).toBe(true)
+
+    mod.logRealtimeStatus("calendar-h1", "CHANNEL_ERROR", new Error("socket died"))
+    expect(reportRealtimeAnomaly).toHaveBeenCalledTimes(1)
+    expect(reportRealtimeAnomaly).toHaveBeenCalledWith("calendar-h1", "CHANNEL_ERROR", "socket died")
+  })
+
+  it("片付けの前の CLOSED は、従来どおり異常として報告する（サーバ側の終了を伏せぬ）", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {})
+    const mod = await freshModule()
+
+    const logger = mod.createRealtimeStatusLogger("baby_logs")
+    logger.onStatus("CLOSED")
+    expect(reportRealtimeAnomaly).toHaveBeenCalledTimes(1)
+    expect(reportRealtimeAnomaly).toHaveBeenCalledWith("baby_logs", "CLOSED", undefined)
+  })
+
+  it.each(["CHANNEL_ERROR", "TIMED_OUT"])("片付けの後でも %s は報告する（失敗を伏せぬ）", async (status) => {
+    vi.spyOn(console, "error").mockImplementation(() => {})
+    const mod = await freshModule()
+
+    const logger = mod.createRealtimeStatusLogger("baby_diaries")
+    logger.dispose()
+    logger.onStatus(status, new Error("synthetic"))
+    expect(reportRealtimeAnomaly).toHaveBeenCalledWith("baby_diaries", status, "synthetic")
+  })
+
   it("1 セッション 1 回に絞る（再接続フラップで連投しない）", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {})
     vi.spyOn(console, "error").mockImplementation(() => {})
