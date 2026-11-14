@@ -1,8 +1,21 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useId, useRef, useState } from "react"
 import Link from "next/link"
-import { AlertCircle, BellOff, BellRing, CalendarPlus, CircleCheck, CircleHelp, Lock, Repeat, Trash } from "lucide-react"
+import {
+  AlertCircle,
+  BellOff,
+  BellRing,
+  CalendarPlus,
+  CircleCheck,
+  CircleHelp,
+  CircleMinus,
+  ListChecks,
+  Loader2,
+  Lock,
+  Repeat,
+  Trash,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Sheet,
@@ -16,6 +29,7 @@ import type { ChoreOwner } from "@/lib/domain/chore-pending"
 import { REMINDER_OPTIONS, reminderRowToState } from "@/lib/domain/event-reminder"
 import {
   collectionDayRelativeLabel,
+  GARBAGE_KIND_PRESETS,
   garbageRequestLabel,
   isGarbageRequest,
   type EventPurposeScope,
@@ -28,8 +42,26 @@ import {
   type GarbageReminderChoice,
   type ResolvedEventPurpose,
 } from "@/lib/domain/garbage"
+import {
+  buildGarbageBatch,
+  finishGarbageBatch,
+  garbageBatchStatusText,
+  garbageBatchSummaryText,
+  GARBAGE_BATCH_MAX,
+  initialBatchChoice,
+  markGarbageBatchSending,
+  nextGarbageBatchItem,
+  resumeGarbageBatch,
+  settleGarbageBatchItem,
+  stopGarbageBatch,
+  type GarbageBatch,
+  type GarbageBatchChoice,
+  type GarbageBatchItem,
+  type GarbageBatchOutcome,
+} from "@/lib/domain/garbage-batch"
 import type { GarbagePageData } from "@/lib/supabase/garbage-overview-query"
 import { submitGarbageRequest } from "@/app/(main)/chores/garbage/actions"
+import { CheckButton } from "@/components/chores/shared/check-button"
 import { EmptyState } from "@/components/chores/shared/empty-state"
 import { PendingChoreNotice } from "@/components/chores/shared/pending-chore-notice"
 import { RefreshOnVisible } from "@/components/chores/shared/refresh-on-visible"
@@ -121,6 +153,15 @@ export function GarbageView({ owner, data }: GarbageViewProps) {
   const [editing, setEditing] = useState<Editing | null>(null)
   const [confirmingOrphan, setConfirmingOrphan] = useState<string | null>(null)
   const [earlier, setEarlier] = useState<EarlierNotice | null>(null)
+  // 既存の予定の候補のうち、まとめて分類するために選んだもの（予定の id）
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set())
+  // まとめての分類の確認（名称を選び直せる下書き）と、送っておる・送った一括の結果
+  const [batchDraft, setBatchDraft] = useState<GarbageBatchChoice[] | null>(null)
+  const [batchError, setBatchError] = useState<string | null>(null)
+  const [batch, setBatch] = useState<GarbageBatch | null>(null)
+  // 一括が送って、まだ結果の出ておらぬ件（予定の id → 固めた要求の JSON）。応答は hook から非同期に届く。
+  // 同じ予定でも、シートから送った別の保存の応答を一括の結果へ吸い込まぬよう、要求の中身まで照らす
+  const batchPendingRef = useRef<Map<string, string>>(new Map())
   // 編集セッションの番号札（応答の時に今のシートを読む。開閉と同時に書き換える）
   const [sessions] = useState(createChoreEditSessions)
   const closeEditor = () => {
@@ -134,6 +175,21 @@ export function GarbageView({ owner, data }: GarbageViewProps) {
     isPayload: isGarbageRequest,
     sessions,
     onOutcome: (outcome) => {
+      // まとめての分類が送った 1 件（後からの「同じ操作で確認」の応答も）は、その件の結果へ映すだけ。
+      // シート（編集セッション）からの送信は、同じ予定・同じ中身でも一括のものではない
+      const sent = outcome.payload
+      const frozen = sent.op === "save" ? batchPendingRef.current.get(sent.eventId) : undefined
+      if (sent.op === "save" && frozen === JSON.stringify(sent) && outcome.origin?.session === undefined) {
+        if (outcome.kind !== "unknown") batchPendingRef.current.delete(sent.eventId)
+        const result: GarbageBatchOutcome =
+          outcome.kind === "settled"
+            ? { kind: "settled", status: outcome.status, readbackFailed: outcome.result.purposeLoad?.status === "failed" }
+            : outcome.kind === "rejected"
+              ? { kind: "rejected", error: outcome.error }
+              : { kind: "unknown" }
+        setBatch((prev) => (prev ? settleGarbageBatchItem(prev, sent.eventId, result) : prev))
+        return
+      }
       const origin = outcome.origin
       // 確定（保存・拒否）したら、送ったシートだけを閉じる。結果不明の間は開いたまま、控えの一覧で確かめさせる
       if (outcome.kind === "settled" && outcome.status !== "conflict" &&
@@ -164,20 +220,95 @@ export function GarbageView({ owner, data }: GarbageViewProps) {
   const orphans = overview.entries.filter((e) => e.state === "orphan")
   const eventsReadable = data.events !== "failed"
 
+  // ── まとめての分類: 1 件ずつ、前の件の応答が出てから次を送る ──
+  const batchRunning = batch?.phase === "running"
+  const sendRef = useRef(save.send)
+  useEffect(() => {
+    sendRef.current = save.send
+  })
+  const saveIdle = save.ready && !save.saving
+  // 確認待ちの控え・読めぬ控えが在る間は、次を送らず止める（同じ操作で確かめてから続ける）
+  const saveHeld = save.pending.length > 0 || save.unreadable > 0
+  useEffect(() => {
+    if (!batch || batch.phase !== "running" || !saveIdle) return
+    if (batch.items.some((item) => item.status === "sending")) return
+    let cancelled = false
+    void Promise.resolve().then(() => {
+      if (cancelled) return
+      if (saveHeld) {
+        setBatch((prev) => (prev ? stopGarbageBatch(prev) : prev))
+        return
+      }
+      const next = nextGarbageBatchItem(batch)
+      if (!next) {
+        setBatch((prev) => (prev ? finishGarbageBatch(prev) : prev))
+        return
+      }
+      // 応答を受ける前に、この件が一括の送信であることを記す（固めた要求の中身ごと）
+      batchPendingRef.current.set(next.eventId, JSON.stringify(next.request))
+      const opId = sendRef.current(next.request, next.label)
+      if (opId === null) batchPendingRef.current.delete(next.eventId)
+      setBatch((prev) =>
+        prev ? (opId === null ? stopGarbageBatch(prev) : markGarbageBatchSending(prev, next.eventId)) : prev,
+      )
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [batch, saveIdle, saveHeld])
+
   const openEditor = (
     event: GarbageEventSummary,
     current: ResolvedEventPurpose | null,
     options: { lockedScope?: EventPurposeScope; initialMode?: GarbageAction; initialReminder?: GarbageReminderChoice } = {},
   ) => {
+    // まとめての分類を送っておる間は、ほかの分類を始めさせぬ（順番に割り込ませぬ）
+    if (batchRunning) return
     if (current === null || current.kind === "unknown") return
     setEditing({ target: targetOf(event), current, ...options, session: sessions.begin() })
   }
 
   /** シートの外から送る（一覧の整理）。先に送った操作の結果は、ここで次の操作をした = 見た */
   const sendFromPage = (request: GarbageRequest, label: string) => {
+    if (batchRunning) return
     setEarlier(null)
     save.send(request, label)
   }
+
+  const selectedCandidates = candidates.filter((candidate) => selected.has(candidate.event.id))
+  const toggleCandidate = (eventId: string, on: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(eventId)
+      else next.delete(eventId)
+      return next
+    })
+  }
+  const openBatchConfirm = () => {
+    if (batchRunning || selectedCandidates.length === 0) return
+    setBatchError(null)
+    setBatchDraft(selectedCandidates.slice(0, GARBAGE_BATCH_MAX).map(initialBatchChoice))
+  }
+  const confirmBatch = () => {
+    if (!batchDraft) return
+    const built = buildGarbageBatch(batchDraft)
+    if (!built) {
+      setBatchError("すべての予定で、ごみの名称を選んでください。")
+      return
+    }
+    setEarlier(null)
+    batchPendingRef.current = new Map()
+    setBatch(built)
+    setBatchDraft(null)
+    setSelected(new Set())
+  }
+  const closeBatch = () => {
+    batchPendingRef.current = new Map()
+    setBatch(null)
+  }
+  // 続きを送る時は、今の候補に残っておる件だけ（止めておる間にシートや家族が分類した予定は送り直さぬ）
+  const candidateIds = new Set(candidates.map((candidate) => candidate.event.id))
+  const resumeBatch = () => setBatch((prev) => (prev ? resumeGarbageBatch(prev, (eventId) => candidateIds.has(eventId)) : prev))
 
   return (
     <>
@@ -280,6 +411,7 @@ export function GarbageView({ owner, data }: GarbageViewProps) {
                       type="button"
                       variant="outline"
                       aria-label={`${formatDayJa(c.date)}の${c.label}を変更`}
+                      disabled={batchRunning}
                       onClick={() => openEditor(c.event, c.purpose)}
                       className="shrink-0 cursor-pointer"
                     >
@@ -303,6 +435,45 @@ export function GarbageView({ owner, data }: GarbageViewProps) {
         )}
       </section>
 
+      {/* ── まとめての分類の結果（件ごとに、保存できた・保存していない・未確認・未送信を分けて出す）── */}
+      {batch && (
+        <section aria-labelledby="garbage-batch-heading" className={SECTION} data-testid="garbage-batch">
+          <h2 id="garbage-batch-heading" className={HEADING}>
+            まとめて分類
+          </h2>
+          <div className={CARD}>
+            <p role="status" className="text-sm" data-testid="garbage-batch-summary">
+              {garbageBatchSummaryText(batch)}
+            </p>
+            <ul className="flex flex-col gap-2">
+              {batch.items.map((item) => (
+                <BatchItemRow key={item.eventId} item={item} />
+              ))}
+            </ul>
+            <p className="text-xs text-muted-foreground">
+              1件ずつ順に保存します（まとめて1回の保存ではありません）。途中で止まった場合、保存できた予定はそのまま残り、送っていない予定は保存しません。
+            </p>
+            {batch.phase !== "running" && (
+              <div className="flex flex-wrap gap-2">
+                {batch.phase === "stopped" && batch.items.some((item) => item.status === "stopped") && (
+                  <Button
+                    type="button"
+                    className="cursor-pointer"
+                    disabled={save.blocked}
+                    onClick={resumeBatch}
+                  >
+                    送っていない予定を続けて分類
+                  </Button>
+                )}
+                <Button type="button" variant="outline" className="cursor-pointer" onClick={closeBatch}>
+                  結果を閉じる
+                </Button>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
       {/* ── 既存カレンダー予定の確認（自動登録・通知変更をしない）── */}
       {candidatesReadable && (candidates.length > 0 || overview.entries.length === 0) && (
         <section aria-labelledby="garbage-candidates-heading" className={SECTION} data-testid="garbage-candidates">
@@ -310,31 +481,58 @@ export function GarbageView({ owner, data }: GarbageViewProps) {
           {candidates.length > 0 ? (
             <>
               <p className="text-xs text-muted-foreground">
-                予定名から見つけた候補です。ごみの日と決めつけず、1件ずつ確認して分類してください。
-                通知は「変えない」が初期値です。予定そのものは変更しません。
+                予定名から見つけた候補です。ごみの日と決めつけず、確認して分類してください。
+                1件ずつでも、選んでまとめてでも分類できます。通知は「変えない」が初期値です。予定そのものは変更しません。
               </p>
               <ul className="flex flex-col gap-2">
-                {candidates.map((candidate) => (
-                  <li key={candidate.event.id} className={CARD}>
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="break-words text-sm font-medium">{candidate.event.title}</p>
-                        <p className="text-xs text-muted-foreground">{formatDayJa(candidate.event.start_date)}{candidate.event.isSeries ? "・繰り返し" : ""}{candidate.event.source === "google" ? "・Google" : ""}</p>
-                        {candidate.suggestedKind && <p className="text-xs text-muted-foreground">名称の候補: {candidate.suggestedKind}（未確定）</p>}
+                {candidates.map((candidate) => {
+                  const when = formatDayJa(candidate.event.start_date)
+                  return (
+                    <li key={candidate.event.id} className={CARD}>
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <CheckButton
+                          checked={selected.has(candidate.event.id)}
+                          onCheckedChange={(on) => toggleCandidate(candidate.event.id, on)}
+                          label={`予定「${candidate.event.title}」（${when}）をまとめて分類する対象に選ぶ`}
+                          disabled={batchRunning || batchDraft !== null}
+                          className="-ml-2 -mt-1"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="break-words text-sm font-medium">{candidate.event.title}</p>
+                          <p className="text-xs text-muted-foreground">{when}{candidate.event.isSeries ? "・繰り返し" : ""}{candidate.event.source === "google" ? "・Google" : ""}</p>
+                          {candidate.suggestedKind && <p className="text-xs text-muted-foreground">名称の候補: {candidate.suggestedKind}（未確定）</p>}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          aria-label={`予定「${candidate.event.title}」（${when}）を確認して分類`}
+                          className="shrink-0 cursor-pointer"
+                          disabled={batchRunning}
+                          onClick={() => openEditor(candidate.event, candidate.current, { initialReminder: "keep" })}
+                        >
+                          確認して分類
+                        </Button>
                       </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        aria-label={`予定「${candidate.event.title}」（${formatDayJa(candidate.event.start_date)}）を確認して分類`}
-                        className="shrink-0 cursor-pointer"
-                        onClick={() => openEditor(candidate.event, candidate.current, { initialReminder: "keep" })}
-                      >
-                        確認して分類
-                      </Button>
-                    </div>
-                  </li>
-                ))}
+                    </li>
+                  )
+                })}
               </ul>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  className="cursor-pointer"
+                  disabled={selectedCandidates.length === 0 || batchRunning || save.blocked}
+                  onClick={openBatchConfirm}
+                >
+                  <ListChecks size={16} aria-hidden="true" />
+                  選んだ{selectedCandidates.length}件をまとめて分類
+                </Button>
+                {selectedCandidates.length > 0 && !batchRunning && (
+                  <Button type="button" variant="outline" className="cursor-pointer" onClick={() => setSelected(new Set())}>
+                    選択を外す
+                  </Button>
+                )}
+              </div>
               {data.candidatesMore && (
                 <p className="text-xs text-muted-foreground">
                   ほかにも候補があります（近い順に{candidates.length}件を表示しています）。分類すると次の候補が出ます。
@@ -365,6 +563,7 @@ export function GarbageView({ owner, data }: GarbageViewProps) {
                 today={today}
                 windowDays={data.windowDays}
                 eventsReadable={eventsReadable}
+                disabled={batchRunning}
                 onChange={() =>
                   entry.anchor && openEditor(entry.anchor, entry.anchorPurpose, { lockedScope: entry.row.scope })
                 }
@@ -439,6 +638,7 @@ export function GarbageView({ owner, data }: GarbageViewProps) {
                       type="button"
                       variant="outline"
                       aria-label={`予定が見つからない分類「${name}」を整理`}
+                      disabled={batchRunning}
                       onClick={() => setConfirmingOrphan(entry.row.id)}
                       className="cursor-pointer self-start"
                     >
@@ -490,6 +690,64 @@ export function GarbageView({ owner, data }: GarbageViewProps) {
 
       <RefreshOnVisible />
 
+      {/* まとめての分類の確認。ここでは何も保存せず、送る内容（件数・名称・範囲・通知）を確かめて固める */}
+      <Sheet open={batchDraft !== null} onOpenChange={(open) => !open && setBatchDraft(null)}>
+        <SheetContent side="bottom" className="max-h-[85dvh] overflow-hidden rounded-t-2xl safe-bottom">
+          <SheetHeader>
+            <SheetTitle>まとめて分類</SheetTitle>
+            <SheetDescription>選んだ予定を、ごみの日として1件ずつ保存します</SheetDescription>
+          </SheetHeader>
+          <div className="flex flex-col gap-3 overflow-y-auto px-4 pb-4" data-testid="garbage-batch-confirm">
+            {batchDraft && (
+              <>
+                <p className="text-sm font-medium">{batchDraft.length}件をごみの日にします</p>
+                <ul className="flex flex-col gap-2">
+                  {batchDraft.map((choice, index) => (
+                    <BatchChoiceRow
+                      key={choice.candidate.event.id}
+                      choice={choice}
+                      onKind={(kind) => {
+                        setBatchError(null)
+                        setBatchDraft((prev) => prev && prev.map((c, i) => (i === index ? { ...c, kind } : c)))
+                      }}
+                    />
+                  ))}
+                </ul>
+                <div className="flex flex-col gap-1 rounded-lg border border-border/60 p-3 text-xs text-muted-foreground">
+                  <p className="flex items-center gap-1.5 text-sm text-foreground">
+                    <BellOff size={14} aria-hidden="true" />
+                    通知は変えません（今の通知設定のまま）
+                  </p>
+                  <p>通知を付けたい時は、分類した後に一覧の「変更」から選べます。</p>
+                  <p>
+                    まとめて1回で保存するのではなく、1件ずつ順に保存します。途中で止まった場合、保存できた予定はそのまま残り、残りは送りません。
+                  </p>
+                </div>
+                {batchError && (
+                  <p role="alert" className="flex items-start gap-2 text-sm text-destructive">
+                    <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                    <span>{batchError}</span>
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    className="cursor-pointer"
+                    disabled={save.blocked || batchDraft.some((choice) => choice.kind === null)}
+                    onClick={confirmBatch}
+                  >
+                    {batchDraft.length}件を分類する
+                  </Button>
+                  <Button type="button" variant="outline" className="cursor-pointer" onClick={() => setBatchDraft(null)}>
+                    やめる
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
+
       <Sheet open={editing !== null} onOpenChange={(open) => !open && closeEditor()}>
         <SheetContent side="bottom" className="max-h-[85dvh] overflow-hidden rounded-t-2xl safe-bottom">
           <SheetHeader>
@@ -531,6 +789,7 @@ function EntryRow({
   today,
   windowDays,
   eventsReadable,
+  disabled = false,
   onChange,
   onClear,
 }: {
@@ -538,6 +797,8 @@ function EntryRow({
   today: string
   windowDays: number
   eventsReadable: boolean
+  /** まとめての分類を送っておる間は、変更・解除を始めさせぬ */
+  disabled?: boolean
   onChange: () => void
   onClear: () => void
 }) {
@@ -611,6 +872,7 @@ function EntryRow({
               type="button"
               variant="outline"
               aria-label={`${name}（${row.scope === "series" ? "繰り返し" : "この回だけ"}）を変更`}
+              disabled={disabled}
               onClick={onChange}
               className="cursor-pointer"
             >
@@ -621,6 +883,7 @@ function EntryRow({
             type="button"
             variant="outline"
             aria-label={`${name}（${row.scope === "series" ? "繰り返し" : "この回だけ"}）を解除`}
+            disabled={disabled}
             onClick={onClear}
             className="cursor-pointer"
           >
@@ -628,6 +891,87 @@ function EntryRow({
           </Button>
         </div>
       )}
+    </li>
+  )
+}
+
+/** まとめての分類の確認の 1 件（範囲は決まっており、名称だけ選び直せる）。 */
+function BatchChoiceRow({ choice, onKind }: { choice: GarbageBatchChoice; onKind: (kind: string | null) => void }) {
+  const selectId = useId()
+  const { event } = choice.candidate
+  const when = formatDayJa(event.start_date)
+  return (
+    <li className="flex flex-col gap-2 rounded-xl border border-border/60 p-3" data-testid="garbage-batch-choice">
+      <div className="min-w-0">
+        <p className="break-words text-sm font-medium">{event.title}</p>
+        <p className="text-xs text-muted-foreground">
+          {when}
+          {event.source === "google" ? "・Google" : ""}
+        </p>
+        <p className="flex items-center gap-1 text-xs text-muted-foreground">
+          {event.isSeries && <Repeat size={12} aria-hidden="true" />}
+          範囲: {event.isSeries ? "繰り返しのすべての回（これから追加される回も）" : "この予定だけ"}
+        </p>
+      </div>
+      <label htmlFor={selectId} className="text-xs font-medium">
+        ごみの名称
+      </label>
+      <select
+        id={selectId}
+        aria-label={`予定「${event.title}」（${when}）のごみの名称`}
+        value={choice.kind ?? ""}
+        onChange={(e) => onKind(e.target.value === "" ? null : e.target.value)}
+        className="min-h-11 w-full cursor-pointer rounded-lg border border-border bg-background px-3 text-sm text-foreground transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-ring"
+      >
+        <option value="">選んでください</option>
+        {GARBAGE_KIND_PRESETS.map((preset) => (
+          <option key={preset.label} value={preset.label}>
+            {preset.label}
+          </option>
+        ))}
+      </select>
+      {choice.kind === null && (
+        <p className="text-xs text-muted-foreground">
+          名前から名称を決められませんでした。選んでください（一覧に無い名称は、1件ずつの分類で入力できます）。
+        </p>
+      )}
+    </li>
+  )
+}
+
+/** まとめての分類の結果の 1 件（アイコンと文で状態を言う。色だけに頼らぬ）。 */
+function BatchItemRow({ item }: { item: GarbageBatchItem }) {
+  const done = item.status === "saved" || item.status === "unchanged"
+  const failed = item.status === "conflict" || item.status === "rejected"
+  const notSent = item.status === "waiting" || item.status === "stopped" || item.status === "skipped"
+  const iconClass = done
+    ? "mt-0.5 shrink-0 text-emerald-700 dark:text-emerald-400"
+    : failed
+      ? "mt-0.5 shrink-0 text-destructive"
+      : "mt-0.5 shrink-0 text-muted-foreground"
+  return (
+    <li className="flex items-start gap-2 text-sm" data-batch-status={item.status}>
+      {item.status === "sending" ? (
+        <Loader2 size={16} className={`${iconClass} animate-spin`} aria-hidden="true" />
+      ) : done ? (
+        <CircleCheck size={16} className={iconClass} aria-hidden="true" />
+      ) : failed ? (
+        <AlertCircle size={16} className={iconClass} aria-hidden="true" />
+      ) : notSent ? (
+        <CircleMinus size={16} className={iconClass} aria-hidden="true" />
+      ) : (
+        <CircleHelp size={16} className={iconClass} aria-hidden="true" />
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="break-words font-medium">
+          {item.title}
+          <span className="font-normal text-muted-foreground">
+            （{formatDayJa(item.startDate)}・{item.kind}
+            {item.scope === "series" ? "・繰り返しのすべての回" : ""}）
+          </span>
+        </p>
+        <p className="text-xs text-muted-foreground">{garbageBatchStatusText(item)}</p>
+      </div>
     </li>
   )
 }
