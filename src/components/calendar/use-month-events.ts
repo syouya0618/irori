@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { logSupabaseError } from "@/lib/supabase/log-error"
-import { logRealtimeStatus, logRealtimeEvent } from "@/lib/supabase/realtime-log"
+import { createRealtimeStatusLogger, logRealtimeEvent } from "@/lib/supabase/realtime-log"
 import {
   monthFirstOf,
   shiftMonth,
@@ -70,6 +70,17 @@ export interface CalendarEventRecord extends CalendarEventLite {
 export type PurposeLoadState = "ok" | "stale" | "failed"
 
 const NO_PURPOSES: EventPurposeLoad = { status: "ok", rows: [] }
+
+/**
+ * 手元の写しへ入れる生の行（画面で解決した `purpose` は持ち込まぬ）。表示中の行を書き戻す経路
+ * （失敗の復元・シリーズの一括削除）が用途つきの行を入れると、後で世帯の分類が 0 件になった時
+ * （最後の分類を解除した）に、下の「分類なしの近道」が古いごみの印をそのまま描いてしまう。
+ */
+function rawRow(row: CalendarEventRecord): CalendarEventRecord {
+  if (row.purpose === undefined) return row
+  const { purpose: _purpose, ...raw } = row
+  return raw
+}
 
 // SELECT カラムは中立モジュール（@/lib/domain/calendar-event-columns）に置く。
 // "use client" のこのファイルから値を re-export すると Server Component 側で
@@ -303,11 +314,12 @@ export function useMonthEvents({
 
   // ---- 楽観更新ヘルパ ----
   const upsertOptimistic = useCallback((row: CalendarEventRecord) => {
+    const raw = rawRow(row)
     setEvents((prev) => {
-      const idx = prev.findIndex((e) => e.id === row.id)
-      if (idx === -1) return [...prev, row]
+      const idx = prev.findIndex((e) => e.id === raw.id)
+      if (idx === -1) return [...prev, raw]
       const copy = [...prev]
-      copy[idx] = row
+      copy[idx] = raw
       return copy
     })
   }, [])
@@ -326,7 +338,7 @@ export function useMonthEvents({
     },
     [],
   )
-  const setAllEvents = useCallback((rows: CalendarEventRecord[]) => setEvents(rows), [])
+  const setAllEvents = useCallback((rows: CalendarEventRecord[]) => setEvents(rows.map(rawRow)), [])
   /**
    * いま表示中の月を取り直す。非同期の応答（保存の衝突・作成の完了・同期の完了）の後で
    * 呼ぶ経路は、呼び出し時点の `monthFirst` を閉じ込めると、待つ間に月を送った利用者の
@@ -352,6 +364,8 @@ export function useMonthEvents({
   useEffect(() => {
     const supabase = createClient()
     const channelName = `calendar-${householdId}`
+    // 片付けの後の CLOSED（画面を離れた）を異常として報告せぬ。片付けの前の CLOSED・失敗は従来どおり
+    const statusLog = createRealtimeStatusLogger(channelName)
     const channel = supabase
       .channel(channelName)
       .on(
@@ -367,8 +381,9 @@ export function useMonthEvents({
           void refetch(monthFirstRef.current)
         },
       )
-      .subscribe((status, err) => logRealtimeStatus(channelName, status, err))
+      .subscribe((status, err) => statusLog.onStatus(status, err))
     return () => {
+      statusLog.dispose()
       void supabase.removeChannel(channel)
     }
   }, [householdId, refetch])

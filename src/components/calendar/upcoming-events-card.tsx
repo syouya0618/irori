@@ -98,6 +98,9 @@ export function UpcomingEventsCard({
   const [rawEvents, setEvents] = useState(initialEvents)
   // 用途（ごみの日）の分類。取り直しに失敗した時は、前に読めた分類を保つ（予定の表示は倒さぬ）
   const [purposeLoad, setPurposeLoad] = useState<EventPurposeLoad>(initialPurposes)
+  // 前に読めた分類で描いておるが、最後の取り直しは失敗した（家族の新しい分類が映っておらぬかもしれぬ）。
+  // カレンダー（use-month-events の purposeStale）と同じ扱いで、文で言う
+  const [purposeStale, setPurposeStale] = useState(false)
   const events = useMemo(
     () =>
       purposeLoad.status === "ok" && purposeLoad.rows.length === 0
@@ -180,7 +183,12 @@ export function UpcomingEventsCard({
       // （失敗は failed で返る）。読めた時だけ差し替え、読めなんだ時は前の分類を保つ
       void fetchEventPurposeLoad(supabase, householdId, controller.signal).then((load) => {
         if (signal?.aborted || generation !== generationRef.current) return
-        if (load.status === "ok") setPurposeLoad(load)
+        if (load.status === "ok") {
+          setPurposeLoad(load)
+          setPurposeStale(false)
+        } else {
+          setPurposeStale(true)
+        }
       })
       // destructure と同じ一本の鎖に保つ（scripts/check-supabase-error-destructure.py は
       // `.select(` から上の destructure を辿る。変数に組み立ててから別の文で受けると
@@ -401,7 +409,7 @@ export function UpcomingEventsCard({
       {/* 用途（ごみの日）の分類を一度も読めておらぬ: 予定は描いておるが、ごみの印を出せておらぬ。
           「印が無い = ごみの日ではない」と読ませぬよう、文で言う（カレンダーの帯と同じ扱い）。
           取り直しで読めれば消える */}
-      {purposeLoad.status === "failed" && (
+      {(purposeLoad.status === "failed" || purposeStale) && (
         <div
           role="status"
           data-testid="upcoming-purpose-unknown"
@@ -409,7 +417,9 @@ export function UpcomingEventsCard({
         >
           <CircleHelp size={14} className="shrink-0" aria-hidden="true" />
           <span className="flex-1">
-            ごみの日の分類を読み込めていません（印のない予定が、ごみの日ではないとは限りません）
+            {purposeLoad.status === "failed"
+              ? "ごみの日の分類を読み込めていません（印のない予定が、ごみの日ではないとは限りません）"
+              : "ごみの日の分類が最新でない可能性があります（印のない予定が、ごみの日ではないとは限りません）"}
           </span>
           <button
             type="button"

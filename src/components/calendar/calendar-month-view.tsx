@@ -183,7 +183,10 @@ export function CalendarMonthView({
           const dayEvents = eventsByDate.get(cell.date) ?? []
           const isSelected = cell.date === selectedDate
           const dayNum = Number(cell.date.slice(8, 10))
-          const garbageLabels = countsUnknown ? [] : garbageLabelsOf(dayEvents)
+          // 印（アイコン）は通常の予定の帯・丸と同じく、手元の行で描く（読み込み中・失敗の間に
+          // ごみだけを消して通常の印を残すと、ごみの日が「何も無い日」に見える）。読み上げの種別は
+          // 件数が当てにならぬ間は言わぬ（cellLabel が countsUnknown で伏せる）
+          const garbageLabels = garbageLabelsOf(dayEvents)
           return (
             <button
               key={cell.date}

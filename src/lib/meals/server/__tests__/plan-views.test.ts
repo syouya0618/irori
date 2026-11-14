@@ -338,6 +338,62 @@ describe("買い物の画面（loadShoppingView）", () => {
     expect((await shoppingView()).stale).toBe(true)
   })
 
+  it("除外を足した後・更新の前（リストが古い間）は、当たる料理の材料を『入れていない』と言わず、残りうると言う（F1）", async () => {
+    db.tables.dinner_plan_entries.push(
+      entryRow(HOUSE, {
+        plan_date: TODAY,
+        recipe_id: null,
+        recipe_version: null,
+        custom_title: "卵焼き",
+        custom_ingredients: [{ ingredientId: "egg", quantity: { amount: 100, unit: "g" } }],
+        status: "confirmed",
+        origin: "manual",
+      }),
+    )
+    const { syncGroceryAutoItems } = await import("../grocery-sync")
+    const actor = { supabase: db.supabase, householdId: HOUSE, userId: USER }
+    expect(await syncGroceryAutoItems(actor, UUID, { today: TODAY })).toMatchObject({ ok: true, status: "saved" })
+    expect((await shoppingView()).heldDishes).toEqual([])
+
+    // 卵のアレルギーを足す（買い物の同期はまだ）: 保存済みのリストには卵が残っておる
+    db.tables.food_exclusions.push(exclusionRow(HOUSE))
+    const stale = await shoppingView()
+    expect(stale.sections.flatMap((group) => group.items).map((item) => item.name)).toContain("卵")
+    expect(stale.stale).toBe(true)
+    expect(stale.heldDishes.map((dish) => dish.title)).toEqual(["卵焼き"])
+    expect(stale.heldDishes[0].message).toContain("材料が残っていることがあります")
+    expect(stale.heldDishes[0].message).not.toContain("入れていません")
+
+    // 更新の後は、事実どおり「入れていません」と言う
+    expect(await syncGroceryAutoItems(actor, "f3000000-0000-4000-8000-000000000002", { today: TODAY })).toMatchObject({ ok: true })
+    const fresh = await shoppingView()
+    expect(fresh.stale).toBe(false)
+    expect(fresh.sections.flatMap((group) => group.items).map((item) => item.name)).not.toContain("卵")
+    expect(fresh.heldDishes[0].message).toContain("入れていません")
+  })
+
+  it("リストが古い間も、当たる・確かめられない理由（材料が無い等）は消さずに言う", async () => {
+    db.tables.food_exclusions.push(exclusionRow(HOUSE))
+    db.tables.dinner_plan_entries.push(
+      // 同期していない確定の料理（リストを古くする）と、材料の無い手動料理（除外に当たるかを確かめられぬ）
+      entryRow(HOUSE, { plan_date: TODAY, recipe_id: "nikujaga", status: "confirmed" }),
+      entryRow(HOUSE, {
+        plan_date: TOMORROW,
+        recipe_id: null,
+        recipe_version: null,
+        custom_title: "おでん",
+        status: "confirmed",
+        origin: "manual",
+      }),
+    )
+    const view = await shoppingView()
+    expect(view.stale).toBe(true)
+    const oden = view.heldDishes.find((dish) => dish.title === "おでん")
+    expect(oden?.message).toContain("材料が登録されていないため、使わない食材に当たるかを確かめられません。")
+    expect(oden?.message).toContain("材料が残っていることがあります")
+    expect(oden?.message).not.toContain("入れていません")
+  })
+
   it("常備品は買い物に出さず、常備品として扱ったことを返す", async () => {
     db.tables.dinner_settings.push({
       household_id: HOUSE,
