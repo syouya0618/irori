@@ -689,4 +689,86 @@ describe("既存カレンダー予定の候補（明示確認・通知無変更�
     expect(list[0].suggestedKind).toBe("資源") // 推奨表示だけ。保存するかは利用者が選ぶ
     expect(list[0].current.kind).toBe("normal")
   })
+  it.each([
+    ["燃えるごみ", "燃えるごみ"],
+    ["燃えるゴミ", "燃えるごみ"],
+    ["可燃ごみ", "燃えるごみ"],
+    ["燃やすごみの日", "燃えるごみ"],
+    ["燃えないごみ", "燃えないごみ"],
+    ["不燃ごみ", "燃えないごみ"],
+    ["資源", "資源"],
+    ["資源の回収", "資源"],
+    ["プラ", "プラスチック"],
+    ["プラの日", "プラスチック"],
+    ["容器包装プラ", "プラスチック"],
+    ["プラスチック", "プラスチック"],
+    ["びん・缶", "びん・缶"],
+    ["缶・びん", "びん・缶"],
+    ["ビン・カン", "びん・缶"],
+    ["びん缶", "びん・缶"],
+    ["空き缶", "びん・缶"],
+    ["ペットボトル", "ペットボトル"],
+    ["古紙", "古紙"],
+    ["粗大ごみ", "粗大ごみ"],
+    ["ゴミ出し", null],
+    // 複数の種類に当たる題は推さぬ（狭い名称を初期選択にせぬ）
+    ["資源ごみ（びん・缶・ペットボトル）", null],
+  ])("収集日らしい題「%s」は候補になり、名称の推しは %s", (title, kind) => {
+    const list = suggestGarbageCandidates([native(SINGLE, { title })], [])
+    expect(list).toHaveLength(1)
+    expect(list[0].suggestedKind).toBe(kind)
+  })
+  it.each([
+    "ゴミ箱掃除",
+    "ごみ箱を洗う",
+    "ごみ袋を買う",
+    "ゴミ袋購入",
+    "ごみ当番",
+    "資源回収の当番",
+    "ゴミ拾い",
+    "空き缶ひろい",
+    "ごみの分別を調べる",
+    "清掃工場の見学（ごみ）",
+    "プランの打ち合わせ",
+    "プラネタリウム",
+    "プラモデル",
+    "プライベート",
+    "缶詰を買う",
+    "病院と買い物",
+  ])("収集日ではない題「%s」は候補にしない", (title) => {
+    expect(suggestGarbageCandidates([native(SINGLE, { title })], [])).toEqual([])
+  })
+  it("どれか 1 回にでも分類・通知の明示 OFF の行が在るシリーズは、ほかの回も候補にしない", () => {
+    const first = native(E1, { title: "燃えるごみ", series_id: SERIES, start_date: "2026-11-12" })
+    const second = native(E2, { title: "燃えるごみ", series_id: SERIES, start_date: "2026-11-19" })
+    // シリーズの既定を解除した後に残る「通知の明示 OFF だけ」の行（用途は持たぬ）
+    const optOutOnly = purpose({ id: P1, scope: "event", targetKey: E1, purpose: null, garbageKind: null, reminderOptOut: true })
+    expect(suggestGarbageCandidates([first, second], [optOutOnly])).toEqual([])
+    // この回だけごみにした回が在るシリーズも、既に利用者が判断したものとして出さぬ
+    const eventOnly = purpose({ id: P2, scope: "event", targetKey: E2 })
+    expect(suggestGarbageCandidates([first, second], [eventOnly])).toEqual([])
+    // 行が 1 つも無ければ、シリーズを 1 候補として出す（最初の回を起点に）
+    expect(suggestGarbageCandidates([second, first], [])).toMatchObject([{ event: { id: E1, isSeries: true } }])
+  })
+  it("単発の予定に通知の明示 OFF だけの行が在れば候補にしない", () => {
+    const single = native(SINGLE, { title: "粗大ごみ" })
+    const row = purpose({ id: P3, scope: "event", targetKey: SINGLE, purpose: null, garbageKind: null, reminderOptOut: true })
+    expect(suggestGarbageCandidates([single], [row])).toEqual([])
+  })
+  it("シリーズの既定が通常（未知の値）なら『未分類』と決めつけず候補にしない", () => {
+    const first = native(E1, { title: "燃えるごみ", series_id: SERIES })
+    const row = purpose({ id: P1, scope: "series", targetKey: SERIES, purpose: "normal", garbageKind: null, remindDefault: null })
+    expect(suggestGarbageCandidates([first], [row])).toEqual([])
+  })
+  it("近い順に上限まで出し、上限 + 1 件を求めれば超えた分が在ることが分かる", () => {
+    const events = Array.from({ length: 4 }, (_, i) =>
+      native(`5e000000-0000-4000-8000-00000000003${i}`, { title: "燃えるごみ", start_date: `2026-11-1${i + 2}` }),
+    )
+    expect(suggestGarbageCandidates([...events].reverse(), [], 3).map((c) => c.event.start_date)).toEqual([
+      "2026-11-12",
+      "2026-11-13",
+      "2026-11-14",
+    ])
+    expect(suggestGarbageCandidates(events, [], 4)).toHaveLength(4)
+  })
 })

@@ -785,17 +785,63 @@ function summarize(event: GarbageEventRow): GarbageEventSummary {
 export interface GarbageCandidate {
   event: GarbageEventSummary
   current: Extract<ResolvedEventPurpose, { kind: "normal" }>
+  /** 題から推した名称（プリセットの名称）。表示と一括分類の初期選択だけに使い、保存は利用者の確認の後 */
   suggestedKind: string | null
+}
+
+/** 候補を探す期間内の上限（近い順）。超えた分は「ほかにも在る」と言う */
+export const GARBAGE_CANDIDATE_LIMIT = 20
+
+/**
+ * 収集日らしい題。「プラ」は「プラン」「プライベート」等と紛れぬよう、後ろに片仮名が続かぬ時だけ。
+ * びん・缶はどちらの順・区切り（・／、と 等）・表記（ビン・カン・瓶）も拾う。
+ */
+const CANDIDATE_TITLE =
+  /ごみ|ゴミ|可燃|不燃|資源|古紙|ペットボトル|プラスチック|プラ(?![ァ-ヶー])|(?:びん|ビン|瓶)\s*[・･/／、,，&＆と]?\s*(?:缶|カン|かん)|(?:缶|カン)\s*[・･/／、,，&＆と]?\s*(?:びん|ビン|瓶)|空き(?:缶|かん|びん|ビン|瓶)/
+
+/** 収集日ではない家事・用事（ごみ箱の掃除・袋の買い物・当番・ごみ拾い・見学・分別の調べもの）。 */
+const NOT_COLLECTION_TITLE =
+  /(?:ごみ|ゴミ)\s*(?:箱|ばこ|袋|ぶくろ)|当番|拾い|ひろい|見学|分別\s*(?:を|の)?\s*(?:調べ|確認|方法|表)|買う|買い物|購入|掃除|そうじ|洗う|あらう/
+
+/** 題 → 名称のプリセット（当たる規則がちょうど 1 つの時だけ推す）。 */
+const CANDIDATE_KIND_RULES: readonly (readonly [RegExp, string])[] = [
+  [/燃えない|燃やせない|不燃/, "燃えないごみ"],
+  [/燃える|燃やす|燃やせる|可燃/, "燃えるごみ"],
+  [/ペットボトル/, "ペットボトル"],
+  [/プラスチック|プラ(?![ァ-ヶー])/, "プラスチック"],
+  [/(?:びん|ビン|瓶)[\s\S]*?(?:缶|カン|かん)|(?:缶|カン)[\s\S]*?(?:びん|ビン|瓶)|空き(?:缶|かん|びん|ビン|瓶)/, "びん・缶"],
+  [/古紙|新聞|雑誌|段ボール|ダンボール/, "古紙"],
+  [/粗大/, "粗大ごみ"],
+  [/資源/, "資源"],
+]
+
+/** 予定の題が、ごみの収集日の候補に見えるか（読み取り専用の推定。これだけでは何も保存せぬ）。 */
+export function looksLikeGarbageCollection(title: string): boolean {
+  const text = title.trim()
+  return CANDIDATE_TITLE.test(text) && !NOT_COLLECTION_TITLE.test(text)
+}
+
+/**
+ * 題から推した名称のプリセット。当たらねば null。複数の種類に当たる題（「資源ごみ（びん・缶・ペットボトル）」等）も
+ * null — 狭い名称を初期選択にして、まとめての分類で確かめずに保存させぬ。
+ */
+export function suggestGarbageKind(title: string): string | null {
+  const text = title.trim()
+  const matched = CANDIDATE_KIND_RULES.filter(([pattern]) => pattern.test(text))
+  return matched.length === 1 ? matched[0][1] : null
 }
 
 /**
  * 直近の予定から候補を探す（読み取り専用）。Google再同期でも同じ繰り返しは1候補に畳む。
  * 「ごみ箱を洗う」等の家事は除外。種別は推定表示のみで、分類RPCへは利用者の選択が必要。
+ *
+ * 分類・通知の明示 OFF の行が在る予定は候補にせぬ（利用者が既に判断した予定。見るのは期間内の回とシリーズの既定だけ。
+ * 繰り返しは、期間内のどれか 1 回にでも行が在れば、そのシリーズごと出さぬ）。
  */
 export function suggestGarbageCandidates(
   events: readonly GarbageEventRow[],
   purposeRows: readonly EventPurposeRow[],
-  limit = 20,
+  limit = GARBAGE_CANDIDATE_LIMIT,
 ): GarbageCandidate[] {
   const index = buildEventPurposeIndex(purposeRows)
   const result: GarbageCandidate[] = []
@@ -803,22 +849,30 @@ export function suggestGarbageCandidates(
   const sorted = [...events].sort((a, b) =>
     a.start_date === b.start_date ? a.id.localeCompare(b.id) : a.start_date.localeCompare(b.start_date)
   )
-  for (const event of sorted) {
-    if (event.medical_record_id) continue
-    const title = event.title.trim()
-    if (/ごみ箱|ゴミ箱|ゴミ袋|ごみ袋|ごみ当番|ゴミ当番/.test(title)) continue
-    if (!/(?:ごみ|ゴミ|可燃|不燃|資源回収|古紙|ペットボトル|プラごみ|プラスチック|びん.?缶)/.test(title)) continue
-    const purpose = resolveEventPurpose(event, index)
-    if (purpose.kind !== "normal" || purpose.exception) continue
+  const resolved = sorted.map((event) => ({ event, purpose: resolveEventPurpose(event, index) }))
+  // 分類の行（シリーズの既定・どれか 1 回の行）が在るシリーズ
+  const touchedSeries = new Set<string>()
+  for (const { event, purpose } of resolved) {
     const seriesKey = seriesKeyOf(event)
+    if (seriesKey === null) continue
+    if (purpose.kind !== "normal" || purpose.exception || purpose.seen.series !== null || purpose.seen.event !== null) {
+      touchedSeries.add(seriesKey)
+    }
+  }
+  for (const { event, purpose } of resolved) {
+    if (result.length >= Math.max(0, limit)) break
+    if (event.medical_record_id) continue
+    if (!looksLikeGarbageCollection(event.title)) continue
+    if (purpose.kind !== "normal" || purpose.exception) continue
+    if (purpose.seen.series !== null || purpose.seen.event !== null) continue
+    const seriesKey = seriesKeyOf(event)
+    if (seriesKey !== null && touchedSeries.has(seriesKey)) continue
     const eventKey = eventKeyOf(event)
     if (eventKey === null) continue
     const groupKey = seriesKey ? `series:\u0000${seriesKey}` : `event:\u0000${eventKey}`
     if (seen.has(groupKey)) continue
     seen.add(groupKey)
-    const suggestion = GARBAGE_KIND_PRESETS.find((preset) => title.includes(preset.label))
-    result.push({ event: summarize(event), current: purpose, suggestedKind: suggestion?.label ?? null })
-    if (result.length >= Math.max(0, limit)) break
+    result.push({ event: summarize(event), current: purpose, suggestedKind: suggestGarbageKind(event.title) })
   }
   return result
 }

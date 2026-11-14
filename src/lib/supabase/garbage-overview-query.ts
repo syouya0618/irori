@@ -3,6 +3,7 @@ import type { Database } from "@/lib/types/database"
 import {
   buildGarbageOverview,
   eventKeyOf,
+  GARBAGE_CANDIDATE_LIMIT,
   GARBAGE_EVENT_COLUMNS,
   parseGarbageEventRow,
   purposeLookupKey,
@@ -73,8 +74,13 @@ export interface GarbagePageData {
    */
   events: "ok" | "failed" | "truncated"
   overview: GarbageOverview
-  /** 既存予定からの未分類候補（読み取り専用。存在しないときは候補非表示）。 */
+  /**
+   * 既存予定からの未分類候補（読み取り専用。期間内の予定の題から推したもの）。
+   * 分類か予定を読めなんだ時は空（「候補が無い」とは言わぬ — 画面は候補の欄を出さぬ）
+   */
   candidates?: GarbageCandidate[]
+  /** 候補が上限（`GARBAGE_CANDIDATE_LIMIT`）を超えて在った（近い順に上限まで載せた） */
+  candidatesMore?: boolean
   /** 並べた収集日の通知設定（鍵 = event_uid）。行が無い鍵 = 通知なし */
   reminders:
     | { status: "ok"; byEventKey: Record<string, GarbageReminderRow> }
@@ -154,12 +160,16 @@ export async function loadGarbagePage(
     collectionLimit: GARBAGE_COLLECTION_LIMIT,
   })
 
+  // 上限 + 1 件まで探し、上限を超えて在ったかを言えるようにする
+  const found = events === "failed" ? [] : suggestGarbageCandidates(windowEvents, rows, GARBAGE_CANDIDATE_LIMIT + 1)
+
   return {
     ...base,
     purposes: "ok",
     events,
     overview,
-    candidates: events === "failed" ? [] : suggestGarbageCandidates(windowEvents, rows),
+    candidates: found.slice(0, GARBAGE_CANDIDATE_LIMIT),
+    candidatesMore: found.length > GARBAGE_CANDIDATE_LIMIT,
     reminders: await lookupReminders(
       supabase,
       householdId,
