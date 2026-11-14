@@ -19,6 +19,7 @@ import { submitGarbageRequest } from "@/app/(main)/chores/garbage/actions"
 import {
   buildGarbageOverview,
   purposeLookupKey,
+  suggestGarbageCandidates,
   type EventPurposeRow,
   type GarbageEventRow,
 } from "@/lib/domain/garbage"
@@ -150,6 +151,61 @@ describe("GarbageView: 未登録・読めなんだ時", () => {
     expect(within(entries).getByText("プラスチック")).toBeInTheDocument()
     // 読めておらぬ期間について「この分類の回はありません」とも言わぬ
     expect(within(entries).queryByText(/この分類の回はありません/)).toBeNull()
+  })
+})
+
+describe("GarbageView: 既存予定の候補を手動で分類する", () => {
+  it("候補表示だけではRPCを書かず、確認フォームの通知初期値は『変えない』", async () => {
+    const existing = event(SINGLE, { title: "燃えるごみ", start_date: TODAY })
+    const candidates = suggestGarbageCandidates([existing], [])
+    render(<GarbageView owner={OWNER} data={pageData({ patch: { candidates } })} />)
+    await settle()
+    const panel = screen.getByTestId("garbage-candidates")
+    expect(panel).toHaveTextContent("燃えるごみ")
+    expect(panel).toHaveTextContent("名称の候補")
+    expect(submit).not.toHaveBeenCalled()
+    // 押下対象の名前は、どの予定を確かめるのかを言う（同じ文言のボタンが並ぶ）
+    fireEvent.click(within(panel).getByRole("button", { name: "予定「燃えるごみ」（11月11日（水））を確認して分類" }))
+    const form = await screen.findByTestId("garbage-purpose-form")
+    expect(within(form).getByRole("button", { name: "通知設定は変えない" })).toHaveAttribute("aria-pressed", "true")
+    expect(within(form).getByRole("button", { name: "前日 20:00 に通知する" })).toHaveAttribute("aria-pressed", "false")
+    expect(submit).not.toHaveBeenCalled()
+    // 探した範囲（今日から 62 日・題だけ）を言い、全件とは言わぬ
+    expect(screen.getByTestId("garbage-candidates-scope")).toHaveTextContent("今日から62日のあいだの予定の名前だけ")
+  })
+  it("候補が無い時は通常のごみ画面のまま", async () => {
+    render(<GarbageView owner={OWNER} data={pageData({})} />)
+    await settle()
+    expect(screen.queryByTestId("garbage-candidates")).toBeNull()
+  })
+  it("未登録で候補が 0 件なら、見つからなかったことと探した範囲を言う", async () => {
+    render(<GarbageView owner={OWNER} data={pageData({ patch: { candidates: [], candidatesMore: false } })} />)
+    await settle()
+    const panel = screen.getByTestId("garbage-candidates")
+    expect(panel).toHaveTextContent("ごみの日らしい名前の予定は見つかりませんでした。")
+    expect(within(panel).getByTestId("garbage-candidates-scope")).toHaveTextContent(
+      "それより先の予定や、名前から判断できない予定は候補に出ません",
+    )
+    expect(within(panel).queryByRole("button")).toBeNull()
+  })
+  it("分類か予定を読めなんだ時は、候補の欄を出さぬ（未分類・候補なしと言わぬ）", async () => {
+    for (const patch of [{ purposes: "failed" as const }, { events: "failed" as const }]) {
+      render(<GarbageView owner={OWNER} data={pageData({ patch: { ...patch, candidates: [] } })} />)
+      await settle()
+      expect(screen.queryByTestId("garbage-candidates")).toBeNull()
+      expect(screen.queryByText("ごみの日らしい名前の予定は見つかりませんでした。")).toBeNull()
+      cleanup()
+    }
+  })
+  it("分類が既に在り候補が 0 件なら候補の欄は出さず、上限を超えた候補はそう言う", async () => {
+    render(<GarbageView owner={OWNER} data={pageData({ rows: seriesRows, windowEvents: seriesEvents, patch: { candidates: [] } })} />)
+    await settle()
+    expect(screen.queryByTestId("garbage-candidates")).toBeNull()
+    cleanup()
+    const candidates = suggestGarbageCandidates([event(SINGLE, { title: "粗大ごみ" })], [])
+    render(<GarbageView owner={OWNER} data={pageData({ patch: { candidates, candidatesMore: true } })} />)
+    await settle()
+    expect(screen.getByTestId("garbage-candidates")).toHaveTextContent("ほかにも候補があります（近い順に1件を表示しています）")
   })
 })
 
