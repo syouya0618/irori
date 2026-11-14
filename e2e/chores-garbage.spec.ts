@@ -267,6 +267,79 @@ test("既存のGoogle同期済みごみ予定: シリーズ分類が保存直後
   await expect(dayCell(page, today)).toHaveAttribute("aria-label", /ごみ（燃えるごみ）$/)
 })
 
+test("既存の予定の候補: 表示だけでは書かず、確認して分類すると通知を変えずに保存し、読み直すと候補から消える", async ({ page, approvedUser }) => {
+  const today = todayJst()
+  const first = shiftYmd(today, 1)
+  const later = shiftYmd(today, 8)
+  await loginAndOpenCalendar(page, approvedUser.email)
+  const householdId = await householdOf(approvedUser.id)
+  const admin = adminClient()
+  const googleCalendarId = "candidate-garbage@example.invalid"
+  const recurringEventId = `candidate-${crypto.randomUUID()}`
+  const firstGoogleEventId = `occ-a-${crypto.randomUUID()}`
+  const { error: seedError } = await admin.from("calendar_events").insert([
+    { id: crypto.randomUUID(), household_id: householdId, title: "燃えるゴミ", source: "google",
+      is_all_day: true, start_date: first, end_date: first,
+      google_calendar_id: googleCalendarId, google_event_id: firstGoogleEventId, recurring_event_id: recurringEventId },
+    { id: crypto.randomUUID(), household_id: householdId, title: "燃えるゴミ", source: "google",
+      is_all_day: true, start_date: later, end_date: later,
+      google_calendar_id: googleCalendarId, google_event_id: `occ-b-${crypto.randomUUID()}`, recurring_event_id: recurringEventId },
+    // 収集日ではない用事（候補に出さぬ）
+    { id: crypto.randomUUID(), household_id: householdId, title: "ゴミ箱掃除", source: "native",
+      is_all_day: true, start_date: shiftYmd(today, 2), end_date: shiftYmd(today, 2) },
+    { id: crypto.randomUUID(), household_id: householdId, title: "プランの打ち合わせ", source: "native",
+      is_all_day: true, start_date: shiftYmd(today, 3), end_date: shiftYmd(today, 3) },
+  ])
+  expect(seedError, "既存の予定の seed").toBeNull()
+  // 分類の前から在る通知（候補から分類しても、変えも足しもせぬことを確かめる）
+  const { error: reminderError } = await admin.from("event_reminders").insert({
+    household_id: householdId,
+    event_uid: `${googleCalendarId}|${firstGoogleEventId}`,
+    remind_kind: "prev_day_20",
+    remind_minutes_before: null,
+  })
+  expect(reminderError, "既存の通知の seed").toBeNull()
+
+  await page.goto("/chores/garbage")
+  const panel = page.getByTestId("garbage-candidates")
+  // 同じ繰り返しの 2 回は 1 候補。用事の予定は出さぬ
+  await expect(panel.getByRole("listitem")).toHaveCount(1, { timeout: 15_000 })
+  await expect(panel).toContainText("燃えるゴミ")
+  await expect(panel).toContainText("名称の候補: 燃えるごみ（未確定）")
+  await expect(panel).not.toContainText("ゴミ箱掃除")
+  await expect(panel).not.toContainText("プランの打ち合わせ")
+  await expect(page.getByTestId("garbage-candidates-scope")).toContainText("今日から62日のあいだ")
+  // 候補を出しただけでは何も書かぬ
+  await waitForPurposes(approvedUser.id, [])
+
+  const trigger = panel.getByRole("button", { name: /^予定「燃えるゴミ」（.+）を確認して分類$/ })
+  await page.setViewportSize({ width: 390, height: 844 })
+  const box = await trigger.boundingBox()
+  expect(box?.height ?? 0).toBeGreaterThanOrEqual(MIN_TOUCH_PX)
+
+  const form = page.getByTestId("garbage-purpose-form")
+  await openOverlay(trigger, form)
+  // 通知の初期値は「変えない」。繰り返しは範囲を選ぶまで保存できぬ
+  await expect(form.getByRole("button", { name: "通知設定は変えない" })).toHaveAttribute("aria-pressed", "true")
+  await form.getByRole("button", { name: "シリーズ全体" }).click()
+  await expect(form.getByRole("button", { name: "通知設定は変えない" })).toHaveAttribute("aria-pressed", "true")
+  await form.getByRole("button", { name: "燃えるごみ", exact: true }).click()
+  await form.getByRole("button", { name: "分類を保存" }).click()
+
+  // DB: シリーズの既定は「付けぬ」。通知は seed の 1 件のまま（足しも消しもせぬ）
+  await waitForPurposes(approvedUser.id, [
+    { scope: "series", purpose: "garbage", garbage_kind: "燃えるごみ", remind_default: "none" },
+  ])
+  await waitForReminders(approvedUser.id, [{ remind_kind: "prev_day_20", remind_at: prevDay20Jst(first) }])
+
+  // 読み直し（SSR）: 2 回とも収集日に並び、候補からは消える
+  await page.reload()
+  const collections = page.getByTestId("garbage-collections")
+  await expect(collections.getByRole("listitem")).toHaveCount(2, { timeout: 15_000 })
+  await expect(collections).toContainText("燃えるごみ")
+  await expect(page.getByTestId("garbage-candidates")).toHaveCount(0)
+})
+
 test("ごみの日: シリーズ全体の分類と、この回だけ通常へ戻す例外", async ({ page, approvedUser }) => {
   const today = todayJst()
   const second = shiftYmd(today, 7)
