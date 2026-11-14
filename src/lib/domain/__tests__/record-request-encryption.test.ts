@@ -184,3 +184,35 @@ it("accepts another reader's completed migration instead of leaving a false unre
  const results = await Promise.all([readRecordRequests(owner), readRecordRequests(owner)])
  expect(results).toEqual([{ items: [entry], unreadable: 0 }, { items: [entry], unreadable: 0 }])
 })
+// Another tab can (re)initialize the same owner's marker with a new epoch while a read awaits
+// crypto (cold start, legacy marker migration). That is not an account switch.
+const swapMarkerDuringDecrypt = (next: () => string, times: number) => {
+ const original = keys.recordRequestKey
+ let swaps = 0
+ return vi.spyOn(keys, "recordRequestKey").mockImplementation(async (...args) => {
+  if (swaps < times) { swaps++; localStorage.setItem(markerKey, next()) }
+  return original(...args)
+ })
+}
+it("reads again instead of silently dropping a request when the same owner's marker gains a new epoch", async () => {
+ expect(await storeRecordRequest(entry)).toBe(true)
+ const raw = localStorage.getItem(storageKey)
+ const marker = JSON.parse(localStorage.getItem(markerKey)!)
+ swapMarkerDuringDecrypt(() => JSON.stringify({ ...marker, epoch: crypto.randomUUID() }), 1)
+ expect(await readRecordRequests(owner)).toEqual({ items: [entry], unreadable: 0 })
+ expect(localStorage.getItem(storageKey)).toBe(raw)
+})
+it("withholds and blocks, never empties, when another owner becomes active during a read", async () => {
+ expect(await storeRecordRequest(entry)).toBe(true)
+ const raw = localStorage.getItem(storageKey)
+ swapMarkerDuringDecrypt(() => JSON.stringify({ schema: 2, ownerHash: "0".repeat(64), epoch: crypto.randomUUID() }), 1)
+ expect(await readRecordRequests(owner)).toEqual({ items: [], unreadable: 1 })
+ expect(localStorage.getItem(storageKey)).toBe(raw)
+})
+it("stops after bounded re-reads and reports the remaining request when the marker keeps changing", async () => {
+ expect(await storeRecordRequest(entry)).toBe(true)
+ const marker = JSON.parse(localStorage.getItem(markerKey)!)
+ const spy = swapMarkerDuringDecrypt(() => JSON.stringify({ ...marker, epoch: crypto.randomUUID() }), Number.POSITIVE_INFINITY)
+ expect(await readRecordRequests(owner)).toEqual({ items: [], unreadable: 1 })
+ expect(spy.mock.calls.length).toBeLessThanOrEqual(3)
+})

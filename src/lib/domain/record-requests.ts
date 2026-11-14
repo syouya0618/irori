@@ -105,8 +105,9 @@ async function seal(value: RecordRequest, previous: string | null, started: stri
   return localStorage.getItem(k) === encoded
  } finally { if (localStorage.getItem(fence) === token) localStorage.removeItem(fence) }
 }
-/** Decrypt/migrate before enabling new operations. Failure never means an empty queue. */
-export async function readRecordRequests(owner: SaveOwner, kind?: RecordRequest["kind"]): Promise<{ items: RecordRequest[]; unreadable: number }> {
+type ReadResult = { items: RecordRequest[]; unreadable: number }
+/** One pass under one owner epoch. null = the active-owner marker changed mid-read. */
+async function readOnce(owner: SaveOwner, kind?: RecordRequest["kind"]): Promise<ReadResult | null> {
  const items: RecordRequest[] = []; let unreadable = 0
  try {
   const keys = scopedKeys(owner)
@@ -122,19 +123,35 @@ export async function readRecordRequests(owner: SaveOwner, kind?: RecordRequest[
     if (value && key(value) === k) {
      // Keep legacy bytes until the key transaction and encrypted write succeed.
      if (!await seal(value, raw, started)) {
-      if (localStorage.getItem(ACTIVE_OWNER) !== started || localStorage.getItem(k) === null) continue
+      if (localStorage.getItem(ACTIVE_OWNER) !== started) return null
+      if (localStorage.getItem(k) === null) continue
       // Another tab may have migrated the same immutable body while we awaited
       // crypto. Verify its completed ciphertext instead of reporting corruption.
       value = await unseal(JSON.parse(localStorage.getItem(k) ?? "null"), k)
      }
     } else value = await unseal(parsed, k)
-    if (localStorage.getItem(ACTIVE_OWNER) !== started || localStorage.getItem(k) === null) continue
+    // A changed marker is never "nothing pending": start over under the new epoch.
+    if (localStorage.getItem(ACTIVE_OWNER) !== started) return null
+    // Removed by a confirmed operation (any tab) while we awaited: really gone.
+    if (localStorage.getItem(k) === null) continue
     if (!value || key(value) !== k) { unreadable++; continue }
     if (!kind || value.kind === kind) items.push(value)
    } catch { unreadable++ }
   }
   return { items, unreadable }
  } catch { return { items: [], unreadable: 1 } }
+}
+/** Decrypt/migrate before enabling new operations. Failure never means an empty queue. */
+export async function readRecordRequests(owner: SaveOwner, kind?: RecordRequest["kind"]): Promise<ReadResult> {
+ // Another tab may (re)initialize the same owner's marker with a new epoch while this read
+ // awaits crypto (cold start, legacy marker migration). Read again from the start; an
+ // account switch makes the next pass report this owner's requests as unreadable (blocked).
+ for (let attempt = 0; attempt < 3; attempt++) {
+  const result = await readOnce(owner, kind)
+  if (result) return result
+ }
+ // The marker kept changing: block on what remains rather than report an empty queue.
+ return { items: [], unreadable: countRecordRequests(owner) }
 }
 export async function listRecordRequests(owner: SaveOwner, kind?: RecordRequest["kind"]): Promise<RecordRequest[]> { return (await readRecordRequests(owner, kind)).items }
 export async function storeRecordRequest(r: RecordRequest): Promise<boolean> {

@@ -12,6 +12,7 @@ const hashModules=path.join(path.dirname(require.resolve("@noble/hashes/sha2.js"
 const origin="http://127.0.0.1:55438"
 const previousSource=execFileSync("git",["show","83bc267336db6c2199f1ffa0c5c737c03809aaec:src/lib/domain/record-requests.ts"],{cwd:repo,encoding:"utf8"})
 const results=[]
+try{
 for(const [name,engine] of Object.entries({chromium,webkit})){
  const profile=mkdtempSync(path.join(tmpdir(),"irori-replay-"+name+"-"))
  let context
@@ -139,11 +140,37 @@ for(const [name,engine] of Object.entries({chromium,webkit})){
   const m=await import("/src/lib/domain/record-requests.js"),c="e9000000-0000-4000-8000-000000000001"
   return m.storeRecordRequest({schema:1,id,owner:{userId:"parallel-fixture",householdId:"parallel-household",childId:c},kind:"custom",payload:{operation:"record",id,childId:c,version:null,fieldId:c,value:false,loggedAt:"2026-10-31T00:00:00Z",memo:null,voided:false}})
  },id)
- const written=await Promise.all([parallel(page,"e9000000-0000-4000-8000-000000000005"),parallel(second,"e9000000-0000-4000-8000-000000000006")])
- if(!written.every(Boolean))throw Error("parallel writes")
- const restored=await page.evaluate(async()=>{const m=await import("/src/lib/domain/record-requests.js");return m.readRecordRequests({userId:"parallel-fixture",householdId:"parallel-household"})})
- if(restored.items.length!==2||restored.unreadable)throw Error("parallel key creation lost a ciphertext")
- results.push({browser:name,checks:["parallel-tabs-key-creation","cold-owner-marker-initialization"]})
+ const parallelOwner={userId:"parallel-fixture",householdId:"parallel-household"}
+ const parallelIds=["e9000000-0000-4000-8000-000000000005","e9000000-0000-4000-8000-000000000006"]
+ const written=await Promise.all([parallel(page,parallelIds[0]),parallel(second,parallelIds[1])])
+ if(!written.every(Boolean))throw Error("parallel writes: store returned "+JSON.stringify(written))
+ // 読み戻しだけを行う（再送しない）。keys = そのタブから見える暗号文の数、ids = 復号できた控え
+ const readParallel=tab=>tab.evaluate(async owner=>{
+  const m=await import("/src/lib/domain/record-requests.js")
+  const r=await m.readRecordRequests(owner)
+  return {ids:r.items.map(item=>item.id).sort(),unreadable:r.unreadable,keys:Object.keys(localStorage).filter(k=>k.startsWith(m.RECORD_REQUEST_PREFIX+owner.userId+":")).length}
+ },parallelOwner)
+ // 1) 保存の成功と復号: 書いたタブ自身では、自分の控えが遅れずに見え、復号できる
+ for(const [tab,id] of [[page,parallelIds[0]],[second,parallelIds[1]]]){
+  const own=await readParallel(tab)
+  if(!own.ids.includes(id)||own.unreadable)throw Error("own-tab readback: "+JSON.stringify({id,...own}))
+ }
+ // 2) 別タブからの可視性: 別タブへの localStorage の反映は、書込の Promise の解決より遅れうる。
+ //    同じ2件を再送せず、両方のタブの読み戻しだけを最大2秒観測する。最後まで欠ければ失敗にする。
+ for(const tab of [page,second]){
+  let seen
+  for(let i=0;i<20;i++){
+   seen=await readParallel(tab)
+   if(seen.ids.length===2&&seen.unreadable===0)break
+   if(i<19)await new Promise(resolve=>setTimeout(resolve,100))
+  }
+  if(seen.ids.length!==2||seen.unreadable)throw Error("cross-tab visibility after 2s: "+JSON.stringify(seen))
+ }
+ // 3) 永続化と鍵: ブラウザを閉じて開き直しても2つの暗号文が残り、IndexedDB の1つの鍵で両方を復号できる
+ await context.close();context=await engine.launchPersistentContext(profile);await configure(context);page=await context.newPage();await page.goto(origin)
+ const persisted=await readParallel(page)
+ if(persisted.ids.join()!==[...parallelIds].sort().join()||persisted.unreadable)throw Error("parallel writes after browser restart: "+JSON.stringify(persisted))
+ results.push({browser:name,checks:["parallel-tabs-key-creation","cold-owner-marker-initialization","own-tab-readback","cross-tab-visibility","parallel-restart-persistence"]})
  results.push({browser:name,checks:await page.evaluate(async()=>{
   const m=await import("/src/lib/domain/record-requests.js"),owner={userId:"parallel-fixture",householdId:"parallel-household",childId:"e9000000-0000-4000-8000-000000000001"}
   const open=indexedDB.open.bind(indexedDB)
@@ -202,5 +229,10 @@ for(const [name,engine] of Object.entries({chromium,webkit})){
   await context?.close()
   rmSync(profile,{recursive:true,force:true})
  }
+}
+}catch(error){
+ // ジョブのログを読めぬ時の手掛かりとして、理由を GitHub Actions の注記へ出す（値は合成のものだけ）
+ console.log("::error title=Encrypted replay storage::"+String(error?.message??error).replace(/\s+/g," ").slice(0,900)+" passed="+JSON.stringify(results.map(r=>r.browser+":"+(r.checks??[r.case]).join("+"))))
+ throw error
 }
 console.log(JSON.stringify(results,null,2))
