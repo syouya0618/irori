@@ -237,5 +237,19 @@ describe("UpcomingEventsCard: ごみの日", () => {
     await waitFor(() => expect(screen.getByText("歯医者")).toBeInTheDocument())
     expect(screen.getByText("収集の日").closest("li")).toHaveTextContent("ごみ・燃えるごみ")
     expect(screen.queryByText(/最新を確認できません/)).toBeNull()
+    // 前に読めた分類で描いておることを、カレンダーと同じく文で言う（家族の新しい分類が映っておらぬかもしれぬ）
+    await waitFor(() =>
+      expect(screen.getByTestId("upcoming-purpose-unknown")).toHaveTextContent("ごみの日の分類が最新でない可能性があります"),
+    )
+    // 次の取り直しで読めれば消える
+    mockState.purposeError = null
+    mockState.purposeRows = [
+      { id: "d8000000-0000-4000-8000-000000000001", scope: "event", target_key: GARBAGE, purpose: "garbage", garbage_kind: "燃えるごみ", remind_default: null, reminder_opt_out: false, updated_at: null },
+    ]
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"))
+    })
+    await waitFor(() => expect(screen.queryByTestId("upcoming-purpose-unknown")).toBeNull())
+    expect(screen.getByText("収集の日").closest("li")).toHaveTextContent("ごみ・燃えるごみ")
   })
 })
