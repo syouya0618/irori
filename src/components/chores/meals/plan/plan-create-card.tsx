@@ -398,12 +398,26 @@ export function PlanCreateCard({
               </Button>
             )}
             {stale ? (
-              <p role="alert" className="flex items-start gap-2 text-sm text-foreground">
-                <AlertCircle size={16} className="mt-0.5 shrink-0 text-destructive" aria-hidden="true" />
-                <span>
-                  他の端末で変更されました。読み取った希望は適用していません。最新の献立を確認してから、もう一度「希望を確認する」を押してください。
-                </span>
-              </p>
+              <div className="flex flex-col items-start gap-2">
+                <p role="alert" className="flex items-start gap-2 text-sm text-foreground">
+                  <AlertCircle size={16} className="mt-0.5 shrink-0 text-destructive" aria-hidden="true" />
+                  <span>
+                    他の端末で変更されました。読み取った希望は適用していません。
+                    {current.result.revision > view.revision
+                      ? "最新の献立を読み込んでください。"
+                      : "最新の献立に合わせて、希望を再確認してください。"}
+                  </span>
+                </p>
+                {current.result.revision > view.revision ? (
+                  <Button type="button" variant="outline" className="min-h-11" disabled={busy} onClick={onStale}>
+                    最新の献立を読み込む
+                  </Button>
+                ) : (
+                  <Button type="button" variant="outline" className="min-h-11" disabled={busy} onClick={interpret}>
+                    希望を再確認する
+                  </Button>
+                )}
+              </div>
             ) : (
               current.result.summary.length > 0 && (
                 <Button type="button" className="self-start" disabled={busy} onClick={adopt}>
