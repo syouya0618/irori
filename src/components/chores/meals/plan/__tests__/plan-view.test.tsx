@@ -473,6 +473,31 @@ describe("希望 → 読み取り結果 → 採用（C-33 / C-38 / C-81）", () 
     // 自動では適用しない。最新の献立を読み直すだけ
     expect(saveDinnerRequest).not.toHaveBeenCalled()
     expect(refresh).toHaveBeenCalledTimes(1)
+    // 古い版のまま再読込して上書きしない。次の操作を隠さずに案内する。
+    expect(within(reading).getByRole("button", { name: "最新の献立を読み込む" })).toBeEnabled()
+  })
+
+  it("C-38: 最新版が届いたあとで希望を再確認し、古い版では保存しない", async () => {
+    interpretDinnerWish
+      .mockResolvedValueOnce(interpreted({ revision: 6 }))
+      .mockResolvedValueOnce(interpreted({ revision: 6 }))
+    saveDinnerRequest.mockResolvedValue(saved({ via: "auto", revision: 7 }))
+    const { rerender } = view()
+    await ready()
+    await typeWish("金曜はカレー")
+    await click(screen.getByRole("button", { name: "希望を確認する" }))
+    const stale = await screen.findByRole("region", { name: "希望の読み取り結果" })
+    expect(within(stale).getByRole("button", { name: "最新の献立を読み込む" })).toBeEnabled()
+    expect(within(stale).queryByRole("button", { name: "この内容で献立を作る" })).toBeNull()
+
+    rerender(<PlanView {...props({ view: planView({}, { revision: 6 }) })} />)
+    const refreshed = screen.getByRole("region", { name: "希望の読み取り結果" })
+    await click(within(refreshed).getByRole("button", { name: "希望を再確認する" }))
+    expect(interpretDinnerWish).toHaveBeenCalledTimes(2)
+    const renewed = await screen.findByRole("region", { name: "希望の読み取り結果" })
+    await click(within(renewed).getByRole("button", { name: "この内容で献立を作る" }))
+    await waitFor(() => expect(saveDinnerRequest).toHaveBeenCalledTimes(1))
+    expect(saveDinnerRequest.mock.calls[0][0]).toMatchObject({ expectedRevision: 6, mode: "auto" })
   })
 
   it("C-38: 読み取った後に他の端末の変更が届いたら、採用の釦を引っ込める", async () => {
@@ -488,6 +513,14 @@ describe("希望 → 読み取り結果 → 採用（C-33 / C-38 / C-81）", () 
     const stale = screen.getByRole("region", { name: "希望の読み取り結果" })
     expect(within(stale).getByRole("alert")).toHaveTextContent("他の端末で変更されました")
     expect(within(stale).queryByRole("button", { name: "この内容で献立を作る" })).toBeNull()
+    expect(within(stale).getByRole("button", { name: "希望を再確認する" })).toBeEnabled()
+    expect(saveDinnerRequest).not.toHaveBeenCalled()
+
+    // 変更後の版に読み直せば、新しい版を持つ安全な採用操作へ戻れる。
+    interpretDinnerWish.mockResolvedValueOnce(interpreted({ revision: 6 }))
+    await click(within(stale).getByRole("button", { name: "希望を再確認する" }))
+    const renewed = await screen.findByRole("region", { name: "希望の読み取り結果" })
+    expect(within(renewed).getByRole("button", { name: "この内容で献立を作る" })).toBeEnabled()
     expect(saveDinnerRequest).not.toHaveBeenCalled()
   })
 
