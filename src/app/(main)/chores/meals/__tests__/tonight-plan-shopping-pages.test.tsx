@@ -78,13 +78,14 @@ afterEach(async () => {
 })
 
 describe("/chores/meals（今夜）", () => {
-  it("今日の献立が無ければ「まだ決まっていません」と出し、主な 2 つの操作を大きく出す", async () => {
+  it("今日の献立が無ければ、食材追加から候補・献立までの主な操作を大きく出す", async () => {
     render(await MealsTonightPage())
     expect(screen.getByTestId("tonight-state")).toHaveTextContent("今日の夕食は、まだ決まっていません。")
     const actions = within(screen.getByRole("navigation", { name: "ごはんの主な操作" })).getAllByRole("link")
-    expect(actions.map((link) => link.getAttribute("href"))).toEqual(["/chores/meals/now", "/chores/meals/plan"])
-    expect(actions[0]).toHaveTextContent("今あるもので作る")
-    expect(actions[1]).toHaveTextContent("1 週間の献立を作る")
+    expect(actions.map((link) => link.getAttribute("href"))).toEqual(["/chores/meals/pantry", "/chores/meals/now", "/chores/meals/plan"])
+    expect(actions[0]).toHaveTextContent("食材を追加する")
+    expect(actions[1]).toHaveTextContent("今あるもので作る")
+    expect(actions[2]).toHaveTextContent("1 週間の献立を作る")
     for (const link of actions) expect(link.className).toMatch(/\bmin-h-20\b/)
     expect(screen.getByTestId("tonight-to-buy")).toHaveTextContent("まだ買うものはありません。")
     // h1 は layout が持つ（page は区画から）
