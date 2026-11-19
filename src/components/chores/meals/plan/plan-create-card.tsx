@@ -306,7 +306,7 @@ export function PlanCreateCard({
         {current === null && trimmed !== "" && !interpreting && (
           <button
             type="button"
-            className="self-start text-sm text-muted-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+            className="self-start min-h-11 rounded-md px-2 py-2 text-sm text-muted-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
             disabled={busy}
             onClick={() => {
               setWish("")
@@ -323,7 +323,7 @@ export function PlanCreateCard({
           </p>
         )}
         <details className="text-xs text-muted-foreground">
-          <summary className="w-fit cursor-pointer py-1">AI補助の状態を確認</summary>
+          <summary className="inline-flex min-h-11 w-fit cursor-pointer items-center rounded-md px-2 py-2 focus-visible:outline-2 focus-visible:outline-ring">AI補助の状態を確認</summary>
           <p className="flex items-start gap-2 py-1" data-testid="meal-ai-status">
             <Bot size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
             <span>{shownAi.message}</span>
