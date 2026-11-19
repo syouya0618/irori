@@ -430,7 +430,7 @@ export function PantryBulkForm({
 
                   <details className="rounded-xl border border-border/60">
                     <summary className="cursor-pointer px-3 py-3 text-sm font-medium">数量・単位・保管場所を編集（任意）</summary>
-                    <div className="grid grid-cols-3 gap-2 px-3 pb-3">
+                    <div className="grid grid-cols-1 gap-2 px-3 pb-3 min-[360px]:grid-cols-2 sm:grid-cols-3">
                     <div className="flex min-w-0 flex-col gap-1">
                       <label htmlFor={`${formId}-${draft.id}-amount`} className="text-xs text-muted-foreground">
                         数量
