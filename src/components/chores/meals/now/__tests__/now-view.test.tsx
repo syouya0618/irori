@@ -110,6 +110,7 @@ describe("C-23 揃う候補（基本 3 案）と、別枠の分離", () => {
       expect(within(card).getByText(/約\d+分/)).toBeInTheDocument()
     }
     expect(screen.getByTestId("now-ready-count")).toHaveTextContent(`${view.readyTotal}件`)
+    expect(screen.queryByRole("link", { name: "分量を確認する料理を見る" })).not.toBeInTheDocument()
   })
 
   it("買い足しが要る料理は別の区画に出て、足りない食材と量を示す（揃う区画に混ぜない）", () => {
@@ -145,6 +146,11 @@ describe("C-23 揃う候補（基本 3 案）と、別枠の分離", () => {
     expect(within(card).getByText("分量要確認")).toBeInTheDocument()
     expect(within(card).getByText("分量を確認する食材")).toBeInTheDocument()
     expect(within(card).getByText(/数量が登録されていません/)).toBeInTheDocument()
+    // 名前だけの簡単登録直後も、候補が画面の下へ埋もれない。
+    expect(screen.getByRole("link", { name: "分量を確認する料理を見る" })).toHaveAttribute(
+      "href",
+      "#now-check-heading",
+    )
   })
 })
 
