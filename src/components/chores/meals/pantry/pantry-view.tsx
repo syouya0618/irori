@@ -1,7 +1,8 @@
 "use client"
 
 import { useId, useRef, useState } from "react"
-import { AlertCircle, CircleCheck, Refrigerator } from "lucide-react"
+import Link from "next/link"
+import { AlertCircle, ArrowRight, CircleCheck, Refrigerator } from "lucide-react"
 
 import { EmptyState } from "@/components/chores/shared/empty-state"
 import { PendingChoreNotice } from "@/components/chores/shared/pending-chore-notice"
@@ -14,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import type { ChoreOwner } from "@/lib/domain/chore-pending"
+import { MEALS_NOW_HREF } from "@/components/chores/meals/shared/meal-routes"
 import { PANTRY_STATUS_LABELS, PANTRY_STORAGE_LABELS } from "@/lib/meals/server/format"
 import type { AddPantryItemsRequest, PantryItemFields } from "@/lib/meals/server/pantry-requests"
 import { segmentCn } from "@/lib/utils/segment-cn"
@@ -51,6 +53,8 @@ const GROUPING_LABELS: Record<Grouping, string> = {
 interface Notice {
   text: string
   tone: "status" | "alert"
+  /** 食材を新規登録した直後だけ、次の操作を案内する。 */
+  toNow?: boolean
 }
 
 interface Group {
@@ -160,6 +164,7 @@ export function PantryView({ owner, today, items, unreadable }: PantryViewProps)
               ? `${result.items.length}件の食材は、既に登録されていました。`
               : `${result.items.length}件の食材を登録しました。`,
           tone: "status",
+          toNow: true,
         })
         return
       }
@@ -269,7 +274,7 @@ export function PantryView({ owner, today, items, unreadable }: PantryViewProps)
     <div className="flex flex-col gap-6">
       <section aria-labelledby={`${baseId}-bulk-heading`} className="flex flex-col gap-3">
         <h2 id={`${baseId}-bulk-heading`} className="text-sm font-semibold text-muted-foreground">
-          まとめて入力
+          食材を追加
         </h2>
         <PantryBulkForm
           key={bulkKey}
@@ -287,6 +292,16 @@ export function PantryView({ owner, today, items, unreadable }: PantryViewProps)
       </section>
 
       {editing === undefined && message}
+      {editing === undefined && notice?.toNow && (
+        <Link
+          href={MEALS_NOW_HREF}
+          prefetch={false}
+          className="inline-flex min-h-11 w-fit items-center gap-2 rounded-xl border border-border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          登録した食材から料理を探す
+          <ArrowRight size={16} aria-hidden="true" />
+        </Link>
+      )}
       <PendingChoreNotice save={pendingSave} showMessage={false} />
 
       {unreadable > 0 && (
@@ -308,7 +323,7 @@ export function PantryView({ owner, today, items, unreadable }: PantryViewProps)
             icon={Refrigerator}
             // 読めない食材が在るときに「まだありません」と言わない（在る食材を無いと偽らない）
             title={unreadable > 0 ? "表示できる食材がありません" : "食材がまだ登録されていません"}
-            description="家にある食材を上の「まとめて入力」に書くと、今あるもので作れる料理を探せます。数量は分かる範囲でかまいません。"
+            description="家にある食材の名前を入力するだけで登録できます。数量や保管場所は後からでも設定できます。"
           >
             <Button type="button" variant="outline" onClick={() => document.getElementById(textareaId)?.focus()}>
               食材を入力する
