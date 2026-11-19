@@ -223,7 +223,8 @@ test("ごはん: 金曜を固定 → 7 日分 → 確定 → 買い物 → 家�
   await expect(page.getByTestId("plan-gap")).toHaveCount(0)
   await measureTouchTargets(page, "献立（料理つき）", violations)
 
-  // ── 4. もう一度 7 日分を作り直しても、金曜のカレーは同じ行のまま固定で残る ───────────
+  // ── 4. 前の希望は勝手に捨てず、利用者が外してから通常の7日分を作り直す ───────────
+  await page.getByRole("button", { name: "希望を消して通常作成" }).click()
   await expect(createButton).toBeEnabled({ timeout: 15_000 })
   await createButton.click()
   await waitForRevisionAfter(householdId, firstRevision)
