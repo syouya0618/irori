@@ -400,6 +400,7 @@ describe("希望 → 読み取り結果 → 採用（C-33 / C-38 / C-81）", () 
     expect(createButton()).toBeEnabled()
     expect(screen.queryByRole("button", { name: "希望を確認する" })).toBeNull()
     await typeWish(" 金曜はカレー、魚多め、30分以内、なんとなく軽め ")
+    expect(screen.queryByRole("button", { name: "7日分の献立を作る" })).toBeNull()
     await click(screen.getByRole("button", { name: "希望を確認する" }))
     expect(interpretDinnerWish).toHaveBeenCalledWith({
       wish: "金曜はカレー、魚多め、30分以内、なんとなく軽め",
@@ -520,6 +521,25 @@ describe("希望 → 読み取り結果 → 採用（C-33 / C-38 / C-81）", () 
     await click(screen.getByRole("button", { name: "希望を消して通常作成" }))
     await waitFor(() => expect(createButton()).toBeEnabled())
     await click(createButton())
+    await waitFor(() => expect(saveDinnerRequest).toHaveBeenCalledTimes(1))
+    expect(saveDinnerRequest.mock.calls[0][0]).toMatchObject({ constraints: null, mode: "auto" })
+  })
+
+  it("希望から条件を1件も読めなくても勝手に通常作成しない。明示的に希望なしを選べる", async () => {
+    interpretDinnerWish.mockResolvedValue(interpreted({
+      summary: [],
+      constraints: { pins: [], preferTags: [], avoidTags: [], maxMinutes: null, preferRecipeIds: [] },
+      unparsed: ["適当な料理"],
+    }))
+    saveDinnerRequest.mockResolvedValue(saved({ via: "auto" }))
+    view()
+    await ready()
+    await typeWish("適当な料理")
+    await click(screen.getByRole("button", { name: "希望を確認する" }))
+    const reading = await screen.findByRole("region", { name: "希望の読み取り結果" })
+    expect(reading).toHaveTextContent("読み取れた条件はありませんでした")
+    expect(saveDinnerRequest).not.toHaveBeenCalled()
+    await click(within(reading).getByRole("button", { name: "希望を使わず7日分の献立を作る" }))
     await waitFor(() => expect(saveDinnerRequest).toHaveBeenCalledTimes(1))
     expect(saveDinnerRequest.mock.calls[0][0]).toMatchObject({ constraints: null, mode: "auto" })
   })
