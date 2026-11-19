@@ -31,7 +31,7 @@ jobs:
             'eslint-config-next': '16.4.6'
           }
           for (const [name, version] of Object.entries(expected)) {
-            const got = require(name + '/package.json').version
+            const got = JSON.parse(require('node:fs').readFileSync('node_modules/' + name + '/package.json', 'utf8')).version
             console.log(name + ': ' + got)
             if (got !== version) throw new Error(name + ': expected ' + version + ', got ' + got)
           }
