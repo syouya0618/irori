@@ -1,0 +1,40 @@
+# Temporary branch-only production dependency audit; remove once the run has been inspected.
+name: Runtime dependency audit (temporary)
+
+on:
+  push:
+    branches:
+      - fix/security-next-react-20261120
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Verify lockfile resolves exact patched versions
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          node - <<'NODE'
+          const expected = {
+            next: '16.4.6',
+            react: '19.2.9',
+            'react-dom': '19.2.9',
+            'eslint-config-next': '16.4.6'
+          }
+          for (const [name, version] of Object.entries(expected)) {
+            const got = require(name + '/package.json').version
+            console.log(name + ': ' + got)
+            if (got !== version) throw new Error(name + ': expected ' + version + ', got ' + got)
+          }
+          NODE
+      - name: Check production dependencies against advisory registry
+        run: pnpm audit --prod --audit-level high
