@@ -183,6 +183,18 @@ export function NowView({ view }: { view: NowViewData }) {
           {view.maxCookMinutes !== null && `（調理時間の上限 ${view.maxCookMinutes}分）`}。
         </p>
         {view.usingDefaultServings && <MealNotice kind="defaultServings" />}
+        {view.readyTotal === 0 && view.checkTotal > 0 && (
+          <div className="flex flex-col gap-2 rounded-xl border border-border px-3 py-3 text-sm">
+            <p>
+              食材の数量が分からなくても、候補は{view.checkTotal}件あります。
+              作れるかどうか、分量を確かめて選べます。
+            </p>
+            <a href="#now-check-heading" className={`${ACTION_LINK} w-fit`}>
+              分量を確認する料理を見る
+              <ChevronRight size={16} aria-hidden="true" />
+            </a>
+          </div>
+        )}
       </div>
 
       <ExclusionHoldNotice notice={view.exclusions} />
