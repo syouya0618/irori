@@ -146,6 +146,101 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
+describe("食材のかんたん登録", () => {
+  it("辞書にある食材は名前だけで登録でき、数量・保管場所・期限を必須にしない", async () => {
+    actions.previewPantryText.mockResolvedValue({
+      ok: true,
+      items: [preview({ name: "玉ねぎ", quantity: null })],
+      resolvedCount: 1,
+      unresolvedNames: [],
+      truncated: false,
+    })
+    actions.addPantryItems.mockImplementation(async (request) => ({
+      status: "saved",
+      items: request.items.map((entry) => ({ ...stored(), id: entry.id, name: entry.name })),
+      saved: request.items.length,
+      replayed: 0,
+    }))
+    view()
+    await ready()
+    fireEvent.change(bulkBox(), { target: { value: "玉ねぎ" } })
+    await click(screen.getByRole("button", { name: "そのまま登録" }))
+    await waitFor(() => expect(actions.addPantryItems).toHaveBeenCalledTimes(1))
+    const request = actions.addPantryItems.mock.calls[0][0]
+    expect(request.items).toHaveLength(1)
+    expect(request.items[0]).toMatchObject({
+      ingredientId: null,
+      name: "玉ねぎ",
+      quantity: null,
+      storage: null,
+      expiresOn: null,
+      confirmedOn: TODAY,
+      status: "have",
+    })
+    expect(request.items[0].id).toMatch(UUID)
+    expect(screen.queryByTestId("pantry-draft")).not.toBeInTheDocument()
+    await waitFor(() => expect(bulkBox()).toHaveValue(""))
+  })
+
+  it("数量付きの複数食材も、確実に読めれば一度で登録できる", async () => {
+    actions.previewPantryText.mockResolvedValue({
+      ok: true,
+      items: [
+        preview({ name: "玉ねぎ", quantity: { amount: 2, unit: "piece" }, quantityText: "2個" }),
+        preview({ name: "牛乳", ingredientId: "milk", ingredientName: "牛乳", quantity: null }),
+      ],
+      resolvedCount: 2,
+      unresolvedNames: [],
+      truncated: false,
+    })
+    actions.addPantryItems.mockResolvedValue({ status: "saved", items: [], saved: 2, replayed: 0 })
+    view()
+    await ready()
+    fireEvent.change(bulkBox(), { target: { value: "玉ねぎ2個、牛乳" } })
+    await click(screen.getByRole("button", { name: "そのまま登録" }))
+    await waitFor(() => expect(actions.addPantryItems).toHaveBeenCalledTimes(1))
+    expect(actions.addPantryItems.mock.calls[0][0].items.map((entry) => entry.quantity)).toEqual([
+      { amount: 2, unit: "piece" }, null,
+    ])
+  })
+
+  it("辞書にない食材・読めない数量は自動登録せず、修正できる確認画面を出す", async () => {
+    actions.previewPantryText.mockResolvedValue(PREVIEW_OK)
+    view()
+    await ready()
+    fireEvent.change(bulkBox(), { target: { value: "玉ねぎ 2個、謎の葉、豚こま 300" } })
+    await click(screen.getByRole("button", { name: "そのまま登録" }))
+    await waitFor(() => expect(screen.getAllByTestId("pantry-draft")).toHaveLength(3))
+    expect(actions.addPantryItems).not.toHaveBeenCalled()
+    expect(screen.getByText(/確認が必要な食材があります/)).toBeInTheDocument()
+    expect(screen.getByText("数量・単位・保管場所を編集（任意）", { exact: true })).toBeInTheDocument()
+    expect(bulkBox()).toHaveValue("玉ねぎ 2個、謎の葉、豚こま 300")
+  })
+
+  it("件数超過は一部だけを黙って保存せず、切り捨てを知らせる", async () => {
+    actions.previewPantryText.mockResolvedValue({ ...PREVIEW_OK, truncated: true })
+    view()
+    await ready()
+    fireEvent.change(bulkBox(), { target: { value: "玉ねぎ 2個" } })
+    await click(screen.getByRole("button", { name: "そのまま登録" }))
+    await waitFor(() => expect(screen.getAllByTestId("pantry-draft")).toHaveLength(3))
+    expect(screen.getByRole("alert")).toHaveTextContent("最初の50件だけを読み取りました")
+    expect(actions.addPantryItems).not.toHaveBeenCalled()
+  })
+
+  it("読み取りがオフラインなら入力を残し、保存も行わない", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {})
+    actions.previewPantryText.mockRejectedValueOnce(new TypeError("Failed to fetch"))
+    view()
+    await ready()
+    fireEvent.change(bulkBox(), { target: { value: "玉ねぎ" } })
+    await click(screen.getByRole("button", { name: "そのまま登録" }))
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("通信できませんでした"))
+    expect(bulkBox()).toHaveValue("玉ねぎ")
+    expect(actions.addPantryItems).not.toHaveBeenCalled()
+  })
+})
+
 describe("C-21 まとめ入力 → 確認 → 登録", () => {
   it("入力欄に例（改行・読点の区切り）が出ており、読み取りは保存しない", async () => {
     actions.previewPantryText.mockResolvedValue(PREVIEW_OK)
