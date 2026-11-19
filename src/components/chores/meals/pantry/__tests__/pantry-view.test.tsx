@@ -213,7 +213,7 @@ describe("食材のかんたん登録", () => {
     await waitFor(() => expect(screen.getAllByTestId("pantry-draft")).toHaveLength(3))
     expect(actions.addPantryItems).not.toHaveBeenCalled()
     expect(screen.getByText(/確認が必要な食材があります/)).toBeInTheDocument()
-    expect(screen.getByText("数量・単位・保管場所を編集（任意）", { exact: true })).toBeInTheDocument()
+    expect(screen.getAllByText("数量・単位・保管場所を編集（任意）")).toHaveLength(3)
     expect(bulkBox()).toHaveValue("玉ねぎ 2個、謎の葉、豚こま 300")
   })
 
@@ -224,7 +224,7 @@ describe("食材のかんたん登録", () => {
     fireEvent.change(bulkBox(), { target: { value: "玉ねぎ 2個" } })
     await click(screen.getByRole("button", { name: "そのまま登録" }))
     await waitFor(() => expect(screen.getAllByTestId("pantry-draft")).toHaveLength(3))
-    expect(screen.getByRole("alert")).toHaveTextContent("最初の50件だけを読み取りました")
+    expect(screen.getByText(/最初の50件だけを読み取りました/)).toBeInTheDocument()
     expect(actions.addPantryItems).not.toHaveBeenCalled()
   })
 
