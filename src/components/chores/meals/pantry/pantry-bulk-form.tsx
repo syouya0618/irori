@@ -1,7 +1,7 @@
 "use client"
 
-import { useId, useState, useTransition } from "react"
-import { CircleCheck, CircleHelp, Info, Loader2, X } from "lucide-react"
+import { useId, useRef, useState, useTransition } from "react"
+import { CircleCheck, CircleHelp, Info, Loader2, Plus, X } from "lucide-react"
 
 import { previewPantryText } from "@/app/(main)/chores/meals/pantry/actions"
 import { Button } from "@/components/ui/button"
@@ -121,15 +121,79 @@ export function PantryBulkForm({
   const [truncated, setTruncated] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [reading, startReading] = useTransition()
+  const previewingRef = useRef(false)
 
   const helpId = `${formId}-help`
   const errorId = `${formId}-error`
 
-  function read() {
+  /** 読み取りが確実な食材だけを直接登録。不明点は既存の確認画面へ送る。 */
+  function quickAdd() {
+    if (disabled || saving || previewingRef.current) return
     if (text.trim() === "") {
       setError("食材の名前を入力してください。")
       return
     }
+    previewingRef.current = true
+    setError(null)
+    startReading(async () => {
+      try {
+        const result = await previewPantryText(text)
+        if (!result.ok) {
+          setError(result.error)
+          return
+        }
+        if (result.items.length === 0) {
+          setError("食材の名前を入力してください。")
+          return
+        }
+        const needsReview = result.truncated || result.items.some(
+          (item) => item.ingredientId === null || item.issues.length > 0 ||
+            item.name.trim() === "" || (item.quantityText !== null && item.quantity === null),
+        )
+        if (needsReview) {
+          // 辞書にない食材・読めない数量・件数超過を、黙って登録／切り捨てない。
+          setDrafts(result.items.map(draftOf))
+          setTruncated(result.truncated)
+          setError("確認が必要な食材があります。名前や数量を確認してから登録してください。")
+          onDraftChange?.(true)
+          return
+        }
+        const request: AddPantryItemsRequest = {
+          items: result.items.map((item) => ({
+            id: newClientId(),
+            // サーバーが登録直前に辞書照合し直す。推測の保管場所・期限は入れない。
+            ingredientId: null,
+            name: item.name.trim(),
+            quantity: item.quantity,
+            status: "have",
+            useSoon: false,
+            storage: null,
+            expiresOn: null,
+            confirmedOn: today,
+          })),
+        }
+        const issue = addPantryItemsIssue(request)
+        if (issue !== null) {
+          setError(PANTRY_INPUT_MESSAGES[issue])
+          return
+        }
+        if (!onSubmit(request)) setError("ほかの保存を確認中です。完了後にもう一度お試しください。")
+      } catch (err) {
+        logOfflineError("[pantry-bulk-form] quickAdd", err)
+        setError(OFFLINE_ERROR_MESSAGE)
+      } finally {
+        previewingRef.current = false
+      }
+    })
+  }
+
+  function read() {
+    if (previewingRef.current) return
+    if (text.trim() === "") {
+      setError("食材の名前を入力してください。")
+      return
+    }
+    previewingRef.current = true
     setError(null)
     startReading(async () => {
       try {
@@ -142,9 +206,10 @@ export function PantryBulkForm({
         setTruncated(result.truncated)
         onDraftChange?.(true)
       } catch (err) {
-        // 読み取りは保存を伴わない。届かなかっただけなので、もう一度押せばよい
         logOfflineError("[pantry-bulk-form] previewPantryText", err)
         setError(OFFLINE_ERROR_MESSAGE)
+      } finally {
+        previewingRef.current = false
       }
     })
   }
@@ -213,18 +278,18 @@ export function PantryBulkForm({
         <Textarea
           id={textareaId}
           value={text}
-          rows={4}
+          rows={2}
           maxLength={PANTRY_TEXT_MAX}
           placeholder={PANTRY_BULK_PLACEHOLDER}
           aria-describedby={error && drafts === null ? `${helpId} ${errorId}` : helpId}
-          disabled={reading || drafts !== null}
+          disabled={reading || saving || drafts !== null}
           onChange={(event) => {
             setText(event.target.value)
             setError(null)
           }}
         />
         <p id={helpId} className="text-xs text-muted-foreground">
-          改行か「、」で区切って、まとめて入力できます（1 回に{PANTRY_BULK_MAX}件まで）。数量は「2個」「500ml」のように単位を付けると読み取ります。数量は書かなくても登録できます。
+          食材名だけでOK。改行・「、」でまとめて追加できます。数量・単位・保管場所は任意です（最大{PANTRY_BULK_MAX}件）。読めない食材は保存せず確認画面へ進みます。
         </p>
         {error && drafts === null && (
           <p id={errorId} role="alert" className="text-sm text-destructive">
@@ -232,10 +297,15 @@ export function PantryBulkForm({
           </p>
         )}
         {drafts === null && (
-          <Button type="button" className="self-start" disabled={reading} onClick={read}>
-            {reading && <Loader2 className="animate-spin" aria-hidden="true" />}
-            {reading ? "読み取り中…" : "内容を確認"}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" className="min-h-11 flex-1 sm:flex-none" disabled={disabled || reading} onClick={quickAdd}>
+              {reading ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
+              {reading ? "読み取り中…" : "そのまま登録"}
+            </Button>
+            <Button type="button" variant="ghost" disabled={reading} onClick={read}>
+              内容を確認
+            </Button>
+          </div>
         )}
       </div>
 
@@ -358,7 +428,9 @@ export function PantryBulkForm({
                     </ul>
                   )}
 
-                  <div className="grid grid-cols-3 gap-2">
+                  <details className="rounded-xl border border-border/60">
+                    <summary className="cursor-pointer px-3 py-3 text-sm font-medium">数量・単位・保管場所を編集（任意）</summary>
+                    <div className="grid grid-cols-1 gap-2 px-3 pb-3 min-[360px]:grid-cols-2 sm:grid-cols-3">
                     <div className="flex min-w-0 flex-col gap-1">
                       <label htmlFor={`${formId}-${draft.id}-amount`} className="text-xs text-muted-foreground">
                         数量
@@ -417,7 +489,8 @@ export function PantryBulkForm({
                         ))}
                       </select>
                     </div>
-                  </div>
+                    </div>
+                  </details>
                 </li>
               )
             })}

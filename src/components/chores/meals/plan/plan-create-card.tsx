@@ -2,7 +2,7 @@
 
 import { useId, useRef, useState, type TransitionStartFunction } from "react"
 import Link from "next/link"
-import { AlertCircle, Bot, Loader2, Sparkles, Wand2 } from "lucide-react"
+import { AlertCircle, Bot, Loader2, Sparkles } from "lucide-react"
 
 import { interpretDinnerWish } from "@/app/(main)/chores/meals/plan/actions"
 import { MealNotice } from "@/components/chores/meals/shared/meal-notices"
@@ -47,7 +47,7 @@ export interface GenerateInput {
 }
 
 const READ_FAILED =
-  "希望を読み取れませんでした。通信状況を確認して、もう一度お試しください。希望を使わない作成は、そのまま使えます。"
+  "希望を読み取れませんでした。通信状況を確認して、もう一度お試しください。希望を消すと通常の献立作成ができます。"
 
 const DAY_OPTIONS = Array.from(
   { length: MEAL_RANGE_MAX_DAYS - MEAL_RANGE_MIN_DAYS + 1 },
@@ -71,8 +71,8 @@ function summaryKey(item: WishSummaryItem): string {
 /**
  * 献立を作る操作（開始日・日数・希望）。
  *
- * - 「〇日分の献立を作る」は 1 回の押下で作る（希望は任意）。AI 補助が未設定・上限・停止中でも使える。
- * - 「希望を反映」は希望の文を読み取るだけで、**献立は変えない**。読み取った内容（固定する日と料理・
+ * - 希望がなければ 1 回で作成。希望があれば同じ主ボタンで読み取って確認画面へ進む。
+ * - 希望の文を読み取るだけでは**献立は変えない**。読み取った内容（固定する日と料理・
  *   反映できなかった部分）を見せ、利用者が「この内容で献立を作る」を押して初めて作成へ進む。
  * - 読み取りを待つ間・読み取った後に献立が変わっていたら、読み取った希望は適用しない
  *   （「他の端末で変更されました」。採用の釦を出さない）。サーバーも採用の直前に版と除外を検証し直す。
@@ -263,21 +263,6 @@ export function PlanCreateCard({
         </span>
       </div>
 
-      <Button
-        type="button"
-        className="min-h-12 w-full text-base"
-        disabled={busy}
-        onClick={() =>
-          onGenerate({ constraints: null, mode: "auto", expectedRevision: view.revision, includeStaple })
-        }
-      >
-        <Sparkles aria-hidden="true" />
-        {days}日分の献立を作る
-      </Button>
-      <p className="text-xs text-muted-foreground">
-        {formatMealDateShort(view.from)}から{days}日分を、提案として作ります。固定した料理・作った料理はそのまま残します。
-      </p>
-
       <div className="flex flex-col gap-2 border-t border-border/60 pt-4">
         <label htmlFor={wishId} className="text-sm font-medium">
           希望（任意）
@@ -297,20 +282,53 @@ export function PlanCreateCard({
         <div id={wishHelpId}>
           <MealNotice kind="aiWish" />
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          className="self-start"
-          disabled={busy || trimmed === ""}
-          onClick={interpret}
-        >
-          {interpreting ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Wand2 aria-hidden="true" />}
-          {interpreting ? "希望を読み取っています…" : "希望を反映"}
-        </Button>
-        <p className="flex items-start gap-2 text-xs text-muted-foreground" data-testid="meal-ai-status">
-          <Bot size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
-          <span>{shownAi.message}</span>
-        </p>
+        {current === null && (
+          <Button
+            type="button"
+            className="min-h-12 w-full text-base"
+            disabled={busy}
+            onClick={() => {
+              if (trimmed !== "") {
+                interpret()
+                return
+              }
+              onGenerate({ constraints: null, mode: "auto", expectedRevision: view.revision, includeStaple })
+            }}
+          >
+            {interpreting ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
+            {interpreting
+              ? "希望を読み取っています…"
+              : trimmed === ""
+                ? `${days}日分の献立を作る`
+                : "希望を確認する"}
+          </Button>
+        )}
+        {current === null && trimmed !== "" && !interpreting && (
+          <button
+            type="button"
+            className="self-start min-h-11 rounded-md px-2 py-2 text-sm text-muted-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+            disabled={busy}
+            onClick={() => {
+              setWish("")
+              setReadError(null)
+              setReading(null)
+            }}
+          >
+            希望を消して通常作成
+          </button>
+        )}
+        {current === null && trimmed === "" && (
+          <p className="text-xs text-muted-foreground">
+            {formatMealDateShort(view.from)}から{days}日分を提案します。固定した料理・作った料理はそのまま残します。
+          </p>
+        )}
+        <details className="text-xs text-muted-foreground">
+          <summary className="min-h-11 w-fit cursor-pointer rounded-md px-2 py-3 focus-visible:outline-2 focus-visible:outline-ring">AI補助の状態を確認</summary>
+          <p className="flex items-start gap-2 py-1" data-testid="meal-ai-status">
+            <Bot size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+            <span>{shownAi.message}</span>
+          </p>
+        </details>
 
         {readError !== null && (
           <p role="alert" className="flex items-start gap-2 text-sm text-foreground">
@@ -332,7 +350,7 @@ export function PlanCreateCard({
               。この時点では、献立は変わっていません。
             </p>
             {current.result.summary.length === 0 ? (
-              <p className="text-sm">読み取れた条件はありませんでした。希望を使わない作成は、そのまま使えます。</p>
+              <p className="text-sm">読み取れた条件はありませんでした。内容を直すか、希望を使わずに作成できます。</p>
             ) : (
               <ul className="flex list-disc flex-col gap-1 pl-5 text-sm">
                 {current.result.summary.map((item) => (
@@ -368,13 +386,38 @@ export function PlanCreateCard({
                 {text}
               </p>
             ))}
+            {!stale && current.result.summary.length === 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                className="self-start"
+                disabled={busy}
+                onClick={() => onGenerate({ constraints: null, mode: "auto", expectedRevision: current.result.revision, includeStaple })}
+              >
+                希望を使わず{days}日分の献立を作る
+              </Button>
+            )}
             {stale ? (
-              <p role="alert" className="flex items-start gap-2 text-sm text-foreground">
-                <AlertCircle size={16} className="mt-0.5 shrink-0 text-destructive" aria-hidden="true" />
-                <span>
-                  他の端末で変更されました。読み取った希望は適用していません。最新の献立を確認してから、もう一度「希望を反映」を押してください。
-                </span>
-              </p>
+              <div className="flex flex-col items-start gap-2">
+                <p role="alert" className="flex items-start gap-2 text-sm text-foreground">
+                  <AlertCircle size={16} className="mt-0.5 shrink-0 text-destructive" aria-hidden="true" />
+                  <span>
+                    他の端末で変更されました。読み取った希望は適用していません。
+                    {current.result.revision > view.revision
+                      ? "最新の献立を読み込んでください。"
+                      : "最新の献立に合わせて、希望を再確認してください。"}
+                  </span>
+                </p>
+                {current.result.revision > view.revision ? (
+                  <Button type="button" variant="outline" className="min-h-11" disabled={busy} onClick={onStale}>
+                    最新の献立を読み込む
+                  </Button>
+                ) : (
+                  <Button type="button" variant="outline" className="min-h-11" disabled={busy} onClick={interpret}>
+                    希望を再確認する
+                  </Button>
+                )}
+              </div>
             ) : (
               current.result.summary.length > 0 && (
                 <Button type="button" className="self-start" disabled={busy} onClick={adopt}>

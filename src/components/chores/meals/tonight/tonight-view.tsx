@@ -5,6 +5,7 @@ import {
   ChevronRight,
   CircleAlert,
   CookingPot,
+  PackagePlus,
   Refrigerator,
   ShoppingCart,
   type LucideIcon,
@@ -15,6 +16,7 @@ import { planHref, planStartBounds } from "@/components/chores/meals/plan/plan-q
 import { ExclusionHoldNotice } from "@/components/chores/meals/shared/exclusion-hold-notice"
 import {
   MEALS_NOW_HREF,
+  MEALS_PANTRY_HREF,
   MEALS_PLAN_HREF,
   MEALS_SHOPPING_HREF,
 } from "@/components/chores/meals/shared/meal-routes"
@@ -75,7 +77,7 @@ export interface TonightViewProps {
 }
 
 /**
- * 今夜（/chores/meals）。今日の夕食の状態、主な 2 つの操作、まだ買うものの件数、
+ * 今夜（/chores/meals）。今日の夕食の状態、食材登録・今日の候補・週間献立への操作、まだ買うものの件数、
  * 使わない食材の設定との衝突の警告を出す。
  *
  * 境界指令を持たない（Server Component として描く。保存の操作は持たない）。
@@ -194,6 +196,12 @@ export function TonightView({ summary, conflicts, unreadableEntries }: TonightVi
       )}
 
       <nav aria-label="ごはんの主な操作" className="flex flex-col gap-3">
+        <ActionCard
+          href={MEALS_PANTRY_HREF}
+          icon={PackagePlus}
+          title="食材を追加する"
+          description="名前だけで登録できます。数量や保管場所は後からでもOK"
+        />
         <ActionCard
           href={MEALS_NOW_HREF}
           icon={Refrigerator}
