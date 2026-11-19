@@ -314,6 +314,7 @@ describe("C-21 まとめ入力 → 確認 → 登録", () => {
     expect(request.items[2]).toMatchObject({ name: "豚こま", quantity: { amount: 300, unit: "g" } })
 
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("3件の食材を登録しました。"))
+    expect(screen.getByRole("link", { name: "登録した食材から料理を探す" })).toHaveAttribute("href", "/chores/meals/now")
     // 確定したら、まとめ入力を空に戻す（同じ文をもう一度登録させない）
     expect(screen.queryByTestId("pantry-draft")).not.toBeInTheDocument()
     expect(bulkBox()).toHaveValue("")
