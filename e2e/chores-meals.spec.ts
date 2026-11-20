@@ -116,8 +116,9 @@ test("ごはん: 食材を登録すると、「今あるもので」にその食
   await page.getByRole("link", { name: /^ごはん/ }).click()
   await expect(page).toHaveURL(/\/chores\/meals$/, { timeout: 15_000 })
   await expect(page.getByRole("heading", { level: 1, name: "ごはん" })).toBeVisible()
-  await expect(page.getByTestId("tonight-state")).toContainText("まだ決まっていません")
-  await page.getByRole("link", { name: /今あるもので作る/ }).click()
+  // 新ホームは月〜日のスケジュール。従来の「今あるもので」は直接URLで互換提供。
+  await expect(page.getByTestId("schedule-week").locator(":scope > li")).toHaveCount(7)
+  await page.goto("/chores/meals/now")
   await expect(page).toHaveURL(/\/chores\/meals\/now$/, { timeout: 15_000 })
 
   // 食材が無いうちは「揃う」「分量を確認」に候補を捏造せず、登録へ誘導する。買い足し案は別の枠に、
@@ -165,7 +166,8 @@ test("ごはん: 食材を登録すると、「今あるもので」にその食
   }).toPass({ timeout: 15_000 })
 
   // ── 3. 「今あるもので」: 登録した食材で作れる料理が、買い足しの枠ではない所に出る ──────
-  await page.getByRole("navigation", { name: "ごはんの画面" }).getByRole("link", { name: "今あるもので" }).click()
+  // 3タブにまとめた後も「今あるもので」の旧URLは利用できる
+  await page.goto("/chores/meals/now")
   await expect(page).toHaveURL(/\/chores\/meals\/now$/, { timeout: 15_000 })
   const candidate = page.getByTestId("now-candidate").filter({ hasText: "鮭の塩焼き" })
   await expect(candidate).toBeVisible({ timeout: 15_000 })
@@ -686,7 +688,8 @@ test("ごはん ④: 今あるもので選んだ副菜を、固定したカレ�
   await expect(page.getByRole("status").filter({ hasText: "2件の食材を登録しました。" })).toBeVisible({ timeout: 15_000 })
 
   // ── 4. 今あるもので → 副菜を、固定したカレーの在る金曜へ足す ──────────────────────
-  await page.getByRole("navigation", { name: "ごはんの画面" }).getByRole("link", { name: "今あるもので" }).click()
+  // 3タブにまとめた後も「今あるもので」の旧URLは利用できる
+  await page.goto("/chores/meals/now")
   await expect(page).toHaveURL(/\/chores\/meals\/now$/, { timeout: 15_000 })
   const candidate = page.getByTestId("now-candidate").filter({ hasText: "ほうれん草のおひたし" }).first()
   await expect(candidate).toBeVisible({ timeout: 15_000 })
