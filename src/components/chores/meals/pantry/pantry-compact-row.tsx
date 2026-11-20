@@ -1,6 +1,7 @@
 "use client"
 
 import { ChevronRight } from "lucide-react"
+import { IngredientPhoto } from "@/components/chores/meals/shared/meal-photo"
 
 import {
   PANTRY_STORAGE_LABELS,
@@ -62,9 +63,7 @@ export function PantryCompactRow({
         onClick={onEdit}
         className="flex min-h-18 w-full items-center gap-3 px-3 py-3 text-left focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50"
       >
-        <span className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-3xl" aria-hidden="true">
-          {GLYPHS[item.ingredientId ?? ""] ?? "🥗"}
-        </span>
+        <IngredientPhoto ingredientId={item.ingredientId} fallback={GLYPHS[item.ingredientId ?? ""] ?? "🥗"} className="size-14" />
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="text-base font-semibold break-words">{item.name}</span>
           <span className="text-sm text-muted-foreground">
