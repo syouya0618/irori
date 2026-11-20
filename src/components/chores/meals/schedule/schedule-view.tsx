@@ -13,6 +13,7 @@ import {
 } from "lucide-react"
 
 import { MEALS_PANTRY_HREF, mealRecipeHref } from "@/components/chores/meals/shared/meal-routes"
+import { MealPhoto } from "@/components/chores/meals/shared/meal-photo"
 import { PendingChoreNotice } from "@/components/chores/shared/pending-chore-notice"
 import { RefreshOnVisible } from "@/components/chores/shared/refresh-on-visible"
 import { useChoreSave, type ChoreSaveOutcome } from "@/components/chores/shared/use-chore-save"
@@ -242,7 +243,7 @@ export function ScheduleView({
                   return (
                     <section key={entry.id} className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-3" aria-label={entry.title}>
                       <div className="flex items-center gap-3">
-                        <div aria-hidden="true" className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-3xl">{roleIcon(entry)}</div>
+                        <MealPhoto recipeId={entry.recipeId} fallback={roleIcon(entry)} className="size-14" />
                         <div className="flex min-w-0 flex-1 flex-col gap-1">
                           <p className="text-base font-semibold break-words">{entry.title}</p>
                           <p className="text-xs text-muted-foreground">
