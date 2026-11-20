@@ -31,15 +31,17 @@ const GLYPHS: Readonly<Record<string, string>> = {
 /** カンプの写真は現物写真と誤認しないよう、ここでは絵文字アイコンで表現する。 */
 export function PantryCompactRow({
   item,
+  today,
   disabled,
   onEdit,
 }: {
   item: PantryItemView
+  today: string
   disabled: boolean
   onEdit: () => void
 }) {
   const quantity = formatQuantityJa(item.quantity)
-  const expires = item.expiresOn === null ? null : formatDaysLeft(item.expiresOn, item.confirmedOn)
+  const expires = item.expiresOn === null ? null : formatDaysLeft(item.expiresOn, today)
   const storage = item.storage !== null ? PANTRY_STORAGE_LABELS[item.storage] : "保管場所未設定"
   const badge =
     item.expiry === "expired" ? "期限切れ" :
@@ -79,7 +81,7 @@ export function PantryCompactRow({
       </button>
       {(item.expiry === "expired" || item.expiry === "soon" || item.stale || item.catalogName === null || item.generic !== null) && (
         <ul aria-label={`${item.name}の注意`} className="flex flex-wrap gap-x-3 gap-y-1 border-t border-border/60 px-3 py-2 text-xs text-muted-foreground">
-          {item.expiry === "expired" && <li>期限切れ（{formatDaysLeft(item.expiresOn as string, item.confirmedOn)}）・材料に数えません</li>}
+          {item.expiry === "expired" && <li>期限切れ（{formatDaysLeft(item.expiresOn as string, today)}）・材料に数えません</li>}
           {item.expiry === "soon" && <li>期限が近い{expires !== null ? `（${expires}）` : ""}</li>}
           {item.stale && <li>確認から日が経っています</li>}
           {item.catalogName === null && <li>一覧にない名前（提案の材料に数えません）</li>}
