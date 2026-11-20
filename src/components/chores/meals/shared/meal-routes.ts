@@ -11,6 +11,7 @@ export const MEALS_NOW_HREF = "/chores/meals/now"
 export const MEALS_PLAN_HREF = "/chores/meals/plan"
 export const MEALS_SHOPPING_HREF = "/chores/meals/shopping"
 export const MEALS_PANTRY_HREF = "/chores/meals/pantry"
+export const MEALS_MEMO_HREF = "/chores/meals/memo"
 export const MEALS_SETTINGS_HREF = "/chores/meals/settings"
 export const MEALS_RECIPES_HREF = "/chores/meals/recipes"
 
@@ -25,13 +26,11 @@ export interface MealSegment {
   label: string
 }
 
-/** 画面上部の切替に並べる 5 画面（この順で表示する）。 */
+/** 日常の入口は 3 画面。従来の詳細機能は route を残し、ここには並べない。 */
 export const MEAL_SEGMENTS: readonly MealSegment[] = [
-  { href: MEALS_BASE_HREF, label: "今夜" },
-  { href: MEALS_NOW_HREF, label: "今あるもので" },
-  { href: MEALS_PLAN_HREF, label: "献立" },
-  { href: MEALS_SHOPPING_HREF, label: "買い物" },
-  { href: MEALS_PANTRY_HREF, label: "食材" },
+  { href: MEALS_BASE_HREF, label: "スケジュール" },
+  { href: MEALS_PANTRY_HREF, label: "冷蔵庫の在庫" },
+  { href: MEALS_MEMO_HREF, label: "メモ" },
 ]
 
 /**
@@ -39,6 +38,9 @@ export const MEAL_SEGMENTS: readonly MealSegment[] = [
  * （含めないと、設定やレシピの画面で「今夜」が現在地に見える）。
  */
 export const MEAL_HIDDEN_SEGMENTS: readonly MealSegment[] = [
+  { href: MEALS_PLAN_HREF, label: "献立の詳細" },
+  { href: MEALS_NOW_HREF, label: "料理の候補" },
+  { href: MEALS_SHOPPING_HREF, label: "買い物の詳細" },
   { href: MEALS_SETTINGS_HREF, label: "設定" },
   { href: MEALS_RECIPES_HREF, label: "レシピ" },
 ]
