@@ -3,6 +3,7 @@
  * 照合・期限・数量の正本は従来どおり server の辞書と pantry-match。
  */
 import { foldName, toIngredientIndex, type IngredientDict } from "./normalize"
+import type { PantryStorage, Quantity } from "./types"
 
 /** 通信で得た表示値だけを使う。世帯 ID や機密情報は不要。 */
 export interface PantryIdentity {
@@ -15,6 +16,8 @@ export interface PantryIdentity {
 export interface PantryExistingItem extends PantryIdentity {
   id: string
   status: "have" | "low" | "out"
+  storage?: PantryStorage | null
+  quantity?: Quantity | null
 }
 
 /** 同じ辞書 ID または未解決の同一表記だけ一致。部位・加工品・由来は同一視しない。 */
