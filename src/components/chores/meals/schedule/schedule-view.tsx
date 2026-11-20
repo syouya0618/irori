@@ -151,9 +151,10 @@ export function ScheduleView({
           ) : <span aria-hidden="true" className="size-11" />}
         </div>
 
+        {/* Do not animate disabled opacity to enabled: intermediate contrast is below WCAG AA. */}
         <Button
           type="button"
-          className="min-h-12 w-full rounded-xl bg-primary-hover text-base text-primary-foreground shadow-sm hover:bg-primary-hover"
+          className="min-h-12 w-full rounded-xl bg-primary-hover text-base text-primary-foreground shadow-sm hover:bg-primary-hover transition-[color,background-color,border-color,outline-color,box-shadow,translate]"
           disabled={save.blocked || !canGenerate}
           onClick={() => {
             if (hasReplaceable) setConfirmGenerate(true)
