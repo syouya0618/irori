@@ -1392,6 +1392,46 @@ describe("作った・作らなかった・料理後の食材（C-37）", () => 
 })
 
 describe("手動料理（saveCustomDish）と削除", () => {
+  it("AI提案の1品を手入力料理へ版付きで置き換え、他の料理には触れない", async () => {
+    const original = entryRow(HOUSE, { plan_date: FRIDAY, recipe_id: "nikujaga", status: "proposed", origin: "ai" })
+    const untouched = entryRow(HOUSE, { id: "f3000000-0000-4000-8000-000000000099", plan_date: FRIDAY, recipe_id: "curry_rice", position: 1 })
+    db.tables.dinner_plan_entries.push(original, untouched)
+    const id = original.id as string
+    const prevVersion = original.updated_at as string
+    const refused = await saveCustomDish({
+      id, version: prevVersion, date: FRIDAY, role: "main", title: "おでん", ingredients: null,
+    })
+    expect(refused).toMatchObject({ failure: "rejected" })
+    expect(entryById(id).recipe_id).toBe("nikujaga")
+
+    const result = success(await saveCustomDish({
+      id, version: prevVersion, date: FRIDAY, role: "main", title: "おでん",
+      ingredients: null, convertFromRecipe: true,
+    }))
+    expect(result.status).toBe("saved")
+    expect(entryById(id)).toMatchObject({
+      recipe_id: null, recipe_version: null, custom_title: "おでん",
+      origin: "manual", pinned: true, status: "proposed",
+    })
+    expect(entryById(untouched.id).recipe_id).toBe("curry_rice")
+    expect(db.entries()).toHaveLength(2)
+    const stale = success(await saveCustomDish({
+      id, version: prevVersion, date: FRIDAY, role: "main", title: "別の料理",
+      ingredients: null, convertFromRecipe: true,
+    }))
+    expect(stale.status).toBe("conflict")
+    expect(entryById(id).custom_title).toBe("おでん")
+  })
+
+  it("存在しない料理を変換指定しても、新規作成しない", async () => {
+    const failed = await saveCustomDish({
+      id: NEW_ID, version: "2026-11-11T00:00:00+00:00", date: FRIDAY, role: "main",
+      title: "おでん", ingredients: null, convertFromRecipe: true,
+    })
+    expect(failed).toMatchObject({ status: "conflict" })
+    expect(db.entries()).toEqual([])
+  })
+
   it("材料なしで足せる。固定・手動として保存し、買い物の自動計算に入らないと知らせる", async () => {
     const result = success(
       await saveCustomDish({ id: NEW_ID, version: null, date: FRIDAY, role: "main", title: " おでん ", ingredients: null }),
