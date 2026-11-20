@@ -163,7 +163,7 @@ export function ScheduleView({
           この週の献立を提案
         </Button>
         {remainingDays < 7 && remainingDays > 0 && (
-          <p className="text-xs text-muted-foreground">過ぎた日は変えず、${firstGenerationDay}から${remainingDays}日分を提案します。</p>
+          <p className="text-xs text-muted-foreground">過ぎた日は変えず、{shortDate(firstGenerationDay)}から{remainingDays}日分を提案します。</p>
         )}
         {!canGenerate && (
           <p role="note" className="text-sm text-muted-foreground">
