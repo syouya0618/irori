@@ -199,6 +199,25 @@ describe("C-21 / C-22 まとめ入力の解釈（保存しない）", () => {
     expect(revalidatePath).not.toHaveBeenCalled()
   })
 
+  it("総称・誤記への選択候補を返すが、勝手に解決したりDBから在庫を読まない", async () => {
+    const { calls, from } = signIn(() => ({ data: null, error: null }))
+    const result = await previewPantryText("豚肉、玉ねき")
+    if (!result.ok) throw new Error("unreachable")
+    expect(result.items[0]).toMatchObject({
+      name: "豚肉",
+      ingredientId: "pork",
+      isGeneric: true,
+      suggestedNames: expect.arrayContaining(["豚こま切れ肉"]),
+    })
+    expect(result.items[1]).toMatchObject({
+      name: "玉ねき",
+      ingredientId: null,
+      suggestedNames: expect.arrayContaining(["玉ねぎ"]),
+    })
+    expect(calls).toEqual([])
+    expect(from).not.toHaveBeenCalled()
+  })
+
   it("部分一致で別の食材へ寄せない（「豚」「豚こまの残り」は未解決。対照: 「豚こま」は解決する）", async () => {
     signIn(() => ({ data: null, error: null }))
     const result = await previewPantryText("豚、豚こまの残り、豚こま")
