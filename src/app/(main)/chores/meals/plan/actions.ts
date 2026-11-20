@@ -1620,7 +1620,13 @@ export async function saveCustomDish(request: SaveCustomDishRequest): Promise<Di
     let input: PlanEntryInput
     if (existing) {
       if (existing.recipeId !== null && request.convertFromRecipe !== true) return rejectedResult(MESSAGES.notCustom)
-      if (existing.recipeId === null && request.convertFromRecipe === true) return rejectedResult(MESSAGES.invalid)
+      if (existing.recipeId === null && request.convertFromRecipe === true) {
+        // 他端末が先にレシピを手動料理へ変えた場合、古い版は入力ミスでなく競合。
+        if (request.version !== existing.version) {
+          return conflictResult("row_changed", context.plan.revision, [MESSAGES.goneEntry])
+        }
+        return rejectedResult(MESSAGES.invalid)
+      }
       if (existing.status !== "proposed" && existing.status !== "confirmed") return rejectedResult(MESSAGES.cookedEntry)
       if (existing.date !== request.date || existing.role !== request.role) return rejectedResult(MESSAGES.customMoved)
       input = entryInputOf(existing, {
