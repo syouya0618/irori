@@ -83,7 +83,7 @@ export function CleaningCalendar({
         </div>
         <Button type="button" className="min-h-11" onClick={onAddRoutine}>
           <Plus aria-hidden="true" />
-          項目を追加
+          家事項目を設定
         </Button>
       </div>
       <p className="text-sm text-muted-foreground">
