@@ -149,7 +149,12 @@ test("家族2アカウント: 主菜を提案→採用→副菜競合→別端�
     await openToday(family.page)
     const familyDetailSheet = family.page.getByRole("dialog")
     await expect(familyDetailSheet).toBeVisible({ timeout: 15_000 })
-    await expect(familyDetailSheet.getByRole("heading", { name: /の献立/ })).toBeVisible()
+    const dayHeading = familyDetailSheet.getByRole("heading", { name: /の献立/ })
+    await expect(dayHeading).toBeVisible()
+    // 初回は操作ボタンへ飛ばず、先頭の献立見出しを読める状態から始まる。
+    await expect(dayHeading).toBeFocused({ timeout: 10_000 })
+    await expect.poll(() => familyDetailSheet.locator(".overflow-y-auto").first().evaluate((el) => el.scrollTop))
+      .toBeLessThanOrEqual(2)
     await family.page.screenshot({ path: testInfo.outputPath("irori-day-detail-390.png"), animations: "disabled" })
     const adoptedSide = await proposeFirst(family.page, "side")
     await expect(family.page.getByRole("status").filter({ hasText: "選んだ料理を献立に追加しました" })).toBeVisible({ timeout: 20_000 })
