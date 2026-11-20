@@ -98,13 +98,13 @@ export function CleaningCalendar({
           <ChevronRight aria-hidden="true" />
         </Button>
       </div>
-      <div className="grid grid-cols-7 gap-1 text-center text-xs" role="grid" aria-label={`${year}年${monthNumber}月の家事カレンダー`}>
+      <div className="grid grid-cols-7 gap-1 text-center text-xs" role="group" aria-label={`${year}年${monthNumber}月の家事カレンダー`}>
         {WEEKDAYS.map((name) => (
-          <div key={name} role="columnheader" className={`py-1 font-medium ${name === "日" ? "text-destructive" : name === "土" ? "text-primary" : "text-muted-foreground"}`}>
+          <div key={name} className={`py-1 font-medium ${name === "日" ? "text-destructive" : name === "土" ? "text-primary" : "text-muted-foreground"}`}>
             {name}
           </div>
         ))}
-        {Array.from({ length: offset }, (_, index) => <div key={`padding-${index}`} role="gridcell" aria-hidden="true" />)}
+        {Array.from({ length: offset }, (_, index) => <div key={`padding-${index}`} aria-hidden="true" />)}
         {dates.map((date) => {
           const marks = calendarMarksForDate(date, items, logs)
           const done = marks.completed.length
@@ -112,7 +112,7 @@ export function CleaningCalendar({
           const active = date === chosen
           const isToday = date === today
           return (
-            <div key={date} role="gridcell">
+            <div key={date}>
               <button
                 type="button"
                 aria-label={`${monthNumber}月${Number(date.slice(8))}日: 完了${done}件・次回目安${due}件`}
