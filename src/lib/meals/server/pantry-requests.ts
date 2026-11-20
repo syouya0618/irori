@@ -283,7 +283,7 @@ export interface PantryPreviewItem {
  * 食材を保存せず、既存在庫も書き換えない。IDは重複警告にのみ使用する。
  */
 export type PantryNameResolutionResult =
-  | { ok: true; items: { name: string; ingredientId: string | null; catalogName: string | null }[] }
+  | { ok: true; items: { name: string; ingredientId: string | null; catalogName: string | null; isGeneric: boolean; suggestedNames: string[] }[] }
   | { ok: false; error: string }
 
 export type PantryPreviewResult =
