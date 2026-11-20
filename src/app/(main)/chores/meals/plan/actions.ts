@@ -1360,6 +1360,19 @@ export async function addDinnerRecipe(request: AddDinnerRecipeRequest): Promise<
       }
       if (addedDishStatus(day) !== request.status) return dayChanged(MESSAGES.addStatusChanged)
       const sameRole = day.some((entry) => entry.role === recipe.role && entry.status !== "skipped")
+      if (request.onlyIfRoleMissing === true && sameRole) {
+        return dayChanged("家族が先にこの区分の料理を決めています。上書きせず、最新の献立を読み直してください。")
+      }
+      // 丼・カレー・麺などの「主食を含む主菜」と別の主食を重ねない。
+      if (request.onlyIfRoleMissing === true && request.role === "staple" &&
+          day.some((entry) => entry.role === "main" && entry.status !== "skipped" &&
+            (context.lookup.recipeById.get(entry.recipeId ?? "")?.includesStaple === true))) {
+        return dayChanged("主食を含む主菜が既にあります。主食は追加せず、最新の献立を確認してください。")
+      }
+      if (request.onlyIfRoleMissing === true && request.role === "main" && recipe.includesStaple === true &&
+          day.some((entry) => entry.role === "staple" && entry.status !== "skipped")) {
+        return dayChanged("主食が既にあるため、主食を含む主菜は追加できません。別の主菜を選んでください。")
+      }
       if (sameRole) {
         notices = [
           `${formatMealDateShort(request.date)}は${dishRoleLabel(recipe.role)}が 2 品になりました。元の料理はそのまま残しています。`,
