@@ -184,6 +184,16 @@ jobs:
             exit 1
           fi
 
+      - name: Upload synthetic irori design screenshots for human parity review
+        # Upload only PNGs from disposable local-DB E2E. Never export auth state, traces, SQL, or credentials.
+        if: success() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: irori-mobile-design-evidence
+          path: test-results/**/irori-*.png
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload Playwright artifacts
         if: failure()
         uses: actions/upload-artifact@v7
