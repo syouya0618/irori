@@ -265,7 +265,7 @@ export function PantryBulkForm({
                   ...patch,
                   confirmSeparate: patch.name !== undefined && patch.name !== draft.name
                     ? false
-                    : draft.confirmSeparate,
+                    : (patch.confirmSeparate ?? draft.confirmSeparate),
                 }
               : draft,
           ),
