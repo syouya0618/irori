@@ -1,7 +1,6 @@
 import type { ReactNode } from "react"
 
-import { MealsNav, MealsSettingsLink } from "@/components/chores/meals/shared/meals-nav"
-import { ChoresHeader } from "@/components/chores/shared/chores-header"
+import { MealsHeader, MealsNav } from "@/components/chores/meals/shared/meals-nav"
 
 /**
  * ごはん（/chores/meals とその下位）の殻。見出し「ごはん」・下位 3 画面の切替・設定への入口を持つ。
@@ -17,11 +16,8 @@ import { ChoresHeader } from "@/components/chores/shared/chores-header"
  */
 export default function MealsLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="flex flex-col gap-4 px-4 pt-12 pb-8">
-      <div className="relative">
-        <ChoresHeader title="ごはん" />
-        <MealsSettingsLink className="absolute top-0 right-0" />
-      </div>
+    <div className="flex flex-col gap-3 px-4 pt-3 pb-8">
+      <MealsHeader />
       <MealsNav />
       {children}
     </div>
