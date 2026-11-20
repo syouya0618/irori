@@ -1270,6 +1270,38 @@ describe("④ 一覧の料理 1 品を、既存の日の献立へ足す（addDin
     expect(await addDinnerRecipe(addSide({ onlyIfRoleMissing: false }))).toMatchObject({ failure: "rejected" })
   })
 
+  it("任意提案の採用では、家族が更新した子どもの年齢制約を再確認して危険な候補を拒否", async () => {
+    const before = JSON.stringify(db.entries())
+    db.tables.children.push({
+      id: "f5000000-0000-4000-8000-0000000000c1",
+      household_id: HOUSE,
+      name: "あかり",
+      birth_date: "2026-09-01",
+      created_at: "2026-11-10T00:00:00.123456+00:00",
+    })
+    const blocked = await addDinnerRecipe(addSide({
+      recipeId: "sweet_potato_honey_lemon",
+      role: "side",
+      status: "proposed",
+      onlyIfRoleMissing: true,
+    }))
+    expect(blocked).toMatchObject({ failure: "rejected", error: expect.stringContaining("年齢制約") })
+    expect(JSON.stringify(db.entries())).toBe(before)
+    expect(db.rpcNames()).not.toContain("save_dinner_entry")
+  })
+
+  it("子どもの情報を読み込めない時は、任意提案の採用を安全扱いせず停止", async () => {
+    db.failTable("children")
+    const refused = await addDinnerRecipe(addSide({
+      role: "side",
+      status: "proposed",
+      onlyIfRoleMissing: true,
+    }))
+    expect(refused).toMatchObject({ failure: "rejected", error: expect.stringContaining("年齢制約を確認できません") })
+    expect(db.entries()).toEqual([])
+    expect(db.rpcNames()).not.toContain("save_dinner_entry")
+  })
+
   it("過ぎた日・区分の食い違い・世帯 ID の紛れ込みは拒む", async () => {
     expect(await addDinnerRecipe(addSide({ date: "2026-11-10" }))).toMatchObject({ failure: "rejected" })
     expect(await addDinnerRecipe(addSide({ role: "main" }))).toMatchObject({ failure: "rejected" })
