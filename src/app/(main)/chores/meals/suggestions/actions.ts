@@ -90,10 +90,12 @@ export async function suggestMealRole(
         .filter((tag) => CUISINES.has(tag)),
     )
     const children = context.children.map((child) => ({ id: child.id, birthDate: child.birthDate, mealStage: null }))
+    // 既に料理がある日はその料理の人数で採用される。候補の在庫判定も同じ人数に揃える。
+    const servings = active.find((entry) => entry.status === "proposed" || entry.status === "confirmed")?.servings ?? context.settings.servings
     const suggestions = suggestNow({
       today,
       eatOn: request.date,
-      servings: context.settings.servings,
+      servings,
       pantry: context.pantry,
       exclusions: context.exclusions,
       preferences: context.preferences,
