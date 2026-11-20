@@ -189,13 +189,16 @@ describe("RecipeRow", () => {
 })
 
 describe("meal-routes", () => {
-  it("5 画面の href はごはんの下位で、設定・レシピは切替に並べない", () => {
+  it("3画面は主ナビ、旧詳細画面は隠し経路として維持する", () => {
     for (const segment of MEAL_SEGMENTS) {
       expect(segment.href === MEALS_BASE_HREF || segment.href.startsWith(`${MEALS_BASE_HREF}/`)).toBe(true)
     }
     expect(MEAL_SEGMENTS.map((segment) => segment.href)).not.toContain(MEALS_SETTINGS_HREF)
     expect(MEAL_HIDDEN_SEGMENTS.map((segment) => segment.href)).toContain(MEALS_SETTINGS_HREF)
-    expect(new Set([...MEAL_SEGMENTS, ...MEAL_HIDDEN_SEGMENTS].map((segment) => segment.href)).size).toBe(7)
+    expect(MEAL_SEGMENTS.map((segment) => segment.label)).toEqual(["スケジュール", "冷蔵庫の在庫", "メモ"])
+    expect(MEAL_HIDDEN_SEGMENTS.map((segment) => segment.href)).toContain("/chores/meals/shopping")
+    expect(MEAL_HIDDEN_SEGMENTS.map((segment) => segment.href)).toContain("/chores/meals/now")
+    expect(new Set([...MEAL_SEGMENTS, ...MEAL_HIDDEN_SEGMENTS].map((segment) => segment.href)).size).toBe(8)
   })
 
   it("レシピの href は ID を path の 1 区切りとして符号化する", () => {
