@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
+import type { DinnerRequest } from "@/lib/meals/server/plan-requests"
 import type { DinnerDayView, DinnerEntryView } from "@/lib/meals/server/plan-views"
 
 const { suggestMealRole } = vi.hoisted(() => ({ suggestMealRole: vi.fn() }))
@@ -61,7 +62,7 @@ describe("曜日詳細の任意提案", () => {
         role: "side", minutes: 10, stock: "check", missingNames: [], checkNames: ["ほうれん草"],
       }],
     })
-    const onAdd = vi.fn(() => true)
+    const onAdd = vi.fn((_request: DinnerRequest) => true)
     render(<RoleSuggestionPanel day={day([STAPLE_MAIN])} revision={7} servings={3} disabled={false} onAdd={onAdd} />)
     fireEvent.click(screen.getByRole("button", { name: "副菜を提案" }))
     await waitFor(() => expect(screen.getByRole("button", { name: "ほうれん草のおひたしを献立へ追加" })).toBeEnabled())
