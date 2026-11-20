@@ -1235,6 +1235,41 @@ describe("④ 一覧の料理 1 品を、既存の日の献立へ足す（addDin
     expect(success(await addDinnerRecipe(addSide({ status: "proposed" }))).status).toBe("saved")
   })
 
+  it("任意提案の採用は同じ区分の2品目と、主食を含む主菜への重複を止める", async () => {
+    await fridayCurry("proposed")
+    const already = entryRow(HOUSE, { plan_date: FRIDAY, role: "side", position: 3, recipe_id: "tamagoyaki", status: "proposed" })
+    db.tables.dinner_plan_entries.push(already)
+    const before = JSON.stringify(db.entries())
+    const duplicate = success(await addDinnerRecipe(addSide({
+      status: "proposed", position: 1, onlyIfRoleMissing: true,
+    })))
+    expect(duplicate).toMatchObject({ status: "conflict", detail: "day_changed" })
+    expect(duplicate.notices.join("")).toContain("この区分")
+    expect(JSON.stringify(db.entries())).toBe(before)
+
+    // カレーは主食を含むため、別のご飯を足す提案は止める。
+    const stapleConflict = success(await addDinnerRecipe(addSide({
+      role: "staple", recipeId: "steamed_rice", position: 2,
+      status: "proposed", onlyIfRoleMissing: true,
+    })))
+    expect(stapleConflict.status).toBe("conflict")
+    expect(stapleConflict.notices.join("")).toContain("主食を含む主菜")
+
+    // 主食が先に決まった日には、カレーを主菜として提案採用しない。
+    db.tables.dinner_plan_entries.push(entryRow(HOUSE, {
+      plan_date: SATURDAY, role: "staple", position: 0,
+      recipe_id: "steamed_rice", status: "proposed",
+    }))
+    const curryConflict = success(await addDinnerRecipe(addSide({
+      date: SATURDAY, role: "main", recipeId: "curry_rice",
+      position: 1, status: "proposed", onlyIfRoleMissing: true,
+    })))
+    expect(curryConflict.status).toBe("conflict")
+    expect(curryConflict.notices.join("")).toContain("主食が既に")
+    expect(db.rpcNames()).not.toContain("save_dinner_entry")
+    expect(await addDinnerRecipe(addSide({ onlyIfRoleMissing: false }))).toMatchObject({ failure: "rejected" })
+  })
+
   it("過ぎた日・区分の食い違い・世帯 ID の紛れ込みは拒む", async () => {
     expect(await addDinnerRecipe(addSide({ date: "2026-11-10" }))).toMatchObject({ failure: "rejected" })
     expect(await addDinnerRecipe(addSide({ role: "main" }))).toMatchObject({ failure: "rejected" })
