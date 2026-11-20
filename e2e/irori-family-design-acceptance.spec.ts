@@ -105,7 +105,12 @@ test("家族2アカウント: 主菜を提案→採用→副菜競合→別端�
     await expect(dialog.getByRole("button", { name: "主食を提案" })).toBeVisible()
     await expect(dialog.getByRole("button", { name: "汁物を提案" })).toBeVisible()
 
-    // 提案ボタンは読み取りのみ。採用するまでDBに献立を作らない。
+    // 4区分の提案はどれも実際に計算できる。採用するまではDBに書かない。
+    for (const label of ["主食", "汁物", "副菜"]) {
+      await page.getByRole("button", { name: label + "を提案" }).click()
+      await expect(page.getByTestId("role-suggestion-results")
+        .getByRole("button", { name: /を献立へ追加/ }).first()).toBeVisible({ timeout: 15_000 })
+    }
     await page.getByRole("button", { name: "主菜を提案" }).click()
     await expect(page.getByTestId("role-suggestion-results")).toBeVisible({ timeout: 15_000 })
     let rows = await adminClient().from("dinner_plan_entries").select("id").eq("household_id", household)
