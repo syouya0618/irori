@@ -220,6 +220,40 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
+describe("週間スケジュールから1品を手入力で変更・削除", () => {
+  it("指定した1品だけのシートを開き、変更も削除も操作できる", async () => {
+    saveDinnerRequest.mockResolvedValue(saved())
+    view({
+      view: planView({ [TODAY]: [entry(), entry({ id: E_SIDE, role: "side", position: 1, title: "ほうれん草のおひたし", recipeId: "spinach_ohitashi" })] }),
+      initialEntryId: E_MAIN,
+    })
+    const dialog = screen.getByRole("dialog")
+    expect(within(dialog).getByText("肉じゃが")).toBeInTheDocument()
+    expect(within(dialog).getByText("この料理を手入力で変更")).toBeInTheDocument()
+    expect(within(dialog).getByText(/元のレシピとの自動連携は外れ/)).toBeInTheDocument()
+    fireEvent.change(within(dialog).getByLabelText("料理名"), { target: { value: "おでん" } })
+    await click(within(dialog).getByRole("button", { name: "変更を保存" }))
+    await waitFor(() => expect(saveDinnerRequest).toHaveBeenCalledTimes(1))
+    expect(saveDinnerRequest.mock.calls[0][0]).toMatchObject({
+      op: "custom_dish",
+      id: E_MAIN,
+      version: V1,
+      date: TODAY,
+      role: "main",
+      title: "おでん",
+      ingredients: null,
+      convertFromRecipe: true,
+    })
+    // 保存は1品だけ。その他の料理を削除する要求を混ぜない。
+    expect(saveDinnerRequest.mock.calls[0][0]).not.toHaveProperty("deleteIds")
+  })
+
+  it("同じ世帯・表示中の週に無いIDでは編集シートを開かない", () => {
+    view({ view: planView({ [TODAY]: [entry()] }), initialEntryId: E_SIDE })
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+  })
+})
+
 describe("C-31 開始日と日数からワンタッチで作る", () => {
   it("既定は今日から 7 日分。1 回の押下で、提案の作成を送る（操作 ID・献立の版つき）", async () => {
     saveDinnerRequest.mockResolvedValue(saved({ via: "auto" }))
