@@ -6,6 +6,7 @@ import { MEALS_REVALIDATE_PATH } from "@/components/chores/meals/shared/meal-rou
 import { isRecord } from "@/lib/domain/child-sharing"
 import { parseRpcOutcome, parseRpcStatus, rejectedResult, unknownResult, type ChoreSaveResult } from "@/lib/domain/rpc-outcome"
 import { foldName, parseBulkInput, resolveIngredientId, type ParsedIngredientInput } from "@/lib/meals/normalize"
+import { specificPantryCatalogNames, suggestPantryCatalogNames } from "@/lib/meals/pantry-guidance"
 import { getMealLookup, type MealLookup } from "@/lib/meals/server/context"
 import { MEAL_INVALID_MESSAGE, isMealLabel, mealFailureOf, settleMealAction } from "@/lib/meals/server/meal-input"
 import {
@@ -73,6 +74,14 @@ function previewItem(parsed: ParsedIngredientInput, lookup: MealLookup): PantryP
     issues.push("quantity_unreadable")
   }
 
+  const isGeneric = ingredientId !== null && lookup.index.byId.get(ingredientId)?.generic === true
+  // 候補は表示のみ。利用者が選んだ名前を登録時にサーバーで再照合する。
+  const suggestedNames =
+    isGeneric && ingredientId !== null
+      ? specificPantryCatalogNames(ingredientId, lookup.index)
+      : ingredientId === null && isMealLabel(name, PANTRY_NAME_MAX)
+        ? suggestPantryCatalogNames(name, lookup.index)
+        : []
   return {
     name,
     ingredientId,
@@ -80,6 +89,8 @@ function previewItem(parsed: ParsedIngredientInput, lookup: MealLookup): PantryP
     quantity,
     quantityText: parsed.quantityText,
     issues,
+    ...(isGeneric ? { isGeneric: true } : {}),
+    ...(suggestedNames.length > 0 ? { suggestedNames } : {}),
   }
 }
 
