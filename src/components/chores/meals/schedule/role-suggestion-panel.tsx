@@ -35,11 +35,13 @@ const STOCK_LABEL = {
 export function RoleSuggestionPanel({
   day,
   revision,
+  servings,
   disabled,
   onAdd,
 }: {
   day: DinnerDayView
   revision: number
+  servings: number
   disabled: boolean
   /** 1品の採用だけが保存を行い、既存の版ガード・結果不明保護を通す。 */
   onAdd: (request: DinnerRequest) => boolean
@@ -83,7 +85,7 @@ export function RoleSuggestionPanel({
       recipeId: candidate.recipeId,
       role: candidate.role,
       position: firstPosition,
-      servings: day.entries.find((entry) => entry.status === "proposed" || entry.status === "confirmed")?.servings ?? 2,
+      servings: day.entries.find((entry) => entry.status === "proposed" || entry.status === "confirmed")?.servings ?? servings,
       status: addedDishStatus(day.entries),
       onlyIfRoleMissing: true,
     }
