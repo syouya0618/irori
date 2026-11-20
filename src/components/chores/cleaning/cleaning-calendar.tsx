@@ -81,7 +81,7 @@ export function CleaningCalendar({
           <CalendarDays size={20} className="text-primary" aria-hidden="true" />
           <h2 id="cleaning-calendar-heading" className="text-base font-semibold">家事ルーティン記録</h2>
         </div>
-        <Button type="button" className="min-h-11" onClick={onAddRoutine}>
+        <Button type="button" variant="outline" className="min-h-11" onClick={onAddRoutine}>
           <Plus aria-hidden="true" />
           家事項目を設定
         </Button>
@@ -98,7 +98,8 @@ export function CleaningCalendar({
           <ChevronRight aria-hidden="true" />
         </Button>
       </div>
-      <div className="grid grid-cols-7 gap-1 text-center text-xs" role="group" aria-label={`${year}年${monthNumber}月の家事カレンダー`}>
+      <div className="-mx-2 overflow-x-auto px-2">
+      <div className="grid min-w-[308px] grid-cols-7 gap-0 text-center text-xs" role="group" aria-label={`${year}年${monthNumber}月の家事カレンダー`}>
         {WEEKDAYS.map((name) => (
           <div key={name} className={`py-1 font-medium ${name === "日" ? "text-destructive" : name === "土" ? "text-primary" : "text-muted-foreground"}`}>
             {name}
@@ -118,7 +119,7 @@ export function CleaningCalendar({
                 aria-label={`${monthNumber}月${Number(date.slice(8))}日: 完了${done}件・次回目安${due}件`}
                 aria-pressed={active}
                 onClick={() => setSelected(date)}
-                className={`flex min-h-11 w-full flex-col items-center justify-center gap-1 rounded-xl border px-0.5 py-1 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-ring ${active ? "border-primary bg-primary/10 font-semibold" : isToday ? "border-primary" : "border-transparent hover:bg-muted"}`}
+                className={`flex min-h-11 min-w-11 w-full flex-col items-center justify-center gap-1 rounded-xl border px-0.5 py-1 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-ring ${active ? "border-primary bg-primary/10 font-semibold" : isToday ? "border-primary" : "border-transparent hover:bg-muted"}`}
               >
                 <span>{Number(date.slice(8))}</span>
                 <span aria-hidden="true" className="flex min-h-2 items-center gap-0.5">
@@ -129,6 +130,7 @@ export function CleaningCalendar({
             </div>
           )
         })}
+      </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
         <span className="flex items-center gap-1"><span className="size-2 rounded-full bg-emerald-700" aria-hidden="true" />完了日</span>
