@@ -200,6 +200,8 @@ export interface DinnerEntryView {
   isCustom: boolean
   /** 目安の調理時間（分）。手動料理・カタログに無いレシピは null。 */
   minutes: number | null
+  /** 丼・カレーなど、主菜自身に主食が含まれる。別の主食を提案しないための表示用フラグ。 */
+  includesStaple?: true
   servings: number
   pinned: boolean
   status: PlanEntryStatus
@@ -457,6 +459,7 @@ export function buildDinnerPlanView(
       recipeId: entry.recipeId,
       isCustom,
       minutes: recipe?.minutes ?? null,
+      ...(recipe?.includesStaple === true ? { includesStaple: true as const } : {}),
       servings: entry.servings,
       pinned: entry.pinned,
       status: entry.status,
