@@ -157,7 +157,7 @@ describe("ごはんの layout", () => {
     const { container } = renderLayout()
     const shell = container.firstElementChild
     expect(shell?.className).toMatch(/\bpx-4\b/)
-    expect(shell?.className).toMatch(/\bpt-3\b/)
+    expect(shell?.className).toContain("env(safe-area-inset-top,0px)+0.75rem")
     expect(shell?.className).not.toMatch(/pb-nav|pb-20|pb-24/)
   })
 })
