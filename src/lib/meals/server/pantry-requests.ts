@@ -278,6 +278,14 @@ export interface PantryPreviewItem {
   suggestedNames?: string[]
 }
 
+/**
+ * ユーザーが確認画面で書き直した名称の再照合結果。
+ * 食材を保存せず、既存在庫も書き換えない。IDは重複警告にのみ使用する。
+ */
+export type PantryNameResolutionResult =
+  | { ok: true; items: { name: string; ingredientId: string | null; catalogName: string | null }[] }
+  | { ok: false; error: string }
+
 export type PantryPreviewResult =
   | {
       ok: true
