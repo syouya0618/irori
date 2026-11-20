@@ -227,8 +227,8 @@ describe("週間スケジュールから1品を手入力で変更・削除", () 
       view: planView({ [TODAY]: [entry(), entry({ id: E_SIDE, role: "side", position: 1, title: "ほうれん草のおひたし", recipeId: "spinach_ohitashi" })] }),
       initialEntryId: E_MAIN,
     })
-    await ready()
     const dialog = screen.getByRole("dialog")
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "変更を保存" })).toBeEnabled())
     expect(within(dialog).getByText("肉じゃが")).toBeInTheDocument()
     expect(within(dialog).getByText("この料理を手入力で変更")).toBeInTheDocument()
     expect(within(dialog).getByText(/元のレシピとの自動連携は外れ/)).toBeInTheDocument()
