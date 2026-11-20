@@ -147,7 +147,10 @@ test("家族2アカウント: 主菜を提案→採用→副菜競合→別端�
 
     await family.page.reload()
     await openToday(family.page)
-    await family.page.screenshot({ path: testInfo.outputPath("irori-day-detail-390.png") })
+    const familyDetailSheet = family.page.getByRole("dialog")
+    await expect(familyDetailSheet).toBeVisible({ timeout: 15_000 })
+    await expect(familyDetailSheet.getByRole("heading", { name: /の献立/ })).toBeVisible()
+    await family.page.screenshot({ path: testInfo.outputPath("irori-day-detail-390.png"), animations: "disabled" })
     const adoptedSide = await proposeFirst(family.page, "side")
     await expect(family.page.getByRole("status").filter({ hasText: "選んだ料理を献立に追加しました" })).toBeVisible({ timeout: 20_000 })
     await expect(async () => {
