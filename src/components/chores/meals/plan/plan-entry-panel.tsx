@@ -380,6 +380,22 @@ export function PlanEntryPanel({
         <ServingsForm entry={entry} householdServings={householdServings} disabled={disabled} send={send} />
       )}
 
+      {active && !entry.isCustom && (
+        <section className="flex flex-col gap-2">
+          <h3 className="text-sm font-semibold">この料理を手入力で変更</h3>
+          <PlanCustomDishForm
+            key={`${entry.id}:${entry.version}:convert`}
+            editing={{ id: entry.id, version: entry.version, title: entry.title, role: entry.role, ingredients: [], convertFromRecipe: true }}
+            date={entry.date}
+            dateLabel={dayLabel}
+            disabled={disabled}
+            saving={saving}
+            onSubmit={send}
+            onCancel={onClose}
+          />
+        </section>
+      )}
+
       {active && entry.isCustom && custom !== null && (
         <section className="flex flex-col gap-2">
           <h3 className="text-sm font-semibold">料理名と材料</h3>
