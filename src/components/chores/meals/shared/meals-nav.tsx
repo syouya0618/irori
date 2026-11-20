@@ -75,6 +75,7 @@ export function MealsHeader() {
   const active = useActiveMealHref()
   const title =
     active === MEALS_PANTRY_HREF ? "冷蔵庫の在庫" :
+    active === MEALS_NOW_HREF ? "料理の候補" :
     active === MEALS_MEMO_HREF || active === MEALS_SHOPPING_HREF ? "メモ" :
     active === MEALS_SETTINGS_HREF ? "ごはんの設定" :
     active === MEALS_RECIPES_HREF ? "料理の詳細" :
