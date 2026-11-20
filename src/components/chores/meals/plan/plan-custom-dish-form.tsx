@@ -157,7 +157,7 @@ export function PlanCustomDishForm({
         <p role="note" className="rounded-xl border border-amber-500/40 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:bg-amber-900/20 dark:text-amber-100">
           この1品だけを手入力の料理に変えます。元のレシピとの自動連携は外れ、材料を入力しない場合は買い物の自動計算に含まれません。ほかの料理は変わりません。
         </p>
-      )
+      )}
       <div className="flex flex-col gap-2">
         <label htmlFor={titleId} className="text-sm font-medium">
           料理名
