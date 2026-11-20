@@ -190,10 +190,6 @@ export function ScheduleView({
             </div>
           </div>
         )}
-        <Link href={planHref(firstGenerationDay, view.today)} prefetch={false} className="inline-flex min-h-11 self-start items-center rounded-lg px-3 py-2 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
-          希望を伝えて献立を作る・細かく編集する
-        </Link>
-
         {notice !== null && (
           <p role={notice.error ? "alert" : "status"} className="flex items-start gap-2 rounded-xl bg-muted/50 px-3 py-2 text-sm">
             {notice.error ? <AlertCircle size={18} aria-hidden="true" /> : <Check size={18} className="text-emerald-700" aria-hidden="true" />}
@@ -208,7 +204,7 @@ export function ScheduleView({
                 type="button"
                 aria-label={`${day.label}の献立を見る`}
                 onClick={() => setSelectedDate(day.date)}
-                className={`grid min-h-14 w-full grid-cols-[3.5rem_minmax(0,1fr)_1.25rem] items-center gap-2 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring ${day.isToday ? "border-l-4 border-primary bg-muted" : ""}`}
+                className={`grid min-h-12 w-full grid-cols-[3.5rem_minmax(0,1fr)_1.25rem] items-center gap-2 rounded-xl px-2 py-1 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring ${day.isToday ? "border-l-4 border-primary bg-muted" : ""}`}
               >
                 <span className="flex flex-col items-center justify-center gap-0.5 text-xs">
                   <span className={`font-semibold ${day.isToday ? "text-primary" : ""}`}>{weekdayOf(day.date)}</span>
@@ -223,6 +219,10 @@ export function ScheduleView({
             </li>
           ))}
         </ul>
+        <Link href={planHref(firstGenerationDay, view.today)} prefetch={false}
+          className="inline-flex min-h-11 self-start items-center rounded-lg px-2 text-xs font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
+          希望を伝えて献立を作る・細かく編集する
+        </Link>
         <p className="text-xs text-muted-foreground">曜日を押すと、献立・材料・在庫の目安を確認できます。</p>
       </section>
 
