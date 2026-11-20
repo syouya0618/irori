@@ -146,10 +146,16 @@ export async function resolvePantryNames(names: string[]): Promise<PantryNameRes
     items: names.map((name) => {
       const cleaned = name.trim()
       const ingredientId = resolveIngredientId(cleaned, index)
+      const isGeneric = ingredientId !== null && index.byId.get(ingredientId)?.generic === true
       return {
         name: cleaned,
         ingredientId,
         catalogName: ingredientId === null ? null : (index.byId.get(ingredientId)?.name ?? null),
+        isGeneric,
+        suggestedNames:
+          isGeneric && ingredientId !== null
+            ? specificPantryCatalogNames(ingredientId, index)
+            : ingredientId === null ? suggestPantryCatalogNames(cleaned, index) : [],
       }
     }),
   }
