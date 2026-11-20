@@ -29,6 +29,7 @@ import { shiftYmd } from "@/lib/utils/date-jst"
 import { isMealRequest, runMealRequest, type MealRequest, type MealSaveSuccess } from "../plan/meal-request"
 import { planEntryHref, planHref, planStartBounds } from "../plan/plan-query"
 import { scheduleHref } from "./schedule-query"
+import { RoleSuggestionPanel } from "./role-suggestion-panel"
 
 const POLL_MS = 60_000
 const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"] as const
@@ -98,7 +99,12 @@ export function ScheduleView({
       return
     }
     setConfirmGenerate(false)
-    setNotice({ text: "献立の提案を保存しました。各曜日を押して内容を確認してください。", error: false })
+    if (outcome.payload.op === "add_recipe") {
+      setSelectedDate(null)
+      setNotice({ text: "選んだ料理を献立に追加しました。曜日を開いて内容をご確認ください。", error: false })
+    } else {
+      setNotice({ text: "献立の提案を保存しました。各曜日を押して内容を確認してください。", error: false })
+    }
   }
 
   const save = useChoreSave<MealRequest, MealSaveSuccess>({
@@ -303,6 +309,14 @@ export function ScheduleView({
                     </section>
                   )
                 })}
+                <RoleSuggestionPanel
+                  key={`${selected.date}:${view.revision}`}
+                  day={selected}
+                  revision={view.revision}
+                  servings={view.servings.value}
+                  disabled={save.blocked || view.unreadableEntries > 0}
+                  onAdd={(request) => save.send(request, "選んだ料理を献立へ追加") !== null}
+                />
                 {view.ageRulesChecked === false && selected.entries.length > 0 && (
                   <p className="text-sm text-muted-foreground">子どもの年齢に関する注意は確認できていません。料理の詳細で確認してください。</p>
                 )}
