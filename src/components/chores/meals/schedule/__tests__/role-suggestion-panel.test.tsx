@@ -76,6 +76,9 @@ describe("曜日詳細の任意提案", () => {
       role: "side", expectedRevision: 7, servings: 3,
       position: 1, status: "confirmed", onlyIfRoleMissing: true,
     })
-    expect(onAdd.mock.calls[0][0].id).toMatch(/^[0-9a-f-]{36}$/)
+    const adopted = onAdd.mock.calls[0][0]
+    expect(adopted.op).toBe("add_recipe")
+    if (adopted.op !== "add_recipe") throw new Error("unexpected operation")
+    expect(adopted.id).toMatch(/^[0-9a-f-]{36}$/)
   })
 })
