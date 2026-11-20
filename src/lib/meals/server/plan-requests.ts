@@ -457,11 +457,14 @@ export interface AddDinnerRecipeRequest {
   servings: number
   /** 押した時点のその日の状態（`addedDishStatus`）。 */
   status: "proposed" | "confirmed"
+  /** 空き区分への任意提案を採用した場合、既に同区分が埋まっていれば上書きも追加もしない。 */
+  onlyIfRoleMissing?: true
 }
 
 export function isAddDinnerRecipeRequest(value: unknown): value is AddDinnerRecipeRequest {
   return (
-    isRequest(value, ["id", "expectedRevision", "date", "recipeId", "role", "position", "servings", "status"]) &&
+    isRequest(value, ["id", "expectedRevision", "date", "recipeId", "role", "position", "servings", "status", "onlyIfRoleMissing"]) &&
+    (value.onlyIfRoleMissing === undefined || value.onlyIfRoleMissing === true) &&
     isClientId(value.id) &&
     isRevision(value.expectedRevision) &&
     isYmd(value.date) &&
