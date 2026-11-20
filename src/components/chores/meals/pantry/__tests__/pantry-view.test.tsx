@@ -314,7 +314,7 @@ describe("登録精度: 重複・総称・候補を確認する", () => {
     })
     actions.addPantryItems.mockResolvedValue({ status: "saved", items: [], saved: 1, replayed: 0 })
     actions.resolvePantryNames.mockResolvedValue({
-      ok: true, items: [{ name: "豚こま切れ肉", ingredientId: "pork_komagire", catalogName: "豚こま切れ肉" }],
+      ok: true, items: [{ name: "豚こま切れ肉", ingredientId: "pork_komagire", catalogName: "豚こま切れ肉", isGeneric: false, suggestedNames: [] }],
     })
     view({ items: [] })
     await ready()
@@ -364,7 +364,7 @@ describe("登録精度: 重複・総称・候補を確認する", () => {
       resolvedCount: 0, unresolvedNames: ["玉ねき"], truncated: false,
     })
     actions.resolvePantryNames.mockResolvedValue({
-      ok: true, items: [{ name: "たまねぎ", ingredientId: "onion", catalogName: "玉ねぎ" }],
+      ok: true, items: [{ name: "たまねぎ", ingredientId: "onion", catalogName: "玉ねぎ", isGeneric: false, suggestedNames: [] }],
     })
     actions.addPantryItems.mockResolvedValue({ status: "saved", items: [], saved: 1, replayed: 0 })
     view() // 既存在庫は辞書 ID=onion、名前は「玉ねぎ」
@@ -403,6 +403,41 @@ describe("登録精度: 重複・総称・候補を確認する", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("通信できませんでした")
     expect(screen.getByLabelText("1件目の名前")).toHaveValue("たまねぎ")
     expect(actions.addPantryItems).not.toHaveBeenCalled()
+  })
+
+  it("手入力で総称へ改名した場合も、再照合後の警告を見ずに保存させない", async () => {
+    actions.previewPantryText.mockResolvedValue({
+      ok: true, items: [preview({ name: "豚こ", ingredientId: null, ingredientName: null })],
+      resolvedCount: 0, unresolvedNames: ["豚こ"], truncated: false,
+    })
+    actions.resolvePantryNames
+      .mockResolvedValueOnce({
+        ok: true, items: [{
+          name: "豚肉", ingredientId: "pork", catalogName: "豚肉",
+          isGeneric: true, suggestedNames: ["豚こま切れ肉"],
+        }],
+      })
+      .mockResolvedValueOnce({
+        ok: true, items: [{
+          name: "豚こま切れ肉", ingredientId: "pork_komagire", catalogName: "豚こま切れ肉",
+          isGeneric: false, suggestedNames: [],
+        }],
+      })
+    actions.addPantryItems.mockResolvedValue({ status: "saved", items: [], saved: 1, replayed: 0 })
+    view({ items: [] })
+    await ready()
+    fireEvent.change(bulkBox(), { target: { value: "豚こ" } })
+    await click(screen.getByRole("button", { name: "内容を確認" }))
+    await waitFor(() => expect(screen.getAllByTestId("pantry-draft")).toHaveLength(1))
+    fireEvent.change(screen.getByLabelText("1件目の名前"), { target: { value: "豚肉" } })
+    await click(screen.getByRole("button", { name: "1件を登録" }))
+    expect(await screen.findByText(/総称です。部位・種類が不明/)).toBeInTheDocument()
+    expect(actions.addPantryItems).not.toHaveBeenCalled()
+    await click(screen.getByRole("button", { name: "豚こま切れ肉を選ぶ" }))
+    await click(screen.getByRole("button", { name: "1件を登録" }))
+    await waitFor(() => expect(actions.addPantryItems).toHaveBeenCalledTimes(1))
+    expect(actions.addPantryItems.mock.calls[0][0].items[0].name).toBe("豚こま切れ肉")
+    expect(actions.resolvePantryNames).toHaveBeenCalledTimes(2)
   })
 
   it("使い切った同名行は有効在庫の重複扱いにしない", async () => {
@@ -504,8 +539,8 @@ describe("C-21 まとめ入力 → 確認 → 登録", () => {
     actions.resolvePantryNames.mockResolvedValue({
       ok: true,
       items: [
-        { name: "新玉ねぎ", ingredientId: null, catalogName: null },
-        { name: "豚こま", ingredientId: "pork_komagire", catalogName: "豚こま切れ肉" },
+        { name: "新玉ねぎ", ingredientId: null, catalogName: null, isGeneric: false, suggestedNames: [] },
+        { name: "豚こま", ingredientId: "pork_komagire", catalogName: "豚こま切れ肉", isGeneric: false, suggestedNames: [] },
       ],
     })
     actions.addPantryItems.mockResolvedValue({ status: "saved", items: [], saved: 2, replayed: 0 })
@@ -521,6 +556,10 @@ describe("C-21 まとめ入力 → 確認 → 登録", () => {
 
     await click(screen.getByRole("button", { name: "2件目「謎の葉」を登録しない" }))
     expect(screen.getAllByTestId("pantry-draft")).toHaveLength(2)
+    await click(screen.getByRole("button", { name: "2件を登録" }))
+    await waitFor(() => expect(actions.resolvePantryNames).toHaveBeenCalledTimes(1))
+    expect(actions.addPantryItems).not.toHaveBeenCalled()
+    expect(screen.getByText(/総称または一覧にない食材/)).toBeInTheDocument()
     await click(screen.getByRole("button", { name: "2件を登録" }))
     await waitFor(() => expect(actions.addPantryItems).toHaveBeenCalledTimes(1))
     expect(actions.addPantryItems.mock.calls[0][0].items.map((entry) => entry.name)).toEqual(["新玉ねぎ", "豚こま"])
