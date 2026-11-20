@@ -177,8 +177,9 @@ test("家族2アカウント: 主菜を提案→採用→副菜競合→別端�
       if (error) throw Error(error.message)
       expect(data).toMatchObject({ id: mainId, custom_title: "家族同期のおでん", recipe_id: null })
     }).toPass({ timeout: 20_000 })
-    await page.goto("/chores/meals")
-    await expect(page.getByTestId("schedule-week").getByText(/家族同期のおでん/)).toBeVisible({ timeout: 15_000 })
+    // Aはページを再読込せず、復帰時の自動取り直しでBの編集を受け取る。
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")))
+    await expect(page.getByTestId("schedule-week").getByText(/家族同期のおでん/)).toBeVisible({ timeout: 25_000 })
     await expect(page.getByTestId("schedule-week").getByText(adoptedSide)).toBeVisible({ timeout: 15_000 })
     await page.screenshot({ path: testInfo.outputPath("irori-week-schedule-320.png") })
 
@@ -246,7 +247,8 @@ test("家族2アカウント: 自由な家事項目→完了→取消が掃除�
       expect(data).toHaveLength(1)
       expect(data![0].voided_at).toBeNull()
     }).toPass({ timeout: 20_000 })
-    await page.reload()
+    // Bの完了はAの画面復帰で取り込む。ハードリロードに頼らない。
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")))
     const calendar = page.getByTestId("cleaning-calendar")
     const dateLabel = todayJst().split("-")
     const dateText = Number(dateLabel[1]) + "月" + Number(dateLabel[2]) + "日"
@@ -258,7 +260,7 @@ test("家族2アカウント: 自由な家事項目→完了→取消が掃除�
       .getByRole("button", { name: "直前の記録を取り消す" }).click()
     await expect(family.page.getByRole("status").filter({ hasText: "記録を取り消しました。" }))
       .toBeVisible({ timeout: 15_000 })
-    await page.reload()
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")))
     await expect(calendar.getByRole("button", { name: dateText + ": 完了0件・次回目安1件" }))
       .toBeVisible({ timeout: 15_000 })
     await page.screenshot({ path: testInfo.outputPath("irori-cleaning-320.png") })
