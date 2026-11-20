@@ -338,7 +338,7 @@ export function PantryBulkForm({
         )}
         {compact && drafts === null && (
           <button type="button" disabled={reading} onClick={() => setExpanded((value) => !value)}
-            className="inline-flex min-h-8 self-end items-center rounded-lg px-2 text-xs text-muted-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
+            className="inline-flex min-h-11 self-end items-center rounded-lg px-2 text-xs text-muted-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
             {expanded ? "かんたん入力に戻す" : "数量・保管場所などを詳しく入力"}
           </button>
         )}
