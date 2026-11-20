@@ -136,7 +136,7 @@ export function ScheduleView({
             >
               <ChevronLeft size={21} aria-hidden="true" />
             </Link>
-          ) : <span aria-label="これより前の週は表示できません" className="size-11" />}
+          ) : <span aria-hidden="true" className="size-11" />}
           <h2 className="min-w-0 text-center text-sm font-semibold sm:text-base">{weekTitle(view.from, view.to)}</h2>
           {canNext ? (
             <Link
@@ -147,12 +147,12 @@ export function ScheduleView({
             >
               <ChevronRight size={21} aria-hidden="true" />
             </Link>
-          ) : <span aria-label="これより先の週は表示できません" className="size-11" />}
+          ) : <span aria-hidden="true" className="size-11" />}
         </div>
 
         <Button
           type="button"
-          className="min-h-12 w-full rounded-xl text-base shadow-sm"
+          className="min-h-12 w-full rounded-xl bg-primary-hover text-base text-primary-foreground shadow-sm hover:bg-primary-hover"
           disabled={save.blocked || !canGenerate}
           onClick={() => {
             if (hasReplaceable) setConfirmGenerate(true)
@@ -163,7 +163,7 @@ export function ScheduleView({
           この週の献立を提案
         </Button>
         {remainingDays < 7 && remainingDays > 0 && (
-          <p className="text-xs text-muted-foreground">過ぎた日は変えず、${firstGenerationDay}から${remainingDays}日分を提案します。</p>
+          <p className="text-xs text-muted-foreground">過ぎた日は変えず、{shortDate(firstGenerationDay)}から{remainingDays}日分を提案します。</p>
         )}
         {!canGenerate && (
           <p role="note" className="text-sm text-muted-foreground">
@@ -179,7 +179,7 @@ export function ScheduleView({
             </div>
           </div>
         )}
-        <Link href={planHref(firstGenerationDay, view.today)} prefetch={false} className="self-start px-1 text-sm text-primary underline-offset-4 hover:underline focus-visible:outline-2">
+        <Link href={planHref(firstGenerationDay, view.today)} prefetch={false} className="inline-flex min-h-11 self-start items-center rounded-lg px-3 py-2 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
           希望を伝えて献立を作る・細かく編集する
         </Link>
 
@@ -197,15 +197,15 @@ export function ScheduleView({
                 type="button"
                 aria-label={`${day.label}の献立を見る`}
                 onClick={() => setSelectedDate(day.date)}
-                className={`grid min-h-14 w-full grid-cols-[3.5rem_minmax(0,1fr)_1.25rem] items-center gap-2 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring ${day.isToday ? "bg-primary/10" : ""}`}
+                className={`grid min-h-14 w-full grid-cols-[3.5rem_minmax(0,1fr)_1.25rem] items-center gap-2 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring ${day.isToday ? "border-l-4 border-primary bg-muted" : ""}`}
               >
                 <span className="flex flex-col items-center justify-center gap-0.5 text-xs">
                   <span className={`font-semibold ${day.isToday ? "text-primary" : ""}`}>{weekdayOf(day.date)}</span>
-                  <span className="text-muted-foreground">{shortDate(day.date)}</span>
+                  <span className={day.isToday ? "text-foreground" : "text-muted-foreground"}>{shortDate(day.date)}</span>
                 </span>
-                <span className={`min-w-0 text-sm font-medium leading-relaxed break-words ${day.entries.length === 0 ? "text-muted-foreground" : ""}`}>
+                <span className={`min-w-0 text-sm font-medium leading-relaxed break-words ${day.entries.length === 0 && !day.isToday ? "text-muted-foreground" : "text-foreground"}`}>
                   {dayTitle(day)}
-                  {day.isToday && <span className="ml-1.5 text-xs text-primary">今日</span>}
+                  {day.isToday && <span className="ml-1.5 text-xs font-semibold text-foreground">今日</span>}
                 </span>
                 <ChevronRight size={19} aria-hidden="true" className="text-muted-foreground" />
               </button>

@@ -64,6 +64,7 @@ describe("スケジュール画面", () => {
     )
     render(await MealsSchedulePage())
     expect(screen.getByTestId("schedule-week").querySelectorAll("li")).toHaveLength(7)
+    expect(screen.getByText("過ぎた日は変えず、11/11から5日分を提案します。")).toBeInTheDocument()
     expect(screen.getByText("肉じゃが")).toBeInTheDocument()
     expect(screen.queryByText("親子丼")).not.toBeInTheDocument()
     await act(async () => {

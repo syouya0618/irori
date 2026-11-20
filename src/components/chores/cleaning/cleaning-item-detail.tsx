@@ -545,6 +545,7 @@ export function CleaningItemDetail({
                           type="button"
                           variant="outline"
                           aria-label={`${title}を訂正`}
+                          className="min-h-12"
                           disabled={disabled}
                           onClick={() => {
                             setConfirming(null)
@@ -559,6 +560,7 @@ export function CleaningItemDetail({
                         type="button"
                         variant="outline"
                         aria-label={`${title}を取り消す`}
+                        className="min-h-12"
                         disabled={disabled}
                         onClick={() => {
                           setEditingLog(null)

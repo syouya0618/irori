@@ -326,7 +326,7 @@ export function PantryView({ owner, today, items, unreadable, variant = "full" }
           登録した食材（{items.length}件）
         </h2>
 
-        {items.length === 0 ? (
+        {items.length === 0 && variant !== "compact" ? (
           <EmptyState
             icon={Refrigerator}
             // 読めない食材が在るときに「まだありません」と言わない（在る食材を無いと偽らない）
@@ -372,7 +372,7 @@ export function PantryView({ owner, today, items, unreadable, variant = "full" }
                 </ul>
                 {compactItems.length === 0 && (
                   <p className="rounded-xl bg-muted/50 px-3 py-4 text-sm text-muted-foreground">
-                    この保管場所の食材は、まだありません。
+                    {unreadable > 0 ? "表示できる食材がありません。読み込めない在庫が残っています。" : "この保管場所の食材は、まだありません。"}
                   </p>
                 )}
                 <Button type="button" variant="ghost" className="self-start" onClick={() => setShowDetailedControls(true)}>

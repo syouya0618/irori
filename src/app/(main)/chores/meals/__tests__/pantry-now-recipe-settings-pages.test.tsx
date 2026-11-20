@@ -126,9 +126,10 @@ describe("/chores/meals/pantry（食材）", () => {
     expect(screen.getByRole("heading", { level: 2, name: "登録した食材（2件）" })).toBeInTheDocument()
   })
 
-  it("食材が無ければ入力へ誘導する（未登録の表示）", async () => {
+  it("食材が無くても、保管場所フィルターと追加入力を表示する", async () => {
     render(await PantryPage())
-    expect(screen.getByText("食材がまだ登録されていません")).toBeInTheDocument()
+    expect(screen.getByRole("group", { name: "保管場所で絞り込む" })).toBeInTheDocument()
+    expect(screen.getByText("この保管場所の食材は、まだありません。")).toBeInTheDocument()
     expect(screen.getByLabelText("家にある食材")).toBeInTheDocument()
   })
 
