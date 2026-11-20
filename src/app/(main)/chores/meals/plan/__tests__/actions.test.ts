@@ -1393,7 +1393,7 @@ describe("作った・作らなかった・料理後の食材（C-37）", () => 
 
 describe("手動料理（saveCustomDish）と削除", () => {
   it("AI提案の1品を手入力料理へ版付きで置き換え、他の料理には触れない", async () => {
-    const original = entryRow(HOUSE, { plan_date: FRIDAY, recipe_id: "nikujaga", status: "proposed", origin: "ai" })
+    const original = entryRow(HOUSE, { plan_date: FRIDAY, recipe_id: "nikujaga", status: "proposed", origin: "ai_assisted" })
     const untouched = entryRow(HOUSE, { id: "f3000000-0000-4000-8000-000000000099", plan_date: FRIDAY, recipe_id: "curry_rice", position: 1 })
     db.tables.dinner_plan_entries.push(original, untouched)
     const id = original.id as string
