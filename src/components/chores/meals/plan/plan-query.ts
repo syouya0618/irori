@@ -13,6 +13,7 @@ import { DINNER_ENTRY_PAST_DAYS, DINNER_PLAN_START_MAX_AHEAD_DAYS } from "@/lib/
 import { isValidYmd, shiftYmd } from "@/lib/utils/date-jst"
 
 export const PLAN_START_PARAM = "start"
+export const PLAN_ENTRY_PARAM = "entry"
 
 /** 画面に並べる日数（開始日から）。 */
 export const PLAN_VIEW_DAYS = 7
@@ -37,6 +38,12 @@ export function resolvePlanStart(raw: string | string[] | undefined, today: stri
 export function planHref(start: string | null, today: string | null = null): string {
   if (start === null || !isValidYmd(start) || start === today) return MEALS_PLAN_HREF
   return `${MEALS_PLAN_HREF}?${PLAN_START_PARAM}=${start}`
+}
+
+/** 表示中の1品の編集を開く。別の献立を誤って開かぬようIDは画面でも検証する。 */
+export function planEntryHref(start: string, entryId: string, today: string): string {
+  const base = planHref(start, today)
+  return `${base}${base.includes("?") ? "&" : "?"}${PLAN_ENTRY_PARAM}=${encodeURIComponent(entryId)}`
 }
 
 /** 作成の開始日に選べる日（今日から、開始の上限まで）。 */
