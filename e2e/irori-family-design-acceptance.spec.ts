@@ -113,7 +113,7 @@ test("家族2アカウント: 主菜を提案→採用→副菜競合→別端�
     }
     await page.getByRole("button", { name: "主菜を提案" }).click()
     await expect(page.getByTestId("role-suggestion-results")).toBeVisible({ timeout: 15_000 })
-    let rows = await adminClient().from("dinner_plan_entries").select("id").eq("household_id", household)
+    const rows = await adminClient().from("dinner_plan_entries").select("id").eq("household_id", household)
     expect(rows.error).toBeNull()
     expect(rows.data ?? []).toHaveLength(0)
     const first = page.getByTestId("role-suggestion-results").getByRole("button", { name: /を献立へ追加/ }).first()
