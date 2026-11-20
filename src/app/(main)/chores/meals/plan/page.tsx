@@ -55,7 +55,7 @@ export default async function MealPlanPage({
     <KeepLastGood scope={scope}>
       <PlanView
         // 持ち主（利用者・世帯）が替われば、画面の状態と保存の手順ごと作り直す
-        key={`${userId}:${householdId}`}
+        key={`${userId}:${householdId}:${requestedEntry ?? ""}`}
         owner={{ userId, householdId }}
         view={data.view}
         extras={data.extras}
