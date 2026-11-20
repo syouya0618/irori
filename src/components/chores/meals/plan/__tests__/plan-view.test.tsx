@@ -227,6 +227,7 @@ describe("週間スケジュールから1品を手入力で変更・削除", () 
       view: planView({ [TODAY]: [entry(), entry({ id: E_SIDE, role: "side", position: 1, title: "ほうれん草のおひたし", recipeId: "spinach_ohitashi" })] }),
       initialEntryId: E_MAIN,
     })
+    await ready()
     const dialog = screen.getByRole("dialog")
     expect(within(dialog).getByText("肉じゃが")).toBeInTheDocument()
     expect(within(dialog).getByText("この料理を手入力で変更")).toBeInTheDocument()
