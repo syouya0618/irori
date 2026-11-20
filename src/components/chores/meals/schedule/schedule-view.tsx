@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useRef, useState } from "react"
 import Link from "next/link"
 import {
   AlertCircle,
@@ -67,6 +67,7 @@ export function ScheduleView({
   details: ScheduleDishDetails
 }) {
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const sheetTitleRef = useRef<HTMLHeadingElement | null>(null)
   const [confirmGenerate, setConfirmGenerate] = useState(false)
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null)
   const selected = view.days.find((day) => day.date === selectedDate)
@@ -235,11 +236,11 @@ export function ScheduleView({
       <RefreshOnVisible pollMs={POLL_MS} paused={selected !== undefined || confirmGenerate} />
 
       <Sheet open={selected !== undefined} onOpenChange={(open) => { if (!open) setSelectedDate(null) }}>
-        <SheetContent side="bottom" className="max-h-[88dvh] overflow-hidden rounded-t-3xl safe-bottom">
+        <SheetContent side="bottom" initialFocus={() => sheetTitleRef.current ?? true} className="max-h-[88dvh] overflow-hidden rounded-t-3xl safe-bottom">
           {selected !== undefined && (
             <>
               <SheetHeader className="pb-1 pr-12">
-                <SheetTitle>{formatMealDate(selected.date)}の献立</SheetTitle>
+                <SheetTitle ref={sheetTitleRef} tabIndex={-1}>{formatMealDate(selected.date)}の献立</SheetTitle>
                 <SheetDescription>
                   {selected.entries.length === 0 ? "この日の料理はまだ決まっていません。" : `${selected.entries.length}品の料理を確認できます。`}
                 </SheetDescription>
