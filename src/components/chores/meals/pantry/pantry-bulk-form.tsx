@@ -65,7 +65,8 @@ function isRenamed(draft: Draft): boolean {
   return draft.name.trim() !== draft.parsedName
 }
 
-type VerifiedDraftNames = Readonly<Record<string, PantryIdentity>>
+type VerifiedDraftName = PantryIdentity & { isGeneric: boolean; suggestedNames: string[] }
+type VerifiedDraftNames = Readonly<Record<string, VerifiedDraftName>>
 
 function draftIdentity(draft: Draft, verifiedNames: VerifiedDraftNames): PantryIdentity {
   const name = draft.name.trim()
@@ -174,7 +175,7 @@ export function PantryBulkForm({
   const [truncated, setTruncated] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [confirmedUnreadable, setConfirmedUnreadable] = useState(false)
-  const [verifiedNames, setVerifiedNames] = useState<Record<string, PantryIdentity>>({})
+  const [verifiedNames, setVerifiedNames] = useState<Record<string, VerifiedDraftName>>({})
   const [reading, startReading] = useTransition()
   const previewingRef = useRef(false)
   // サーバーへの名称再照合中にユーザーが編集したら、古い入力を保存しない。
@@ -320,7 +321,7 @@ export function PantryBulkForm({
   // 辞書IDはプレビュー時点のもの、手入力後はサーバーで再照合したもののみ使う。
   const duplicates = duplicatesOf(drafts ?? [], existingItems, verifiedNames)
 
-  function submitDrafts(activeDrafts: Draft[], checkedNames: VerifiedDraftNames) {
+  function submitDrafts(activeDrafts: Draft[], checkedNames: VerifiedDraftNames, freshlyVerified = false) {
     const checkedDuplicates = duplicatesOf(activeDrafts, existingItems, checkedNames)
     const unconfirmed = checkedDuplicates.findIndex((matched, index) =>
       (matched.existing.length > 0 || matched.earlier !== undefined) && !activeDrafts[index].confirmSeparate,
@@ -331,6 +332,17 @@ export function PantryBulkForm({
     }
     if (hasUnreadable && !confirmedUnreadable) {
       setError("表示できない食材があります。重複の可能性を確認してから登録してください。")
+      return
+    }
+    // 改名後に初めて総称・未解決と判明した場合は、そのまま確定しない。
+    // 再照合結果を画面へ表示してから、利用者にもう一度保存を選んでもらう。
+    if (freshlyVerified && activeDrafts.some((draft) =>
+      isRenamed(draft) && (
+        checkedNames[draft.id]?.isGeneric === true ||
+        checkedNames[draft.id]?.ingredientId === null
+      ),
+    )) {
+      setError("名前を再照合しました。総称または一覧にない食材が含まれます。候補と注意を確認してから登録してください。")
       return
     }
     const items: PantryNewItem[] = []
@@ -393,17 +405,17 @@ export function PantryBulkForm({
           setError("食材名を確認できませんでした。もう一度お試しください。")
           return
         }
-        const checked: Record<string, PantryIdentity> = {}
+        const checked: Record<string, VerifiedDraftName> = {}
         for (const [index, draft] of activeDrafts.entries()) {
           const item = result.items[index]
           if (item.name !== draft.name.trim()) {
             setError("食材名が一致しません。もう一度確認してください。")
             return
           }
-          checked[draft.id] = { name: item.name, ingredientId: item.ingredientId, catalogName: item.catalogName }
+          checked[draft.id] = { name: item.name, ingredientId: item.ingredientId, catalogName: item.catalogName, isGeneric: item.isGeneric, suggestedNames: item.suggestedNames }
         }
         setVerifiedNames(checked)
-        submitDrafts(activeDrafts, checked)
+        submitDrafts(activeDrafts, checked, true)
       } catch (err) {
         logOfflineError("[pantry-bulk-form] resolvePantryNames", err)
         setError(OFFLINE_ERROR_MESSAGE)
@@ -515,6 +527,11 @@ export function PantryBulkForm({
             {drafts.map((draft, index) => {
               const position = `${index + 1}件目`
               const renamed = isRenamed(draft)
+              const verified = renamed && verifiedNames[draft.id]?.name === draft.name.trim()
+                ? verifiedNames[draft.id]
+                : null
+              const shownGeneric = verified?.isGeneric ?? (!renamed && draft.isGeneric)
+              const shownSuggestions = verified?.suggestedNames ?? (renamed ? [] : draft.suggestedNames)
               return (
                 <li
                   key={draft.id}
@@ -574,19 +591,19 @@ export function PantryBulkForm({
                       </label>
                     </div>
                   )}
-                  {!renamed && draft.isGeneric && (
+                  {shownGeneric && (
                     <p className="text-sm text-amber-700 dark:text-amber-300">
                       「{draft.name}」は総称です。部位・種類が不明なままでは料理の材料として確定できません。
                       分かる場合は具体的な食材を選んでください。
                     </p>
                   )}
-                  {!renamed && draft.suggestedNames.length > 0 && (
+                  {shownSuggestions.length > 0 && (
                     <div role="group" aria-label={`${position}の食材名の候補`} className="flex flex-col gap-2">
                       <p className="text-sm text-muted-foreground">
-                        {draft.isGeneric ? "具体的な種類の候補" : "辞書にある近い名前の候補"}（自動では選びません）
+                        {shownGeneric ? "具体的な種類の候補" : "辞書にある近い名前の候補"}（自動では選びません）
                       </p>
                       <div className="flex flex-wrap gap-2">
-                        {draft.suggestedNames.map((name) => (
+                        {shownSuggestions.map((name) => (
                           <Button key={name} type="button" variant="outline" className="min-h-11" onClick={() => patchDraft(draft.id, { name })}>
                             {name}を選ぶ
                           </Button>
@@ -597,7 +614,13 @@ export function PantryBulkForm({
                   {renamed ? (
                     <p className="flex items-start gap-2 text-sm text-muted-foreground">
                       <Info size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-                      <span>名前を変えました。登録するときに、食材の一覧と照合します。</span>
+                      <span>
+                        {verified === null
+                          ? "名前を変えました。登録するときに、食材の一覧と照合します。"
+                          : verified.ingredientId === null
+                            ? "一覧にない名前です（提案の材料に数えません）"
+                            : `食材の一覧と一致: ${verified.catalogName}`}
+                      </span>
                     </p>
                   ) : draft.catalogName !== null ? (
                     <p className="flex items-start gap-2 text-sm">
