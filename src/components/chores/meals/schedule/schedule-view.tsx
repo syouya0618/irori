@@ -27,7 +27,7 @@ import { newClientId } from "@/lib/utils/client-id"
 import { shiftYmd } from "@/lib/utils/date-jst"
 
 import { isMealRequest, runMealRequest, type MealRequest, type MealSaveSuccess } from "../plan/meal-request"
-import { planHref, planStartBounds } from "../plan/plan-query"
+import { planEntryHref, planHref, planStartBounds } from "../plan/plan-query"
 import { scheduleHref } from "./schedule-query"
 
 const POLL_MS = 60_000
@@ -291,11 +291,11 @@ export function ScheduleView({
                           </Link>
                         )}
                         <Link
-                          href={planHref(selected.date < view.today ? view.today : selected.date, view.today)}
+                          href={planEntryHref(selected.date < view.today ? view.today : selected.date, entry.id, view.today)}
                           prefetch={false}
                           className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-border px-4 py-2 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring"
                         >
-                          献立を変更する
+                          {entry.status === "proposed" || entry.status === "confirmed" ? "この料理を変更・削除" : "この料理の記録を見る"}
                         </Link>
                       </div>
                     </section>
