@@ -26,8 +26,8 @@ describe("自分で設定した家事の月間カレンダー", () => {
     const onAddRoutine = vi.fn()
     render(<CleaningCalendar today="2026-11-11" items={items} logs={logs} historyFailed={false} historyTruncated={false}
       onOpenRoutine={onOpenRoutine} onAddRoutine={onAddRoutine} />)
-    const grid = screen.getByRole("grid", { name: "2026年11月の家事カレンダー" })
-    expect(within(grid).getAllByRole("gridcell")).toHaveLength(30)
+    const grid = screen.getByRole("group", { name: "2026年11月の家事カレンダー" })
+    expect(within(grid).getAllByRole("button")).toHaveLength(30)
     await act(async () => { fireEvent.click(within(grid).getByRole("button", { name: /11月15日: 完了0件・次回目安1件/ })) })
     expect(screen.getByText("11月15日の記録・予定")).toBeInTheDocument()
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /キッチン掃除.*次回目安/ })) })
@@ -40,7 +40,7 @@ describe("自分で設定した家事の月間カレンダー", () => {
     render(<CleaningCalendar today="2026-11-11" items={items} logs={[]} historyFailed={true} historyTruncated={true}
       onOpenRoutine={() => {}} onAddRoutine={() => {}} />)
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "次の月を見る" })) })
-    expect(screen.getByRole("grid", { name: "2026年12月の家事カレンダー" })).toBeInTheDocument()
+    expect(screen.getByRole("group", { name: "2026年12月の家事カレンダー" })).toBeInTheDocument()
     expect(screen.getByText(/履歴の一部を読み込めていません/)).toBeInTheDocument()
   })
 })
