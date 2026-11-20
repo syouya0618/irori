@@ -179,7 +179,7 @@ export function ScheduleView({
             </div>
           </div>
         )}
-        <Link href={planHref(firstGenerationDay, view.today)} prefetch={false} className="self-start px-1 text-sm text-primary underline-offset-4 hover:underline focus-visible:outline-2">
+        <Link href={planHref(firstGenerationDay, view.today)} prefetch={false} className="inline-flex min-h-11 self-start items-center rounded-lg px-3 py-2 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
           希望を伝えて献立を作る・細かく編集する
         </Link>
 
