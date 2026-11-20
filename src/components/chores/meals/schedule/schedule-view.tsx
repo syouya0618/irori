@@ -198,12 +198,13 @@ export function ScheduleView({
                 type="button"
                 aria-label={`${day.label}の献立を見る`}
                 onClick={() => setSelectedDate(day.date)}
-                className={`grid min-h-14 w-full grid-cols-[3.5rem_minmax(0,1fr)_1.25rem] items-center gap-2 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring ${day.isToday ? "border-l-4 border-primary bg-muted" : ""}`}
+                className={`grid min-h-14 w-full grid-cols-[3.2rem_3.25rem_minmax(0,1fr)_1.25rem] items-center gap-2 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring ${day.isToday ? "border-l-4 border-primary bg-muted" : ""}`}
               >
                 <span className="flex flex-col items-center justify-center gap-0.5 text-xs">
                   <span className={`font-semibold ${day.isToday ? "text-primary" : ""}`}>{weekdayOf(day.date)}</span>
                   <span className={day.isToday ? "text-foreground" : "text-muted-foreground"}>{shortDate(day.date)}</span>
                 </span>
+                <MealPhoto recipeId={day.entries[0]?.recipeId ?? null} fallback={day.entries.length > 0 ? roleIcon(day.entries[0]) : "📝"} className="size-12" />
                 <span className={`min-w-0 text-sm font-medium leading-relaxed break-words ${day.entries.length === 0 && !day.isToday ? "text-muted-foreground" : "text-foreground"}`}>
                   {dayTitle(day)}
                   {day.isToday && <span className="ml-1.5 text-xs font-semibold text-foreground">今日</span>}
