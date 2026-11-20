@@ -1,5 +1,5 @@
 import { PlanView } from "@/components/chores/meals/plan/plan-view"
-import { PLAN_START_PARAM, resolvePlanStart } from "@/components/chores/meals/plan/plan-query"
+import { PLAN_ENTRY_PARAM, PLAN_START_PARAM, resolvePlanStart } from "@/components/chores/meals/plan/plan-query"
 import { KeepLastGood } from "@/components/chores/shared/keep-last-good"
 import { MealContextError } from "@/lib/meals/server/context"
 import { loadMealAiStatus } from "@/lib/meals/server/plan-views"
@@ -39,7 +39,9 @@ export default async function MealPlanPage({
   if (!context) return null
   const { supabase, userId, householdId } = context
   const today = mealToday()
-  const startDate = resolvePlanStart((await searchParams)[PLAN_START_PARAM], today)
+  const params = await searchParams
+  const startDate = resolvePlanStart(params[PLAN_START_PARAM], today)
+  const requestedEntry = typeof params[PLAN_ENTRY_PARAM] === "string" ? params[PLAN_ENTRY_PARAM] : null
 
   const [data, ai] = await Promise.all([
     loadPlanPageData(supabase, householdId, userId, { startDate, today }),
@@ -53,11 +55,12 @@ export default async function MealPlanPage({
     <KeepLastGood scope={scope}>
       <PlanView
         // 持ち主（利用者・世帯）が替われば、画面の状態と保存の手順ごと作り直す
-        key={`${userId}:${householdId}`}
+        key={`${userId}:${householdId}:${requestedEntry ?? ""}`}
         owner={{ userId, householdId }}
         view={data.view}
         extras={data.extras}
         ai={ai}
+        initialEntryId={requestedEntry}
       />
     </KeepLastGood>
   )

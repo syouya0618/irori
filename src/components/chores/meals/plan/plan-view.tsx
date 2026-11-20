@@ -53,6 +53,8 @@ export interface PlanViewProps {
   extras: PlanPageExtras
   /** 画面を開いた時点の AI 補助の状態。 */
   ai: MealAiStatusView
+  /** 週間スケジュールから編集する1品。表示中の世帯・週にある場合だけ開く。 */
+  initialEntryId?: string | null
 }
 
 interface Notice {
@@ -85,19 +87,23 @@ function pushAvoid(list: readonly string[], ids: readonly string[]): string[] {
  *   上書きせずに「他の端末で変更されました」と出す。
  * - 在庫の引当・不足・除外との衝突は、サーバーが計算した表示（`DinnerPlanView`）をそのまま出す。
  */
-export function PlanView({ owner, view, extras, ai }: PlanViewProps) {
+export function PlanView({ owner, view, extras, ai, initialEntryId = null }: PlanViewProps) {
   const router = useRouter()
   // 取り直しは家事の共通の門を通す（`router.refresh()` を直に呼ばない。圏外・届かない時に画面を失わない）
   const { refresh } = useChoresRefresh()
   const [days, setDays] = useState(PLAN_VIEW_DAYS)
   const [notice, setNotice] = useState<Notice | null>(null)
-  const [sheet, setSheet] = useState<SheetState>(null)
+  const [sheet, setSheet] = useState<SheetState>(() =>
+    initialEntryId !== null && view.days.some((day) => day.entries.some((entry) => entry.id === initialEntryId))
+      ? { kind: "entry", entryId: initialEntryId, seq: 1 }
+      : null,
+  )
   const [avoid, setAvoid] = useState<Record<string, string[]>>({})
   const [readingToken, setReadingToken] = useState(0)
   const [interpreting, startInterpret] = useTransition()
   // 作成カードの、釦だけで変わる未保存の選択（主食の枠）が在るか
   const [createDirty, setCreateDirty] = useState(false)
-  const sheetSeqRef = useRef(0)
+  const sheetSeqRef = useRef(sheet !== null ? 1 : 0)
   // 送信中の操作を送ったシートの通し番号（シートの外から送った操作・控えの確かめ直しは null）
   const originSheetRef = useRef<number | null>(null)
 

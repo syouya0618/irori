@@ -42,6 +42,7 @@ import {
 import { newClientId } from "@/lib/utils/client-id"
 import { isValidYmd, todayJstString } from "@/lib/utils/date-jst"
 import { segmentCn } from "@/lib/utils/segment-cn"
+import { CleaningCalendar } from "./cleaning-calendar"
 import { CleaningItemCard } from "./cleaning-item-card"
 import { CleaningItemDetail } from "./cleaning-item-detail"
 import { CleaningRoutineForm } from "./cleaning-routine-form"
@@ -370,6 +371,20 @@ export function CleaningView({
 
   return (
     <div className="flex flex-col gap-6">
+      <CleaningCalendar
+        today={today}
+        items={entries.map((entry) => ({
+          id: entry.routine.id,
+          name: entry.routine.name,
+          dueOn: entry.status.isPaused ? null : entry.status.dueOn,
+          lastDoneOn: entry.status.lastDoneOn,
+        }))}
+        logs={logs}
+        historyFailed={historyFailed}
+        historyTruncated={historyTruncated}
+        onOpenRoutine={(id) => openSheet({ kind: "item", routineId: id, mode: "detail" })}
+        onAddRoutine={() => openSheet({ kind: "create" })}
+      />
       <section aria-labelledby="cleaning-due-heading" className="flex flex-col gap-3">
         <h2 id="cleaning-due-heading" className="text-sm font-semibold text-muted-foreground">
           今日・今週やること

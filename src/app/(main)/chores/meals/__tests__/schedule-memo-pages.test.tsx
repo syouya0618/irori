@@ -74,7 +74,7 @@ describe("スケジュール画面", () => {
     expect(within(dialog).getByText("肉じゃが")).toBeInTheDocument()
     expect(within(dialog).getByText(/材料（レシピ/)).toBeInTheDocument()
     expect(within(dialog).getByRole("link", { name: "料理の詳細を見る" })).toHaveAttribute("href", "/chores/meals/recipes/nikujaga")
-    expect(within(dialog).getByRole("link", { name: "献立を変更する" })).toHaveAttribute("href", "/chores/meals/plan")
+    expect(within(dialog).getByRole("link", { name: "この料理を変更・削除" })).toHaveAttribute("href", `/chores/meals/plan?entry=${db.entries().find((e) => e.household_id === HOUSE)?.id}`)
   })
 
   it("献立を読み込めなければ「未定」と偽らず、最後に読めた内容を保つ", async () => {

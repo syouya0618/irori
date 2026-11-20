@@ -63,7 +63,7 @@ export function PlanCustomDishForm({
   onCancel,
 }: {
   /** 編集する料理。null なら新規。 */
-  editing: { id: string; version: string; title: string; role: DishRole; ingredients: CustomIngredientView[] } | null
+  editing: { id: string; version: string; title: string; role: DishRole; ingredients: CustomIngredientView[]; convertFromRecipe?: boolean } | null
   date: string
   dateLabel: string
   disabled: boolean
@@ -124,6 +124,7 @@ export function PlanCustomDishForm({
       role,
       title: trimmedTitle,
       ingredients: ingredients.length > 0 ? ingredients : null,
+      ...(editing?.convertFromRecipe ? { convertFromRecipe: true } : {}),
     }
     const { op: _op, ...body } = request
     void _op
@@ -152,6 +153,11 @@ export function PlanCustomDishForm({
       <p className="text-sm text-muted-foreground">
         {dateLabel}の料理として保存します。手で入れた料理は固定になり、献立の作り直しで消えません。
       </p>
+      {editing?.convertFromRecipe && (
+        <p role="note" className="rounded-xl border border-amber-500/40 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:bg-amber-900/20 dark:text-amber-100">
+          この1品だけを手入力の料理に変えます。元のレシピとの自動連携は外れ、材料を入力しない場合は買い物の自動計算に含まれません。ほかの料理は変わりません。
+        </p>
+      )}
       <div className="flex flex-col gap-2">
         <label htmlFor={titleId} className="text-sm font-medium">
           料理名

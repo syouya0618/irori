@@ -18,7 +18,6 @@ import { useChoreSave, type ChoreSaveOutcome } from "@/components/chores/shared/
 import { Button } from "@/components/ui/button"
 import type { ChoreOwner } from "@/lib/domain/chore-pending"
 import {
-  GROCERY_NAME_MAX,
   isGroceryRequest,
   isSaveGroceryManualItemRequest,
   type GroceryRequest,
@@ -26,6 +25,8 @@ import {
 } from "@/lib/meals/server/plan-requests"
 import type { ShoppingItemView, ShoppingView } from "@/lib/meals/server/plan-views"
 import { newClientId } from "@/lib/utils/client-id"
+
+import { displayFreeMemo, encodeFreeMemo, FREE_MEMO_TEXT_MAX } from "./memo-text"
 
 const POLL_MS = 60_000
 
@@ -60,7 +61,7 @@ export function MemoView({ owner, view }: { owner: ChoreOwner; view: ShoppingVie
       return
     }
     if (isGroceryRequest(outcome.payload) && outcome.payload.op === "manual_item") {
-      if (pendingText.current === outcome.payload.name) setDraft("")
+      if (pendingText.current === displayFreeMemo({ name: outcome.payload.name, note: outcome.payload.note }).text) setDraft("")
       pendingText.current = null
     }
     setSubmitting(false)
@@ -83,22 +84,26 @@ export function MemoView({ owner, view }: { owner: ChoreOwner; view: ShoppingVie
   }
 
   function saveDraft() {
-    const name = draft.trim()
-    if (!name || save.blocked || pendingText.current !== null) return
+    const text = draft.trim()
+    if (!text || save.blocked || pendingText.current !== null) return
+    const encoded = encodeFreeMemo(text)
+    if (!encoded.ok) {
+      setNotice({ text: encoded.error, error: true })
+      return
+    }
     const req = {
       id: newClientId(),
       version: null,
-      name,
+      ...encoded.fields,
       quantity: null,
       unit: null,
       section: "other",
-      note: null,
     }
     if (!isSaveGroceryManualItemRequest(req)) {
-      setNotice({ text: `1行は${GROCERY_NAME_MAX}文字以内で書いてください。`, error: true })
+      setNotice({ text: "このメモは保存できません。少し短く分けてください。", error: true })
       return
     }
-    if (send({ op: "manual_item", ...req })) { pendingText.current = name; setSubmitting(true) }
+    if (send({ op: "manual_item", ...req })) { pendingText.current = text; setSubmitting(true) }
   }
 
   function purchaseOf(item: ShoppingItemView, checked: boolean): GroceryPurchaseInput {
@@ -119,7 +124,7 @@ export function MemoView({ owner, view }: { owner: ChoreOwner; view: ShoppingVie
           {save.saving || save.blocked || submitting ? (
             <span role="status">保存・確認中</span>
           ) : draft.trim() !== "" ? (
-            <span>入力中（Enterまたは離れると保存）</span>
+            <span>入力中（保存を押すか、入力欄を離れると確定）</span>
           ) : (
             <span role="status" className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
               <Check size={14} aria-hidden="true" />
@@ -138,13 +143,14 @@ export function MemoView({ owner, view }: { owner: ChoreOwner; view: ShoppingVie
         <ul className="flex flex-col divide-y divide-border/50" data-testid="memo-list">
           {sortedNotes.map((item) => {
             const checked = item.state === "purchased"
+            const displayed = displayFreeMemo({ name: item.name, note: item.note })
             return (
               <li key={item.id} className="flex min-h-14 items-center gap-2 py-1">
                 <button
                   type="button"
                   role="checkbox"
                   aria-checked={checked}
-                  aria-label={`${item.name}を${checked ? "未購入" : "購入済み"}にする`}
+                  aria-label={`${displayed.text}を${checked ? "未購入" : "購入済み"}にする`}
                   disabled={save.blocked}
                   onClick={() => send({
                     op: "purchase",
@@ -158,9 +164,9 @@ export function MemoView({ owner, view }: { owner: ChoreOwner; view: ShoppingVie
                     {checked && <Check size={15} aria-hidden="true" />}
                   </span>
                 </button>
-                <span className={`min-w-0 flex-1 break-words text-base ${checked ? "text-muted-foreground line-through" : ""}`}>
-                  {item.name}
-                  {item.note && <span className="block text-xs text-muted-foreground">{item.note}</span>}
+                <span className={`min-w-0 flex-1 whitespace-pre-wrap break-words text-base ${checked ? "text-muted-foreground line-through" : ""}`}>
+                  {displayed.text}
+                  {displayed.legacyNote && <span className="block text-xs text-muted-foreground">{displayed.legacyNote}</span>}
                 </span>
                 {confirmDelete === item.id ? (
                   <span className="flex gap-1">
@@ -195,22 +201,31 @@ export function MemoView({ owner, view }: { owner: ChoreOwner; view: ShoppingVie
           }}
         >
           <label htmlFor="shopping-memo-entry" className="sr-only">買い物メモを追加</label>
-          <input
+          <textarea
             id="shopping-memo-entry"
-            type="text"
+            rows={2}
             autoComplete="off"
             value={draft}
-            maxLength={GROCERY_NAME_MAX}
             disabled={save.blocked}
+            aria-describedby="shopping-memo-help"
             onChange={(event) => { setDraft(event.target.value); setNotice(null) }}
             onBlur={saveDraft}
-            placeholder="＋ ここに自由に書く"
-            className="min-h-12 min-w-0 flex-1 bg-transparent px-2 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault()
+                saveDraft()
+              }
+            }}
+            placeholder="＋ 買うもの・気になることを自由に書く"
+            className="min-h-20 min-w-0 flex-1 resize-y rounded-xl bg-transparent px-2 py-2 text-base leading-relaxed outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           />
           <Button type="submit" variant="outline" size="icon" disabled={!draft.trim() || save.blocked} aria-label="書いたメモを保存">
             <Plus size={18} aria-hidden="true" />
           </Button>
         </form>
+        <p id="shopping-memo-help" className="pt-1 text-xs text-muted-foreground">
+          1件{FREE_MEMO_TEXT_MAX}文字まで。改行も使えます。保存は入力欄を離すか、保存ボタンを押すか、Ctrl/⌘＋Enter。
+        </p>
       </section>
 
       {view.unreadableItems > 0 && (

@@ -123,7 +123,7 @@ test("ごはん新UI: 週間7日→曜日詳細→メモ追加→再読込→購
   await expect(page).toHaveURL(/\/chores\/meals\/memo$/)
   const textBox = page.getByRole("textbox", { name: "買い物メモを追加" })
   await textBox.fill("キッチンペーパー")
-  await textBox.press("Enter")
+  await page.getByRole("button", { name: "書いたメモを保存" }).click()
   // メモ画面には保存済み表示と保存完了通知の両方が在る。通知を正確に特定する。
   await expect(page.getByRole("status").filter({ hasText: "保存しました。家族の買い物リストにも反映されます。" })).toBeVisible({ timeout: 15_000 })
 

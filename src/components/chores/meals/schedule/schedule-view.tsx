@@ -13,6 +13,7 @@ import {
 } from "lucide-react"
 
 import { MEALS_PANTRY_HREF, mealRecipeHref } from "@/components/chores/meals/shared/meal-routes"
+import { MealPhoto } from "@/components/chores/meals/shared/meal-photo"
 import { PendingChoreNotice } from "@/components/chores/shared/pending-chore-notice"
 import { RefreshOnVisible } from "@/components/chores/shared/refresh-on-visible"
 import { useChoreSave, type ChoreSaveOutcome } from "@/components/chores/shared/use-chore-save"
@@ -26,7 +27,7 @@ import { newClientId } from "@/lib/utils/client-id"
 import { shiftYmd } from "@/lib/utils/date-jst"
 
 import { isMealRequest, runMealRequest, type MealRequest, type MealSaveSuccess } from "../plan/meal-request"
-import { planHref, planStartBounds } from "../plan/plan-query"
+import { planEntryHref, planHref, planStartBounds } from "../plan/plan-query"
 import { scheduleHref } from "./schedule-query"
 
 const POLL_MS = 60_000
@@ -150,9 +151,10 @@ export function ScheduleView({
           ) : <span aria-hidden="true" className="size-11" />}
         </div>
 
+        {/* Do not animate disabled opacity to enabled: intermediate contrast is below WCAG AA. */}
         <Button
           type="button"
-          className="min-h-12 w-full rounded-xl bg-primary-hover text-base text-primary-foreground shadow-sm hover:bg-primary-hover"
+          className="min-h-12 w-full rounded-xl bg-primary-hover text-base text-primary-foreground shadow-sm hover:bg-primary-hover transition-[color,background-color,border-color,outline-color,box-shadow,translate]"
           disabled={save.blocked || !canGenerate}
           onClick={() => {
             if (hasReplaceable) setConfirmGenerate(true)
@@ -197,12 +199,13 @@ export function ScheduleView({
                 type="button"
                 aria-label={`${day.label}の献立を見る`}
                 onClick={() => setSelectedDate(day.date)}
-                className={`grid min-h-14 w-full grid-cols-[3.5rem_minmax(0,1fr)_1.25rem] items-center gap-2 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring ${day.isToday ? "border-l-4 border-primary bg-muted" : ""}`}
+                className={`grid min-h-14 w-full grid-cols-[3.2rem_3.25rem_minmax(0,1fr)_1.25rem] items-center gap-2 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring ${day.isToday ? "border-l-4 border-primary bg-muted" : ""}`}
               >
                 <span className="flex flex-col items-center justify-center gap-0.5 text-xs">
                   <span className={`font-semibold ${day.isToday ? "text-primary" : ""}`}>{weekdayOf(day.date)}</span>
                   <span className={day.isToday ? "text-foreground" : "text-muted-foreground"}>{shortDate(day.date)}</span>
                 </span>
+                <MealPhoto recipeId={day.entries[0]?.recipeId ?? null} fallback={day.entries.length > 0 ? roleIcon(day.entries[0]) : "📝"} className="size-12" />
                 <span className={`min-w-0 text-sm font-medium leading-relaxed break-words ${day.entries.length === 0 && !day.isToday ? "text-muted-foreground" : "text-foreground"}`}>
                   {dayTitle(day)}
                   {day.isToday && <span className="ml-1.5 text-xs font-semibold text-foreground">今日</span>}
@@ -242,7 +245,7 @@ export function ScheduleView({
                   return (
                     <section key={entry.id} className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-3" aria-label={entry.title}>
                       <div className="flex items-center gap-3">
-                        <div aria-hidden="true" className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-3xl">{roleIcon(entry)}</div>
+                        <MealPhoto recipeId={entry.recipeId} fallback={roleIcon(entry)} className="size-14" />
                         <div className="flex min-w-0 flex-1 flex-col gap-1">
                           <p className="text-base font-semibold break-words">{entry.title}</p>
                           <p className="text-xs text-muted-foreground">
@@ -290,11 +293,11 @@ export function ScheduleView({
                           </Link>
                         )}
                         <Link
-                          href={planHref(selected.date < view.today ? view.today : selected.date, view.today)}
+                          href={planEntryHref(selected.date, entry.id, view.today)}
                           prefetch={false}
                           className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-border px-4 py-2 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring"
                         >
-                          献立を変更する
+                          {entry.status === "proposed" || entry.status === "confirmed" ? "この料理を変更・削除" : "この料理の記録を見る"}
                         </Link>
                       </div>
                     </section>

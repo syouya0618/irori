@@ -402,14 +402,17 @@ export interface SaveCustomDishRequest {
   servings?: number
   /** null = 材料を登録しない（買い物の自動計算の対象外）。 */
   ingredients: CustomIngredientInput[] | null
+  /** 利用者が「手入力で変更」を選んだ場合だけ、提案レシピを手動料理に変える。 */
+  convertFromRecipe?: boolean
 }
 
 export function isSaveCustomDishRequest(value: unknown): value is SaveCustomDishRequest {
-  if (!isRequest(value, ["id", "version", "date", "role", "title", "servings", "ingredients"])) return false
+  if (!isRequest(value, ["id", "version", "date", "role", "title", "servings", "ingredients", "convertFromRecipe"])) return false
   const { ingredients } = value
   return (
     isClientId(value.id) &&
     isNullableVersion(value.version) &&
+    (value.convertFromRecipe === undefined || (value.convertFromRecipe === true && isVersion(value.version))) &&
     isYmd(value.date) &&
     isRole(value.role) &&
     isLabel(value.title, CUSTOM_DISH_TITLE_MAX) &&
