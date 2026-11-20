@@ -97,6 +97,18 @@ describe("順位: 早く使いたい・期限が近い食材、好み、時間",
     expect(salmon?.match.missing[0]).toMatchObject({ ingredientId: "salmon", reasons: ["expired"] })
   })
 
+  it("未来日の提案は当日ではなく食べる日で賞味期限を判定する", () => {
+    const pantry = richPantry().map((item) =>
+      item.id === "salmon" ? { ...item, expiresOn: "2026-11-12" } : item,
+    )
+    const now = suggestNow(input(pantry, { roles: ["main"], limit: 50 }))
+    expect(ids(now.ready)).toContain("salmon_grill")
+    const future = suggestNow(input(pantry, { roles: ["main"], eatOn: "2026-11-13", limit: 50 }))
+    expect(ids(future.ready)).not.toContain("salmon_grill")
+    expect(future.buy.find((item) => item.recipe.id === "salmon_grill")?.match.missing)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ reasons: ["expired"] })]))
+  })
+
   it("C-74: 保存済みの評価の有無で順位が変わる（実記録に基づく理由を返す）", () => {
     const base = suggestNow(input(richPantry(), { limit: 50 }))
     const before = ids(base.ready).indexOf("chicken_teriyaki")
