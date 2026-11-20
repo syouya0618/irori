@@ -265,7 +265,7 @@ describe("登録精度: 重複・総称・候補を確認する", () => {
 
     await click(screen.getByRole("button", { name: "既存を編集" }))
     expect(screen.getByRole("dialog")).toHaveTextContent("玉ねぎ")
-    await click(within(screen.getByRole("dialog")).getByRole("button", { name: "閉じる" }))
+    await click(within(screen.getByRole("dialog")).getAllByRole("button", { name: "閉じる" }).at(-1) as HTMLElement)
     expect(screen.getByTestId("pantry-duplicate")).toBeInTheDocument()
 
     await click(screen.getByRole("checkbox", { name: "1件目を別の在庫として登録する" }))
