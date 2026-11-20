@@ -50,7 +50,8 @@ export function RoleSuggestionPanel({
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const activeRoles = new Set(day.entries.filter((entry) => entry.status !== "skipped").map((entry) => entry.role))
-  const available = ROLES.filter(({ role }) => !activeRoles.has(role))
+  const mainIncludesStaple = day.entries.some((entry) => entry.role === "main" && entry.status !== "skipped" && entry.includesStaple === true)
+  const available = ROLES.filter(({ role }) => !activeRoles.has(role) && !(role === "staple" && mainIncludesStaple))
   const firstPosition = firstFreePosition(day.entries)
 
   function suggest(role: DishRole) {
