@@ -100,7 +100,7 @@ export async function suggestMealRole(
       feedback: context.feedback,
       stapleIngredientIds: context.settings.stapleIngredientIds,
       maxMinutes: context.settings.maxCookMinutes,
-      catalog: { ingredients: context.lookup.ingredients, recipes: context.lookup.recipes, allergens: context.lookup.allergens },
+      catalog: context.lookup,
       roles: [request.role],
       limit: 50,
     })
