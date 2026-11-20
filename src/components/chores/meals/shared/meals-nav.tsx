@@ -87,7 +87,7 @@ export function MealsHeader() {
         <ChevronLeft size={20} aria-hidden="true" />
       </Link>
       <Link href={MEALS_BASE_HREF} prefetch={false} aria-label="irori ごはんのトップ"
-        className="inline-flex min-h-7 items-center justify-center rounded-lg px-2 text-[24px] font-extrabold tracking-[-0.065em] leading-none text-primary focus-visible:outline-2 focus-visible:outline-ring">
+        className="inline-flex min-h-11 items-center justify-center rounded-lg px-2 text-[24px] font-extrabold tracking-[-0.065em] leading-none text-primary focus-visible:outline-2 focus-visible:outline-ring">
         irori
       </Link>
       <h1 className="text-lg font-bold leading-tight text-foreground">{title}</h1>
