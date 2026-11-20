@@ -224,9 +224,9 @@ describe("C-21 / C-22 まとめ入力の解釈（保存しない）", () => {
     expect(await resolvePantryNames(["たまねぎ", "豚肉", "謎の葉"])).toEqual({
       ok: true,
       items: [
-        { name: "たまねぎ", ingredientId: "onion", catalogName: "玉ねぎ" },
-        { name: "豚肉", ingredientId: "pork", catalogName: "豚肉" },
-        { name: "謎の葉", ingredientId: null, catalogName: null },
+        { name: "たまねぎ", ingredientId: "onion", catalogName: "玉ねぎ", isGeneric: false, suggestedNames: [] },
+        { name: "豚肉", ingredientId: "pork", catalogName: "豚肉", isGeneric: true, suggestedNames: expect.arrayContaining(["豚こま切れ肉"]) },
+        { name: "謎の葉", ingredientId: null, catalogName: null, isGeneric: false, suggestedNames: expect.any(Array) },
       ],
     })
     expect(calls).toEqual([])
