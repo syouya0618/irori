@@ -26,6 +26,8 @@ import { createHash, randomUUID } from "node:crypto"
 
 import { revalidatePath } from "next/cache"
 
+import { findAgeRuleWarnings } from "@/lib/meals/child-serving"
+
 import { MEALS_REVALIDATE_PATH } from "@/components/chores/meals/shared/meal-routes"
 import {
   parseRpcOutcome,
@@ -1342,6 +1344,30 @@ export async function addDinnerRecipe(request: AddDinnerRecipeRequest): Promise<
       const verdict = evaluateRecipe(recipe, set).verdict
       if (verdict === "blocked") return rejectedResult(MESSAGES.addBlocked)
       if (verdict === "label_check") return rejectedResult(describeAutoConfirmHold(set) ?? MESSAGES.addLabelCheck)
+      // 任意提案の採用だけは、候補取得後に家族が子どもの情報を変更した可能性も
+      // あらためて確認する。年齢情報が読めないときは「安全」と言わず保存を止める。
+      if (request.onlyIfRoleMissing === true) {
+        const children = await loadMealContext(actor.supabase, actor.householdId, {
+          include: ["children"],
+          today,
+        })
+        if (!children.ok || (children.context.unreadable.children ?? 0) > 0) {
+          return rejectedResult("子どもの年齢制約を確認できませんでした。読み直してから採用してください。")
+        }
+        const ages = findAgeRuleWarnings(
+          recipe.ingredients,
+          children.context.children.map((child) => ({
+            id: child.id,
+            birthDate: child.birthDate,
+            mealStage: null,
+          })),
+          request.date,
+          context.lookup.index,
+        )
+        if (ages.length > 0) {
+          return rejectedResult("お子さんの年齢制約に触れる食材を含むため、こちらの提案は採用できません。")
+        }
+      }
 
       const day = context.plan.entries.filter((entry) => entry.date === request.date)
       const dayChanged = (notice: string) => {
