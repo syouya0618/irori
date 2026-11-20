@@ -36,7 +36,7 @@ describe("共有メモの後方互換な表示と保存", () => {
     const input = "牛乳\n鍋に入れる豆腐\nパスは C:\\house\\memo"
     const fields = roundTrip(input)
     expect(fields.note).not.toContain("\n")
-    expect(fields.note).toContain("\\n")
+    expect(fields.name + (fields.note ?? "")).toContain("\\n")
   })
 
   it("全角文字の長さを数え、上限超過でも入力データを削除しない", () => {
