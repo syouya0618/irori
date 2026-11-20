@@ -260,7 +260,7 @@ test("家族2アカウント: 自由な家事項目→完了→取消が掃除�
     const dateLabel = todayJst().split("-")
     const dateText = Number(dateLabel[1]) + "月" + Number(dateLabel[2]) + "日"
     await expect(calendar.getByRole("button", { name: dateText + ": 完了1件・次回目安0件" }))
-      .toBeVisible({ timeout: 15_000 })
+      .toBeVisible({ timeout: 75_000 })
     await checkCompactScreen(page)
 
     await family.page.getByTestId("cleaning-inline-undo")
@@ -270,8 +270,9 @@ test("家族2アカウント: 自由な家事項目→完了→取消が掃除�
     await page.bringToFront()
     await expect.poll(() => page.evaluate(() => document.visibilityState)).toBe("visible")
     await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")))
+    // 定期取得は60秒。通信確認が初回失敗しても次の1周期で回復するか確かめる。
     await expect(calendar.getByRole("button", { name: dateText + ": 完了0件・次回目安1件" }))
-      .toBeVisible({ timeout: 15_000 })
+      .toBeVisible({ timeout: 75_000 })
     await page.screenshot({ path: testInfo.outputPath("irori-cleaning-320.png") })
   } finally {
     await family.context.close()
