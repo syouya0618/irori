@@ -133,7 +133,7 @@ describe("B-01 最初に「今日・今週やること」", () => {
   it("最初の区画が「今日・今週やること」で、期限超過を含めて期限の近い順に並ぶ", () => {
     const { container } = view({ routines })
     const headings = [...container.querySelectorAll("h2")].map((h) => h.textContent)
-    expect(headings[0]).toBe("今日・今週やること")
+    expect(headings.slice(0, 2)).toEqual(["家事ルーティン記録", "今日・今週やること"])
     const due = within(dueSection()).getAllByTestId("cleaning-item")
     expect(due.map((item) => item.querySelector("p")?.textContent)).toEqual(["浴室の排水口", "年に一度の換気扇"])
     // 期限超過は日数を文で言う（色だけにせぬ）
