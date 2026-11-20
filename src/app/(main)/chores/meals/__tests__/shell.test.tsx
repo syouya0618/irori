@@ -65,6 +65,18 @@ describe("ごはんの layout", () => {
     expect(screen.getByText("本文")).toBeInTheDocument()
   })
 
+  it.each([
+    ["/chores/meals", "スケジュール"],
+    ["/chores/meals/pantry", "冷蔵庫の在庫"],
+    ["/chores/meals/memo", "メモ"],
+    ["/chores/meals/plan", "献立の詳細"],
+    ["/chores/meals/now", "料理の候補"],
+  ])("画面 %s の見出しは %s", (route, title) => {
+    pathname = route
+    renderLayout()
+    expect(screen.getByRole("heading", { level: 1, name: title })).toBeInTheDocument()
+  })
+
   it("日常の切替は3画面だけで、旧画面のURLはナビに並べない", () => {
     renderLayout()
     expect(segmentLinks().map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
