@@ -16,7 +16,7 @@ import { MealsHeader, MealsNav } from "@/components/chores/meals/shared/meals-na
  */
 export default function MealsLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="flex flex-col gap-3 px-4 pt-3 pb-8">
+    <div className="flex flex-col gap-3 px-4 pt-[calc(env(safe-area-inset-top,0px)+0.75rem)] pb-8">
       <MealsHeader />
       <MealsNav />
       {children}
