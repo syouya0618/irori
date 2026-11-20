@@ -96,6 +96,7 @@ export function PantryBulkForm({
   today,
   disabled,
   saving,
+  compact = false,
   textareaId,
   onSubmit,
   onDraftChange,
@@ -105,6 +106,8 @@ export function PantryBulkForm({
   /** 新しい保存を受けられない（送信中・確認待ち）。 */
   disabled: boolean
   saving: boolean
+  /** 週間カンプの在庫タブでは1行の簡易登録を優先。詳しい入力も展開できる。 */
+  compact?: boolean
   /** 入力欄の id（空の案内から入力欄へ移るため、親が決める）。 */
   textareaId: string
   /** 受け付けたら true（塞がれていれば false。入力は残す）。 */
@@ -117,6 +120,7 @@ export function PantryBulkForm({
 }) {
   const formId = useId()
   const [text, setText] = useState("")
+  const [expanded, setExpanded] = useState(!compact)
   const [drafts, setDrafts] = useState<Draft[] | null>(null)
   const [truncated, setTruncated] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -271,41 +275,72 @@ export function PantryBulkForm({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="glass flex flex-col gap-3 rounded-2xl p-4 shadow-lg shadow-black/[0.04]">
-        <label htmlFor={textareaId} className="text-sm font-medium">
+      <div className={compact && !expanded ? "flex flex-col gap-2 rounded-2xl border border-border/70 bg-card p-3" : "glass flex flex-col gap-3 rounded-2xl p-4 shadow-lg shadow-black/[0.04]"}>
+        <label htmlFor={textareaId} className={compact && !expanded ? "sr-only" : "text-sm font-medium"}>
           家にある食材
         </label>
-        <Textarea
-          id={textareaId}
-          value={text}
-          rows={2}
-          maxLength={PANTRY_TEXT_MAX}
-          placeholder={PANTRY_BULK_PLACEHOLDER}
-          aria-describedby={error && drafts === null ? `${helpId} ${errorId}` : helpId}
-          disabled={reading || saving || drafts !== null}
-          onChange={(event) => {
-            setText(event.target.value)
-            setError(null)
-          }}
-        />
-        <p id={helpId} className="text-xs text-muted-foreground">
+        {expanded ? (
+          <Textarea
+            id={textareaId}
+            value={text}
+            rows={2}
+            maxLength={PANTRY_TEXT_MAX}
+            placeholder={PANTRY_BULK_PLACEHOLDER}
+            aria-describedby={error && drafts === null ? `${helpId} ${errorId}` : helpId}
+            disabled={reading || saving || drafts !== null}
+            onChange={(event) => {
+              setText(event.target.value)
+              setError(null)
+            }}
+          />
+        ) : (
+          <div className="flex min-w-0 items-center gap-2">
+            <Input
+              id={textareaId}
+              value={text}
+              maxLength={PANTRY_TEXT_MAX}
+              placeholder="＋ 食材名だけで追加（例：玉ねぎ、豆腐）"
+              autoComplete="off"
+              aria-describedby={error && drafts === null ? `${helpId} ${errorId}` : helpId}
+              disabled={reading || saving || drafts !== null}
+              className="min-h-11 min-w-0 flex-1 text-base"
+              onChange={(event) => {
+                setText(event.target.value)
+                setError(null)
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                  event.preventDefault()
+                  quickAdd()
+                }
+              }}
+            />
+            <Button type="button" className="min-h-11 shrink-0 px-3" disabled={disabled || reading || text.trim() === ""} onClick={quickAdd}>
+              {reading ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
+              追加
+            </Button>
+          </div>
+        )}
+        <p id={helpId} className={compact && !expanded ? "sr-only" : "text-xs text-muted-foreground"}>
           食材名だけでOK。改行・「、」でまとめて追加できます。数量・単位・保管場所は任意です（最大{PANTRY_BULK_MAX}件）。読めない食材は保存せず確認画面へ進みます。
         </p>
         {error && drafts === null && (
-          <p id={errorId} role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
+          <p id={errorId} role="alert" className="text-sm text-destructive">{error}</p>
         )}
-        {drafts === null && (
+        {drafts === null && expanded && (
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" className="min-h-11 flex-1 sm:flex-none" disabled={disabled || reading} onClick={quickAdd}>
               {reading ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
               {reading ? "読み取り中…" : "そのまま登録"}
             </Button>
-            <Button type="button" variant="ghost" disabled={reading} onClick={read}>
-              内容を確認
-            </Button>
+            <Button type="button" variant="ghost" disabled={reading} onClick={read}>内容を確認</Button>
           </div>
+        )}
+        {compact && drafts === null && (
+          <button type="button" disabled={reading} onClick={() => setExpanded((value) => !value)}
+            className="inline-flex min-h-8 self-end items-center rounded-lg px-2 text-xs text-muted-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
+            {expanded ? "かんたん入力に戻す" : "数量・保管場所などを詳しく入力"}
+          </button>
         )}
       </div>
 
