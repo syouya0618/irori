@@ -34,6 +34,7 @@ export function MemoView({ owner, view }: { owner: ChoreOwner; view: ShoppingVie
   const [draft, setDraft] = useState("")
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
   const pendingText = useRef<string | null>(null)
   const all = [...view.sections.flatMap((group) => group.items), ...view.purchased, ...view.notNeeded]
   const notes = all.filter((item) => item.origin === "manual")
@@ -49,17 +50,20 @@ export function MemoView({ owner, view }: { owner: ChoreOwner; view: ShoppingVie
     if (outcome.kind === "rejected") {
       setNotice({ text: outcome.error, error: true })
       pendingText.current = null
+      setSubmitting(false)
       return
     }
     if (outcome.status === "conflict") {
       setNotice({ text: "家族の端末で先に更新されました。最新の内容を確認してやり直してください。", error: true })
       pendingText.current = null
+      setSubmitting(false)
       return
     }
     if (isGroceryRequest(outcome.payload) && outcome.payload.op === "manual_item") {
       if (pendingText.current === outcome.payload.name) setDraft("")
       pendingText.current = null
     }
+    setSubmitting(false)
     setConfirmDelete(null)
     setNotice({ text: "保存しました。家族の買い物リストにも反映されます。", error: false })
   }
@@ -94,7 +98,7 @@ export function MemoView({ owner, view }: { owner: ChoreOwner; view: ShoppingVie
       setNotice({ text: `1行は${GROCERY_NAME_MAX}文字以内で書いてください。`, error: true })
       return
     }
-    if (send({ op: "manual_item", ...req })) pendingText.current = name
+    if (send({ op: "manual_item", ...req })) { pendingText.current = name; setSubmitting(true) }
   }
 
   function purchaseOf(item: ShoppingItemView, checked: boolean): GroceryPurchaseInput {
@@ -112,7 +116,7 @@ export function MemoView({ owner, view }: { owner: ChoreOwner; view: ShoppingVie
             <NotebookPen size={16} aria-hidden="true" />
             買い物・気になること
           </p>
-          {save.saving || save.blocked || pendingText.current !== null ? (
+          {save.saving || save.blocked || submitting ? (
             <span role="status">保存・確認中</span>
           ) : draft.trim() !== "" ? (
             <span>入力中（Enterまたは離れると保存）</span>
