@@ -259,6 +259,7 @@ describe("週間スケジュールから1品を手入力で変更・削除", () 
     await click(within(dialog).getByRole("button", { name: "この料理を献立から外す" }))
     expect(within(dialog).getByText(/「肉じゃが」をこの日の献立から外します/)).toBeInTheDocument()
     expect(saveDinnerRequest).not.toHaveBeenCalled()
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "外す" })).toBeEnabled())
     await click(within(dialog).getByRole("button", { name: "外す" }))
     await waitFor(() => expect(saveDinnerRequest).toHaveBeenCalledTimes(1))
     expect(saveDinnerRequest.mock.calls[0][0]).toEqual({
