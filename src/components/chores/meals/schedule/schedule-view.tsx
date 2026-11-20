@@ -8,7 +8,6 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  Clock3,
   CookingPot,
   Sparkles,
 } from "lucide-react"
