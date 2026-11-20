@@ -27,6 +27,7 @@ import {
   type PantryPreviewIssue,
   type PantryPreviewItem,
   type PantryPreviewResult,
+  type PantryNameResolutionResult,
   type SavePantryItemRequest,
 } from "@/lib/meals/server/pantry-requests"
 import {
@@ -120,6 +121,37 @@ export async function previewPantryText(text: string): Promise<PantryPreviewResu
     resolvedCount: items.filter((item) => item.ingredientId !== null).length,
     unresolvedNames: items.filter((item) => item.ingredientId === null).map((item) => item.name),
     truncated: parsed.truncated || all.length > PANTRY_BULK_MAX,
+  }
+}
+
+/**
+ * 入力後に名前を直したとき、プレビュー時点の辞書IDを流用しない。
+ * 名前だけを認証済みの辞書で再照合する。数量・在庫DBは読まない。
+ * クライアントの重複警告向けであり、同時登録の原子的防止ではない。
+ */
+export async function resolvePantryNames(names: string[]): Promise<PantryNameResolutionResult> {
+  const auth = await getAuthContext()
+  if (auth.error !== null) return { ok: false, error: auth.error }
+  if (
+    !Array.isArray(names) ||
+    names.length < 1 ||
+    names.length > PANTRY_BULK_MAX ||
+    names.some((name) => typeof name !== "string" || !isMealLabel(name.trim(), PANTRY_NAME_MAX))
+  ) {
+    return { ok: false, error: MEAL_INVALID_MESSAGE }
+  }
+  const index = getMealLookup().index
+  return {
+    ok: true,
+    items: names.map((name) => {
+      const cleaned = name.trim()
+      const ingredientId = resolveIngredientId(cleaned, index)
+      return {
+        name: cleaned,
+        ingredientId,
+        catalogName: ingredientId === null ? null : (index.byId.get(ingredientId)?.name ?? null),
+      }
+    }),
   }
 }
 
