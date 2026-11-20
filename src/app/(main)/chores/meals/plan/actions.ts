@@ -1619,16 +1619,22 @@ export async function saveCustomDish(request: SaveCustomDishRequest): Promise<Di
     const existing = context.plan.entries.find((entry) => entry.id === request.id)
     let input: PlanEntryInput
     if (existing) {
-      if (existing.recipeId !== null) return rejectedResult(MESSAGES.notCustom)
-      if (existing.status === "cooked") return rejectedResult(MESSAGES.cookedEntry)
+      if (existing.recipeId !== null && request.convertFromRecipe !== true) return rejectedResult(MESSAGES.notCustom)
+      if (existing.recipeId === null && request.convertFromRecipe === true) return rejectedResult(MESSAGES.invalid)
+      if (existing.status !== "proposed" && existing.status !== "confirmed") return rejectedResult(MESSAGES.cookedEntry)
       if (existing.date !== request.date || existing.role !== request.role) return rejectedResult(MESSAGES.customMoved)
       input = entryInputOf(existing, {
+        recipeId: null,
+        recipeVersion: null,
         customTitle: request.title.trim(),
         customIngredients,
         servings: request.servings ?? existing.servings,
+        pinned: true,
+        origin: "manual",
       })
     } else {
       if (request.version !== null) return conflictResult("gone", context.plan.revision, [MESSAGES.goneEntry])
+      if (request.convertFromRecipe === true) return rejectedResult(MESSAGES.goneEntry)
       const position = freePosition(context.plan.entries, request.date, null)
       if (position === null) return rejectedResult(MESSAGES.noFreeSlot)
       input = {
