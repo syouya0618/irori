@@ -66,7 +66,7 @@ export async function suggestMealRole(
       return { ok: false, reason: "unavailable", message: "献立・在庫・除外設定をすべて確認できませんでした。読み直してください。" }
     }
     const context = loaded.context
-    if ((context.unreadable.plan ?? 0) > 0 || (context.unreadable.pantry ?? 0) > 0) {
+    if ((context.unreadable.plan ?? 0) > 0 || (context.unreadable.pantry ?? 0) > 0 || (context.unreadable.children ?? 0) > 0) {
       return { ok: false, reason: "unavailable", message: "読めない献立か食材があるため、安全に提案できません。" }
     }
     if (context.plan.revision !== request.expectedRevision) {
