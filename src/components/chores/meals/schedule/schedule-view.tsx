@@ -291,7 +291,7 @@ export function ScheduleView({
                           </Link>
                         )}
                         <Link
-                          href={planEntryHref(selected.date < view.today ? view.today : selected.date, entry.id, view.today)}
+                          href={planEntryHref(selected.date, entry.id, view.today)}
                           prefetch={false}
                           className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-border px-4 py-2 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring"
                         >
