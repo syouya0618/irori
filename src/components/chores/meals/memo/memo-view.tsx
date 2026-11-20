@@ -150,7 +150,7 @@ export function MemoView({ owner, view }: { owner: ChoreOwner; view: ShoppingVie
                   type="button"
                   role="checkbox"
                   aria-checked={checked}
-                  aria-label={`${item.name}を${checked ? "未購入" : "購入済み"}にする`}
+                  aria-label={`${displayed.text}を${checked ? "未購入" : "購入済み"}にする`}
                   disabled={save.blocked}
                   onClick={() => send({
                     op: "purchase",
