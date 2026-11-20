@@ -17,6 +17,7 @@ import {
   suggestPantryCatalogNames,
 } from "../pantry-guidance"
 import { INGREDIENTS, q } from "./fixtures"
+import { INGREDIENTS as REAL_INGREDIENTS } from "../catalog/ingredients"
 
 describe("foldName（照合用の正規化）", () => {
   it.each([
@@ -272,10 +273,10 @@ describe("登録精度の補助（名前候補と重複の確認）", () => {
   })
 
   it("総称の候補は実在の派生食材。自動で部位を一つに決めない", () => {
-    const names = specificPantryCatalogNames("pork", INGREDIENTS)
+    const names = specificPantryCatalogNames("pork", REAL_INGREDIENTS)
     expect(names).toContain("豚こま切れ肉")
     expect(names.length).toBeLessThanOrEqual(4)
     expect(names).not.toContain("豚肉")
-    expect(specificPantryCatalogNames("onion", INGREDIENTS)).toEqual([])
+    expect(specificPantryCatalogNames("onion", REAL_INGREDIENTS)).toEqual([])
   })
 })
