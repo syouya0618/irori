@@ -272,6 +272,10 @@ export interface PantryPreviewItem {
   /** 数量として読もうとした部分の原文。 */
   quantityText: string | null
   issues: PantryPreviewIssue[]
+  /** 総称は登録できるが献立の材料には確定計上しない。 */
+  isGeneric?: boolean
+  /** あくまで選択肢。勝手に食材 ID へ決定したり、在庫を変更したりしない。 */
+  suggestedNames?: string[]
 }
 
 export type PantryPreviewResult =
