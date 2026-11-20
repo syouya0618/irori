@@ -8,7 +8,16 @@ import { activeSegmentHref } from "@/components/chores/shared/segment-links"
 import { cn } from "@/lib/utils"
 import { segmentCn } from "@/lib/utils/segment-cn"
 
-import { MEAL_HIDDEN_SEGMENTS, MEAL_SEGMENTS, MEALS_SETTINGS_HREF } from "./meal-routes"
+import {
+  MEAL_HIDDEN_SEGMENTS,
+  MEAL_SEGMENTS,
+  MEALS_BASE_HREF,
+  MEALS_MEMO_HREF,
+  MEALS_NOW_HREF,
+  MEALS_PLAN_HREF,
+  MEALS_SETTINGS_HREF,
+  MEALS_SHOPPING_HREF,
+} from "./meal-routes"
 
 const ALL_SEGMENTS = [...MEAL_SEGMENTS, ...MEAL_HIDDEN_SEGMENTS]
 
@@ -29,11 +38,17 @@ function useActiveMealHref(): string | null {
  */
 export function MealsNav({ className }: { className?: string }) {
   const active = useActiveMealHref()
+  const current =
+    active === MEALS_PLAN_HREF || active === MEALS_NOW_HREF
+      ? MEALS_BASE_HREF
+      : active === MEALS_SHOPPING_HREF
+        ? MEALS_MEMO_HREF
+        : active
   return (
     <nav aria-label="ごはんの画面" className={className}>
-      <div className="flex flex-wrap gap-1 rounded-xl bg-muted/50 p-1">
+      <div className="grid grid-cols-3 gap-1 rounded-xl bg-muted/50 p-1">
         {MEAL_SEGMENTS.map((item) => {
-          const isActive = item.href === active
+          const isActive = item.href === current
           return (
             <Link
               key={item.href}
@@ -42,7 +57,7 @@ export function MealsNav({ className }: { className?: string }) {
               aria-current={isActive ? "page" : undefined}
               className={cn(
                 segmentCn(isActive),
-                "flex min-w-11 flex-auto items-center justify-center text-center whitespace-nowrap focus-visible:outline-2 focus-visible:outline-ring",
+                "flex min-h-11 min-w-0 items-center justify-center rounded-lg px-2 text-center text-xs whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-ring sm:text-sm",
               )}
             >
               {item.label}

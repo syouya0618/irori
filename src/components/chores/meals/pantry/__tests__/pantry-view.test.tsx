@@ -634,6 +634,26 @@ describe("一覧の並べ方と空の表示（X-03 未登録）", () => {
     expect(screen.getByText("表示できる食材がありません")).toBeInTheDocument()
     expect(screen.getByRole("alert")).toHaveTextContent("表示できない食材が 2 件あります")
   })
+
+  it("冷蔵庫のコンパクト表示は在庫0件でも4つの保管場所フィルターを表示する", async () => {
+    view({ items: [], variant: "compact" })
+    const filter = screen.getByRole("group", { name: "保管場所で絞り込む" })
+    expect(within(filter).getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "すべて", "冷蔵", "冷凍", "常温",
+    ])
+    expect(within(filter).getByRole("button", { name: "すべて" })).toHaveAttribute("aria-pressed", "true")
+    expect(screen.getByText("この保管場所の食材は、まだありません。")).toBeInTheDocument()
+    await click(within(filter).getByRole("button", { name: "冷凍" }))
+    expect(within(filter).getByRole("button", { name: "冷凍" })).toHaveAttribute("aria-pressed", "true")
+  })
+
+  it("コンパクト表示で在庫が読めない場合は空とは断定しない", () => {
+    view({ items: [], unreadable: 2, variant: "compact" })
+    expect(screen.getByRole("group", { name: "保管場所で絞り込む" })).toBeInTheDocument()
+    expect(screen.getByText(/表示できる食材がありません。読み込めない在庫が残っています/)).toBeInTheDocument()
+    expect(screen.queryByText("この保管場所の食材は、まだありません。")).not.toBeInTheDocument()
+  })
+
 })
 
 describe("編集シート（数量・保管場所・期限・最終確認日・削除）", () => {

@@ -44,6 +44,7 @@ export default async function PantryPage() {
         today={ctx.today}
         items={items}
         unreadable={ctx.unreadable.pantry ?? 0}
+        variant="compact"
       />
     </KeepLastGood>
   )

@@ -107,6 +107,54 @@ async function measureTouchTargets(page: Page, label: string, violations: string
   }
 }
 
+test("ごはん新UI: 週間7日→曜日詳細→メモ追加→再読込→購入チェック（390px）", async ({ page, approvedUser }) => {
+  const house = await setupHousehold(page, approvedUser.id, approvedUser.email, "E2Eごはん3タブ世帯")
+  await page.goto("/chores/meals")
+
+  const nav = page.getByRole("navigation", { name: "ごはんの画面" })
+  await expect(nav.getByRole("link")).toHaveCount(3)
+  await expect(nav.getByRole("link", { name: "スケジュール" })).toHaveAttribute("aria-current", "page")
+  await expect(page.getByTestId("schedule-week").locator(":scope > li")).toHaveCount(7)
+  await page.getByTestId("schedule-week").getByRole("button").first().click()
+  await expect(page.getByRole("dialog")).toContainText("の献立")
+  await page.keyboard.press("Escape")
+
+  await nav.getByRole("link", { name: "メモ" }).click()
+  await expect(page).toHaveURL(/\/chores\/meals\/memo$/)
+  const textBox = page.getByRole("textbox", { name: "買い物メモを追加" })
+  await textBox.fill("キッチンペーパー")
+  await textBox.press("Enter")
+  // メモ画面には保存済み表示と保存完了通知の両方が在る。通知を正確に特定する。
+  await expect(page.getByRole("status").filter({ hasText: "保存しました。家族の買い物リストにも反映されます。" })).toBeVisible({ timeout: 15_000 })
+
+  await expect(async () => {
+    const { data, error } = await adminClient()
+      .from("grocery_items").select("id, origin, name, purchased")
+      .eq("household_id", house).eq("name", "キッチンペーパー")
+    if (error) throw new Error(error.message)
+    expect(data).toHaveLength(1)
+    expect(data?.[0]).toMatchObject({ origin: "manual", purchased: false })
+  }).toPass({ timeout: 15_000 })
+
+  await page.reload()
+  const check = page.getByRole("checkbox", { name: "キッチンペーパーを購入済みにする" })
+  await expect(check).toBeVisible({ timeout: 15_000 })
+  await check.click()
+  await expect(async () => {
+    const { data, error } = await adminClient().from("grocery_items")
+      .select("purchased").eq("household_id", house).eq("name", "キッチンペーパー").single()
+    if (error) throw new Error(error.message)
+    expect(data?.purchased).toBe(true)
+  }).toPass({ timeout: 15_000 })
+  const { count, error } = await adminClient().from("pantry_items")
+    .select("id", { count: "exact", head: true }).eq("household_id", house)
+  expect(error).toBeNull()
+  expect(count).toBe(0) // 購入チェックしても冷蔵庫の在庫は勝手に増やさない
+
+  await nav.getByRole("link", { name: "冷蔵庫の在庫" }).click()
+  await expect(page.getByRole("group", { name: "保管場所で絞り込む" })).toBeVisible()
+})
+
 test("ごはん: 食材を登録すると、「今あるもので」にその食材で作れる料理が出る", async ({ page, approvedUser }) => {
   const householdId = await setupHousehold(page, approvedUser.id, approvedUser.email, "E2Eごはん食材世帯")
 
@@ -116,8 +164,9 @@ test("ごはん: 食材を登録すると、「今あるもので」にその食
   await page.getByRole("link", { name: /^ごはん/ }).click()
   await expect(page).toHaveURL(/\/chores\/meals$/, { timeout: 15_000 })
   await expect(page.getByRole("heading", { level: 1, name: "ごはん" })).toBeVisible()
-  await expect(page.getByTestId("tonight-state")).toContainText("まだ決まっていません")
-  await page.getByRole("link", { name: /今あるもので作る/ }).click()
+  // 新ホームは月〜日のスケジュール。従来の「今あるもので」は直接URLで互換提供。
+  await expect(page.getByTestId("schedule-week").locator(":scope > li")).toHaveCount(7)
+  await page.goto("/chores/meals/now")
   await expect(page).toHaveURL(/\/chores\/meals\/now$/, { timeout: 15_000 })
 
   // 食材が無いうちは「揃う」「分量を確認」に候補を捏造せず、登録へ誘導する。買い足し案は別の枠に、
@@ -165,7 +214,8 @@ test("ごはん: 食材を登録すると、「今あるもので」にその食
   }).toPass({ timeout: 15_000 })
 
   // ── 3. 「今あるもので」: 登録した食材で作れる料理が、買い足しの枠ではない所に出る ──────
-  await page.getByRole("navigation", { name: "ごはんの画面" }).getByRole("link", { name: "今あるもので" }).click()
+  // 3タブにまとめた後も「今あるもので」の旧URLは利用できる
+  await page.goto("/chores/meals/now")
   await expect(page).toHaveURL(/\/chores\/meals\/now$/, { timeout: 15_000 })
   const candidate = page.getByTestId("now-candidate").filter({ hasText: "鮭の塩焼き" })
   await expect(candidate).toBeVisible({ timeout: 15_000 })
@@ -686,7 +736,8 @@ test("ごはん ④: 今あるもので選んだ副菜を、固定したカレ�
   await expect(page.getByRole("status").filter({ hasText: "2件の食材を登録しました。" })).toBeVisible({ timeout: 15_000 })
 
   // ── 4. 今あるもので → 副菜を、固定したカレーの在る金曜へ足す ──────────────────────
-  await page.getByRole("navigation", { name: "ごはんの画面" }).getByRole("link", { name: "今あるもので" }).click()
+  // 3タブにまとめた後も「今あるもので」の旧URLは利用できる
+  await page.goto("/chores/meals/now")
   await expect(page).toHaveURL(/\/chores\/meals\/now$/, { timeout: 15_000 })
   const candidate = page.getByTestId("now-candidate").filter({ hasText: "ほうれん草のおひたし" }).first()
   await expect(candidate).toBeVisible({ timeout: 15_000 })

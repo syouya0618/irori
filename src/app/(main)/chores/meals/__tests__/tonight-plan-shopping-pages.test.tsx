@@ -38,7 +38,7 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/chores/meals",
 }))
 
-import MealsTonightPage from "../page"
+import MealsTonightPage from "../tonight/page"
 import MealPlanPage, { maxDuration } from "../plan/page"
 import MealShoppingPage from "../shopping/page"
 

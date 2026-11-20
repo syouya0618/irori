@@ -4,7 +4,7 @@ import { MealsNav, MealsSettingsLink } from "@/components/chores/meals/shared/me
 import { ChoresHeader } from "@/components/chores/shared/chores-header"
 
 /**
- * ごはん（/chores/meals とその下位）の殻。見出し「ごはん」・下位 5 画面の切替・設定への入口を持つ。
+ * ごはん（/chores/meals とその下位）の殻。見出し「ごはん」・下位 3 画面の切替・設定への入口を持つ。
  *
  * - **ここではデータを読まない**（認証も読まない）。layout が cookies などを読むと、Cache Components
  *   無効の現構成では layout の描画が終わるまで遷移が止まり、`loading.tsx` が出ない

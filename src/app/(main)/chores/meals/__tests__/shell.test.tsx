@@ -64,23 +64,22 @@ describe("ごはんの layout", () => {
     expect(screen.getByText("本文")).toBeInTheDocument()
   })
 
-  it("切替は 5 画面を決まった順で並べる", () => {
+  it("日常の切替は3画面だけで、旧画面のURLはナビに並べない", () => {
     renderLayout()
     expect(segmentLinks().map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
-      ["今夜", "/chores/meals"],
-      ["今あるもので", "/chores/meals/now"],
-      ["献立", "/chores/meals/plan"],
-      ["買い物", "/chores/meals/shopping"],
-      ["食材", "/chores/meals/pantry"],
+      ["スケジュール", "/chores/meals"],
+      ["冷蔵庫の在庫", "/chores/meals/pantry"],
+      ["メモ", "/chores/meals/memo"],
     ])
   })
 
   it.each([
-    ["/chores/meals", "今夜"],
-    ["/chores/meals/now", "今あるもので"],
-    ["/chores/meals/plan", "献立"],
-    ["/chores/meals/shopping", "買い物"],
-    ["/chores/meals/pantry", "食材"],
+    ["/chores/meals", "スケジュール"],
+    ["/chores/meals/now", "スケジュール"],
+    ["/chores/meals/plan", "スケジュール"],
+    ["/chores/meals/shopping", "メモ"],
+    ["/chores/meals/pantry", "冷蔵庫の在庫"],
+    ["/chores/meals/memo", "メモ"],
   ])("%s では「%s」だけが現在地（aria-current=page と塗り）", (path, label) => {
     pathname = path
     renderLayout()
@@ -112,23 +111,20 @@ describe("ごはんの layout", () => {
     }
   })
 
-  it("下位のさらに下位（/plan/…）でも、最も近い項目が現在地", () => {
+  it("下位のさらに下位（/plan/…）でも、週間スケジュールが現在地", () => {
     pathname = "/chores/meals/plan/2026-11-12"
     renderLayout()
-    expect(currentSegments()).toEqual(["献立"])
+    expect(currentSegments()).toEqual(["スケジュール"])
   })
 
-  it("切替は折り返せる並びで、項目は 44px 以上・項目の中では折り返さない", () => {
+  it("3つの切替は均等幅のグリッドで44px以上のタップ領域を持つ", () => {
     renderLayout()
     const list = screen.getByRole("navigation", { name: "ごはんの画面" }).firstElementChild
-    expect(list?.className).toMatch(/\bflex-wrap\b/)
+    expect(list?.className).toMatch(/grid-cols-3/)
     for (const link of segmentLinks()) {
       expect(link.className).toMatch(/\bmin-h-11\b/)
-      expect(link.className).toMatch(/\bmin-w-11\b/)
-      expect(link.className).toMatch(/\bwhitespace-nowrap\b/)
-      // 等分（flex-1）ではなく文字幅で並べる
-      expect(link.className).toMatch(/\bflex-auto\b/)
-      expect(link.className).not.toMatch(/\bflex-1\b/)
+      expect(link.className).toMatch(/\bmin-w-0\b/)
+      expect(link.className).toMatch(/whitespace-nowrap/)
       expect(link.className).toMatch(/focus-visible:outline-2/)
       expect(link.className).toMatch(/transition-colors/)
       expect(link.className).not.toMatch(/transition-all|\boutline-none\b/)

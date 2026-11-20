@@ -30,6 +30,7 @@ import {
   type MealSaveSuccess,
 } from "../plan/meal-request"
 import { PantryBulkForm } from "./pantry-bulk-form"
+import { PantryCompactRow } from "./pantry-compact-row"
 import {
   PANTRY_STATUS_ORDER,
   PANTRY_STORAGE_ORDER,
@@ -70,6 +71,8 @@ export interface PantryViewProps {
   items: PantryItemView[]
   /** 読めなかった食材の行の数（0 でなければ、全部は表示できていない）。 */
   unreadable: number
+  /** カンプ型コンパクト表示。既存の詳細管理は切替で維持する。 */
+  variant?: "full" | "compact"
 }
 
 /** 注意が要る食材を先に（期限切れ → 期限が近い → 確認が古い → それ以外）。同じ段の中は登録順。 */
@@ -105,10 +108,12 @@ function groupItems(items: readonly PantryItemView[], grouping: Grouping): Group
  * 編集は開いた時点の版を送り、家族が先に直していれば上書きしない。楽観表示はしない
  * （保存が確定してから、サーバーの内容を取り直して描く）。
  */
-export function PantryView({ owner, today, items, unreadable }: PantryViewProps) {
+export function PantryView({ owner, today, items, unreadable, variant = "full" }: PantryViewProps) {
   const baseId = useId()
   const textareaId = `${baseId}-bulk`
   const [grouping, setGrouping] = useState<Grouping>("storage")
+  const [showDetailedControls, setShowDetailedControls] = useState(variant === "full")
+  const [storageFilter, setStorageFilter] = useState<"all" | "fridge" | "freezer" | "pantry">("all")
   // 開いている編集のシート。`seq` は開くたびに変わる通し番号（保存の応答が、どのシートから送った
   // 操作かを見分ける）。`version` は開いた時点の食材の版（送る版はこれに固定する）
   const [editingSheet, setEditingSheet] = useState<{ id: string; seq: number; version: string } | null>(null)
@@ -250,6 +255,9 @@ export function PantryView({ owner, today, items, unreadable }: PantryViewProps)
   const openedVersion = editingSheet?.version ?? ""
   const editorStale = editing !== undefined && editingSheet !== null && editing.version !== editingSheet.version
   const groups = groupItems(items, grouping)
+  const compactItems = [...items]
+    .filter((item) => storageFilter === "all" || item.storage === storageFilter)
+    .sort((a, b) => attentionRank(a) - attentionRank(b))
   const expiredCount = items.filter((item) => item.expiry === "expired").length
   const staleCount = items.filter((item) => item.stale).length
   const unresolvedCount = items.filter((item) => item.catalogName === null).length
@@ -318,7 +326,7 @@ export function PantryView({ owner, today, items, unreadable }: PantryViewProps)
           登録した食材（{items.length}件）
         </h2>
 
-        {items.length === 0 ? (
+        {items.length === 0 && variant !== "compact" ? (
           <EmptyState
             icon={Refrigerator}
             // 読めない食材が在るときに「まだありません」と言わない（在る食材を無いと偽らない）
@@ -331,6 +339,48 @@ export function PantryView({ owner, today, items, unreadable }: PantryViewProps)
           </EmptyState>
         ) : (
           <>
+            {variant === "compact" && !showDetailedControls ? (
+              <div className="flex flex-col gap-3" data-testid="pantry-compact">
+                <div role="group" aria-label="保管場所で絞り込む" className="flex flex-wrap gap-2">
+                  {([
+                    { value: "all", label: "すべて" },
+                    { value: "fridge", label: "冷蔵" },
+                    { value: "freezer", label: "冷凍" },
+                    { value: "pantry", label: "常温" },
+                  ] as const).map(({ value, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={storageFilter === value}
+                      onClick={() => setStorageFilter(value)}
+                      className={`${segmentCn(storageFilter === value)} min-h-11 rounded-full px-4 text-sm focus-visible:outline-2 focus-visible:outline-ring`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <ul aria-label="冷蔵庫の在庫" className="flex flex-col gap-2">
+                  {compactItems.map((item) => (
+                    <PantryCompactRow
+                      key={item.id}
+                      item={item}
+                      today={today}
+                      disabled={save.blocked}
+                      onEdit={() => openEditor(item)}
+                    />
+                  ))}
+                </ul>
+                {compactItems.length === 0 && (
+                  <p className="rounded-xl bg-muted/50 px-3 py-4 text-sm text-muted-foreground">
+                    {unreadable > 0 ? "表示できる食材がありません。読み込めない在庫が残っています。" : "この保管場所の食材は、まだありません。"}
+                  </p>
+                )}
+                <Button type="button" variant="ghost" className="self-start" onClick={() => setShowDetailedControls(true)}>
+                  状態・期限などを詳しく管理する
+                </Button>
+              </div>
+            ) : (
+              <>
             <div role="group" aria-label="並べ方" className="flex gap-1 rounded-xl bg-muted/50 p-1">
               {(Object.keys(GROUPING_LABELS) as Grouping[]).map((value) => (
                 <button
@@ -393,6 +443,13 @@ export function PantryView({ owner, today, items, unreadable }: PantryViewProps)
             <p className="text-xs text-muted-foreground">
               状態を切り替えるか「今日確認した」を押すと、最終確認日が今日になります。
             </p>
+            {variant === "compact" && (
+              <Button type="button" variant="ghost" className="self-start" onClick={() => setShowDetailedControls(false)}>
+                シンプルな一覧へ戻る
+              </Button>
+            )}
+              </>
+            )}
           </>
         )}
       </section>

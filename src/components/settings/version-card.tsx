@@ -86,7 +86,7 @@ export function VersionCard({ owner }: { owner: SaveOwner | null }) {
             variant="outline"
             onClick={recheck}
             disabled={checking}
-            className="min-h-11 w-full cursor-pointer"
+            className="min-h-11 w-full cursor-pointer disabled:opacity-100"
           >
             {checking && <Loader2 size={16} className="animate-spin" aria-hidden="true" />}
             新しい版を確かめる
