@@ -221,7 +221,7 @@ afterEach(async () => {
 })
 
 describe("週間スケジュールから1品を手入力で変更・削除", () => {
-  it("指定した1品だけのシートを開き、変更も削除も操作できる", async () => {
+  it("指定した1品だけのシートを開き、手入力で変更できる", async () => {
     saveDinnerRequest.mockResolvedValue(saved())
     view({
       view: planView({ [TODAY]: [entry(), entry({ id: E_SIDE, role: "side", position: 1, title: "ほうれん草のおひたし", recipeId: "spinach_ohitashi" })] }),
@@ -247,6 +247,25 @@ describe("週間スケジュールから1品を手入力で変更・削除", () 
     })
     // 保存は1品だけ。その他の料理を削除する要求を混ぜない。
     expect(saveDinnerRequest.mock.calls[0][0]).not.toHaveProperty("deleteIds")
+  })
+
+  it("提案した1品だけを確認して削除し、別の品を削除しない", async () => {
+    saveDinnerRequest.mockResolvedValue(saved())
+    view({
+      view: planView({ [TODAY]: [entry(), entry({ id: E_SIDE, role: "side", position: 1, title: "ほうれん草のおひたし", recipeId: "spinach_ohitashi" })] }),
+      initialEntryId: E_MAIN,
+    })
+    const dialog = await screen.findByRole("dialog")
+    await click(within(dialog).getByRole("button", { name: "この料理を献立から外す" }))
+    expect(within(dialog).getByText(/「肉じゃが」をこの日の献立から外します/)).toBeInTheDocument()
+    expect(saveDinnerRequest).not.toHaveBeenCalled()
+    await click(within(dialog).getByRole("button", { name: "外す" }))
+    await waitFor(() => expect(saveDinnerRequest).toHaveBeenCalledTimes(1))
+    expect(saveDinnerRequest.mock.calls[0][0]).toEqual({
+      op: "delete",
+      entryId: E_MAIN,
+      version: V1,
+    })
   })
 
   it("同じ世帯・表示中の週に無いIDでは編集シートを開かない", () => {
