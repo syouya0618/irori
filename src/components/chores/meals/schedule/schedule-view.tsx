@@ -87,14 +87,17 @@ export function ScheduleView({
 
   function onOutcome(outcome: ChoreSaveOutcome<MealRequest, MealSaveSuccess>) {
     if (outcome.kind === "unknown") {
+      if (outcome.payload.op === "add_recipe") setSelectedDate(null)
       setNotice(null)
       return
     }
     if (outcome.kind === "rejected") {
+      if (outcome.payload.op === "add_recipe") setSelectedDate(null)
       setNotice({ text: outcome.error, error: true })
       return
     }
     if (outcome.status === "conflict") {
+      setSelectedDate(null)
       setNotice({ text: "別の端末で献立が変更されました。最新の内容を確認してから選び直してください。", error: true })
       return
     }
