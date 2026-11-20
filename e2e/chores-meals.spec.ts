@@ -163,7 +163,7 @@ test("ごはん: 食材を登録すると、「今あるもので」にその食
   await expect(page).toHaveURL(/\/chores$/, { timeout: 15_000 })
   await page.getByRole("link", { name: /^ごはん/ }).click()
   await expect(page).toHaveURL(/\/chores\/meals$/, { timeout: 15_000 })
-  await expect(page.getByRole("heading", { level: 1, name: "ごはん" })).toBeVisible()
+  await expect(page.getByRole("heading", { level: 1, name: "スケジュール" })).toBeVisible()
   // 新ホームは月〜日のスケジュール。従来の「今あるもので」は直接URLで互換提供。
   await expect(page.getByTestId("schedule-week").locator(":scope > li")).toHaveCount(7)
   await page.goto("/chores/meals/now")
@@ -189,6 +189,7 @@ test("ごはん: 食材を登録すると、「今あるもので」にその食
 
   // ── 2. まとめ入力 → 読み取り結果の確認 → 登録 ───────────────────────────────
   await page.getByLabel("家にある食材").fill("鮭 2切れ、塩 小さじ2、こめ油 大さじ2")
+  await page.getByRole("button", { name: "数量・保管場所などを詳しく入力" }).click()
   await page.getByRole("button", { name: "内容を確認" }).click()
   await expect(page.getByTestId("pantry-preview-resolved")).toHaveText("3件", { timeout: 15_000 })
   await expect(page.getByTestId("pantry-preview-unresolved")).toHaveText("0件")
@@ -730,6 +731,7 @@ test("ごはん ④: 今あるもので選んだ副菜を、固定したカレ�
   // 表示の 3 件に入り、足りないのはかつお節だけ
   await page.goto("/chores/meals/pantry")
   await page.getByLabel("家にある食材").fill("ほうれん草 1束、しょうゆ 大さじ2")
+  await page.getByRole("button", { name: "数量・保管場所などを詳しく入力" }).click()
   await page.getByRole("button", { name: "内容を確認" }).click()
   await expect(page.getByTestId("pantry-preview-resolved")).toHaveText("2件", { timeout: 15_000 })
   await page.getByRole("button", { name: "2件を登録" }).click()
