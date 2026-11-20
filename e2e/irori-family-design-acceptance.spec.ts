@@ -134,6 +134,7 @@ test("家族2アカウント: 主菜を提案→採用→副菜競合→別端�
     await family.page.goto("/chores/meals")
     await expect(family.page.getByTestId("schedule-week").getByText(title)).toBeVisible({ timeout: 15_000 })
     await checkCompactScreen(family.page)
+    await family.page.screenshot({ path: testInfo.outputPath("irori-week-schedule-390.png") })
 
     // Aが副菜の候補を見たあと、Bが先に採用する。古い候補で二重登録しない。
     await page.reload()
@@ -146,6 +147,7 @@ test("家族2アカウント: 主菜を提案→採用→副菜競合→別端�
 
     await family.page.reload()
     await openToday(family.page)
+    await family.page.screenshot({ path: testInfo.outputPath("irori-day-detail-390.png") })
     const adoptedSide = await proposeFirst(family.page, "side")
     await expect(family.page.getByRole("status").filter({ hasText: "選んだ料理を献立に追加しました" })).toBeVisible({ timeout: 20_000 })
     await expect(async () => {
@@ -178,12 +180,14 @@ test("家族2アカウント: 主菜を提案→採用→副菜競合→別端�
     await page.goto("/chores/meals")
     await expect(page.getByTestId("schedule-week").getByText(/家族同期のおでん/)).toBeVisible({ timeout: 15_000 })
     await expect(page.getByTestId("schedule-week").getByText(adoptedSide)).toBeVisible({ timeout: 15_000 })
+    await page.screenshot({ path: testInfo.outputPath("irori-week-schedule-320.png") })
 
     // デザインカンプの3タブ。冷蔵庫の絞り込みとメモは320pxで横溢しない。
     await page.getByRole("navigation", { name: "ごはんの画面" })
       .getByRole("link", { name: "冷蔵庫の在庫" }).click()
     await expect(page.getByRole("group", { name: "保管場所で絞り込む" })).toBeVisible()
     await checkCompactScreen(page)
+    await page.screenshot({ path: testInfo.outputPath("irori-pantry-320.png") })
     await page.getByRole("navigation", { name: "ごはんの画面" }).getByRole("link", { name: "メモ" }).click()
     const memo = page.getByRole("textbox", { name: "買い物メモを追加" })
     await memo.fill("卵\nキッチンペーパー")
@@ -191,6 +195,7 @@ test("家族2アカウント: 主菜を提案→採用→副菜競合→別端�
     await expect(page.getByRole("status").filter({ hasText: "保存しました。家族の買い物リストにも反映されます。" }))
       .toBeVisible({ timeout: 15_000 })
     await checkCompactScreen(page)
+    await page.screenshot({ path: testInfo.outputPath("irori-memo-320.png") })
     await family.page.goto("/chores/meals/memo")
     await expect(family.page.getByText(/キッチンペーパー/)).toBeVisible({ timeout: 15_000 })
     await checkCompactScreen(family.page)
@@ -247,7 +252,7 @@ test("家族2アカウント: 自由な家事項目→完了→取消が掃除�
     await page.reload()
     await expect(calendar.getByRole("button", { name: dateText + ": 完了0件・次回目安1件" }))
       .toBeVisible({ timeout: 15_000 })
-    await testInfo.attach("irori-cleaning-design-320", { body: await page.screenshot(), contentType: "image/png" })
+    await page.screenshot({ path: testInfo.outputPath("irori-cleaning-320.png") })
   } finally {
     await family.context.close()
     await cleanupUser(family.userId)
