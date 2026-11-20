@@ -10,6 +10,12 @@ import {
   splitBulkNames,
 } from "../normalize"
 import type { IngredientDef } from "../types"
+import {
+  matchingExistingPantry,
+  samePantryIngredient,
+  specificPantryCatalogNames,
+  suggestPantryCatalogNames,
+} from "../pantry-guidance"
 import { INGREDIENTS, q } from "./fixtures"
 
 describe("foldName（照合用の正規化）", () => {
@@ -234,5 +240,42 @@ describe("R26 換算できない数え方（合・株・ケース）と、後ろ
       { name: "米", quantity: q(2, "kg"), quantityText: "2kg" },
       { name: "2合", quantity: null, quantityText: null },
     ])
+  })
+})
+
+
+describe("登録精度の補助（名前候補と重複の確認）", () => {
+  it("既存行は ID の一致を優先し、総称・部位・加工品を同一視しない", () => {
+    expect(samePantryIngredient({ name: "たまねぎ", ingredientId: "onion" }, { name: "玉ねぎ", ingredientId: "onion" })).toBe(true)
+    expect(samePantryIngredient({ name: "豚肉", ingredientId: "pork" }, { name: "豚バラ", ingredientId: "pork_belly_slice" })).toBe(false)
+    expect(samePantryIngredient({ name: "豚肉", ingredientId: null }, { name: "豚バラ", ingredientId: "pork_belly_slice" })).toBe(false)
+  })
+
+  it("使い切った記録は重複の警告に混ぜないが、数量不明の有効行は含める", () => {
+    const target = { name: "玉ねぎ", ingredientId: "onion" }
+    const stock = [
+      { id: "a", name: "玉ねぎ", ingredientId: "onion", status: "have" as const },
+      { id: "b", name: "たまねぎ", ingredientId: "onion", status: "low" as const },
+      { id: "c", name: "玉ねぎ", ingredientId: "onion", status: "out" as const },
+      { id: "d", name: "にんじん", ingredientId: "carrot", status: "have" as const },
+    ]
+    expect(matchingExistingPantry(target, stock).map((item) => item.id)).toEqual(["a", "b"])
+  })
+
+  it("誤字には候補を提示するが ID は決定しない。短すぎる名前は推測しない", () => {
+    const suggestions = suggestPantryCatalogNames("玉ねき", INGREDIENTS)
+    expect(suggestions).toContain("玉ねぎ")
+    expect(suggestions.length).toBeLessThanOrEqual(4)
+    expect(suggestPantryCatalogNames("豚", INGREDIENTS)).toEqual([])
+    expect(resolveIngredientId("玉ねき", INGREDIENTS)).toBeNull()
+    expect(resolveIngredientId("豚", INGREDIENTS)).toBeNull()
+  })
+
+  it("総称の候補は実在の派生食材。自動で部位を一つに決めない", () => {
+    const names = specificPantryCatalogNames("pork", INGREDIENTS)
+    expect(names).toContain("豚こま切れ肉")
+    expect(names.length).toBeLessThanOrEqual(4)
+    expect(names).not.toContain("豚肉")
+    expect(specificPantryCatalogNames("onion", INGREDIENTS)).toEqual([])
   })
 })
