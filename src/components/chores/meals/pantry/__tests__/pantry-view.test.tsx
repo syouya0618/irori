@@ -16,12 +16,14 @@ import type {
   PantryItemSaveSuccess,
   PantryPreviewItem,
   PantryPreviewResult,
+  PantryNameResolutionResult,
   SavePantryItemRequest,
 } from "@/lib/meals/server/pantry-requests"
 import type { StoredPantryItem } from "@/lib/meals/server/rows"
 
 const actions = vi.hoisted(() => ({
   previewPantryText: vi.fn<(text: string) => Promise<PantryPreviewResult>>(),
+  resolvePantryNames: vi.fn<(names: string[]) => Promise<PantryNameResolutionResult>>(),
   addPantryItems: vi.fn<(request: AddPantryItemsRequest) => Promise<PantryBulkSaveSuccess | ChoreSaveFailure>>(),
   savePantryItem: vi.fn<(request: SavePantryItemRequest) => Promise<PantryItemSaveSuccess | ChoreSaveFailure>>(),
   deletePantryItem: vi.fn<(request: DeletePantryItemRequest) => Promise<PantryDeleteSuccess | ChoreSaveFailure>>(),
@@ -34,6 +36,7 @@ vi.mock("@/app/(main)/chores/meals/plan/actions", () => ({ saveDinnerRequest: ac
 vi.mock("@/app/(main)/chores/meals/shopping/actions", () => ({ saveGroceryRequest: actions.saveGroceryRequest }))
 vi.mock("@/app/(main)/chores/meals/pantry/actions", () => ({
   previewPantryText: actions.previewPantryText,
+  resolvePantryNames: actions.resolvePantryNames,
   addPantryItems: actions.addPantryItems,
   savePantryItem: actions.savePantryItem,
   deletePantryItem: actions.deletePantryItem,
@@ -310,6 +313,9 @@ describe("登録精度: 重複・総称・候補を確認する", () => {
       truncated: false,
     })
     actions.addPantryItems.mockResolvedValue({ status: "saved", items: [], saved: 1, replayed: 0 })
+    actions.resolvePantryNames.mockResolvedValue({
+      ok: true, items: [{ name: "豚こま切れ肉", ingredientId: "pork_komagire", catalogName: "豚こま切れ肉" }],
+    })
     view({ items: [] })
     await ready()
     fireEvent.change(bulkBox(), { target: { value: "豚肉" } })
@@ -323,6 +329,7 @@ describe("登録精度: 重複・総称・候補を確認する", () => {
     await waitFor(() => expect(actions.addPantryItems).toHaveBeenCalledTimes(1))
     expect(actions.addPantryItems.mock.calls[0][0].items[0].name).toBe("豚こま切れ肉")
     expect(actions.addPantryItems.mock.calls[0][0].items[0].ingredientId).toBeNull()
+    expect(actions.resolvePantryNames).toHaveBeenCalledWith(["豚こま切れ肉"])
   })
 
   it("辞書未解決名は候補を選べるが、自動では書き換えない", async () => {
@@ -344,6 +351,57 @@ describe("登録精度: 重複・総称・候補を確認する", () => {
     expect(screen.getByLabelText("1件目の名前")).toHaveValue("玉ねき")
     await click(screen.getByRole("button", { name: "玉ねぎを選ぶ" }))
     expect(screen.getByLabelText("1件目の名前")).toHaveValue("玉ねぎ")
+    expect(actions.addPantryItems).not.toHaveBeenCalled()
+  })
+
+  it("候補選択後に登録済み食材の別名になった場合も、再照合して二重計上を止める", async () => {
+    actions.previewPantryText.mockResolvedValue({
+      ok: true,
+      items: [preview({
+        name: "玉ねき", ingredientId: null, ingredientName: null,
+        suggestedNames: ["たまねぎ"],
+      })],
+      resolvedCount: 0, unresolvedNames: ["玉ねき"], truncated: false,
+    })
+    actions.resolvePantryNames.mockResolvedValue({
+      ok: true, items: [{ name: "たまねぎ", ingredientId: "onion", catalogName: "玉ねぎ" }],
+    })
+    actions.addPantryItems.mockResolvedValue({ status: "saved", items: [], saved: 1, replayed: 0 })
+    view() // 既存在庫は辞書 ID=onion、名前は「玉ねぎ」
+    await ready()
+    fireEvent.change(bulkBox(), { target: { value: "玉ねき" } })
+    await click(screen.getByRole("button", { name: "そのまま登録" }))
+    await waitFor(() => expect(screen.getAllByTestId("pantry-draft")).toHaveLength(1))
+    await click(screen.getByRole("button", { name: "たまねぎを選ぶ" }))
+    expect(screen.queryByTestId("pantry-duplicate")).not.toBeInTheDocument()
+    await click(screen.getByRole("button", { name: "1件を登録" }))
+    await waitFor(() => expect(actions.resolvePantryNames).toHaveBeenCalledWith(["たまねぎ"]))
+    expect(await screen.findByTestId("pantry-duplicate")).toHaveTextContent("登録済み: 玉ねぎ")
+    expect(actions.addPantryItems).not.toHaveBeenCalled()
+    await click(screen.getByRole("checkbox", { name: "1件目を別の在庫として登録する" }))
+    await click(screen.getByRole("button", { name: "1件を登録" }))
+    await waitFor(() => expect(actions.addPantryItems).toHaveBeenCalledTimes(1))
+    expect(actions.resolvePantryNames).toHaveBeenCalledTimes(1)
+    expect(actions.addPantryItems.mock.calls[0][0].items[0].name).toBe("たまねぎ")
+  })
+
+  it("改名の再照合が通信失敗なら、別名を未検証のまま保存しない", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {})
+    actions.previewPantryText.mockResolvedValue({
+      ok: true,
+      items: [preview({ name: "玉ねき", ingredientId: null, ingredientName: null })],
+      resolvedCount: 0, unresolvedNames: ["玉ねき"], truncated: false,
+    })
+    actions.resolvePantryNames.mockRejectedValueOnce(new TypeError("Failed to fetch"))
+    view()
+    await ready()
+    fireEvent.change(bulkBox(), { target: { value: "玉ねき" } })
+    await click(screen.getByRole("button", { name: "内容を確認" }))
+    await waitFor(() => expect(screen.getAllByTestId("pantry-draft")).toHaveLength(1))
+    fireEvent.change(screen.getByLabelText("1件目の名前"), { target: { value: "たまねぎ" } })
+    await click(screen.getByRole("button", { name: "1件を登録" }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("通信できませんでした")
+    expect(screen.getByLabelText("1件目の名前")).toHaveValue("たまねぎ")
     expect(actions.addPantryItems).not.toHaveBeenCalled()
   })
 
@@ -443,6 +501,13 @@ describe("C-21 まとめ入力 → 確認 → 登録", () => {
 
   it("名前を直した行は「登録するときに照合」と示し、外した行は送らない", async () => {
     actions.previewPantryText.mockResolvedValue(PREVIEW_OK)
+    actions.resolvePantryNames.mockResolvedValue({
+      ok: true,
+      items: [
+        { name: "新玉ねぎ", ingredientId: null, catalogName: null },
+        { name: "豚こま", ingredientId: "pork_komagire", catalogName: "豚こま切れ肉" },
+      ],
+    })
     actions.addPantryItems.mockResolvedValue({ status: "saved", items: [], saved: 2, replayed: 0 })
     view({ items: [] })
     await ready()
