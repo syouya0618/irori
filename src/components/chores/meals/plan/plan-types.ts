@@ -6,7 +6,7 @@
  * （食材辞書・レシピのカタログを画面の bundle へ載せない）。
  */
 
-import type { PantryStatus, UnitId } from "@/lib/meals/types"
+import type { PantryStatus, Quantity, UnitId } from "@/lib/meals/types"
 
 /** 料理の後に状態を更新できる食材（その料理の材料に当たる、登録済みの食材）。 */
 export interface CookedPantryOption {
@@ -16,6 +16,8 @@ export interface CookedPantryOption {
   name: string
   /** 「300g」「数量不明」。 */
   quantityText: string
+  /** 数量が確認済みの在庫だけ、使用量から残量を計算できる。 */
+  quantity?: Quantity | null
   status: PantryStatus
   statusLabel: string
 }
@@ -46,10 +48,13 @@ export interface PlanPageExtras {
   feedbackByEntry: Record<string, EntryFeedbackView>
   /** 枠 ID → 手動料理の材料（材料が未登録なら空の配列）。 */
   customByEntry: Record<string, CustomIngredientView[]>
+  /** カタログ料理を手入力へ変換するとき、元のレシピ材料を人数換算して引き継ぐ。 */
+  recipeByEntry?: Record<string, CustomIngredientView[]>
 }
 
 export const EMPTY_PLAN_PAGE_EXTRAS: PlanPageExtras = Object.freeze({
   pantryByEntry: Object.freeze({}),
   feedbackByEntry: Object.freeze({}),
   customByEntry: Object.freeze({}),
+  recipeByEntry: Object.freeze({}),
 }) as PlanPageExtras
