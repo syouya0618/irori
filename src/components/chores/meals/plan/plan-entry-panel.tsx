@@ -347,6 +347,7 @@ export function PlanEntryPanel({
   pantry,
   feedback,
   custom,
+  recipeIngredients = [],
   disabled,
   saving,
   send,
@@ -361,6 +362,8 @@ export function PlanEntryPanel({
   feedback: EntryFeedbackView | null
   /** 手動料理の材料（手動料理でなければ null）。 */
   custom: CustomIngredientView[] | null
+  /** 元のレシピの材料を人数換算した候補。変換時に失わない。 */
+  recipeIngredients?: CustomIngredientView[]
   disabled: boolean
   saving: boolean
   send: (request: PlanRequest) => boolean
@@ -385,7 +388,7 @@ export function PlanEntryPanel({
           <h3 className="text-sm font-semibold">この料理を手入力で変更</h3>
           <PlanCustomDishForm
             key={`${entry.id}:${entry.version}:convert`}
-            editing={{ id: entry.id, version: entry.version, title: entry.title, role: entry.role, ingredients: [], convertFromRecipe: true }}
+            editing={{ id: entry.id, version: entry.version, title: entry.title, role: entry.role, ingredients: recipeIngredients, convertFromRecipe: true }}
             date={entry.date}
             dateLabel={dayLabel}
             disabled={disabled}
