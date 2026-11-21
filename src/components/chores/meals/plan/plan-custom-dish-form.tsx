@@ -33,6 +33,7 @@ interface Row {
   name: string
   amount: string
   unit: UnitId
+  optional: boolean
 }
 
 function rowsOf(ingredients: readonly CustomIngredientView[]): Row[] {
@@ -41,6 +42,7 @@ function rowsOf(ingredients: readonly CustomIngredientView[]): Row[] {
     name: ingredient.name,
     amount: ingredient.amount === null ? "" : String(ingredient.amount),
     unit: ingredient.unit,
+    optional: ingredient.optional,
   }))
 }
 
@@ -86,7 +88,7 @@ export function PlanCustomDishForm({
 
   function addRow() {
     if (rows.length >= CUSTOM_DISH_INGREDIENTS_MAX) return
-    setRows((prev) => [...prev, { key: `new-${serial}`, name: "", amount: "", unit: "g" }])
+    setRows((prev) => [...prev, { key: `new-${serial}`, name: "", amount: "", unit: "g", optional: false }])
     setSerial((value) => value + 1)
   }
 
@@ -106,7 +108,7 @@ export function PlanCustomDishForm({
         return
       }
       if (isNonNumericUnit(row.unit)) {
-        ingredients.push({ name, amount: null, unit: row.unit })
+        ingredients.push({ name, amount: null, unit: row.unit, ...(row.optional ? { optional: true } : {}) })
         continue
       }
       const amount = Number(row.amount)
@@ -114,7 +116,7 @@ export function PlanCustomDishForm({
         setError(`「${name}」の量を、0 より大きい数で入力してください（分からなければ単位を「適量」に）。`)
         return
       }
-      ingredients.push({ name, amount, unit: row.unit })
+      ingredients.push({ name, amount, unit: row.unit, ...(row.optional ? { optional: true } : {}) })
     }
     const request: { op: "custom_dish" } & SaveCustomDishRequest = {
       op: "custom_dish",
@@ -155,7 +157,7 @@ export function PlanCustomDishForm({
       </p>
       {editing?.convertFromRecipe && (
         <p role="note" className="rounded-xl border border-amber-500/40 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:bg-amber-900/20 dark:text-amber-100">
-          この1品だけを手入力の料理に変えます。元のレシピとの自動連携は外れ、材料を入力しない場合は買い物の自動計算に含まれません。ほかの料理は変わりません。
+          この1品だけを手入力の料理に変えます。元のレシピの材料は編集用に引き継ぎます。材料の内容を確認してから保存してください。材料をすべて外すと買い物の自動計算から外れます。ほかの料理は変わりません。
         </p>
       )}
       <div className="flex flex-col gap-2">
@@ -254,6 +256,16 @@ export function PlanCustomDishForm({
                     <Trash2 aria-hidden="true" />
                   </Button>
                 </div>
+                <label className="inline-flex min-h-11 w-fit cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    aria-label={`材料 ${index + 1} を任意材料にする`}
+                    className="size-11 accent-primary"
+                    checked={row.optional}
+                    onChange={(event) => patchRow(row.key, { optional: event.target.checked })}
+                  />
+                  任意材料（買い物の自動計算には含めない）
+                </label>
               </li>
             ))}
           </ul>
