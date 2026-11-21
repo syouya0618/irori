@@ -117,7 +117,7 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expectNoViolations(page, testInfo, `chores-cleaning-${colorScheme}`)
 
     await page.goto("/chores/meals")
-    await expect(page.getByRole("heading", { level: 1, name: "ごはん" })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole("heading", { level: 1, name: "スケジュール" })).toBeVisible({ timeout: 15_000 })
     // 新しい入口は「今夜」ではなく7日間のスケジュール。旧画面固有の印を待たない。
     await expect(page.getByTestId("schedule-week")).toBeVisible()
     await expect(page.getByTestId("schedule-week").getByRole("button")).toHaveCount(7)

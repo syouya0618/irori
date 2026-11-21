@@ -1235,6 +1235,73 @@ describe("④ 一覧の料理 1 品を、既存の日の献立へ足す（addDin
     expect(success(await addDinnerRecipe(addSide({ status: "proposed" }))).status).toBe("saved")
   })
 
+  it("任意提案の採用は同じ区分の2品目と、主食を含む主菜への重複を止める", async () => {
+    await fridayCurry("proposed")
+    const already = entryRow(HOUSE, { plan_date: FRIDAY, role: "side", position: 3, recipe_id: "tamagoyaki", status: "proposed" })
+    db.tables.dinner_plan_entries.push(already)
+    const before = JSON.stringify(db.entries())
+    const duplicate = success(await addDinnerRecipe(addSide({
+      status: "proposed", position: 1, onlyIfRoleMissing: true,
+    })))
+    expect(duplicate).toMatchObject({ status: "conflict", detail: "day_changed" })
+    expect(duplicate.notices.join("")).toContain("この区分")
+    expect(JSON.stringify(db.entries())).toBe(before)
+
+    // カレーは主食を含むため、別のご飯を足す提案は止める。
+    const stapleConflict = success(await addDinnerRecipe(addSide({
+      role: "staple", recipeId: "steamed_rice", position: 2,
+      status: "proposed", onlyIfRoleMissing: true,
+    })))
+    expect(stapleConflict.status).toBe("conflict")
+    expect(stapleConflict.notices.join("")).toContain("主食を含む主菜")
+
+    // 主食が先に決まった日には、カレーを主菜として提案採用しない。
+    db.tables.dinner_plan_entries.push(entryRow(HOUSE, {
+      plan_date: SATURDAY, role: "staple", position: 0,
+      recipe_id: "steamed_rice", status: "proposed",
+    }))
+    const curryConflict = success(await addDinnerRecipe(addSide({
+      date: SATURDAY, role: "main", recipeId: "curry_rice",
+      position: 1, status: "proposed", onlyIfRoleMissing: true,
+    })))
+    expect(curryConflict.status).toBe("conflict")
+    expect(curryConflict.notices.join("")).toContain("主食が既に")
+    expect(db.rpcNames()).not.toContain("save_dinner_entry")
+    expect(await addDinnerRecipe(addSide({ onlyIfRoleMissing: false }))).toMatchObject({ failure: "rejected" })
+  })
+
+  it("任意提案の採用では、家族が更新した子どもの年齢制約を再確認して危険な候補を拒否", async () => {
+    const before = JSON.stringify(db.entries())
+    db.tables.children.push({
+      id: "f5000000-0000-4000-8000-0000000000c1",
+      household_id: HOUSE,
+      name: "あかり",
+      birth_date: "2026-09-01",
+      created_at: "2026-11-10T00:00:00.123456+00:00",
+    })
+    const blocked = await addDinnerRecipe(addSide({
+      recipeId: "sweet_potato_honey_lemon",
+      role: "side",
+      status: "proposed",
+      onlyIfRoleMissing: true,
+    }))
+    expect(blocked).toMatchObject({ failure: "rejected", error: expect.stringContaining("年齢制約") })
+    expect(JSON.stringify(db.entries())).toBe(before)
+    expect(db.rpcNames()).not.toContain("save_dinner_entry")
+  })
+
+  it("子どもの情報を読み込めない時は、任意提案の採用を安全扱いせず停止", async () => {
+    db.failTable("children")
+    const refused = await addDinnerRecipe(addSide({
+      role: "side",
+      status: "proposed",
+      onlyIfRoleMissing: true,
+    }))
+    expect(refused).toMatchObject({ failure: "rejected", error: expect.stringContaining("年齢制約を確認できません") })
+    expect(db.entries()).toEqual([])
+    expect(db.rpcNames()).not.toContain("save_dinner_entry")
+  })
+
   it("過ぎた日・区分の食い違い・世帯 ID の紛れ込みは拒む", async () => {
     expect(await addDinnerRecipe(addSide({ date: "2026-11-10" }))).toMatchObject({ failure: "rejected" })
     expect(await addDinnerRecipe(addSide({ role: "main" }))).toMatchObject({ failure: "rejected" })

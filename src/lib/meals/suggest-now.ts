@@ -54,6 +54,8 @@ export const NOW_WEIGHTS = {
 export interface SuggestNowInput {
   /** 今日（YYYY-MM-DD, JST）。食べる日でもある。 */
   today: string
+  /** 夕食を食べる予定日。省略時は今日（従来互換）。 */
+  eatOn?: string
   servings: number
   pantry: readonly PantryItem[]
   exclusions: readonly FoodExclusion[]
@@ -189,7 +191,7 @@ export function suggestNow(input: SuggestNowInput): SuggestNowResult {
 
   const suggestions: NowSuggestion[] = partition.allowed.map((recipe) => {
     const match = matchDishToPantry(recipe, input.servings, input.pantry, {
-      eatOn: input.today,
+      eatOn: input.eatOn ?? input.today,
       today: input.today,
       stapleIngredientIds: input.stapleIngredientIds,
       index: view.index,

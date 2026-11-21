@@ -279,9 +279,9 @@ export function PantryView({ owner, today, items, unreadable, variant = "full" }
     )
 
   return (
-    <div className="flex flex-col gap-6">
-      <section aria-labelledby={`${baseId}-bulk-heading`} className="flex flex-col gap-3">
-        <h2 id={`${baseId}-bulk-heading`} className="text-sm font-semibold text-muted-foreground">
+    <div className={variant === "compact" ? "flex flex-col gap-3" : "flex flex-col gap-6"}>
+      <section aria-labelledby={`${baseId}-bulk-heading`} className={variant === "compact" ? "flex flex-col gap-1" : "flex flex-col gap-3"}>
+        <h2 id={`${baseId}-bulk-heading`} className={variant === "compact" ? "sr-only" : "text-sm font-semibold text-muted-foreground"}>
           食材を追加
         </h2>
         <PantryBulkForm
@@ -289,6 +289,7 @@ export function PantryView({ owner, today, items, unreadable, variant = "full" }
           today={today}
           disabled={save.blocked}
           saving={sendingBulk}
+          compact={variant === "compact"}
           textareaId={textareaId}
           onSubmit={(request: AddPantryItemsRequest) => {
             const accepted = send({ op: "pantry_add", ...request })
@@ -321,8 +322,8 @@ export function PantryView({ owner, today, items, unreadable, variant = "full" }
         </p>
       )}
 
-      <section aria-labelledby={`${baseId}-list-heading`} className="flex flex-col gap-3">
-        <h2 id={`${baseId}-list-heading`} className="text-sm font-semibold text-muted-foreground">
+      <section aria-labelledby={`${baseId}-list-heading`} className={variant === "compact" ? "flex flex-col gap-2" : "flex flex-col gap-3"}>
+        <h2 id={`${baseId}-list-heading`} className={variant === "compact" ? "sr-only" : "text-sm font-semibold text-muted-foreground"}>
           登録した食材（{items.length}件）
         </h2>
 

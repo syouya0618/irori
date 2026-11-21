@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useRef, useState } from "react"
 import Link from "next/link"
 import {
   AlertCircle,
@@ -29,6 +29,7 @@ import { shiftYmd } from "@/lib/utils/date-jst"
 import { isMealRequest, runMealRequest, type MealRequest, type MealSaveSuccess } from "../plan/meal-request"
 import { planEntryHref, planHref, planStartBounds } from "../plan/plan-query"
 import { scheduleHref } from "./schedule-query"
+import { RoleSuggestionPanel } from "./role-suggestion-panel"
 
 const POLL_MS = 60_000
 const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"] as const
@@ -66,6 +67,7 @@ export function ScheduleView({
   details: ScheduleDishDetails
 }) {
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const sheetTitleRef = useRef<HTMLHeadingElement | null>(null)
   const [confirmGenerate, setConfirmGenerate] = useState(false)
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null)
   const selected = view.days.find((day) => day.date === selectedDate)
@@ -86,19 +88,27 @@ export function ScheduleView({
 
   function onOutcome(outcome: ChoreSaveOutcome<MealRequest, MealSaveSuccess>) {
     if (outcome.kind === "unknown") {
+      if (outcome.payload.op === "add_recipe") setSelectedDate(null)
       setNotice(null)
       return
     }
     if (outcome.kind === "rejected") {
+      if (outcome.payload.op === "add_recipe") setSelectedDate(null)
       setNotice({ text: outcome.error, error: true })
       return
     }
     if (outcome.status === "conflict") {
+      setSelectedDate(null)
       setNotice({ text: "別の端末で献立が変更されました。最新の内容を確認してから選び直してください。", error: true })
       return
     }
     setConfirmGenerate(false)
-    setNotice({ text: "献立の提案を保存しました。各曜日を押して内容を確認してください。", error: false })
+    if (outcome.payload.op === "add_recipe") {
+      setSelectedDate(null)
+      setNotice({ text: "選んだ料理を献立に追加しました。曜日を開いて内容をご確認ください。", error: false })
+    } else {
+      setNotice({ text: "献立の提案を保存しました。各曜日を押して内容を確認してください。", error: false })
+    }
   }
 
   const save = useChoreSave<MealRequest, MealSaveSuccess>({
@@ -181,10 +191,6 @@ export function ScheduleView({
             </div>
           </div>
         )}
-        <Link href={planHref(firstGenerationDay, view.today)} prefetch={false} className="inline-flex min-h-11 self-start items-center rounded-lg px-3 py-2 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
-          希望を伝えて献立を作る・細かく編集する
-        </Link>
-
         {notice !== null && (
           <p role={notice.error ? "alert" : "status"} className="flex items-start gap-2 rounded-xl bg-muted/50 px-3 py-2 text-sm">
             {notice.error ? <AlertCircle size={18} aria-hidden="true" /> : <Check size={18} className="text-emerald-700" aria-hidden="true" />}
@@ -199,13 +205,12 @@ export function ScheduleView({
                 type="button"
                 aria-label={`${day.label}の献立を見る`}
                 onClick={() => setSelectedDate(day.date)}
-                className={`grid min-h-14 w-full grid-cols-[3.2rem_3.25rem_minmax(0,1fr)_1.25rem] items-center gap-2 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring ${day.isToday ? "border-l-4 border-primary bg-muted" : ""}`}
+                className={`grid min-h-12 w-full grid-cols-[3.5rem_minmax(0,1fr)_1.25rem] items-center gap-2 rounded-xl px-2 py-1 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring ${day.isToday ? "border-l-4 border-primary bg-muted" : ""}`}
               >
                 <span className="flex flex-col items-center justify-center gap-0.5 text-xs">
                   <span className={`font-semibold ${day.isToday ? "text-primary" : ""}`}>{weekdayOf(day.date)}</span>
                   <span className={day.isToday ? "text-foreground" : "text-muted-foreground"}>{shortDate(day.date)}</span>
                 </span>
-                <MealPhoto recipeId={day.entries[0]?.recipeId ?? null} fallback={day.entries.length > 0 ? roleIcon(day.entries[0]) : "📝"} className="size-12" />
                 <span className={`min-w-0 text-sm font-medium leading-relaxed break-words ${day.entries.length === 0 && !day.isToday ? "text-muted-foreground" : "text-foreground"}`}>
                   {dayTitle(day)}
                   {day.isToday && <span className="ml-1.5 text-xs font-semibold text-foreground">今日</span>}
@@ -215,6 +220,10 @@ export function ScheduleView({
             </li>
           ))}
         </ul>
+        <Link href={planHref(firstGenerationDay, view.today)} prefetch={false}
+          className="inline-flex min-h-11 self-start items-center rounded-lg px-2 text-xs font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
+          希望を伝えて献立を作る・細かく編集する
+        </Link>
         <p className="text-xs text-muted-foreground">曜日を押すと、献立・材料・在庫の目安を確認できます。</p>
       </section>
 
@@ -227,11 +236,11 @@ export function ScheduleView({
       <RefreshOnVisible pollMs={POLL_MS} paused={selected !== undefined || confirmGenerate} />
 
       <Sheet open={selected !== undefined} onOpenChange={(open) => { if (!open) setSelectedDate(null) }}>
-        <SheetContent side="bottom" className="max-h-[88dvh] overflow-hidden rounded-t-3xl safe-bottom">
+        <SheetContent side="bottom" initialFocus={() => sheetTitleRef.current ?? true} className="max-h-[88dvh] overflow-hidden rounded-t-3xl safe-bottom">
           {selected !== undefined && (
             <>
               <SheetHeader className="pb-1 pr-12">
-                <SheetTitle>{formatMealDate(selected.date)}の献立</SheetTitle>
+                <SheetTitle ref={sheetTitleRef} tabIndex={-1}>{formatMealDate(selected.date)}の献立</SheetTitle>
                 <SheetDescription>
                   {selected.entries.length === 0 ? "この日の料理はまだ決まっていません。" : `${selected.entries.length}品の料理を確認できます。`}
                 </SheetDescription>
@@ -303,6 +312,14 @@ export function ScheduleView({
                     </section>
                   )
                 })}
+                <RoleSuggestionPanel
+                  key={`${selected.date}:${view.revision}`}
+                  day={selected}
+                  revision={view.revision}
+                  servings={view.servings.value}
+                  disabled={save.blocked || view.unreadableEntries > 0}
+                  onAdd={(request) => save.send(request, "選んだ料理を献立へ追加") !== null}
+                />
                 {view.ageRulesChecked === false && selected.entries.length > 0 && (
                   <p className="text-sm text-muted-foreground">子どもの年齢に関する注意は確認できていません。料理の詳細で確認してください。</p>
                 )}

@@ -155,6 +155,8 @@ describe("/chores/meals/pantry（食材）", () => {
   it("表示済みの画面の取り直しが失敗しても、書きかけのまとめ入力を消さず、直前の内容を保つ（R34）", async () => {
     db.tables.pantry_items.push(pantryRow(HOUSE, { ingredient_id: "onion", name: "玉ねぎ" }))
     const view = render(await PantryPage())
+    // カンプ型の1行簡易入力から、複数行を入力できる詳細モードに展開してから試す。
+    fireEvent.click(screen.getByRole("button", { name: "数量・保管場所などを詳しく入力" }))
     const bulk = screen.getByLabelText("家にある食材")
     fireEvent.change(bulk, { target: { value: "卵 1パック\n牛乳 1本" } })
     // 定期の再取得（router.refresh）で page が再実行され、読み取りが一時的に失敗した

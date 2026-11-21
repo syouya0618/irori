@@ -56,12 +56,25 @@ function currentSegments(): string[] {
 }
 
 describe("ごはんの layout", () => {
-  it("h1「ごはん」・家事へ戻るリンク・本文を出す", () => {
+  it("h1「スケジュール」・iroriロゴ・家事へ戻るリンク・本文を出す", () => {
     renderLayout()
-    expect(screen.getByRole("heading", { level: 1, name: "ごはん" })).toBeInTheDocument()
+    expect(screen.getByRole("heading", { level: 1, name: "スケジュール" })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "irori ごはんのトップ" })).toHaveAttribute("href", "/chores/meals")
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1)
     expect(screen.getByRole("link", { name: "家事" })).toHaveAttribute("href", "/chores")
     expect(screen.getByText("本文")).toBeInTheDocument()
+  })
+
+  it.each([
+    ["/chores/meals", "スケジュール"],
+    ["/chores/meals/pantry", "冷蔵庫の在庫"],
+    ["/chores/meals/memo", "メモ"],
+    ["/chores/meals/plan", "献立の詳細"],
+    ["/chores/meals/now", "料理の候補"],
+  ])("画面 %s の見出しは %s", (route, title) => {
+    pathname = route
+    renderLayout()
+    expect(screen.getByRole("heading", { level: 1, name: title })).toBeInTheDocument()
   })
 
   it("日常の切替は3画面だけで、旧画面のURLはナビに並べない", () => {
@@ -144,7 +157,7 @@ describe("ごはんの layout", () => {
     const { container } = renderLayout()
     const shell = container.firstElementChild
     expect(shell?.className).toMatch(/\bpx-4\b/)
-    expect(shell?.className).toMatch(/\bpt-12\b/)
+    expect(shell?.className).toContain("env(safe-area-inset-top,0px)_+_0.75rem")
     expect(shell?.className).not.toMatch(/pb-nav|pb-20|pb-24/)
   })
 })

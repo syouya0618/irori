@@ -26,6 +26,8 @@ import { createHash, randomUUID } from "node:crypto"
 
 import { revalidatePath } from "next/cache"
 
+import { findAgeRuleWarnings } from "@/lib/meals/child-serving"
+
 import { MEALS_REVALIDATE_PATH } from "@/components/chores/meals/shared/meal-routes"
 import {
   parseRpcOutcome,
@@ -1342,6 +1344,30 @@ export async function addDinnerRecipe(request: AddDinnerRecipeRequest): Promise<
       const verdict = evaluateRecipe(recipe, set).verdict
       if (verdict === "blocked") return rejectedResult(MESSAGES.addBlocked)
       if (verdict === "label_check") return rejectedResult(describeAutoConfirmHold(set) ?? MESSAGES.addLabelCheck)
+      // 任意提案の採用だけは、候補取得後に家族が子どもの情報を変更した可能性も
+      // あらためて確認する。年齢情報が読めないときは「安全」と言わず保存を止める。
+      if (request.onlyIfRoleMissing === true) {
+        const children = await loadMealContext(actor.supabase, actor.householdId, {
+          include: ["children"],
+          today,
+        })
+        if (!children.ok || (children.context.unreadable.children ?? 0) > 0) {
+          return rejectedResult("子どもの年齢制約を確認できませんでした。読み直してから採用してください。")
+        }
+        const ages = findAgeRuleWarnings(
+          recipe.ingredients,
+          children.context.children.map((child) => ({
+            id: child.id,
+            birthDate: child.birthDate,
+            mealStage: null,
+          })),
+          request.date,
+          context.lookup.index,
+        )
+        if (ages.length > 0) {
+          return rejectedResult("お子さんの年齢制約に触れる食材を含むため、こちらの提案は採用できません。")
+        }
+      }
 
       const day = context.plan.entries.filter((entry) => entry.date === request.date)
       const dayChanged = (notice: string) => {
@@ -1360,6 +1386,19 @@ export async function addDinnerRecipe(request: AddDinnerRecipeRequest): Promise<
       }
       if (addedDishStatus(day) !== request.status) return dayChanged(MESSAGES.addStatusChanged)
       const sameRole = day.some((entry) => entry.role === recipe.role && entry.status !== "skipped")
+      if (request.onlyIfRoleMissing === true && sameRole) {
+        return dayChanged("家族が先にこの区分の料理を決めています。上書きせず、最新の献立を読み直してください。")
+      }
+      // 丼・カレー・麺などの「主食を含む主菜」と別の主食を重ねない。
+      if (request.onlyIfRoleMissing === true && request.role === "staple" &&
+          day.some((entry) => entry.role === "main" && entry.status !== "skipped" &&
+            (context.lookup.recipeById.get(entry.recipeId ?? "")?.includesStaple === true))) {
+        return dayChanged("主食を含む主菜が既にあります。主食は追加せず、最新の献立を確認してください。")
+      }
+      if (request.onlyIfRoleMissing === true && request.role === "main" && recipe.includesStaple === true &&
+          day.some((entry) => entry.role === "staple" && entry.status !== "skipped")) {
+        return dayChanged("主食が既にあるため、主食を含む主菜は追加できません。別の主菜を選んでください。")
+      }
       if (sameRole) {
         notices = [
           `${formatMealDateShort(request.date)}は${dishRoleLabel(recipe.role)}が 2 品になりました。元の料理はそのまま残しています。`,
