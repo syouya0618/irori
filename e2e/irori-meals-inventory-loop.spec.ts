@@ -153,7 +153,7 @@ test("家族: 手入力料理の材料が買い物へ反映され、購入・補
     await sheetB.getByRole("textbox", { name: "ほうれん草を使った量" }).fill("1")
 
     await sheet.getByRole("textbox", { name: "ほうれん草を使った量" }).fill("1.5")
-    await expect(sheet.getByTestId("cooked-pantry-remaining")).toContainText("0.5束")
+    await expect(sheet.getByTestId("cooked-pantry-remaining")).toContainText("1/2束")
     await sheet.getByRole("button", { name: "ほうれん草の使用量を反映" }).click()
     await expect(async () => {
       const { data, error } = await admin.from("pantry_items")
@@ -165,6 +165,8 @@ test("家族: 手入力料理の材料が買い物へ反映され、購入・補
 
     // Bの古い版で再度差し引かない。古い絶対残量で上書きされることもない。
     await sheetB.getByRole("button", { name: "ほうれん草の使用量を反映" }).click()
+    // DBの不変だけでなく、家族側が古い版を拒否したことをUIで受領する。
+    await expect(pageB.getByTestId("plan-notice").getByRole("alert")).toBeVisible({ timeout: 20_000 })
     await expect(async () => {
       const { data, error } = await admin.from("pantry_items")
         .select("quantity, unit").eq("household_id", householdId).eq("id", spinachId).single()
@@ -172,7 +174,7 @@ test("家族: 手入力料理の材料が買い物へ反映され、購入・補
       expect(Number(data.quantity)).toBe(0.5)
     }).toPass({ timeout: 15_000 })
     await pageB.reload()
-    await expect(pageB.getByRole("dialog").getByText("現在：ある・0.5束")).toBeVisible({ timeout: 15_000 })
+    await expect(pageB.getByRole("dialog").getByText("現在：ある・1/2束")).toBeVisible({ timeout: 15_000 })
   } finally {
     await contextB.close()
     await cleanupUser(family.id)
