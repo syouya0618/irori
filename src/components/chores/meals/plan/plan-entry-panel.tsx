@@ -321,7 +321,7 @@ function CookedPantryForm({
             disabled={disabled || updates.length === 0}
             onClick={() => send({ op: "pantry_after_cooking", updates })}
           >
-            選んだ食材の状態を更新（{updates.length}件）
+            選んだ食材を更新（{updates.length}件）
           </Button>
           <p className="text-xs text-muted-foreground">
             食材の使用量と「作った」の記録は別々です。「作った」を取り消しても、実際に更新した在庫は自動では戻りません。
