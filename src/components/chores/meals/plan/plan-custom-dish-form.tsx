@@ -157,7 +157,7 @@ export function PlanCustomDishForm({
       </p>
       {editing?.convertFromRecipe && (
         <p role="note" className="rounded-xl border border-amber-500/40 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:bg-amber-900/20 dark:text-amber-100">
-          この1品だけを手入力の料理に変えます。元のレシピの材料は編集用に引き継ぎます。材料の内容を確認してから保存してください。材料をすべて外すと買い物の自動計算から外れます。ほかの料理は変わりません。
+          この1品だけを手入力の料理に変えます。元のレシピとの自動連携は外れますが、元の材料は編集用に引き継ぎます。材料を確認して保存してください。材料をすべて外すと買い物の自動計算から外れます。ほかの料理は変わりません。
         </p>
       )}
       <div className="flex flex-col gap-2">
