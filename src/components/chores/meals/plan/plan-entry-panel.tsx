@@ -196,7 +196,7 @@ function CookedPantryForm({
     <section className="flex flex-col gap-3">
       <h3 className="text-sm font-semibold">調理で使った食材を冷蔵庫へ反映</h3>
       <p className="text-sm text-muted-foreground">
-        実際に使った量を入力した食材だけ、残量を差し引きます。入力だけでは保存しません。
+        食材は自動では減らしません。実際に使った量を入力した食材だけ、残量を差し引きます。入力だけでは保存しません。
         レシピの目安量を勝手に使ったことにはせず、別端末の変更があれば上書きしません。
       </p>
       {options.length === 0 ? (
