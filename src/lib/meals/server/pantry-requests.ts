@@ -272,7 +272,19 @@ export interface PantryPreviewItem {
   /** 数量として読もうとした部分の原文。 */
   quantityText: string | null
   issues: PantryPreviewIssue[]
+  /** 総称は登録できるが献立の材料には確定計上しない。 */
+  isGeneric?: boolean
+  /** あくまで選択肢。勝手に食材 ID へ決定したり、在庫を変更したりしない。 */
+  suggestedNames?: string[]
 }
+
+/**
+ * ユーザーが確認画面で書き直した名称の再照合結果。
+ * 食材を保存せず、既存在庫も書き換えない。IDは重複警告にのみ使用する。
+ */
+export type PantryNameResolutionResult =
+  | { ok: true; items: { name: string; ingredientId: string | null; catalogName: string | null; isGeneric: boolean; suggestedNames: string[] }[] }
+  | { ok: false; error: string }
 
 export type PantryPreviewResult =
   | {

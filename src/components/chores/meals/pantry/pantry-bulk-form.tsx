@@ -3,11 +3,17 @@
 import { useId, useRef, useState, useTransition } from "react"
 import { CircleCheck, CircleHelp, Info, Loader2, Plus, X } from "lucide-react"
 
-import { previewPantryText } from "@/app/(main)/chores/meals/pantry/actions"
+import { previewPantryText, resolvePantryNames } from "@/app/(main)/chores/meals/pantry/actions"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { PANTRY_STORAGE_LABELS, formatQuantityJa } from "@/lib/meals/server/format"
+import {
+  matchingExistingPantry,
+  samePantryIngredient,
+  type PantryExistingItem,
+  type PantryIdentity,
+} from "@/lib/meals/pantry-guidance"
 import {
   PANTRY_BULK_MAX,
   PANTRY_INPUT_MESSAGES,
@@ -40,6 +46,11 @@ interface Draft {
   name: string
   /** 読み取った時点で一致した、食材の一覧の表示名。一致しなければ null。 */
   catalogName: string | null
+  parsedIngredientId: string | null
+  suggestedNames: string[]
+  isGeneric: boolean
+  /** 同じ食材を別の在庫として登録することを明示したか。 */
+  confirmSeparate: boolean
   /** 読み取れた数量（表示用）。 */
   parsedQuantity: PantryQuantityInput | null
   /** 数量として読もうとした部分の原文。 */
@@ -52,6 +63,36 @@ interface Draft {
 
 function isRenamed(draft: Draft): boolean {
   return draft.name.trim() !== draft.parsedName
+}
+
+type VerifiedDraftName = PantryIdentity & { isGeneric: boolean; suggestedNames: string[] }
+type VerifiedDraftNames = Readonly<Record<string, VerifiedDraftName>>
+
+function draftIdentity(draft: Draft, verifiedNames: VerifiedDraftNames): PantryIdentity {
+  const name = draft.name.trim()
+  if (isRenamed(draft)) {
+    const verified = verifiedNames[draft.id]
+    if (verified?.name === name) return verified
+    // 手入力後は元の辞書IDを引き継がない。送信前にサーバーで再照合する。
+    return { name, ingredientId: null, catalogName: null }
+  }
+  return { name, ingredientId: draft.parsedIngredientId, catalogName: draft.catalogName }
+}
+
+function duplicatesOf(
+  drafts: readonly Draft[],
+  existingItems: readonly PantryExistingItem[],
+  verifiedNames: VerifiedDraftNames,
+) {
+  return drafts.map((draft, index) => {
+    const identity = draftIdentity(draft, verifiedNames)
+    return {
+      existing: matchingExistingPantry(identity, existingItems),
+      earlier: drafts.slice(0, index).find((other) =>
+        samePantryIngredient(draftIdentity(other, verifiedNames), identity),
+      ),
+    }
+  })
 }
 
 /** 確認中の一覧の内訳。行を直す・外すたびに、今の一覧から数え直す。 */
@@ -72,6 +113,10 @@ function draftOf(item: PantryPreviewItem): Draft {
     parsedName: item.name,
     name: item.name,
     catalogName: item.ingredientId === null ? null : (item.ingredientName ?? null),
+    parsedIngredientId: item.ingredientId,
+    suggestedNames: item.suggestedNames ?? [],
+    isGeneric: item.isGeneric === true,
+    confirmSeparate: false,
     parsedQuantity: item.quantity,
     quantityText: item.quantityText,
     issues: item.issues,
@@ -100,6 +145,9 @@ export function PantryBulkForm({
   textareaId,
   onSubmit,
   onDraftChange,
+  existingItems = [],
+  onEditExisting,
+  hasUnreadable = false,
 }: {
   /** サーバーの今日（JST）。登録する食材の最終確認日になる。 */
   today: string
@@ -112,6 +160,12 @@ export function PantryBulkForm({
   textareaId: string
   /** 受け付けたら true（塞がれていれば false。入力は残す）。 */
   onSubmit: (request: AddPantryItemsRequest) => boolean
+  /** 表示中の世帯の在庫。既存行の更新や削除はここでは行わない。 */
+  existingItems?: readonly PantryExistingItem[]
+  /** 既存行の編集を親の版付き編集シートに任せる。 */
+  onEditExisting?: (id: string) => void
+  /** 読めない行が在る間は、見えていない重複の可能性を確認する。 */
+  hasUnreadable?: boolean
   /**
    * 確認中の下書き（釦・選択で直す一覧）を持っているかを伝える。文字の入力と違い、自動の取り直しの
    * 見送りに自動では数えられないので、画面が `RefreshOnVisible` の `paused` へ渡す。
@@ -124,8 +178,12 @@ export function PantryBulkForm({
   const [drafts, setDrafts] = useState<Draft[] | null>(null)
   const [truncated, setTruncated] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [confirmedUnreadable, setConfirmedUnreadable] = useState(false)
+  const [verifiedNames, setVerifiedNames] = useState<Record<string, VerifiedDraftName>>({})
   const [reading, startReading] = useTransition()
   const previewingRef = useRef(false)
+  // サーバーへの名称再照合中にユーザーが編集したら、古い入力を保存しない。
+  const draftRevisionRef = useRef(0)
 
   const helpId = `${formId}-help`
   const errorId = `${formId}-error`
@@ -150,15 +208,21 @@ export function PantryBulkForm({
           setError("食材の名前を入力してください。")
           return
         }
-        const needsReview = result.truncated || result.items.some(
-          (item) => item.ingredientId === null || item.issues.length > 0 ||
-            item.name.trim() === "" || (item.quantityText !== null && item.quantity === null),
+        const needsReview = result.truncated || hasUnreadable || result.items.some(
+          (item, index) =>
+            item.ingredientId === null ||
+            item.isGeneric === true ||
+            item.issues.length > 0 ||
+            item.name.trim() === "" ||
+            (item.quantityText !== null && item.quantity === null) ||
+            matchingExistingPantry(item, existingItems).length > 0 ||
+            result.items.slice(0, index).some((earlier) => samePantryIngredient(earlier, item)),
         )
         if (needsReview) {
           // 辞書にない食材・読めない数量・件数超過を、黙って登録／切り捨てない。
           setDrafts(result.items.map(draftOf))
           setTruncated(result.truncated)
-          setError("確認が必要な食材があります。名前や数量を確認してから登録してください。")
+          setError("重複・種類・数量などを確認してください。確認が済むまでは登録しません。")
           onDraftChange?.(true)
           return
         }
@@ -219,12 +283,28 @@ export function PantryBulkForm({
   }
 
   function patchDraft(id: string, patch: Partial<Draft>) {
-    setDrafts((prev) => (prev === null ? prev : prev.map((draft) => (draft.id === id ? { ...draft, ...patch } : draft))))
+    draftRevisionRef.current += 1
+    setDrafts((prev) =>
+      prev === null
+        ? prev
+        : prev.map((draft) =>
+            draft.id === id
+              ? {
+                  ...draft,
+                  ...patch,
+                  confirmSeparate: patch.name !== undefined && patch.name !== draft.name
+                    ? false
+                    : (patch.confirmSeparate ?? draft.confirmSeparate),
+                }
+              : draft,
+          ),
+    )
     setError(null)
   }
 
   function removeDraft(id: string) {
     if (drafts === null) return
+    draftRevisionRef.current += 1
     const next = drafts.filter((draft) => draft.id !== id)
     setDrafts(next.length === 0 ? null : next)
     if (next.length === 0) onDraftChange?.(false)
@@ -232,18 +312,45 @@ export function PantryBulkForm({
   }
 
   function cancel() {
+    draftRevisionRef.current += 1
+    setVerifiedNames({})
     setDrafts(null)
     setTruncated(false)
+    setConfirmedUnreadable(false)
     setError(null)
     onDraftChange?.(false)
   }
 
   const summary = drafts === null ? null : summarize(drafts)
+  // 辞書IDはプレビュー時点のもの、手入力後はサーバーで再照合したもののみ使う。
+  const duplicates = duplicatesOf(drafts ?? [], existingItems, verifiedNames)
 
-  function register() {
-    if (drafts === null || drafts.length === 0) return
+  function submitDrafts(activeDrafts: Draft[], checkedNames: VerifiedDraftNames, freshlyVerified = false) {
+    const checkedDuplicates = duplicatesOf(activeDrafts, existingItems, checkedNames)
+    const unconfirmed = checkedDuplicates.findIndex((matched, index) =>
+      (matched.existing.length > 0 || matched.earlier !== undefined) && !activeDrafts[index].confirmSeparate,
+    )
+    if (unconfirmed >= 0) {
+      setError(`${unconfirmed + 1}件目「${activeDrafts[unconfirmed].name}」は同じ食材が登録済みです。既存の食材を編集するか、「別の在庫として登録する」を選んでください。`)
+      return
+    }
+    if (hasUnreadable && !confirmedUnreadable) {
+      setError("表示できない食材があります。重複の可能性を確認してから登録してください。")
+      return
+    }
+    // 改名後に初めて総称・未解決と判明した場合は、そのまま確定しない。
+    // 再照合結果を画面へ表示してから、利用者にもう一度保存を選んでもらう。
+    if (freshlyVerified && activeDrafts.some((draft) =>
+      isRenamed(draft) && (
+        checkedNames[draft.id]?.isGeneric === true ||
+        checkedNames[draft.id]?.ingredientId === null
+      ),
+    )) {
+      setError("名前を再照合しました。総称または一覧にない食材が含まれます。候補と注意を確認してから登録してください。")
+      return
+    }
     const items: PantryNewItem[] = []
-    for (const [index, draft] of drafts.entries()) {
+    for (const [index, draft] of activeDrafts.entries()) {
       const name = draft.name.trim()
       const amount = parseAmountText(draft.amountText)
       if (!amount.ok) {
@@ -270,7 +377,56 @@ export function PantryBulkForm({
       return
     }
     setError(null)
-    onSubmit(request)
+    if (!onSubmit(request)) setError("ほかの保存を確認中です。完了後にもう一度お試しください。")
+  }
+
+  function register() {
+    if (drafts === null || drafts.length === 0 || disabled || saving || previewingRef.current) return
+    const activeDrafts = drafts
+    const needsVerification = activeDrafts.some((draft) =>
+      isRenamed(draft) && verifiedNames[draft.id]?.name !== draft.name.trim(),
+    )
+    if (!needsVerification) {
+      submitDrafts(activeDrafts, verifiedNames)
+      return
+    }
+    // 候補選択や手入力後も、プレビュー時点の「別食材」という判断を信じない。
+    previewingRef.current = true
+    const revision = draftRevisionRef.current
+    setError(null)
+    startReading(async () => {
+      try {
+        const result = await resolvePantryNames(activeDrafts.map((draft) => draft.name.trim()))
+        if (revision !== draftRevisionRef.current) {
+          setError("確認中に食材名が変わりました。もう一度登録してください。")
+          return
+        }
+        if (!result.ok) {
+          setError(result.error)
+          return
+        }
+        if (result.items.length !== activeDrafts.length) {
+          setError("食材名を確認できませんでした。もう一度お試しください。")
+          return
+        }
+        const checked: Record<string, VerifiedDraftName> = {}
+        for (const [index, draft] of activeDrafts.entries()) {
+          const item = result.items[index]
+          if (item.name !== draft.name.trim()) {
+            setError("食材名が一致しません。もう一度確認してください。")
+            return
+          }
+          checked[draft.id] = { name: item.name, ingredientId: item.ingredientId, catalogName: item.catalogName, isGeneric: item.isGeneric, suggestedNames: item.suggestedNames }
+        }
+        setVerifiedNames(checked)
+        submitDrafts(activeDrafts, checked, true)
+      } catch (err) {
+        logOfflineError("[pantry-bulk-form] resolvePantryNames", err)
+        setError(OFFLINE_ERROR_MESSAGE)
+      } finally {
+        previewingRef.current = false
+      }
+    })
   }
 
   return (
@@ -376,6 +532,20 @@ export function PantryBulkForm({
               </dd>
             </dl>
           </div>
+          {hasUnreadable && (
+            <label className="flex items-start gap-2 rounded-xl border border-amber-500/40 px-3 py-3 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1 size-4 shrink-0"
+                checked={confirmedUnreadable}
+                onChange={(event) => { setConfirmedUnreadable(event.target.checked); setError(null) }}
+              />
+              表示できない在庫があります。重複の可能性を理解し、別在庫として登録する
+            </label>
+          )}
+          {error && (
+            <p role="alert" className="text-sm text-destructive">{error}</p>
+          )}
           {summary.unresolved > 0 && (
             <p className="flex items-start gap-2 text-sm text-muted-foreground">
               <Info size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
@@ -392,6 +562,11 @@ export function PantryBulkForm({
             {drafts.map((draft, index) => {
               const position = `${index + 1}件目`
               const renamed = isRenamed(draft)
+              const verified = renamed && verifiedNames[draft.id]?.name === draft.name.trim()
+                ? verifiedNames[draft.id]
+                : null
+              const shownGeneric = verified?.isGeneric ?? (!renamed && draft.isGeneric)
+              const shownSuggestions = verified?.suggestedNames ?? (renamed ? [] : draft.suggestedNames)
               return (
                 <li
                   key={draft.id}
@@ -423,10 +598,64 @@ export function PantryBulkForm({
                     </Button>
                   </div>
 
+                  {duplicates[index] && (duplicates[index].existing.length > 0 || duplicates[index].earlier !== undefined) && (
+                    <div className="flex flex-col gap-2 rounded-xl border border-amber-500/40 px-3 py-3 text-sm" data-testid="pantry-duplicate">
+                      <p className="font-medium">同じ食材の在庫が見つかりました。数量を二重に数える可能性があります。</p>
+                      {duplicates[index].existing.map((stock) => (
+                        <div key={stock.id} className="flex flex-wrap items-center gap-2">
+                          <span>
+                            登録済み: {stock.name}（{formatQuantityJa(stock.quantity ?? null)}・
+                            {stock.storage ? PANTRY_STORAGE_LABELS[stock.storage] : "保管場所未設定"}）
+                          </span>
+                          {onEditExisting && (
+                            <Button type="button" variant="outline" className="min-h-11" disabled={disabled} onClick={() => onEditExisting(stock.id)}>
+                              既存を編集
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                      {duplicates[index].earlier !== undefined && <p>今回の入力内にも同じ食材があります。</p>}
+                      <label className="flex min-h-11 items-center gap-2">
+                        <input
+                          type="checkbox"
+                          className="size-4 shrink-0"
+                          checked={draft.confirmSeparate}
+                          onChange={(event) => patchDraft(draft.id, { confirmSeparate: event.target.checked })}
+                        />
+                        {position}を別の在庫として登録する
+                      </label>
+                    </div>
+                  )}
+                  {shownGeneric && (
+                    <p className="text-sm text-amber-700 dark:text-amber-300">
+                      「{draft.name}」は総称です。部位・種類が不明なままでは料理の材料として確定できません。
+                      分かる場合は具体的な食材を選んでください。
+                    </p>
+                  )}
+                  {shownSuggestions.length > 0 && (
+                    <div role="group" aria-label={`${position}の食材名の候補`} className="flex flex-col gap-2">
+                      <p className="text-sm text-muted-foreground">
+                        {shownGeneric ? "具体的な種類の候補" : "辞書にある近い名前の候補"}（自動では選びません）
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {shownSuggestions.map((name) => (
+                          <Button key={name} type="button" variant="outline" className="min-h-11" onClick={() => patchDraft(draft.id, { name })}>
+                            {name}を選ぶ
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {renamed ? (
                     <p className="flex items-start gap-2 text-sm text-muted-foreground">
                       <Info size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-                      <span>名前を変えました。登録するときに、食材の一覧と照合します。</span>
+                      <span>
+                        {verified === null
+                          ? "名前を変えました。登録するときに、食材の一覧と照合します。"
+                          : verified.ingredientId === null
+                            ? "一覧にない名前です（提案の材料に数えません）"
+                            : `食材の一覧と一致: ${verified.catalogName}`}
+                      </span>
                     </p>
                   ) : draft.catalogName !== null ? (
                     <p className="flex items-start gap-2 text-sm">
@@ -531,16 +760,11 @@ export function PantryBulkForm({
             })}
           </ul>
 
-          {error && (
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
-          )}
           <p className="text-xs text-muted-foreground">
             登録すると「ある」として一覧に入ります。期限・早く使いたい印は、登録の後に一覧から付けられます。
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" disabled={disabled} onClick={register}>
+            <Button type="button" disabled={disabled || saving || reading} onClick={register}>
               {saving && <Loader2 className="animate-spin" aria-hidden="true" />}
               {drafts.length}件を登録
             </Button>
