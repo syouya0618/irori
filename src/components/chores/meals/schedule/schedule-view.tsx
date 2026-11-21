@@ -306,7 +306,7 @@ export function ScheduleView({
                           prefetch={false}
                           className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-border px-4 py-2 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring"
                         >
-                          {entry.status === "proposed" || entry.status === "confirmed" ? "この料理を変更・削除" : "この料理の記録を見る"}
+                          {entry.status === "proposed" || entry.status === "confirmed" ? "この料理を変更・削除" : entry.status === "cooked" ? "使った食材と残量を反映" : "この料理の記録を見る"}
                         </Link>
                       </div>
                     </section>
