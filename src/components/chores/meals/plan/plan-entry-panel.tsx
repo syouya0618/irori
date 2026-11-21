@@ -13,7 +13,10 @@ import {
 } from "@/components/chores/meals/shared/feedback-choices"
 import { MEALS_PANTRY_HREF } from "@/components/chores/meals/shared/meal-routes"
 import { Button } from "@/components/ui/button"
-import { formatMealDateWithRelative } from "@/lib/meals/server/format"
+import { formatMealDateWithRelative, formatQuantityJa } from "@/lib/meals/server/format"
+import { CONSUMPTION_ISSUE_LABELS, deductPantryUse } from "@/lib/meals/consumption"
+import type { UnitId } from "@/lib/meals/types"
+import { UNIT_LABELS, areUnitsCompatible } from "@/lib/meals/units"
 import {
   GROCERY_HORIZON_DAYS,
   type CookedPantryUpdate,
@@ -181,44 +184,132 @@ function CookedPantryForm({
   send: (request: DinnerRequest) => boolean
 }) {
   const [choices, setChoices] = useState<Record<string, CookedPantryUpdate["status"]>>({})
-  // 版が変わった食材（別の端末の更新・自分の更新の後）の選択は使わない
+  const [usedAmounts, setUsedAmounts] = useState<Record<string, string>>({})
+  const [usedUnits, setUsedUnits] = useState<Record<string, UnitId>>({})
+  // 別端末の編集や保存で版が進んだ項目は、古い版の入力を使わない。
   const updates: CookedPantryUpdate[] = options.flatMap((option) => {
     const status = choices[`${option.id}|${option.version}`]
     return status === undefined ? [] : [{ id: option.id, version: option.version, status }]
   })
 
   return (
-    <section className="flex flex-col gap-2">
-      <h3 className="text-sm font-semibold">使った食材の状態を更新</h3>
+    <section className="flex flex-col gap-3">
+      <h3 className="text-sm font-semibold">調理で使った食材を冷蔵庫へ反映</h3>
       <p className="text-sm text-muted-foreground">
-        食材は自動では減らしません。状態を変えたい食材だけ選んでください。選ばなかった食材はそのままです。
+        食材は自動では減らしません。実際に使った量を入力した食材だけ、残量を差し引きます。入力だけでは保存しません。
+        レシピの目安量を勝手に使ったことにはせず、別端末の変更があれば上書きしません。
       </p>
       {options.length === 0 ? (
         <div className="flex flex-col items-start gap-1 text-sm">
-          <p>この料理の材料に当たる食材は、登録されていません。</p>
-          <Link href={MEALS_PANTRY_HREF} prefetch={false} className={TEXT_LINK}>
-            食材の画面で確認する
-          </Link>
+          <p>この料理の材料に当たる食材は、冷蔵庫に登録されていません。</p>
+          <Link href={MEALS_PANTRY_HREF} prefetch={false} className={TEXT_LINK}>冷蔵庫の在庫を確認する</Link>
         </div>
       ) : (
         <>
           <ul className="flex flex-col gap-3">
             {options.map((option) => {
               const key = `${option.id}|${option.version}`
+              const quantity = option.quantity ?? null
+              const usable = quantity?.amount !== null && quantity?.amount !== undefined && quantity.amount > 0
+              const unit = usedUnits[key] ?? quantity?.unit ?? "g"
+              const raw = usedAmounts[key] ?? ""
+              const compatibleUnits = quantity === null
+                ? []
+                : (Object.keys(UNIT_LABELS) as UnitId[]).filter((candidate) => areUnitsCompatible(candidate, quantity.unit))
+              const estimate = usable && raw.trim() !== ""
+                ? deductPantryUse(
+                    { status: option.status, quantity },
+                    { amount: Number(raw), unit },
+                  )
+                : null
               return (
-                <li key={key} className="flex flex-col gap-1">
-                  <ChoiceGroup
-                    label={`${option.name}（今: ${option.statusLabel}・${option.quantityText}）`}
-                    options={PANTRY_CHOICES}
-                    value={choices[key] ?? null}
-                    onChange={(next) =>
-                      setChoices((prev) => {
-                        const { [key]: _removed, ...rest } = prev
-                        void _removed
-                        return next === null ? rest : { ...rest, [key]: next }
-                      })
-                    }
-                  />
+                <li key={key} className="flex flex-col gap-3 rounded-xl border border-border/70 p-3">
+                  <div className="flex flex-col gap-1">
+                    <p className="font-medium">{option.name}</p>
+                    <p className="text-sm text-muted-foreground">現在：{option.statusLabel}・{option.quantityText}</p>
+                  </div>
+                  {usable ? (
+                    <div className="flex flex-col gap-2" data-testid="cooked-pantry-quantity">
+                      <div className="flex items-end gap-2">
+                        <div className="min-w-0 flex-1">
+                          <label htmlFor={`used-${option.id}`} className="mb-1 block text-sm font-medium">実際に使った量</label>
+                          <input
+                            id={`used-${option.id}`}
+                            aria-label={`${option.name}を使った量`}
+                            type="text"
+                            inputMode="decimal"
+                            autoComplete="off"
+                            value={raw}
+                            placeholder="例：100"
+                            disabled={disabled}
+                            className="min-h-11 w-full rounded-xl border border-input bg-background px-3 py-2 text-base focus-visible:outline-2 focus-visible:outline-ring"
+                            onChange={(event) => setUsedAmounts((prev) => ({ ...prev, [key]: event.target.value }))}
+                          />
+                        </div>
+                        <div className="w-24 shrink-0">
+                          <label htmlFor={`used-unit-${option.id}`} className="mb-1 block text-sm font-medium">単位</label>
+                          <select
+                            id={`used-unit-${option.id}`}
+                            aria-label={`${option.name}の使用単位`}
+                            className={`${NATIVE_SELECT} w-full`}
+                            value={unit}
+                            disabled={disabled}
+                            onChange={(event) => setUsedUnits((prev) => ({ ...prev, [key]: event.target.value as UnitId }))}
+                          >
+                            {compatibleUnits.map((optionUnit) =>
+                              <option key={optionUnit} value={optionUnit}>{UNIT_LABELS[optionUnit]}</option>,
+                            )}
+                          </select>
+                        </div>
+                      </div>
+                      {estimate?.ok === true && (
+                        <p role="status" className="text-sm" data-testid="cooked-pantry-remaining">
+                          反映後の残量：{estimate.status === "out" ? "使い切った（在庫0）" : formatQuantityJa(estimate.remaining)}
+                        </p>
+                      )}
+                      {estimate?.ok === false && (
+                        <p role="alert" className="text-sm text-destructive">{CONSUMPTION_ISSUE_LABELS[estimate.issue]}</p>
+                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="min-h-11 self-start"
+                        disabled={disabled || estimate?.ok !== true}
+                        onClick={() => {
+                          if (estimate?.ok !== true) return
+                          send({
+                            op: "pantry_after_cooking",
+                            updates: [{
+                              id: option.id,
+                              version: option.version,
+                              status: estimate.status,
+                              quantity: estimate.remaining,
+                            }],
+                          })
+                        }}
+                      >
+                        {option.name}の使用量を反映
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      数量不明のため、使用量からの自動減算はしません。残量を確認するか、下の状態だけ更新できます。
+                    </p>
+                  )}
+                  <div className="border-t border-border/60 pt-3">
+                    <ChoiceGroup
+                      label={`${option.name}の状態を手動で変更`}
+                      options={PANTRY_CHOICES}
+                      value={choices[key] ?? null}
+                      onChange={(next) =>
+                        setChoices((prev) => {
+                          const { [key]: _removed, ...rest } = prev
+                          void _removed
+                          return next === null ? rest : { ...rest, [key]: next }
+                        })
+                      }
+                    />
+                  </div>
                 </li>
               )
             })}
@@ -226,12 +317,16 @@ function CookedPantryForm({
           <Button
             type="button"
             variant="outline"
-            className="self-start"
+            className="min-h-11 self-start"
             disabled={disabled || updates.length === 0}
             onClick={() => send({ op: "pantry_after_cooking", updates })}
           >
             選んだ食材を更新（{updates.length}件）
           </Button>
+          <p className="text-xs text-muted-foreground">
+            食材の使用量と「作った」の記録は別々です。「作った」を取り消しても、実際に更新した在庫は自動では戻りません。
+            間違えた時は冷蔵庫の在庫から修正してください。
+          </p>
         </>
       )}
     </section>
@@ -347,6 +442,7 @@ export function PlanEntryPanel({
   pantry,
   feedback,
   custom,
+  recipeIngredients = [],
   disabled,
   saving,
   send,
@@ -361,6 +457,8 @@ export function PlanEntryPanel({
   feedback: EntryFeedbackView | null
   /** 手動料理の材料（手動料理でなければ null）。 */
   custom: CustomIngredientView[] | null
+  /** 元のレシピの材料を人数換算した候補。変換時に失わない。 */
+  recipeIngredients?: CustomIngredientView[]
   disabled: boolean
   saving: boolean
   send: (request: PlanRequest) => boolean
@@ -385,7 +483,7 @@ export function PlanEntryPanel({
           <h3 className="text-sm font-semibold">この料理を手入力で変更</h3>
           <PlanCustomDishForm
             key={`${entry.id}:${entry.version}:convert`}
-            editing={{ id: entry.id, version: entry.version, title: entry.title, role: entry.role, ingredients: [], convertFromRecipe: true }}
+            editing={{ id: entry.id, version: entry.version, title: entry.title, role: entry.role, ingredients: recipeIngredients, convertFromRecipe: true }}
             date={entry.date}
             dateLabel={dayLabel}
             disabled={disabled}

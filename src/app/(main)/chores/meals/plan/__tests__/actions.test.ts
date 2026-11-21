@@ -1449,6 +1449,42 @@ describe("作った・作らなかった・料理後の食材（C-37）", () => 
     expect(db.tables.pantry_items).toHaveLength(2)
   })
 
+  it("実際の使用量を絶対残量として保存し、同じ要求を再送しても二重に引かない", async () => {
+    const spinach = pantryRow(HOUSE, {
+      ingredient_id: "spinach", name: "ほうれん草", quantity: 2, unit: "bunch",
+    })
+    db.tables.pantry_items.push(spinach)
+    const initialVersion = spinach.updated_at as string
+    const request = {
+      updates: [{
+        id: spinach.id as string,
+        version: initialVersion,
+        status: "have" as const,
+        quantity: { amount: 0.5, unit: "bunch" as const },
+      }],
+    }
+    const first = success(await applyCookedPantryUpdates(request))
+    expect(first.status).toBe("saved")
+    expect(spinach).toMatchObject({ quantity: 0.5, unit: "bunch", status: "have" })
+    const afterFirst = spinach.updated_at
+
+    const replay = success(await applyCookedPantryUpdates(request))
+    expect(replay.status).toBe("replayed")
+    expect(spinach).toMatchObject({ quantity: 0.5, unit: "bunch", updated_at: afterFirst })
+
+    // 家族が持つ古い版で別の残量を書き戻そうとしても、更新は成立しない。
+    const stale = success(await applyCookedPantryUpdates({
+      updates: [{
+        id: spinach.id as string,
+        version: initialVersion,
+        status: "have",
+        quantity: { amount: 1, unit: "bunch" },
+      }],
+    }))
+    expect(stale.status).toBe("conflict")
+    expect(spinach).toMatchObject({ quantity: 0.5, unit: "bunch", updated_at: afterFirst })
+  })
+
   it("「作らなかった」は記録だけ（食後評価を作らない）", async () => {
     const entry = entryRow(HOUSE, { plan_date: TODAY, status: "confirmed" })
     db.tables.dinner_plan_entries.push(entry)

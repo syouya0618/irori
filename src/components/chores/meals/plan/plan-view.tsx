@@ -556,6 +556,7 @@ export function PlanView({ owner, view, extras, ai, initialEntryId = null }: Pla
                   pantry={extras.pantryByEntry[openEntry.id] ?? []}
                   feedback={extras.feedbackByEntry[openEntry.id] ?? null}
                   custom={openEntry.isCustom ? (extras.customByEntry[openEntry.id] ?? []) : null}
+                   recipeIngredients={openEntry.isCustom ? [] : (extras.recipeByEntry?.[openEntry.id] ?? [])}
                   disabled={busy}
                   saving={save.saving}
                   send={sendFromSheet}
