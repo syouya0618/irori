@@ -6,7 +6,7 @@
  * DBへの書き込みは、元のupdated_atを添えたsave_pantry_itemで行う。
  */
 
-import type { PantryStatus, Quantity } from "./types"
+import type { PantryStatus, Quantity, UnitId } from "./types"
 import { areUnitsCompatible, roundAmount, toBaseAmount } from "./units"
 
 export type ConsumptionIssue = "no_stock" | "unknown_quantity" | "invalid_amount" | "unit_mismatch" | "overuse"
@@ -20,7 +20,7 @@ export const CONSUMPTION_ISSUE_LABELS: Readonly<Record<ConsumptionIssue, string>
 }
 
 export type ConsumptionPreview =
-  | { ok: true; remaining: Quantity | null; status: PantryStatus }
+  | { ok: true; remaining: { amount: number; unit: UnitId } | null; status: PantryStatus }
   | { ok: false; issue: ConsumptionIssue }
 
 /** 数量が0になればstatus=out / quantity=null。残りがあれば元のhave/lowを維持する。 */
