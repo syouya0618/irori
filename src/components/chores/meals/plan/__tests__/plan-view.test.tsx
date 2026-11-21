@@ -1610,7 +1610,6 @@ describe("冷蔵庫・献立・買い物の数量連動UI", () => {
         },
       },
     })
-    await ready()
     const dialog = screen.getByRole("dialog")
     const input = within(dialog).getByRole("textbox", { name: "豚こま切れ肉を使った量" })
     const apply = within(dialog).getByRole("button", { name: "豚こま切れ肉の使用量を反映" })
