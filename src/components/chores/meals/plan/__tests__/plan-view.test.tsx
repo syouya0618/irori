@@ -1610,6 +1610,7 @@ describe("冷蔵庫・献立・買い物の数量連動UI", () => {
         },
       },
     })
+    await ready()
     const dialog = screen.getByRole("dialog")
     const input = within(dialog).getByRole("textbox", { name: "豚こま切れ肉を使った量" })
     const apply = within(dialog).getByRole("button", { name: "豚こま切れ肉の使用量を反映" })
@@ -1617,6 +1618,7 @@ describe("冷蔵庫・献立・買い物の数量連動UI", () => {
     expect(saveDinnerRequest).not.toHaveBeenCalled()
     fireEvent.change(input, { target: { value: "100" } })
     expect(within(dialog).getByTestId("cooked-pantry-remaining")).toHaveTextContent("200g")
+    await waitFor(() => expect(apply).toBeEnabled())
     await click(apply)
     await waitFor(() => expect(saveDinnerRequest).toHaveBeenCalledTimes(1))
     expect(saveDinnerRequest.mock.calls[0][0]).toEqual({
