@@ -279,3 +279,44 @@ describe("手動料理の材料（編集フォームの初期値）", () => {
     expect(entries.find((entry) => entry.id === withIngredients.id)?.groceryUncomputed).toBe(false)
   })
 })
+
+describe("献立・買い物・冷蔵庫の接続データ", () => {
+  it("カタログ料理を手入力へ変える場合、元の材料を人数換算して編集用に返す", async () => {
+    const planned = entryRow(HOUSE, {
+      plan_date: TOMORROW,
+      recipe_id: "spinach_ohitashi",
+      role: "side",
+      servings: 3,
+      position: 0,
+    })
+    db.tables.dinner_plan_entries.push(planned)
+    const { extras } = await load()
+    expect(extras.recipeByEntry?.[planned.id as string]).toEqual([
+      { name: "ほうれん草", amount: 1.5, unit: "bunch", optional: false },
+      { name: "しょうゆ", amount: 3, unit: "tsp", optional: false },
+      { name: "かつお節", amount: 3, unit: "g", optional: false },
+    ])
+    expect(extras.customByEntry[planned.id as string]).toBeUndefined()
+  })
+
+  it("調理済みの料理に紐づく在庫は数量と版を渡し、料理と関係ない食材は渡さない", async () => {
+    const cooked = entryRow(HOUSE, { plan_date: TODAY, recipe_id: "spinach_ohitashi", role: "side", status: "cooked" })
+    const spinach = pantryRow(HOUSE, {
+      ingredient_id: "spinach", name: "ほうれん草", quantity: 2, unit: "bunch",
+    })
+    const other = pantryRow(HOUSE, {
+      id: "f5000000-0000-4000-8000-000000000099",
+      ingredient_id: "milk", name: "牛乳", quantity: 1, unit: "l",
+    })
+    db.tables.dinner_plan_entries.push(cooked)
+    db.tables.pantry_items.push(spinach, other)
+    const { extras } = await load()
+    expect(extras.pantryByEntry[cooked.id as string]).toEqual([
+      {
+        id: spinach.id, version: spinach.updated_at, name: "ほうれん草",
+        quantityText: "2束", quantity: { amount: 2, unit: "bunch" },
+        status: "have", statusLabel: "ある",
+      },
+    ])
+  })
+})

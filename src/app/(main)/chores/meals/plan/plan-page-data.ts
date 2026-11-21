@@ -32,6 +32,7 @@ import { type DinnerPlanView, buildDinnerPlanView } from "@/lib/meals/server/pla
 import type { StoredPlanEntry } from "@/lib/meals/server/rows"
 import { mealDateRange, mealToday } from "@/lib/meals/server/today"
 import type { RecipeIngredient } from "@/lib/meals/types"
+import { scaleQuantity } from "@/lib/meals/units"
 
 /**
  * `children` は、年齢の制約の注意（1 歳未満のはちみつ等。`DinnerEntryView.ageWarnings`）に要る。
@@ -55,6 +56,7 @@ export function buildPlanPageExtras(context: PlanPageContext, view: DinnerPlanVi
   const pantryByEntry: Record<string, CookedPantryOption[]> = {}
   const feedbackByEntry: Record<string, EntryFeedbackView> = {}
   const customByEntry: Record<string, CustomIngredientView[]> = {}
+  const recipeByEntry: Record<string, CustomIngredientView[]> = {}
 
   for (const entry of context.plan.entries) {
     if (!shown.has(entry.id)) continue
@@ -66,6 +68,20 @@ export function buildPlanPageExtras(context: PlanPageContext, view: DinnerPlanVi
         unit: ingredient.quantity.unit,
         optional: ingredient.optional === true,
       }))
+    } else {
+      const recipe = lookup.recipeById.get(entry.recipeId)
+      // 保存する手入力材料はこの枠の人数ぶん。元のカタログ人数の量をそのまま写さない。
+      if (recipe) {
+        recipeByEntry[entry.id] = recipe.ingredients.map((ingredient) => {
+          const scaled = scaleQuantity(ingredient.quantity, recipe.servings, entry.servings)
+          return {
+            name: ingredientNameOf(ingredient.ingredientId, lookup.index),
+            amount: scaled.amount,
+            unit: scaled.unit,
+            optional: ingredient.optional === true,
+          }
+        })
+      }
     }
 
     // 料理の後の操作（食材の更新・評価）は、今日までの日だけ
@@ -81,6 +97,7 @@ export function buildPlanPageExtras(context: PlanPageContext, view: DinnerPlanVi
           version: item.version,
           name: item.name,
           quantityText: formatQuantityJa(item.quantity),
+          quantity: item.quantity,
           status: item.status,
           statusLabel: PANTRY_STATUS_LABELS[item.status] ?? "",
         }))
@@ -108,7 +125,7 @@ export function buildPlanPageExtras(context: PlanPageContext, view: DinnerPlanVi
       }
     }
   }
-  return { pantryByEntry, feedbackByEntry, customByEntry }
+  return { pantryByEntry, feedbackByEntry, customByEntry, recipeByEntry }
 }
 
 export type PlanPageData =

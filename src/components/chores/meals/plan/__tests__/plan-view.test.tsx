@@ -1551,3 +1551,108 @@ describe("規約（X-02）", () => {
     expect(container.textContent ?? "").not.toMatch(/\p{Extended_Pictographic}/u)
   })
 })
+
+describe("冷蔵庫・献立・買い物の数量連動UI", () => {
+  it("提案料理を手入力に変えても、元の人数換算済みの材料と任意材料を維持できる", async () => {
+    saveDinnerRequest.mockResolvedValue(saved())
+    view({
+      view: planView({ [TODAY]: [entry()] }),
+      initialEntryId: E_MAIN,
+      extras: {
+        ...EMPTY_PLAN_PAGE_EXTRAS,
+        recipeByEntry: {
+          [E_MAIN]: [
+            { name: "豚こま切れ肉", amount: 225, unit: "g", optional: false },
+            { name: "にんにく", amount: 1.5, unit: "clove", optional: true },
+          ],
+        },
+      },
+    })
+    const dialog = screen.getByRole("dialog")
+    expect(within(dialog).getByLabelText("材料 1 の名前")).toHaveValue("豚こま切れ肉")
+    expect(within(dialog).getByLabelText("材料 1 の量")).toHaveValue("225")
+    expect(within(dialog).getByLabelText("材料 2 を任意材料にする")).toBeChecked()
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "変更を保存" })).toBeEnabled())
+    fireEvent.change(within(dialog).getByLabelText("料理名"), { target: { value: "アレンジ肉じゃが" } })
+    await click(within(dialog).getByRole("button", { name: "変更を保存" }))
+    await waitFor(() => expect(saveDinnerRequest).toHaveBeenCalledTimes(1))
+    expect(saveDinnerRequest.mock.calls[0][0]).toMatchObject({
+      op: "custom_dish",
+      id: E_MAIN,
+      version: V1,
+      convertFromRecipe: true,
+      title: "アレンジ肉じゃが",
+      ingredients: [
+        { name: "豚こま切れ肉", amount: 225, unit: "g" },
+        { name: "にんにく", amount: 1.5, unit: "clove", optional: true },
+      ],
+    })
+  })
+
+  it("作った料理の実使用100gだけを反映し、残量200gを版付きで送る（自動減算はしない）", async () => {
+    saveDinnerRequest.mockResolvedValue(saved())
+    const pantryId = "f3000000-0000-4000-8000-0000000000a8"
+    view({
+      view: planView({ [TODAY]: [entry({ status: "cooked", statusLabel: "作った" })] }),
+      initialEntryId: E_MAIN,
+      extras: {
+        ...EMPTY_PLAN_PAGE_EXTRAS,
+        pantryByEntry: {
+          [E_MAIN]: [{
+            id: pantryId,
+            version: V1,
+            name: "豚こま切れ肉",
+            quantityText: "300g",
+            quantity: { amount: 300, unit: "g" },
+            status: "have",
+            statusLabel: "ある",
+          }],
+        },
+      },
+    })
+    const dialog = screen.getByRole("dialog")
+    const input = within(dialog).getByRole("textbox", { name: "豚こま切れ肉を使った量" })
+    const apply = within(dialog).getByRole("button", { name: "豚こま切れ肉の使用量を反映" })
+    expect(apply).toBeDisabled()
+    expect(saveDinnerRequest).not.toHaveBeenCalled()
+    fireEvent.change(input, { target: { value: "100" } })
+    expect(within(dialog).getByTestId("cooked-pantry-remaining")).toHaveTextContent("200g")
+    await waitFor(() => expect(apply).toBeEnabled())
+    await click(apply)
+    await waitFor(() => expect(saveDinnerRequest).toHaveBeenCalledTimes(1))
+    expect(saveDinnerRequest.mock.calls[0][0]).toEqual({
+      op: "pantry_after_cooking",
+      updates: [{
+        id: pantryId,
+        version: V1,
+        status: "have",
+        quantity: { amount: 200, unit: "g" },
+      }],
+    })
+  })
+
+  it("在庫超過の使用量は警告を出して保存要求を送らない", async () => {
+    const pantryId = "f3000000-0000-4000-8000-0000000000a8"
+    view({
+      view: planView({ [TODAY]: [entry({ status: "cooked", statusLabel: "作った" })] }),
+      initialEntryId: E_MAIN,
+      extras: {
+        ...EMPTY_PLAN_PAGE_EXTRAS,
+        pantryByEntry: {
+          [E_MAIN]: [{
+            id: pantryId, version: V1, name: "豚こま切れ肉",
+            quantityText: "300g", quantity: { amount: 300, unit: "g" },
+            status: "have", statusLabel: "ある",
+          }],
+        },
+      },
+    })
+    const dialog = screen.getByRole("dialog")
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "豚こま切れ肉を使った量" }), {
+      target: { value: "500" },
+    })
+    expect(within(dialog).getByText(/在庫より多い量は差し引けません/)).toBeInTheDocument()
+    expect(within(dialog).getByRole("button", { name: "豚こま切れ肉の使用量を反映" })).toBeDisabled()
+    expect(saveDinnerRequest).not.toHaveBeenCalled()
+  })
+})
