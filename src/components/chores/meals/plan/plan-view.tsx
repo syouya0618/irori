@@ -3,10 +3,11 @@
 import { useRef, useState, useTransition } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { AlertCircle, CircleCheck, ClipboardCheck, Loader2, ShoppingCart, Users } from "lucide-react"
+import { AlertCircle, ArrowLeft, CircleCheck, ClipboardCheck, Loader2, ShoppingCart, Users } from "lucide-react"
 
 import { ExclusionHoldNotice } from "@/components/chores/meals/shared/exclusion-hold-notice"
 import { MealNotice } from "@/components/chores/meals/shared/meal-notices"
+import { scheduleReturnHref } from "@/components/chores/meals/schedule/schedule-query"
 import { MEALS_SETTINGS_HREF, MEALS_SHOPPING_HREF } from "@/components/chores/meals/shared/meal-routes"
 import { PendingChoreNotice } from "@/components/chores/shared/pending-chore-notice"
 import { RefreshOnVisible } from "@/components/chores/shared/refresh-on-visible"
@@ -327,6 +328,15 @@ export function PlanView({ owner, view, extras, ai, initialEntryId = null }: Pla
 
   return (
     <div className="flex flex-col gap-4">
+      <Link
+        href={scheduleReturnHref(view.from, view.today)}
+        prefetch={false}
+        className={`${TEXT_LINK} self-start`}
+        data-testid="return-to-weekly-schedule"
+      >
+        <ArrowLeft size={17} aria-hidden="true" />
+        週間スケジュールへ戻る
+      </Link>
       <section
         aria-labelledby="plan-create-heading"
         className="glass flex flex-col gap-3 rounded-2xl p-4 shadow-lg shadow-black/[0.04]"
