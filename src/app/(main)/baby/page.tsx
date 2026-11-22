@@ -153,6 +153,9 @@ export default async function BabyPage({
     <ChildPicker childrenList={children} selectedId={child.id} />
     <BabyDashboard
       key={`${userId}:${householdId}:${child.id}:${selectedDate}`}
+      // SSRで読み終えた時刻。Clientでの重複refetch省略の判断にだけ使う。
+      // 再接続時の再取得・家族同期・失敗時の救済は変えない。
+      initialSnapshotAt={Date.now()}
       initialLogs={logs ?? []}
       initialWeeklyLogs={weeklyLogs ?? []}
       initialGrowthLogs={growthLogs ?? []}
