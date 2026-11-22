@@ -322,6 +322,7 @@ describe("BabyDashboard / 開いたまま日を跨ぐ — 選択日の追従", (
     render(<BabyDashboard {...defaultProps()} />)
     fireEvent.click(screen.getByRole("button", { name: "搾乳" }))
     await flush()
+    await vi.waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
     // fake timers 下では findBy の待機が進まぬゆえ、描画を流してから同期で引く
     expect(screen.getByRole("dialog")).toBeInTheDocument()
 
@@ -337,6 +338,7 @@ describe("BabyDashboard / 開いたまま日を跨ぐ — 選択日の追従", (
     // 日記が無い日の入口は「日記を書く」
     fireEvent.click(screen.getByRole("button", { name: /日記を書く/ }))
     await flush()
+    await vi.waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
     expect(screen.getByRole("dialog")).toBeInTheDocument()
 
     await crossMidnight()
@@ -460,6 +462,7 @@ describe("BabyDashboard / 開いたまま日を跨ぐ — 最終授乳のフォ�
     render(<BabyDashboard {...defaultProps()} />)
     fireEvent.click(screen.getByRole("button", { name: "搾乳" }))
     await flush()
+    await vi.waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
     expect(screen.getByRole("dialog")).toBeInTheDocument()
 
     await crossMidnight()
@@ -496,6 +499,7 @@ describe("BabyDashboard / 日跨ぎと保存の競合", () => {
     render(<BabyDashboard {...defaultProps({ initialLogs: [], initialWeeklyLogs: [] })} />)
     fireEvent.click(screen.getByRole("button", { name: "搾乳" }))
     await flush()
+    await vi.waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
     fireEvent.click(screen.getByRole("button", { name: "記録する" }))
     await flush()
     // 通信中に閉じる → 追従の抑止が外れる
@@ -527,6 +531,7 @@ describe("BabyDashboard / 日跨ぎと保存の競合", () => {
     render(<BabyDashboard {...defaultProps()} />)
     fireEvent.click(screen.getByRole("button", { name: /日記を書く/ }))
     await flush()
+    await vi.waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
     fireEvent.change(screen.getByLabelText("日記本文"), {
       target: { value: "前日の日記" },
     })
@@ -581,6 +586,7 @@ describe("BabyDashboard / 日跨ぎのフォールバック取り直し — 保�
     render(<BabyDashboard {...defaultProps()} />)
     fireEvent.click(screen.getByRole("button", { name: "搾乳" }))
     await flush()
+    await vi.waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
 
     await crossMidnight()
     expect(pending).toHaveLength(2)
