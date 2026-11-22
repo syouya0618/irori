@@ -19,8 +19,10 @@ import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 let pathname = "/chores/meals"
+let search = ""
 vi.mock("next/navigation", () => ({
   usePathname: () => pathname,
+  useSearchParams: () => new URLSearchParams(search),
   useRouter: () => ({ refresh: vi.fn() }),
 }))
 
@@ -30,6 +32,7 @@ import MealsLoading from "../loading"
 
 beforeEach(() => {
   pathname = "/chores/meals"
+  search = ""
 })
 
 afterEach(() => {
@@ -75,6 +78,15 @@ describe("ごはんの layout", () => {
     pathname = route
     renderLayout()
     expect(screen.getByRole("heading", { level: 1, name: title })).toBeInTheDocument()
+  })
+
+  it("献立詳細から戻るときは日曜を含む同一週へ、家事トップへ飛ばさない", () => {
+    pathname = "/chores/meals/plan"
+    search = "start=2026-11-22"
+    renderLayout()
+    expect(screen.getByRole("link", { name: "週間スケジュールへ戻る" }))
+      .toHaveAttribute("href", "/chores/meals?start=2026-11-16")
+    expect(screen.queryByRole("link", { name: "家事" })).toBeNull()
   })
 
   it("日常の切替は3画面だけで、旧画面のURLはナビに並べない", () => {

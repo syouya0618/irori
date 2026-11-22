@@ -24,6 +24,18 @@ export function scheduleHref(start: string, today: string): string {
   return `${MEALS_BASE_HREF}?start=${encodeURIComponent(start)}`
 }
 
+/** 献立詳細の編集画面から、編集中の日付を含む月曜始まりの週へ戻る。
+ * URLに開始日が無ければ今週へ。日付が壊れているときはその値を使わない。
+ * `today` があれば今週はクエリ無しの正規URLに揃える。
+ */
+export function scheduleReturnHref(planStart: string | null, today?: string): string {
+  if (planStart === null || !isValidYmd(planStart)) return MEALS_BASE_HREF
+  const monday = mondayOf(planStart)
+  return today !== undefined && isValidYmd(today)
+    ? scheduleHref(monday, today)
+    : `${MEALS_BASE_HREF}?start=${monday}`
+}
+
 export function scheduleWeekBounds(today: string) {
   const { min, max } = planStartBounds(today)
   return { min: mondayOf(min), max: mondayOf(max) }
