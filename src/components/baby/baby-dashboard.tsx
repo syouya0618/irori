@@ -52,6 +52,7 @@ import {
   BabyLastRecord,
 } from "./baby-handoff-summary"
 import { isDiaryDraftContent } from "@/lib/domain/diary-draft-content"
+import { shouldResyncBabyOnMount } from "@/lib/domain/baby-initial-resync"
 import { readDraft, type DraftOwner } from "@/lib/domain/draft-storage"
 import {
   describeStale,
@@ -221,6 +222,8 @@ function markResyncTouched(
 }
 
 interface BabyDashboardProps {
+  /** SSRデータの取得を終えた時刻。省略（既存テスト等）は安全側で必ず再取得する。 */
+  initialSnapshotAt?: number | null
   initialLogs: BabyLogData[]
   initialWeeklyLogs: BabyLogData[]
   initialGrowthLogs: BabyLogData[]
@@ -286,6 +289,7 @@ export interface InitialLoadErrors {
 }
 
 export function BabyDashboard({
+  initialSnapshotAt = null,
   initialLogs,
   initialWeeklyLogs,
   initialGrowthLogs,
@@ -985,17 +989,18 @@ export function BabyDashboard({
     resyncLogsRef.current = resyncLogs
   }, [resyncLogs])
 
-  // マウント時に 1 回取り直す（P1-04）。戻る/進む（history traversal）では Next 16 が
-  // キャッシュ済みの RSC payload を古さを問わず再利用し（router の bfcache。staleTimes は
-  // 効かない）、この component は何分も前の initialLogs で作り直される。アプリは前面の
-  // ままゆえ visible / focus も発火せず、ここで取らねば配偶者の記録・削除と「最終授乳」
-  // 「次の授乳の目安」が嘘のまま残る。SSR 直後の通常の表示では重複取得になるが、結果は
-  // 同じで、世代ガード・touched の合流規則が手元の変更を守る。
-  // ref ではなく直接呼ぶ: effect は宣言順に走り、上の ref の差し替えより前に読みうる。
+  // 復帰した古いRSC payload、取得失敗、時計不一致なら従来どおりマウントで再取得。
+  // SSR完了から10秒以内だけ重複分を省く。購読の初回SUBSCRIBEDと復帰時の再取得は
+  // 無条件に維持し、SSRから購読成立までの家族変更・DELETEを回収する。
+  // refではなく直接呼ぶ: effectは宣言順で動き、ref差し替えより早く実行されうる。
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- setState（鮮度の反映を含む）は getSession と取得を await した後にしか起きぬ（同期の連鎖描画ではない）
+    if (!shouldResyncBabyOnMount(
+      initialSnapshotAt,
+      Date.now(),
+      Boolean(initialLoadErrors.logs || initialLoadErrors.weekly || initialLoadErrors.growth),
+    )) return
     void resyncLogs()
-  }, [resyncLogs])
+  }, [resyncLogs, initialSnapshotAt, initialLoadErrors.logs, initialLoadErrors.weekly, initialLoadErrors.growth])
 
   // タブ復帰（visible / focus）で取り直す。世代ガード等は resyncLogs 側に残す
   // — フックはリスナの張り外しのみ（use-visibility-refetch.ts の境界）。
