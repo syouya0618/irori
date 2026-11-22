@@ -153,6 +153,10 @@ export default async function BabyPage({
     <ChildPicker childrenList={children} selectedId={child.id} />
     <BabyDashboard
       key={`${userId}:${householdId}:${child.id}:${selectedDate}`}
+      // SSRで読み終えた時刻。Clientでの重複refetch省略の判断にだけ使う。
+      // 再接続時の再取得・家族同期・失敗時の救済は変えない。
+      // eslint-disable-next-line react-hooks/purity -- 動的Server ComponentでのDB読み込み完了時刻。React画面の値・描画内容は変えず、Clientの鮮度判定にのみ使用。
+      initialSnapshotAt={Date.now()}
       initialLogs={logs ?? []}
       initialWeeklyLogs={weeklyLogs ?? []}
       initialGrowthLogs={growthLogs ?? []}

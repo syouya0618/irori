@@ -14,10 +14,9 @@ import { BabyQuickActions } from "./baby-quick-actions"
 import { BabyPastDayActions } from "./baby-past-day-actions"
 import { BabyTimeline } from "./baby-timeline"
 import { BabyDailyDiary } from "./baby-daily-diary"
-import { BabyDiaryEditSheet } from "./baby-diary-edit-sheet"
-import { BabyLogFormSheet } from "./baby-log-form-sheet"
+// 大きな編集フォームは、開く操作まで初期JavaScriptへ含めない。
 import { BabyTemperatureCard } from "./baby-temperature-card"
-import { FeedingTimer, type RunningTimer } from "./feeding-timer"
+import type { RunningTimer } from "./feeding-timer"
 import { RunningTimerChip } from "./running-timer-chip"
 import { PendingSavesNotice } from "./pending-saves-notice"
 import {
@@ -30,6 +29,18 @@ import { BabyWeeklySummary } from "./weekly-summary/baby-weekly-summary"
 import dynamic from "next/dynamic"
 import { growthLatestSummary } from "@/lib/domain/growth-summary"
 const GrowthChartSection = dynamic(()=>import("./charts/growth-chart-section").then(m=>m.GrowthChartSection),{loading:()=> <p className="py-4 text-xs text-muted-foreground">グラフを読み込み中</p>})
+const BabyDiaryEditSheet = dynamic(
+  () => import("./baby-diary-edit-sheet").then((mod) => mod.BabyDiaryEditSheet),
+  { loading: () => <p role="status" className="p-4 text-sm text-muted-foreground">日記の入力画面を準備中…</p> },
+)
+const BabyLogFormSheet = dynamic(
+  () => import("./baby-log-form-sheet").then((mod) => mod.BabyLogFormSheet),
+  { loading: () => <p role="status" className="p-4 text-sm text-muted-foreground">記録の入力画面を準備中…</p> },
+)
+const FeedingTimer = dynamic(
+  () => import("./feeding-timer").then((mod) => mod.FeedingTimer),
+  { loading: () => <p role="status" className="p-4 text-sm text-muted-foreground">授乳タイマーを準備中…</p> },
+)
 import {
   BabyCollapsibleSection,
   HomeFoldFrame,
@@ -40,7 +51,8 @@ import {
   BabyHandoffSummary,
   BabyLastRecord,
 } from "./baby-handoff-summary"
-import { isDiaryDraftContent } from "./baby-diary-edit-sheet"
+import { isDiaryDraftContent } from "@/lib/domain/diary-draft-content"
+import { shouldResyncBabyOnMount } from "@/lib/domain/baby-initial-resync"
 import { readDraft, type DraftOwner } from "@/lib/domain/draft-storage"
 import {
   describeStale,
@@ -210,6 +222,8 @@ function markResyncTouched(
 }
 
 interface BabyDashboardProps {
+  /** SSRデータの取得を終えた時刻。省略（既存テスト等）は安全側で必ず再取得する。 */
+  initialSnapshotAt?: number | null
   initialLogs: BabyLogData[]
   initialWeeklyLogs: BabyLogData[]
   initialGrowthLogs: BabyLogData[]
@@ -275,6 +289,7 @@ export interface InitialLoadErrors {
 }
 
 export function BabyDashboard({
+  initialSnapshotAt = null,
   initialLogs,
   initialWeeklyLogs,
   initialGrowthLogs,
@@ -365,6 +380,9 @@ export function BabyDashboard({
   const [createAmountMl, setCreateAmountMl] = useState<number | null>(null)
   const [formKey, setFormKey] = useState(0)
   const [timerOpen, setTimerOpen] = useState(false)
+  // 初めて開くまではタイマーの巨大なJSをロードしない。一度開いたら閉じても
+  // マウントを保ち、端末保存不可の計測・通信結果不明の送信を失わない。
+  const [timerEverOpened, setTimerEverOpened] = useState(false)
   const [timerFeedingType, setTimerFeedingType] = useState<FeedingType>("breast_left")
   // 端末に残っている授乳の計測（UX-04a）。シートを閉じても計測は続くため、チップで
   // 戻る導線を出す。初期値はタイマー（FeedingTimer）が開いた時と、下の effect が
@@ -971,17 +989,19 @@ export function BabyDashboard({
     resyncLogsRef.current = resyncLogs
   }, [resyncLogs])
 
-  // マウント時に 1 回取り直す（P1-04）。戻る/進む（history traversal）では Next 16 が
-  // キャッシュ済みの RSC payload を古さを問わず再利用し（router の bfcache。staleTimes は
-  // 効かない）、この component は何分も前の initialLogs で作り直される。アプリは前面の
-  // ままゆえ visible / focus も発火せず、ここで取らねば配偶者の記録・削除と「最終授乳」
-  // 「次の授乳の目安」が嘘のまま残る。SSR 直後の通常の表示では重複取得になるが、結果は
-  // 同じで、世代ガード・touched の合流規則が手元の変更を守る。
-  // ref ではなく直接呼ぶ: effect は宣言順に走り、上の ref の差し替えより前に読みうる。
+  // 復帰した古いRSC payload、取得失敗、時計不一致なら従来どおりマウントで再取得。
+  // SSR完了から10秒以内だけ重複分を省く。購読の初回SUBSCRIBEDと復帰時の再取得は
+  // 無条件に維持し、SSRから購読成立までの家族変更・DELETEを回収する。
+  // refではなく直接呼ぶ: effectは宣言順で動き、ref差し替えより早く実行されうる。
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- setState（鮮度の反映を含む）は getSession と取得を await した後にしか起きぬ（同期の連鎖描画ではない）
+    if (!shouldResyncBabyOnMount(
+      initialSnapshotAt,
+      freshnessClockNow(),
+      Boolean(initialLoadErrors.logs || initialLoadErrors.weekly || initialLoadErrors.growth),
+    )) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- resyncLogs はセッション確認とDB取得後にのみstateを変更する非同期処理。
     void resyncLogs()
-  }, [resyncLogs])
+  }, [resyncLogs, initialSnapshotAt, initialLoadErrors.logs, initialLoadErrors.weekly, initialLoadErrors.growth])
 
   // タブ復帰（visible / focus）で取り直す。世代ガード等は resyncLogs 側に残す
   // — フックはリスナの張り外しのみ（use-visibility-refetch.ts の境界）。
@@ -1276,6 +1296,7 @@ export function BabyDashboard({
 
   const handleStartTimer = useCallback((type: FeedingType) => {
     setTimerFeedingType(type)
+    setTimerEverOpened(true)
     setTimerOpen(true)
   }, [])
 
@@ -1625,7 +1646,7 @@ export function BabyDashboard({
       {/* 再マウント用の key は兄弟（BabyLogFormSheet）と名前空間を分ける。どちらも
           0 から数える数値ゆえ、素の数値だと値が揃った瞬間に重複 key になり、React が
           fiber を取り違える（"Encountered two children with the same key"） */}
-      <BabyDiaryEditSheet
+      {(diaryEditOpen || diaryKey > 0) && <BabyDiaryEditSheet
         key={`diary-${diaryKey}`}
         open={diaryEditOpen}
         onOpenChange={setDiaryEditOpen}
@@ -1634,9 +1655,9 @@ export function BabyDashboard({
         initialUpdatedAt={visibleDiary?.updated_at ?? null}
         onSaved={handleDiarySaved}
         owner={owner}
-      />
+      />}
 
-      <BabyLogFormSheet
+      {(sheetOpen || formKey > 0) && <BabyLogFormSheet
         key={`log-${formKey}`}
         open={sheetOpen}
         onOpenChange={setSheetOpen}
@@ -1655,9 +1676,9 @@ export function BabyDashboard({
         onLogRemoved={removeLog}
         // 保存の衝突の後、最新の行で開き直す（key で作り直し、最新の版から seed。P2-07）
         onReloadLog={handleEdit}
-      />
+      />}
 
-      <FeedingTimer
+      {(timerOpen || timerEverOpened) && <FeedingTimer
         open={timerOpen}
         onOpenChange={setTimerOpen}
         initialFeedingType={timerFeedingType}
@@ -1668,7 +1689,7 @@ export function BabyDashboard({
         // fallback を振り分ける（かつては前日行だけ別の callback で fallback のみ更新して
         // おり、昨日を表示中に昨日の行が出ず、週グラフも再取得まで古いままじゃった。P3-8）
         onLogRecorded={appendLogFromOtherPath}
-      />
+      />}
     </div>
   )
 }
