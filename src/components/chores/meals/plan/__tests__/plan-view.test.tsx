@@ -221,6 +221,16 @@ afterEach(async () => {
 })
 
 describe("週間スケジュールから1品を手入力で変更・削除", () => {
+  it("詳細編集からは写真の週間一覧へ戻り、未来週の最終日も週を保つ", () => {
+    view({ view: planView({}, { from: "2026-11-22" }) })
+    expect(screen.getByRole("link", { name: "週間スケジュールへ戻る" }))
+      .toHaveAttribute("href", "/chores/meals?start=2026-11-16")
+    cleanup()
+    view()
+    expect(screen.getByRole("link", { name: "週間スケジュールへ戻る" }))
+      .toHaveAttribute("href", "/chores/meals")
+  })
+
   it("指定した1品だけのシートを開き、手入力で変更できる", async () => {
     saveDinnerRequest.mockResolvedValue(saved())
     view({
