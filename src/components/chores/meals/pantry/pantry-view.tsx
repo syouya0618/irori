@@ -297,6 +297,12 @@ export function PantryView({ owner, today, items, unreadable, variant = "full" }
             return accepted
           }}
           onDraftChange={setBulkDrafting}
+          existingItems={items}
+          hasUnreadable={unreadable > 0}
+          onEditExisting={(id) => {
+            const existing = items.find((candidate) => candidate.id === id)
+            if (existing) openEditor(existing)
+          }}
         />
       </section>
 

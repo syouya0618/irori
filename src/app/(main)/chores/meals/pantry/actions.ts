@@ -6,6 +6,7 @@ import { MEALS_REVALIDATE_PATH } from "@/components/chores/meals/shared/meal-rou
 import { isRecord } from "@/lib/domain/child-sharing"
 import { parseRpcOutcome, parseRpcStatus, rejectedResult, unknownResult, type ChoreSaveResult } from "@/lib/domain/rpc-outcome"
 import { foldName, parseBulkInput, resolveIngredientId, type ParsedIngredientInput } from "@/lib/meals/normalize"
+import { specificPantryCatalogNames, suggestPantryCatalogNames } from "@/lib/meals/pantry-guidance"
 import { getMealLookup, type MealLookup } from "@/lib/meals/server/context"
 import { MEAL_INVALID_MESSAGE, isMealLabel, mealFailureOf, settleMealAction } from "@/lib/meals/server/meal-input"
 import {
@@ -26,6 +27,7 @@ import {
   type PantryPreviewIssue,
   type PantryPreviewItem,
   type PantryPreviewResult,
+  type PantryNameResolutionResult,
   type SavePantryItemRequest,
 } from "@/lib/meals/server/pantry-requests"
 import {
@@ -73,6 +75,14 @@ function previewItem(parsed: ParsedIngredientInput, lookup: MealLookup): PantryP
     issues.push("quantity_unreadable")
   }
 
+  const isGeneric = ingredientId !== null && lookup.index.byId.get(ingredientId)?.generic === true
+  // 候補は表示のみ。利用者が選んだ名前を登録時にサーバーで再照合する。
+  const suggestedNames =
+    isGeneric && ingredientId !== null
+      ? specificPantryCatalogNames(ingredientId, lookup.index)
+      : ingredientId === null && isMealLabel(name, PANTRY_NAME_MAX)
+        ? suggestPantryCatalogNames(name, lookup.index)
+        : []
   return {
     name,
     ingredientId,
@@ -80,6 +90,8 @@ function previewItem(parsed: ParsedIngredientInput, lookup: MealLookup): PantryP
     quantity,
     quantityText: parsed.quantityText,
     issues,
+    ...(isGeneric ? { isGeneric: true } : {}),
+    ...(suggestedNames.length > 0 ? { suggestedNames } : {}),
   }
 }
 
@@ -109,6 +121,43 @@ export async function previewPantryText(text: string): Promise<PantryPreviewResu
     resolvedCount: items.filter((item) => item.ingredientId !== null).length,
     unresolvedNames: items.filter((item) => item.ingredientId === null).map((item) => item.name),
     truncated: parsed.truncated || all.length > PANTRY_BULK_MAX,
+  }
+}
+
+/**
+ * 入力後に名前を直したとき、プレビュー時点の辞書IDを流用しない。
+ * 名前だけを認証済みの辞書で再照合する。数量・在庫DBは読まない。
+ * クライアントの重複警告向けであり、同時登録の原子的防止ではない。
+ */
+export async function resolvePantryNames(names: string[]): Promise<PantryNameResolutionResult> {
+  const auth = await getAuthContext()
+  if (auth.error !== null) return { ok: false, error: auth.error }
+  if (
+    !Array.isArray(names) ||
+    names.length < 1 ||
+    names.length > PANTRY_BULK_MAX ||
+    names.some((name) => typeof name !== "string" || !isMealLabel(name.trim(), PANTRY_NAME_MAX))
+  ) {
+    return { ok: false, error: MEAL_INVALID_MESSAGE }
+  }
+  const index = getMealLookup().index
+  return {
+    ok: true,
+    items: names.map((name) => {
+      const cleaned = name.trim()
+      const ingredientId = resolveIngredientId(cleaned, index)
+      const isGeneric = ingredientId !== null && index.byId.get(ingredientId)?.generic === true
+      return {
+        name: cleaned,
+        ingredientId,
+        catalogName: ingredientId === null ? null : (index.byId.get(ingredientId)?.name ?? null),
+        isGeneric,
+        suggestedNames:
+          isGeneric && ingredientId !== null
+            ? specificPantryCatalogNames(ingredientId, index)
+            : ingredientId === null ? suggestPantryCatalogNames(cleaned, index) : [],
+      }
+    }),
   }
 }
 

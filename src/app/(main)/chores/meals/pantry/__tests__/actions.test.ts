@@ -26,7 +26,7 @@ import type {
   SavePantryItemRequest,
 } from "@/lib/meals/server/pantry-requests"
 
-import { addPantryItems, deletePantryItem, previewPantryText, savePantryItem } from "../actions"
+import { addPantryItems, deletePantryItem, previewPantryText, resolvePantryNames, savePantryItem } from "../actions"
 
 const USER = "d1000000-0000-4000-8000-000000000001"
 const HOUSE = "d1000000-0000-4000-8000-0000000000a1"
@@ -138,6 +138,7 @@ describe("X-05 認証と世帯", () => {
     expect(await savePantryItem(saveRequest())).toEqual({ error: denied.error, failure: "rejected" })
     expect(await deletePantryItem(deleteRequest())).toEqual({ error: denied.error, failure: "rejected" })
     expect(await previewPantryText("玉ねぎ")).toEqual({ ok: false, error: denied.error })
+    expect(await resolvePantryNames(["玉ねぎ"])).toEqual({ ok: false, error: denied.error })
     expect(revalidatePath).not.toHaveBeenCalled()
   })
 
@@ -197,6 +198,53 @@ describe("C-21 / C-22 まとめ入力の解釈（保存しない）", () => {
     expect(calls).toEqual([])
     expect(from).not.toHaveBeenCalled()
     expect(revalidatePath).not.toHaveBeenCalled()
+  })
+
+  it("総称・誤記への選択候補を返すが、勝手に解決したりDBから在庫を読まない", async () => {
+    const { calls, from } = signIn(() => ({ data: null, error: null }))
+    const result = await previewPantryText("豚肉、玉ねき")
+    if (!result.ok) throw new Error("unreachable")
+    expect(result.items[0]).toMatchObject({
+      name: "豚肉",
+      ingredientId: "pork",
+      isGeneric: true,
+      suggestedNames: expect.arrayContaining(["豚こま切れ肉"]),
+    })
+    expect(result.items[1]).toMatchObject({
+      name: "玉ねき",
+      ingredientId: null,
+      suggestedNames: expect.arrayContaining(["玉ねぎ"]),
+    })
+    expect(calls).toEqual([])
+    expect(from).not.toHaveBeenCalled()
+  })
+
+  it("確認画面で改名した食材は辞書で再照合するだけで、DBは読まず書かない", async () => {
+    const { calls, from } = signIn(() => ({ data: null, error: null }))
+    expect(await resolvePantryNames(["たまねぎ", "豚肉", "謎の葉"])).toEqual({
+      ok: true,
+      items: [
+        { name: "たまねぎ", ingredientId: "onion", catalogName: "玉ねぎ", isGeneric: false, suggestedNames: [] },
+        { name: "豚肉", ingredientId: "pork", catalogName: "豚肉", isGeneric: true, suggestedNames: expect.arrayContaining(["豚こま切れ肉"]) },
+        { name: "謎の葉", ingredientId: null, catalogName: null, isGeneric: false, suggestedNames: expect.any(Array) },
+      ],
+    })
+    expect(calls).toEqual([])
+    expect(from).not.toHaveBeenCalled()
+    expect(revalidatePath).not.toHaveBeenCalled()
+  })
+
+  it("再照合は空配列・不正な名前・51件超えを拒否し、辞書IDを推測しない", async () => {
+    const { calls } = signIn(() => ({ data: null, error: null }))
+    const invalid = [
+      [],
+      [" "],
+      ["a".repeat(41)],
+      Array.from({ length: 51 }, () => "玉ねぎ"),
+      [123] as unknown as string[],
+    ]
+    for (const names of invalid) expect(await resolvePantryNames(names)).toMatchObject({ ok: false })
+    expect(calls).toEqual([])
   })
 
   it("部分一致で別の食材へ寄せない（「豚」「豚こまの残り」は未解決。対照: 「豚こま」は解決する）", async () => {
