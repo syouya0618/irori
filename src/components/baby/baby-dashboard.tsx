@@ -996,7 +996,7 @@ export function BabyDashboard({
   useEffect(() => {
     if (!shouldResyncBabyOnMount(
       initialSnapshotAt,
-      Date.now(),
+      freshnessClockNow(),
       Boolean(initialLoadErrors.logs || initialLoadErrors.weekly || initialLoadErrors.growth),
     )) return
     // eslint-disable-next-line react-hooks/set-state-in-effect -- resyncLogs はセッション確認とDB取得後にのみstateを変更する非同期処理。
