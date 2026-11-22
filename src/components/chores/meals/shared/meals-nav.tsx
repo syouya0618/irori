@@ -1,12 +1,14 @@
 "use client"
 
+import { Suspense } from "react"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useSearchParams } from "next/navigation"
 import { ChevronLeft, SlidersHorizontal } from "lucide-react"
 
 import { activeSegmentHref } from "@/components/chores/shared/segment-links"
 import { cn } from "@/lib/utils"
 import { segmentCn } from "@/lib/utils/segment-cn"
+import { scheduleReturnHref } from "@/components/chores/meals/schedule/schedule-query"
 
 import {
   MEAL_HIDDEN_SEGMENTS,
@@ -71,6 +73,21 @@ export function MealsNav({ className }: { className?: string }) {
   )
 }
 
+function MealBackLink({ href, label }: { href: string; label: string }) {
+  return (
+    <Link href={href} prefetch={false} aria-label={label}
+      className="absolute left-0 top-0 flex size-11 items-center justify-center rounded-xl text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring">
+      <ChevronLeft size={20} aria-hidden="true" />
+    </Link>
+  )
+}
+
+/** 詳細編集のURLにある開始日を保持し、同じ週の一覧へ戻す。 */
+function PlanBackLink() {
+  const params = useSearchParams()
+  return <MealBackLink href={scheduleReturnHref(params.get("start"))} label="週間スケジュールへ戻る" />
+}
+
 /** 承認済みカンプに合わせたごはん専用ヘッダー。戻る導線と設定はタップ領域を維持する。 */
 export function MealsHeader() {
   const pathname = usePathname() ?? ""
@@ -85,10 +102,13 @@ export function MealsHeader() {
 
   return (
     <header className="relative flex flex-col items-center gap-1 pb-1" data-testid="meals-header">
-      <Link href="/chores" prefetch={false} aria-label="家事"
-        className="absolute left-0 top-0 flex size-11 items-center justify-center rounded-xl text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring">
-        <ChevronLeft size={20} aria-hidden="true" />
-      </Link>
+      {active === MEALS_PLAN_HREF ? (
+        <Suspense fallback={<MealBackLink href={MEALS_BASE_HREF} label="週間スケジュールへ戻る" />}>
+          <PlanBackLink />
+        </Suspense>
+      ) : (
+        <MealBackLink href="/chores" label="家事" />
+      )}
       <Link href={MEALS_BASE_HREF} prefetch={false} aria-label="irori ごはんのトップ"
         className="inline-flex min-h-11 items-center justify-center rounded-lg px-2 text-[24px] font-extrabold tracking-[-0.065em] leading-none text-primary focus-visible:outline-2 focus-visible:outline-ring">
         irori
