@@ -12,7 +12,7 @@ describe("育児ホームの初期JS / 計測保全", () => {
   it("記録・日記・授乳タイマーは初回同期importを避ける", () => {
     for (const file of ["baby-log-form-sheet", "baby-diary-edit-sheet", "feeding-timer"]) {
       expect(source).toContain(`import("./${file}")`)
-      expect(source).not.toMatch(new RegExp(`^import[^\\n]+from ["']\\./${file}["']`, "m"))
+      expect(source).not.toMatch(new RegExp(`^import\\s+(?!type\\b)[^\\n]+from ["']\\./${file}["']`, "m"))
     }
     expect(source).toContain('import { isDiaryDraftContent } from "@/lib/domain/diary-draft-content"')
   })
