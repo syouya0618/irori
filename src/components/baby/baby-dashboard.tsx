@@ -999,6 +999,7 @@ export function BabyDashboard({
       Date.now(),
       Boolean(initialLoadErrors.logs || initialLoadErrors.weekly || initialLoadErrors.growth),
     )) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- resyncLogs はセッション確認とDB取得後にのみstateを変更する非同期処理。
     void resyncLogs()
   }, [resyncLogs, initialSnapshotAt, initialLoadErrors.logs, initialLoadErrors.weekly, initialLoadErrors.growth])
 
