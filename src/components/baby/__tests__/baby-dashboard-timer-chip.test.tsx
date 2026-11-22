@@ -119,6 +119,7 @@ describe("BabyDashboard / 授乳を計測中のチップ（UX-04a）", () => {
 
     fireEvent.click(chip)
     await flush()
+    await vi.waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
     // タイマーが開き、保存されていた計測（左1回・右1回）がそのまま続いている
     expect(screen.getByRole("dialog")).toBeInTheDocument()
     expect(screen.getByText(/左1回 .+・右1回 /)).toBeInTheDocument()
@@ -179,6 +180,7 @@ describe("BabyDashboard / 授乳を計測中のチップ（UX-04a）", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /授乳を計測中/ }))
     await flush()
+    await vi.waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
     fireEvent.click(screen.getByRole("button", { name: /停止して記録/ }))
     await waitFor(() => expect(recordFeeding).toHaveBeenCalledTimes(1))
     await flush()
@@ -198,6 +200,7 @@ describe("BabyDashboard / 授乳を計測中のチップ（UX-04a）", () => {
     // 新しく計測を始める（左）
     fireEvent.click(screen.getByRole("button", { name: "左" }))
     await flush()
+    await vi.waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
     expect(screen.getByRole("dialog")).toBeInTheDocument()
     // 1 分以上計測してから閉じる（1 分未満は誤って開いた扱いで取り消される）
     act(() => {
