@@ -28,15 +28,12 @@ import { useDraft } from "@/lib/hooks/use-draft"
 import { DRAFT_RETENTION_NOTE, type DraftOwner } from "@/lib/domain/draft-storage"
 import { formatTimeJst, toJstDateString } from "@/lib/utils/date-jst"
 import type { BabyDiaryData } from "@/lib/types/baby"
+import { isDiaryDraftContent, type DiaryDraftContent } from "@/lib/domain/diary-draft-content"
 
-/** 日記の端末下書きの中身（`useDraft` の T） */
-export interface DiaryDraftContent {
-  text: string
-}
+// 既存呼び出し元の公開APIは変えない。実装だけを軽量モジュールへ移す。
+export { isDiaryDraftContent } from "@/lib/domain/diary-draft-content"
+export type { DiaryDraftContent } from "@/lib/domain/diary-draft-content"
 
-export function isDiaryDraftContent(v: unknown): v is DiaryDraftContent {
-  return typeof v === "object" && v !== null && typeof (v as { text?: unknown }).text === "string"
-}
 
 interface BabyDiaryEditSheetProps {
   open: boolean
