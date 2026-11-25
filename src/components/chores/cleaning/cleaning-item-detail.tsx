@@ -85,6 +85,7 @@ export function CleaningItemDetail({
   logs,
   historyFailed,
   historyTruncated,
+  historyPending = false,
   today,
   disabled,
   send,
@@ -98,6 +99,7 @@ export function CleaningItemDetail({
   logs: readonly CleaningLog[]
   historyFailed: boolean
   historyTruncated: boolean
+  historyPending?: boolean
   today: string
   disabled: boolean
   send: (request: CleaningRequest) => boolean
@@ -130,7 +132,7 @@ export function CleaningItemDetail({
   }, [])
 
   const occurrence = status.currentOccurrence
-  const hasOccurrence = !status.isPaused && occurrence !== null
+  const hasOccurrence = !historyPending && !status.isPaused && occurrence !== null
   // 先の回を続けて閉じた後は、現在の回の鍵が DB の上限を越える（予定日が近づくまで閉じられぬ）
   const canClose = hasOccurrence && !status.closeLimitReached
   const nextIfDone = canClose ? status.nextAfterCompletion(today) : null
@@ -262,14 +264,15 @@ export function CleaningItemDetail({
           {describeCadence(routine) ?? "周期を確認してください"}
         </p>
         <div className="flex flex-wrap gap-1.5 empty:hidden">
-          <CleaningStatusBadges status={status} bucket={bucket} />
+          {!historyPending && <CleaningStatusBadges status={status} bucket={bucket} />}
         </div>
         <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-sm">
           <dt className="text-muted-foreground">前回</dt>
-          <dd className="break-words">{lastDoneText(status, today)}</dd>
+          <dd className="break-words">{historyPending ? "確認中" : lastDoneText(status, today)}</dd>
           <dt className="text-muted-foreground">次回</dt>
-          <dd className="break-words">{nextDueText(status, today)}</dd>
+          <dd className="break-words">{historyPending ? "確認中" : nextDueText(status, today)}</dd>
         </dl>
+        {historyPending && <p className="text-sm text-muted-foreground">記録の変更は保存済みです。前回の実施日と次回の目安は、読み込み直すと確認できます。</p>}
       </section>
 
       {error !== null && (

@@ -247,6 +247,7 @@ describe("B-06 対象回はサーバーが決める", () => {
       p_note: null,
     })
     expect(revalidatePath).toHaveBeenCalledWith("/chores/cleaning")
+    expect(revalidatePath).toHaveBeenCalledWith("/chores/cleaning/status")
   })
 
   it("スキップは実施日を付けずに同じ回を閉じる", async () => {

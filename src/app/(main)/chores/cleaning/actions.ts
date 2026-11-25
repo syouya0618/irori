@@ -95,6 +95,7 @@ function failureOf(error: DbError): ChoreSaveFailure {
 
 function revalidateCleaning(): void {
   revalidatePath("/chores/cleaning")
+  revalidatePath("/chores/cleaning/status")
   revalidatePath("/chores")
 }
 

@@ -8,6 +8,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { EmptyState } from "@/components/chores/shared/empty-state"
 import { PendingChoreNotice } from "@/components/chores/shared/pending-chore-notice"
 import { RefreshOnVisible } from "@/components/chores/shared/refresh-on-visible"
+import { useChoresRefresh } from "@/components/chores/shared/use-chores-refresh"
 import {
   CHORE_SAVE_MESSAGES,
   createChoreEditSessions,
@@ -42,10 +43,12 @@ import {
 import { newClientId } from "@/lib/utils/client-id"
 import { isValidYmd, todayJstString } from "@/lib/utils/date-jst"
 import { segmentCn } from "@/lib/utils/segment-cn"
-import { CleaningCalendar } from "./cleaning-calendar"
+import { CleaningCalendar, calendarMarksForDate } from "./cleaning-calendar"
 import { CleaningItemCard } from "./cleaning-item-card"
 import { CleaningItemDetail } from "./cleaning-item-detail"
 import { CleaningRoutineForm } from "./cleaning-routine-form"
+import { CleaningQuickRecord } from "./cleaning-quick-record"
+import { CleaningStatus } from "./cleaning-status"
 
 /** 直後の取り消しの帯を出しておく時間。過ぎた記録は履歴から取り消す。 */
 export const CLEANING_UNDO_WINDOW_MS = 10 * 60 * 1000
@@ -60,6 +63,7 @@ const FILTER_LABEL: Record<CleaningFilter, string> = {
 }
 
 export interface CleaningViewProps {
+  view?: "calendar" | "status"
   owner: ChoreOwner
   /** サーバーの今日（JST）。期限・区分はこの日付で計算する */
   today: string
@@ -79,6 +83,7 @@ interface Entry {
   routine: CleaningRoutine
   status: RoutineStatus
   bucket: CleaningBucket
+  historyPending: boolean
 }
 
 type SheetBody = { kind: "create" } | { kind: "item"; routineId: string; mode: "detail" | "edit" }
@@ -100,6 +105,49 @@ interface LastClosed {
   version: string
   text: string
   at: number
+}
+
+/** 保存応答・取り消しのイベントでだけ読む時計。描画中には呼ばない。 */
+function cleaningEventTime(): number {
+  return Date.now()
+}
+
+interface ConfirmedRecord {
+  log: CleaningLog
+  /** 取消・訂正で実施日ではなくなった日。古い要約から復活させない。 */
+  removedDoneDates: string[]
+  /** 詳細で読み足した履歴など、訂正前の日付がこの画面にはない。 */
+  previousDateUnknown: boolean
+}
+
+/** 保存の確定後、次の正常な読み取りまでの前回実施日。回の鍵は世代を含むため再集計しない。 */
+function confirmedLastDone(
+  routineId: string,
+  serverMarks: CleaningMarks,
+  logs: readonly CleaningLog[],
+  records: readonly ConfirmedRecord[],
+  completeHistory: boolean,
+): { marks: CleaningMarks; pending: boolean } {
+  const affected = records.filter(({ log }) => log.routine_id === routineId)
+  if (affected.length === 0) return { marks: serverMarks, pending: false }
+  let knownLast: string | null = null
+  for (const log of logs) {
+    if (log.routine_id === routineId && log.kind === "done" && log.voided_at === null && log.done_on !== null) {
+      if (knownLast === null || log.done_on > knownLast) knownLast = log.done_on
+    }
+  }
+  if (completeHistory) return { marks: { ...serverMarks, lastDoneOn: knownLast }, pending: false }
+
+  const before = serverMarks.lastDoneOn
+  const changedPrevious = before !== null && affected.some((record) =>
+    record.previousDateUnknown || record.removedDoneDates.includes(before),
+  )
+  // 前回を消したが全履歴はない。見えている古い記録を「最後」とも、0件を「未記録」とも断定しない。
+  if (changedPrevious && (knownLast === null || knownLast < before)) {
+    return { marks: { ...serverMarks, lastDoneOn: null }, pending: true }
+  }
+  const lastDoneOn = knownLast !== null && (before === null || knownLast > before) ? knownLast : before
+  return { marks: { ...serverMarks, lastDoneOn }, pending: false }
 }
 
 /** 結果の文言 1 行（色だけで示さず、アイコン + 文）。 */
@@ -128,8 +176,8 @@ function byDueThenName(a: Entry, b: Entry): number {
 /**
  * 掃除ルーティーンの画面。
  *
- * 最初に「今日・今週やること」（期限超過を含む。周期の単位に依らぬ — 年 1 回の項目でも、今週が
- * 期限ならここに出る）。週 / 月 / 年の切替は、その下の「このあとの項目」を周期の単位で絞るだけじゃ。
+ * カレンダーでは日付を選んで実施を記録し、状況ページでは前回実施からの日数を確認する。
+ * 既存の予定管理（今日・今週やること、周期で絞るこのあとの項目）はカレンダーの下に残す。
  *
  * 保存は `useChoreSave`（操作 ID と内容を送信の前に固定・結果不明は同じ操作で確認・自動再送なし）。
  * 期限と区分は、サーバーが読んだ定義と有効な履歴の要約から毎回計算する（前回実施日の写しを持たぬ）。
@@ -142,6 +190,7 @@ function byDueThenName(a: Entry, b: Entry): number {
  * その操作自身の控えの確定・一覧の取り直し・直後の取り消しの帯（一覧の部品）は、いつでも反映する。
  */
 export function CleaningView({
+  view = "calendar",
   owner,
   today,
   routines,
@@ -152,6 +201,17 @@ export function CleaningView({
   historyFailed,
   historyTruncated,
 }: CleaningViewProps) {
+  const [selectedDate, setSelectedDate] = useState(today)
+  // 履歴の取得失敗は新しい断面ではない。確定した保存を、失敗時の空配列で消さない。
+  const [lastReadableLogs, setLastReadableLogs] = useState(logs)
+  if (!historyFailed && lastReadableLogs !== logs) setLastReadableLogs(logs)
+  const receiptSource = historyFailed ? lastReadableLogs : logs
+  const [confirmed, setConfirmed] = useState<{ source: CleaningLog[]; records: ConfirmedRecord[] }>({ source: logs, records: [] })
+  // 正常な再取得が届いたらサーバーを正本に戻す（家族が行った訂正・取消も受け入れる）。
+  const confirmedRecords = confirmed.source === receiptSource ? confirmed.records : []
+  const confirmedLogs = confirmedRecords.map(({ log }) => log)
+  const visibleLogs = [...logs.filter((log) => !confirmedLogs.some((entry) => entry.id === log.id)), ...confirmedLogs]
+  const { refresh } = useChoresRefresh()
   const [filter, setFilter] = useState<CleaningFilter>("all")
   const [sheet, setSheet] = useState<SheetState>(null)
   // 操作の結果。操作した場所（シートの番号 / 一覧）に出す
@@ -177,7 +237,7 @@ export function CleaningView({
     if (request.op === "routine") return request.name
     if (request.op === "close" || request.op === "backfill") return nameOfRoutine(request.routineId)
     if (request.op === "state" || request.op === "postpone") return nameOfRoutine(request.id)
-    const log = logs.find((entry) => entry.id === request.id)
+    const log = visibleLogs.find((entry) => entry.id === request.id)
     if (log) return nameOfRoutine(log.routine_id)
     // 一覧に無い記録（詳細で読み足した古い履歴）の訂正・取り消しは、開いておる項目のもの
     return sheet?.kind === "item" ? nameOfRoutine(sheet.routineId) : ""
@@ -211,6 +271,31 @@ export function CleaningView({
     }
     const { result, status } = outcome
     const name = nameOfRequest(request) || "掃除の項目"
+    // 書いたと確定した行だけ反映する。結果不明を完了に見せない。
+    if (result.log && status !== "conflict") {
+      const settledLog = result.log
+      const beforeLog = visibleLogs.find((log) => log.id === settledLog.id)
+      const removedDate = request.op === "log_void"
+        ? settledLog.kind === "done" ? settledLog.done_on : null
+        : request.op === "log_update" && beforeLog?.kind === "done" && beforeLog.done_on !== settledLog.done_on
+          ? beforeLog.done_on
+          : null
+      setConfirmed((previous) => {
+        const records = previous.source === receiptSource ? previous.records : []
+        const prior = records.find(({ log }) => log.id === settledLog.id)
+        return {
+          source: receiptSource,
+          records: [
+            ...records.filter(({ log }) => log.id !== settledLog.id),
+            {
+              log: settledLog,
+              removedDoneDates: [...new Set([...(prior?.removedDoneDates ?? []), ...(removedDate === null ? [] : [removedDate])])],
+              previousDateUnknown: prior?.previousDateUnknown === true || (request.op === "log_update" && !beforeLog && settledLog.kind === "done"),
+            },
+          ],
+        }
+      })
+    }
     if (result.detail === "already_closed") {
       setLastClosed(null)
       say(`「${name}」は先に記録されていました。同じ回の記録は 1 件のままです。`, "status")
@@ -236,10 +321,14 @@ export function CleaningView({
       say(CHORE_SAVE_MESSAGES.conflict, "alert", `${which}: ${CHORE_SAVE_MESSAGES.conflict}`)
       return
     }
-    if (request.op === "close") {
-      const text = request.kind === "done" ? `「${name}」を完了にしました。` : `「${name}」をスキップしました。`
+    if (request.op === "close" || request.op === "backfill") {
+      const text = request.op === "backfill"
+        ? origin?.session === undefined
+          ? `「${name}」を${formatYmdJa(result.log?.done_on ?? request.doneOn, today)}に記録しました。`
+          : `${labelOfCleaningRequest(request, name)}しました。`
+        : request.kind === "done" ? `「${name}」を完了にしました。` : `「${name}」をスキップしました。`
       // 記録した実施日が画面の今日と違う時（日をまたいで確かめ直した・画面が古かった）は、その日付を告げる
-      const doneOn = request.kind === "done" ? (result.log?.done_on ?? null) : null
+      const doneOn = request.op === "close" && request.kind === "done" ? (result.log?.done_on ?? null) : null
       const dated =
         isValidYmd(doneOn) && doneOn !== today
           ? `実施日は${formatYmdJa(doneOn, today) ?? doneOn}で記録しました。違う時は、項目の詳細の履歴から直せます。`
@@ -248,7 +337,7 @@ export function CleaningView({
       // 直後の取り消しは、サーバーが返した行の版で行う（端末の時計で版を作らぬ）。帯は一覧の部品ゆえ、
       // 開いておるシートに関わらず反映する
       setLastClosed(
-        result.log ? { logId: result.log.id, version: result.log.updated_at, text, at: Date.now() } : null,
+        result.log ? { logId: result.log.id, version: result.log.updated_at, text, at: cleaningEventTime() } : null,
       )
       return
     }
@@ -289,9 +378,11 @@ export function CleaningView({
   const entries: Entry[] = routines
     .filter((routine) => !routine.archived)
     .map((routine) => {
-      const status = routineStatusFromMarks(routine, marks[routine.id] ?? EMPTY_CLEANING_MARKS, today)
-      return { routine, status, bucket: bucketOf(status, today) }
+      const history = confirmedLastDone(routine.id, marks[routine.id] ?? EMPTY_CLEANING_MARKS, visibleLogs, confirmedRecords, !historyFailed && !historyTruncated)
+      const status = routineStatusFromMarks(routine, history.marks, today)
+      return { routine, status, bucket: bucketOf(status, today), historyPending: history.pending }
     })
+  const pendingHistoryIds = new Set(entries.filter((entry) => entry.historyPending).map((entry) => entry.routine.id))
   const archived = routines.filter((routine) => routine.archived)
   const dueSoon = entries.filter((entry) => isDueSoonBucket(entry.bucket)).sort(byDueThenName)
   const rest = entries
@@ -303,14 +394,21 @@ export function CleaningView({
     })
   const restTotal = entries.length - dueSoon.length
 
-  const sendingClose = save.pending.find((entry) => entry.phase === "sending" && entry.payload.op === "close")
-  const busyRoutineId = sendingClose && sendingClose.payload.op === "close" ? sendingClose.payload.routineId : null
+  const calendarItems = entries.map((entry) => ({
+    id: entry.routine.id,
+    name: entry.routine.name,
+    dueOn: entry.status.isPaused || entry.historyPending ? null : entry.status.dueOn,
+    lastDoneOn: entry.status.lastDoneOn,
+  }))
+  const completedIds = new Set(calendarMarksForDate(selectedDate, calendarItems, visibleLogs).completed.map((item) => item.id))
+  const sendingRecord = save.pending.find((entry) => entry.phase === "sending" && (entry.payload.op === "close" || entry.payload.op === "backfill"))
+  const busyRoutineId = sendingRecord && (sendingRecord.payload.op === "close" || sendingRecord.payload.op === "backfill") ? sendingRecord.payload.routineId : null
   const undoing = save.pending.some(
     (entry) => entry.phase === "sending" && entry.payload.op === "log_void" && entry.payload.id === lastClosed?.logId,
   )
 
   function complete(entry: Entry) {
-    if (entry.status.currentOccurrence === null || entry.status.closeLimitReached) return
+    if (entry.historyPending || entry.status.currentOccurrence === null || entry.status.closeLimitReached) return
     send({
       op: "close",
       id: newClientId(),
@@ -324,9 +422,27 @@ export function CleaningView({
     })
   }
 
+  function recordSelectedDay(id: string) {
+    if (!isValidYmd(selectedDate) || selectedDate > today || completedIds.has(id)) return
+    const entry = entries.find((item) => item.routine.id === id)
+    if (!entry || entry.historyPending) return
+    // 今日の記録は予定の回も進める。過去日や休止中・先の回の上限では、実施だけを追記する。
+    if (selectedDate === today && !entry.status.isPaused && entry.status.currentOccurrence !== null && !entry.status.closeLimitReached) {
+      send({
+        op: "close", id: newClientId(), routineId: id, routineVersion: entry.routine.updated_at,
+        kind: "done", seenOccurrence: entry.status.currentOccurrence, pressedOn: selectedDate,
+      })
+    } else {
+      send({
+        op: "backfill", id: newClientId(), routineId: id, routineVersion: entry.routine.updated_at,
+        doneOn: selectedDate, note: null,
+      })
+    }
+  }
+
   function undoLastClosed() {
     if (lastClosed === null) return
-    if (Date.now() - lastClosed.at > CLEANING_UNDO_WINDOW_MS) {
+    if (cleaningEventTime() - lastClosed.at > CLEANING_UNDO_WINDOW_MS) {
       setLastClosed(null)
       setNotice({ text: "取り消せる時間を過ぎました。項目の詳細の履歴から取り消せます。", tone: "alert", session: undefined })
       return
@@ -337,7 +453,7 @@ export function CleaningView({
   const openEntry = sheet?.kind === "item" ? entries.find((entry) => entry.routine.id === sheet.routineId) : undefined
   // 並べ替えと、一覧から外れた古い記録の読み足しは詳細が行う
   const openLogs = openEntry
-    ? logs.filter((log) => log.routine_id === openEntry.routine.id && log.voided_at === null)
+    ? visibleLogs.filter((log) => log.routine_id === openEntry.routine.id && log.voided_at === null)
     : []
   const sheetOpen = sheet?.kind === "create" || openEntry !== undefined
 
@@ -362,83 +478,119 @@ export function CleaningView({
       status={entry.status}
       bucket={entry.bucket}
       today={today}
-      disabled={save.blocked}
+      historyPending={entry.historyPending}
+      disabled={save.blocked || entry.historyPending}
       busy={busyRoutineId === entry.routine.id}
       onComplete={() => complete(entry)}
       onOpen={() => openSheet({ kind: "item", routineId: entry.routine.id, mode: "detail" })}
     />
   )
 
+  const inlineUndo = lastClosed !== null ? (
+    <div
+      data-testid="cleaning-inline-undo"
+      className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/50 py-1 pr-1 pl-3"
+    >
+      <CircleCheck size={18} className="shrink-0 text-emerald-700 dark:text-emerald-400" aria-hidden="true" />
+      <span className="min-w-0 flex-1 text-sm break-words">{lastClosed.text}</span>
+      <button
+        type="button"
+        aria-label="直前の記録を取り消す"
+        disabled={save.blocked}
+        onClick={undoLastClosed}
+        className="flex min-h-11 shrink-0 cursor-pointer items-center gap-1 rounded-lg px-3 text-sm font-medium text-foreground transition-colors duration-200 hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {undoing ? (
+          <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+        ) : (
+          <Undo2 size={16} aria-hidden="true" />
+        )}
+        取り消す
+      </button>
+    </div>
+  ) : null
+
   return (
     <div className="flex flex-col gap-6">
-      <CleaningCalendar
-        today={today}
-        items={entries.map((entry) => ({
-          id: entry.routine.id,
-          name: entry.routine.name,
-          dueOn: entry.status.isPaused ? null : entry.status.dueOn,
-          lastDoneOn: entry.status.lastDoneOn,
-        }))}
-        logs={logs}
-        historyFailed={historyFailed}
-        historyTruncated={historyTruncated}
-        onOpenRoutine={(id) => openSheet({ kind: "item", routineId: id, mode: "detail" })}
-        onAddRoutine={() => openSheet({ kind: "create" })}
-      />
-      <section aria-labelledby="cleaning-due-heading" className="flex flex-col gap-3">
-        <h2 id="cleaning-due-heading" className="text-sm font-semibold text-muted-foreground">
-          今日・今週やること
-        </h2>
-        {entries.length === 0 ? (
-          <EmptyState
-            icon={BrushCleaning}
-            // 読めぬ項目が在る時に「まだありません」と言わぬ（在る項目を無いと偽らぬ）
-            title={unreadableRoutines > 0 ? "表示できる項目がありません" : "掃除の項目がまだありません"}
-            description="「毎週土曜に浴室の排水口」のように、繰り返す掃除を登録できます。前回からの日数と次の予定日が分かります。"
+      {view === "calendar" ? (
+        <>
+          <CleaningCalendar
+            today={today}
+            selectedDate={selectedDate}
+            onSelectDate={setSelectedDate}
+            items={calendarItems}
+            logs={visibleLogs}
+            historyFailed={historyFailed}
+            historyTruncated={historyTruncated}
+            onOpenRoutine={(id) => openSheet({ kind: "item", routineId: id, mode: "detail" })}
+          />
+          <CleaningQuickRecord
+            today={today}
+            selectedDate={selectedDate}
+            routines={entries.map((entry) => entry.routine)}
+            completedIds={completedIds}
+            pendingIds={pendingHistoryIds}
+            disabled={save.blocked}
+            busyRoutineId={busyRoutineId}
+            onSelectDate={setSelectedDate}
+            onRecord={recordSelectedDay}
+            onAddRoutine={() => openSheet({ kind: "create" })}
           >
-            <Button type="button" onClick={() => openSheet({ kind: "create" })}>
-              <Plus aria-hidden="true" />
-              最初の項目を追加
-            </Button>
-          </EmptyState>
-        ) : dueSoon.length === 0 ? (
-          <p className="glass flex items-center gap-2 rounded-2xl px-4 py-4 text-sm shadow-lg shadow-black/[0.04]">
-            <CircleCheck size={18} className="shrink-0 text-emerald-700 dark:text-emerald-400" aria-hidden="true" />
-            今日・今週が期限の掃除はありません。
-          </p>
-        ) : (
-          <ul aria-labelledby="cleaning-due-heading" className="flex flex-col gap-3">
-            {dueSoon.map(renderCard)}
-          </ul>
-        )}
-
-        {/* 直前の完了と取り消し。一覧の下に出す（上に出すと項目が押し下がり、次のタップがずれる） */}
-        {lastClosed !== null && (
-          <div
-            data-testid="cleaning-inline-undo"
-            className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/50 py-1 pr-1 pl-3"
-          >
-            <CircleCheck size={18} className="shrink-0 text-emerald-700 dark:text-emerald-400" aria-hidden="true" />
-            <span className="min-w-0 flex-1 text-sm break-words">{lastClosed.text}</span>
-            <button
-              type="button"
-              aria-label="直前の記録を取り消す"
-              disabled={save.blocked}
-              onClick={undoLastClosed}
-              className="flex min-h-11 shrink-0 cursor-pointer items-center gap-1 rounded-lg px-3 text-sm font-medium text-foreground transition-colors duration-200 hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50"
+            {inlineUndo}
+          </CleaningQuickRecord>
+        </>
+      ) : (
+        <>
+          <CleaningStatus
+            today={today}
+            entries={entries}
+            routinesTruncated={routinesTruncated || unreadableRoutines > 0}
+            onOpenRoutine={(id) => openSheet({ kind: "item", routineId: id, mode: "detail" })}
+            onAddRoutine={() => openSheet({ kind: "create" })}
+          />
+          {inlineUndo}
+        </>
+      )}
+      {view === "calendar" && (
+        <section aria-labelledby="cleaning-due-heading" className="flex flex-col gap-3">
+          <h2 id="cleaning-due-heading" className="text-sm font-semibold text-muted-foreground">
+            今日・今週やること
+          </h2>
+          {entries.length === 0 ? (
+            <EmptyState
+              icon={BrushCleaning}
+              // 読めぬ項目が在る時に「まだありません」と言わぬ（在る項目を無いと偽らぬ）
+              title={unreadableRoutines > 0 ? "表示できる項目がありません" : "掃除の項目がまだありません"}
+              description="「毎週土曜に浴室の排水口」のように、繰り返す掃除を登録できます。前回からの日数と次の予定日が分かります。"
             >
-              {undoing ? (
-                <Loader2 size={16} className="animate-spin" aria-hidden="true" />
-              ) : (
-                <Undo2 size={16} aria-hidden="true" />
-              )}
-              取り消す
-            </button>
-          </div>
-        )}
+              <Button type="button" onClick={() => openSheet({ kind: "create" })}>
+                <Plus aria-hidden="true" />
+                最初の項目を追加
+              </Button>
+            </EmptyState>
+          ) : dueSoon.length === 0 ? (
+            <p className="glass flex items-center gap-2 rounded-2xl px-4 py-4 text-sm shadow-lg shadow-black/[0.04]">
+              <CircleCheck size={18} className="shrink-0 text-emerald-700 dark:text-emerald-400" aria-hidden="true" />
+              今日・今週が期限の掃除はありません。
+            </p>
+          ) : (
+            <ul aria-labelledby="cleaning-due-heading" className="flex flex-col gap-3">
+              {dueSoon.map(renderCard)}
+            </ul>
+      )}
+
+
       </section>
 
+      )}
+
       {/* 送った後に場所が変わった操作の結果（どの操作かを添える）。開いておるシートには出さぬ */}
+      {pendingHistoryIds.size > 0 && (
+        <div role="status" className="flex flex-col items-start gap-2 rounded-xl border border-border bg-muted/50 p-3 text-sm">
+          <p>記録の変更は保存済みです。前回の実施日と次回の目安を確認中です。更新できない場合は、もう一度読み込んでください。</p>
+          <Button type="button" variant="outline" onClick={() => refresh("manual")}>もう一度読み込む</Button>
+        </div>
+      )}
       <NoticeLine notice={earlier} />
       <NoticeLine notice={pageNotice} />
       {/* 控えの一覧は、シートを開いておる間はシートの中に出す（新しい保存を止めておる理由が分かるよう） */}
@@ -453,7 +605,7 @@ export function CleaningView({
         </p>
       )}
 
-      {entries.length > 0 && (
+      {view === "calendar" && entries.length > 0 && (
         <section aria-labelledby="cleaning-rest-heading" className="flex flex-col gap-3">
           <div className="flex items-center justify-between gap-2">
             <h2 id="cleaning-rest-heading" className="text-sm font-semibold text-muted-foreground">
@@ -617,6 +769,7 @@ export function CleaningView({
                     logs={openLogs}
                     historyFailed={historyFailed}
                     historyTruncated={historyTruncated}
+                    historyPending={openEntry.historyPending}
                     today={today}
                     disabled={save.blocked}
                     send={(request) => send(request, sheet.session)}

@@ -15,6 +15,7 @@ import { adminClient, loginViaMagicLink } from "./fixtures/auth"
  * ほかに:
  * - B-07f 早めに実施した直後の回（鍵が予定日の翌日へ逃げた回）をスキップしても、次回は予定日 + 周期
  * - R35 遅れて届いた保存の応答は、送信中に開いた別のシートを閉じず、入力も保存中の表示も変えない
+ * - クイック記録で選んだ実施日 → カレンダーの掃除名 → 掃除状況の日数 → 履歴の取消を実画面で照合
  */
 
 test.setTimeout(180_000)
@@ -353,7 +354,7 @@ test("掃除 R35: 遅れて届いた完了の応答は、送信中に開いた�
   await expectLogCounts(householdId, { valid: 1, voided: 0 })
 
   // 2. 応答を待つ間に「項目を追加」を開いて名前を打つ。このシートは「保存中」にならぬ
-  await page.getByRole("button", { name: "項目を追加" }).click()
+  await page.getByRole("button", { name: "項目を追加", exact: true }).click()
   const sheet = page.getByRole("dialog")
   await expect(sheet.getByRole("heading", { name: "掃除の項目を追加" })).toBeVisible()
   await sheet.getByLabel("名前").fill("窓ふき")
@@ -382,4 +383,95 @@ test("掃除 R35: 遅れて届いた完了の応答は、送信中に開いた�
     expect((data ?? []).map((row) => row.name).sort()).toEqual(["浴室の排水口", "窓ふき"].sort())
   }
   await expectLogCounts(householdId, { valid: 1, voided: 0 })
+})
+
+test("掃除の受入: 自由項目を選択日に記録 → カレンダーの掃除名と経過日数 → 取消 → 今日の記録", async ({
+  page,
+  approvedUser,
+}) => {
+  const householdId = await openCleaningWithHousehold(page, approvedUser.email, approvedUser.id, "E2E掃除カレンダー連動世帯")
+  await page.setViewportSize({ width: 390, height: 844 })
+  const name = "玄関のたたき掃除"
+  const quick = page.getByRole("region", { name: "掃除を記録", exact: true })
+  const calendar = page.getByTestId("cleaning-calendar")
+  const navigation = page.getByRole("navigation", { name: "掃除の画面" })
+
+  // 空のカレンダーから自由入力の項目を追加する。追加だけでは実施ログを作らない。
+  await quick.getByRole("button", { name: "掃除項目を追加", exact: true }).click()
+  const form = page.getByRole("dialog")
+  await form.getByLabel("名前", { exact: true }).fill(name)
+  await form.getByLabel("場所（任意）").fill("玄関")
+  await form.getByRole("button", { name: /実施してから一定期間後/ }).click()
+  const today = await form.getByLabel("最初の予定日").inputValue()
+  expect(today).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  const past = shiftYmd(today, -3)
+  await form.getByRole("button", { name: "この内容で追加" }).click()
+  await expect(form).toHaveCount(0)
+  await expectLogCounts(householdId, { valid: 0, voided: 0 })
+  await expect(quick.getByRole("button", { name: `${name}を選択日に記録`, exact: true })).toBeEnabled({ timeout: 15_000 })
+
+  // 実施日を3日前へ変える。月初でも、入力した日とカレンダーの表示月が同期する。
+  const selectedDate = quick.getByLabel("実施日", { exact: true })
+  await expect(selectedDate).toHaveValue(today)
+  await selectedDate.fill(past)
+  await expect(selectedDate).toHaveValue(past)
+  await quick.getByRole("button", { name: `${name}を選択日に記録`, exact: true }).click()
+  await expectLogCounts(householdId, { valid: 1, voided: 0 })
+  const recorded = quick.getByRole("button", { name: `${name}はこの日記録済み`, exact: true })
+  await expect(recorded).toBeDisabled()
+  await expect(recorded).toHaveAttribute("aria-pressed", "true")
+  const pastLabel = `${Number(past.slice(5, 7))}月${Number(past.slice(8, 10))}日`
+  const pastCell = calendar.getByRole("button", { name: new RegExp(`^${pastLabel}: 完了1件`) })
+  // 読み上げ名だけではなく、月のマス内の文字として掃除名が見える。
+  await expect(pastCell.locator('[data-cleaning-mark="done"]')).toHaveText(name)
+  await expect(pastCell.locator('[data-cleaning-mark="done"]')).toBeVisible()
+  {
+    const { data, error } = await adminClient().from("cleaning_logs")
+      .select("kind, done_on, occurrence").eq("household_id", householdId).is("voided_at", null)
+    expect(error).toBeNull()
+    expect(data).toEqual([{ kind: "done", done_on: past, occurrence: null }])
+  }
+
+  // 別ページへ移っても、同じ実施履歴から日数と今日の集計が出る。
+  await navigation.getByRole("link", { name: "掃除状況", exact: true }).click()
+  await expect(page).toHaveURL(/\/chores\/cleaning\/status$/)
+  const status = page.getByTestId("cleaning-status")
+  const statusItem = status.getByTestId("cleaning-status-item").filter({ hasText: name })
+  await expect(statusItem.getByText("3日前", { exact: true })).toBeVisible({ timeout: 15_000 })
+  await expect(status.locator("dl > div").filter({ hasText: "今日の実施" })).toContainText("0項目")
+  await expect(status.locator("dl > div").filter({ hasText: "登録済み" })).toContainText("1項目")
+
+  // 詳細の履歴から取消。実施済みを削除ではなく無効化し、状況と暦の両方に反映する。
+  await statusItem.getByRole("button", { name: `${name}の詳細を開く`, exact: true }).click()
+  const detail = page.getByRole("dialog")
+  const history = detail.getByTestId("cleaning-log")
+  await expect(history).toHaveCount(1)
+  await history.getByRole("button", { name: /を取り消す$/ }).click()
+  await history.getByRole("button", { name: "この記録を取り消す", exact: true }).click()
+  await expect(detail).toHaveCount(0)
+  await expectLogCounts(householdId, { valid: 0, voided: 1 })
+  await expect(statusItem.getByText("未記録", { exact: true })).toBeVisible({ timeout: 15_000 })
+
+  await navigation.getByRole("link", { name: "カレンダー", exact: true }).click()
+  await expect(page).toHaveURL(/\/chores\/cleaning$/)
+  await selectedDate.fill(past)
+  const clearedCell = calendar.getByRole("button", { name: new RegExp(`^${pastLabel}: 完了0件`) })
+  await expect(clearedCell).toBeVisible()
+  await expect(clearedCell.locator('[data-cleaning-mark="done"]')).toHaveCount(0)
+  await expect(quick.getByRole("button", { name: `${name}を選択日に記録`, exact: true })).toBeEnabled()
+
+  // 今日へ戻って1タップ記録。今日の実施数も、ページ移動・再読込の後まで一致する。
+  await calendar.getByRole("button", { name: "今日に戻る", exact: true }).click()
+  await expect(selectedDate).toHaveValue(today)
+  await quick.getByRole("button", { name: `${name}を選択日に記録`, exact: true }).click()
+  await expectLogCounts(householdId, { valid: 1, voided: 1 })
+  const todayLabel = `${Number(today.slice(5, 7))}月${Number(today.slice(8, 10))}日`
+  await expect(calendar.getByRole("button", { name: new RegExp(`^${todayLabel}: 完了1件`) }).locator('[data-cleaning-mark="done"]')).toHaveText(name)
+  await navigation.getByRole("link", { name: "掃除状況", exact: true }).click()
+  await expect(page).toHaveURL(/\/chores\/cleaning\/status$/)
+  await expect(statusItem.getByText("今日", { exact: true })).toBeVisible({ timeout: 15_000 })
+  await expect(status.locator("dl > div").filter({ hasText: "今日の実施" })).toContainText("1項目")
+  await page.reload()
+  await expect(statusItem.getByText("今日", { exact: true })).toBeVisible({ timeout: 15_000 })
+  await expect(status.locator("dl > div").filter({ hasText: "今日の実施" })).toContainText("1項目")
 })

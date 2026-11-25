@@ -1,16 +1,19 @@
 /**
- * /chores/cleaning の Server Component: 読んだものを世帯で絞り、読めなかったものを
+ * 掃除の 2 ページで共有する Server Component: 読んだものを世帯で絞り、読めなかったものを
  * 「項目なし」「未記録」と偽らぬこと。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, cleanup, render, screen, within } from "@testing-library/react"
 
-const { getAuthContext } = vi.hoisted(() => ({ getAuthContext: vi.fn() }))
+const { getAuthContext, usePathname } = vi.hoisted(() => ({ getAuthContext: vi.fn(), usePathname: vi.fn() }))
 vi.mock("@/lib/supabase/auth-context", () => ({ getAuthContext }))
 vi.mock("@/app/(main)/chores/cleaning/actions", () => ({ saveCleaning: vi.fn() }))
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }), usePathname: () => "/chores/cleaning" }))
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }), usePathname }))
 
-import CleaningPage from "../page"
+import { CleaningPageContent } from "@/components/chores/cleaning/cleaning-page-content"
+
+// 非同期の Server Component を解決してから Client Component の表示を検査する。
+const CleaningPage = () => CleaningPageContent({ view: "calendar" })
 
 const USER = "c1000000-0000-4000-8000-000000000001"
 const HOUSE = "c1000000-0000-4000-8000-0000000000a1"
@@ -75,6 +78,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] })
   vi.setSystemTime(new Date("2026-11-11T03:00:00.000Z"))
   getAuthContext.mockReset()
+  usePathname.mockReturnValue("/chores/cleaning")
   localStorage.clear()
   vi.spyOn(console, "error").mockImplementation(() => {})
 })
@@ -95,6 +99,10 @@ describe("/chores/cleaning", () => {
     render(await CleaningPage())
     expect(screen.getByRole("heading", { level: 1, name: "掃除" })).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "家事" })).toHaveAttribute("href", "/chores")
+    expect(screen.getByText("やった掃除を記録して、家族で共有。")).toBeInTheDocument()
+    const navigation = screen.getByRole("navigation", { name: "掃除の画面" })
+    expect(within(navigation).getByRole("link", { name: "カレンダー" })).toHaveAttribute("aria-current", "page")
+    expect(within(navigation).getByRole("link", { name: "掃除状況" })).toHaveAttribute("href", "/chores/cleaning/status")
     const due = screen.getByRole("region", { name: "今日・今週やること" })
     expect(within(due).getByText("浴室の排水口")).toBeInTheDocument()
     // 前回実施日は履歴の要約から（定義の基準日からではない）
@@ -153,7 +161,7 @@ describe("/chores/cleaning", () => {
     signIn({ routines: ok([routineRow({ name: "浴室の排水口と鏡" })]), marks: ok([]), logs: ok([]) })
     view.rerender(await CleaningPage())
     expect(screen.queryByTestId("stale-content-notice")).not.toBeInTheDocument()
-    expect(screen.getByText("浴室の排水口と鏡")).toBeInTheDocument()
+    expect(within(screen.getByRole("region", { name: "今日・今週やること" })).getByText("浴室の排水口と鏡")).toBeInTheDocument()
   })
 
   it("対照: 履歴の一覧だけ読めなんだ時は画面を倒さず、期限は要約から出す", async () => {
@@ -174,12 +182,37 @@ describe("/chores/cleaning", () => {
       logs: ok([]),
     })
     render(await CleaningPage())
-    expect(screen.getByText("浴室の排水口")).toBeInTheDocument()
+    expect(within(screen.getByRole("region", { name: "今日・今週やること" })).getByText("浴室の排水口")).toBeInTheDocument()
     expect(screen.getByRole("alert")).toHaveTextContent("表示できない項目が 1 件あります")
   })
 
   it("認証の文脈が無ければ何も描かぬ（遷移は (main)/layout が受ける）", async () => {
     getAuthContext.mockResolvedValue({ error: "認証されていません", reason: "unauthenticated", context: null })
     expect(await CleaningPage()).toBeNull()
+  })
+
+  it("状況ページは同じ履歴の要約を使い、状況の説明と現在地を出す", async () => {
+    usePathname.mockReturnValue("/chores/cleaning/status")
+    const queries = signIn({
+      routines: ok([routineRow()]),
+      marks: ok([{ routine_id: DRAIN, last_done_on: "2026-11-01", max_occurrence: "2026-10-31", max_skip_occurrence: null }]),
+      logs: ok([]),
+    })
+    render(await CleaningPageContent({ view: "status" }))
+    expect(screen.getByText("最後に掃除した日が、ひと目で分かる。")).toBeInTheDocument()
+    const navigation = screen.getByRole("navigation", { name: "掃除の画面" })
+    expect(within(navigation).getByRole("link", { name: "掃除状況" })).toHaveAttribute("aria-current", "page")
+    expect(within(navigation).getByRole("link", { name: "カレンダー" })).not.toHaveAttribute("aria-current")
+    expect(queries.map((query) => query.filters.household_id)).toEqual([HOUSE, HOUSE])
+    expect(screen.getByText(/10日前/)).toBeInTheDocument()
+  })
+
+  it("状況ページへの移動で取得に失敗しても、カレンダーの直前の表示を代わりに残さない", async () => {
+    signIn({ routines: ok([routineRow()]), marks: ok([]), logs: ok([]) })
+    const view = render(await CleaningPage())
+    usePathname.mockReturnValue("/chores/cleaning/status")
+    signIn({ routines: { data: null, error: { message: "timeout" } }, marks: ok([]), logs: ok([]) })
+    const failedStatus = await CleaningPageContent({ view: "status" })
+    expect(() => view.rerender(failedStatus)).toThrow("掃除の項目を取得できませんでした")
   })
 })
