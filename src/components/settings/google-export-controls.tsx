@@ -141,17 +141,19 @@ export function GoogleExportControls({ connectionId }: { connectionId: string })
           {status && (
             <>
               <p role="status" className="text-sm font-medium">{!status.enabled ? "同期停止中" : !status.permission ? "再認証が必要" : status.conflicts?.length ? "競合あり" : status.busy ? "同期中" : status.lastError === "failed" ? "通信または同期に失敗" : status.pending || !status.lastSyncedAt || status.lastError ? "未同期" : "同期済み"}</p>
+              {status.retiring && <p role="status">繰り返しの個別回を確認中です。Google 側にシリーズが残っているため、全件の削除は未完了です。</p>}
               {status.conflicts?.map(conflict => (
                 <div key={conflict.id} className="grid gap-2 rounded-md border p-3">
                   <p>変更が競合しています。反映する内容を選んでください。</p>
                   {(["local","google"] as const).map(side => (
                     <div key={side} className="text-sm">
                       <p>{side === "local" ? "irori" : "Google"} · {side === "google" && conflict.protected ? "内容を確認できません" : describeConflict(conflict[side])}</p>
-                      {!conflict.protected && <Button variant="outline" disabled={working || status.busy} onClick={() => void perform("resolve",conflict.id,side)}>
-                        {side === "local" ? "irori の内容を採用" : "Google の内容を採用"}
+                      {!conflict.protected && !(conflict.legacy_missing && side === "google") && <Button variant="outline" disabled={working || status.busy} onClick={() => void perform("resolve",conflict.id,side)}>
+                        {conflict.legacy_missing ? "新しい Google 予定として送る" : side === "local" ? "irori の内容を採用" : "Google の内容を採用"}
                       </Button>}
                     </div>
                   ))}
+                  {conflict.legacy_missing && <p>旧版のコピーは完全取得と個別照会の両方で見つかりませんでした。この予定を改めて共有する場合は選択してください。</p>}
                   {conflict.protected && <p>予定の内容または編集権限を確認できません。元予定を確認した後、もう一度同期してください。</p>}
                 </div>
               ))}

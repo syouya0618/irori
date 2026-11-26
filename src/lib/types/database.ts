@@ -866,7 +866,7 @@ export interface Database {
         Relationships: []
       }
       google_managed_events: {
-        Row: { calendar_id: string; event_id: string; remote_id: string; is_master: boolean; remote_bound: boolean; common: Json; common_version: string | null; etag: string | null; pending: boolean; observed: Json; conflict_id: string | null; conflict_version: string | null; conflict_etag: string | null; choice: string | null; intent: Json; queued_at: string }
+        Row: { calendar_id: string; event_id: string; remote_id: string; is_master: boolean; retired_master: boolean; remote_bound: boolean; common: Json; common_version: string | null; etag: string | null; pending: boolean; observed: Json; conflict_id: string | null; conflict_version: string | null; conflict_etag: string | null; choice: string | null; intent: Json; queued_at: string }
         Insert: Record<string, never>
         Update: { choice?: "local" | "google"; pending?: boolean; queued_at?: string }
         Relationships: []

@@ -74,6 +74,8 @@ async function exchange(ctx: Lease, id: string, item: Wire | null, cancelled: bo
   return { action:data.action, doc:data.doc ?? null }
 }
 
+class ParentConflict extends Error {}
+
 async function processEvent(ctx: Lease, requestedId: string, listedCancelled=false, parentOnly=false) {
   const context=await seriesContext(ctx,requestedId)
   if (context.kind==="retired") return
@@ -92,20 +94,25 @@ async function processEvent(ctx: Lease, requestedId: string, listedCancelled=fal
   } else if (![404,410].includes(response.status)) throw new Error("event lookup failed")
   const master=Boolean(item?.recurrence || context.kind==="master")
   let seriesId=typeof context.series==="string" ? context.series : master ? managedSeriesId(ctx.calendar,id) : null
-  if (item?.recurringEventId) {
-    if (parentOnly || item.recurringEventId===id) throw new Error("invalid recurring parent")
-    let parent=await seriesContext(ctx,item.recurringEventId)
+  const parentId = item?.recurringEventId ?? (context.kind === "instance" && typeof context.master === "string" ? context.master : null)
+  if (parentId) {
+    if (parentOnly || parentId===id) throw new Error("invalid recurring parent")
+    let parent=await seriesContext(ctx,parentId)
     if (parent.kind==="retired") return
-    if (!ctx.parents.has(item.recurringEventId)) {
-      await processEvent(ctx,item.recurringEventId,false,true)
-      ctx.parents.add(item.recurringEventId)
-      parent=await seriesContext(ctx,item.recurringEventId)
+    if (!ctx.parents.has(parentId)) {
+      await processEvent(ctx,parentId,false,true)
+      ctx.parents.add(parentId)
+      parent=await seriesContext(ctx,parentId)
     }
-    if (parent.kind==="master" && parent.active===false && parent.retired!==true && item.status!=="cancelled") throw new Error("series paused")
-    if (typeof parent.series!=="string" || !occurrenceAnchor(item)) throw new Error("missing occurrence identity")
+    if (parent.kind==="master" && parent.active===false && parent.retired!==true) throw new ParentConflict("series decision pending")
+    if (typeof parent.series!=="string" || (!item?.originalStartTime && typeof context.anchor!=="string")) throw new Error("missing occurrence identity")
     seriesId=parent.series
   }
-  const plan = await exchange(ctx,id,item,listedCancelled || response.status===410 || (context.parentCancelled===true && response.status===404),seriesId,master)
+  const afterParent = parentId && !item ? await seriesContext(ctx,id) : context
+  if (afterParent.kind === "retired") return
+  const confirmedCancel = listedCancelled || response.status===410 || (afterParent.parentCancelled===true && response.status===404)
+  const plan = await exchange(ctx,id,item,confirmedCancel,seriesId,master)
+  if (plan.action==="deferred") throw new ParentConflict("series decision pending")
   if (plan.action==="none" || plan.action==="conflict") return
   const insert = plan.action==="insert"
   const remove = plan.action==="delete"
@@ -189,7 +196,7 @@ export async function syncManaged(db: Db, target: Target, lease: string, api: Ap
         if (ack.error) throw new Error("inbox acknowledgement failed")
       }
     } catch (error) {
-      failure=error
+      if (!(error instanceof ParentConflict)) failure=error
       const retry=new Date().toISOString()
       if (incoming) await db.from("google_managed_inbox").update({queued_at:retry}).eq("calendar_id",calendar).eq("remote_id",id).eq("queued_at",incoming.queued_at).throwOnError()
       await db.from("google_managed_events").update({queued_at:retry}).eq("calendar_id",calendar).eq("remote_id",id).eq("pending",true).throwOnError()
@@ -197,12 +204,13 @@ export async function syncManaged(db: Db, target: Target, lease: string, api: Ap
     if (Date.now()-started > 15_000) break
   }
   if (failure) throw failure
-  const [outstanding,received] = await Promise.all([
+  const [outstanding,received,retiring] = await Promise.all([
     db.from("google_managed_events").select("event_id",{head:true,count:"exact"}).eq("calendar_id",calendar).eq("pending",true),
     db.from("google_managed_inbox").select("remote_id",{head:true,count:"exact"}).eq("calendar_id",calendar),
+    db.from("google_managed_events").select("event_id",{head:true,count:"exact"}).eq("calendar_id",calendar).eq("retired_master",true),
   ])
-  if (outstanding.error || received.error || outstanding.count===null || received.count===null) throw new Error("queue verification failed")
-  return !next && outstanding.count===0 && received.count===0
+  if (outstanding.error || received.error || outstanding.count===null || received.count===null || retiring.error || retiring.count===null) throw new Error("queue verification failed")
+  return !next && outstanding.count===0 && received.count===0 && retiring.count===0
 }
 
-export type ManagedConflict = { id: string; local: Json; google: Json; protected: boolean }
+export type ManagedConflict = { id: string; local: Json; google: Json; protected: boolean; legacy_missing?: boolean }

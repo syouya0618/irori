@@ -26,6 +26,7 @@ CREATE TABLE public.google_managed_events (
   common_version timestamptz,
   etag text,
   pending boolean NOT NULL DEFAULT true,
+  absent_from_scan boolean NOT NULL DEFAULT false,
   legacy_unverified boolean NOT NULL DEFAULT false,
   protected boolean NOT NULL DEFAULT false,
   observed jsonb,
@@ -303,6 +304,11 @@ BEGIN
  IF p_state='present' AND (p_etag IS NULL OR jsonb_typeof(p_doc) IS DISTINCT FROM 'object') THEN RAISE EXCEPTION 'incomplete observation'; END IF;
  remote_doc:=CASE WHEN p_state='present' THEN p_doc ELSE 'null'::jsonb END;
  IF EXISTS (SELECT 1 FROM public.google_retired_event_ids WHERE calendar_id=p_calendar AND remote_id=p_remote) THEN RETURN jsonb_build_object('action','none'); END IF;
+ IF NOT p_master AND p_series IS NOT NULL AND EXISTS (SELECT 1 FROM public.google_family_series s
+   JOIN public.google_managed_events parent ON parent.event_id=s.root_id AND parent.calendar_id=p_calendar
+   WHERE s.household_id=c.household_id AND s.series_id=p_series AND parent.conflict_id IS NOT NULL) THEN
+   RETURN jsonb_build_object('action','deferred');
+ END IF;
  SELECT * INTO m FROM public.google_managed_events WHERE calendar_id=p_calendar AND remote_id=p_remote FOR UPDATE;
  IF NOT FOUND THEN
    IF p_state<>'present' AND NOT (p_state='cancelled' AND p_series IS NOT NULL AND p_anchor IS NOT NULL) THEN RETURN jsonb_build_object('action','none'); END IF;
@@ -345,6 +351,20 @@ BEGIN
  END IF;
  IF NOT m.is_master AND has_event AND (e.household_id<>c.household_id OR e.source<>'native' OR e.child_id IS NOT NULL OR e.medical_record_id IS NOT NULL) THEN
    UPDATE public.google_managed_events SET pending=false,choice=NULL,observed=NULL,conflict_id=NULL WHERE calendar_id=p_calendar AND event_id=m.event_id;
+   RETURN jsonb_build_object('action','none');
+ END IF;
+ -- Re-evaluate the persisted parent even for sparse cancellation / 410 responses.
+ IF NOT m.is_master AND EXISTS(SELECT 1 FROM public.google_series_occurrences o
+   JOIN public.google_family_series s USING(household_id,series_id)
+   JOIN public.google_managed_events parent ON parent.event_id=s.root_id AND parent.calendar_id=p_calendar
+   WHERE o.event_id=m.event_id AND o.household_id=c.household_id AND parent.conflict_id IS NOT NULL) THEN
+   RETURN jsonb_build_object('action','deferred');
+ END IF;
+ IF m.legacy_unverified AND m.absent_from_scan AND m.common IS NULL AND p_state='missing'
+ AND m.conflict_id IS NOT NULL AND m.choice='local' AND m.conflict_version IS NOT DISTINCT FROM e.updated_at AND has_event THEN
+   INSERT INTO public.google_retired_event_ids VALUES(p_calendar,p_remote) ON CONFLICT DO NOTHING;
+   UPDATE public.google_managed_events SET remote_id='r'||replace(gen_random_uuid()::text,'-',''),legacy_unverified=false,
+     absent_from_scan=false,protected=false,conflict_id=NULL,choice=NULL,observed=NULL,pending=true WHERE calendar_id=p_calendar AND event_id=m.event_id;
    RETURN jsonb_build_object('action','none');
  END IF;
  IF NOT m.is_master AND p_series IS NOT NULL THEN
@@ -414,7 +434,8 @@ BEGIN
    SELECT 1 FROM public.google_event_deletions WHERE household_id=c.household_id AND event_id=m.event_id) AND NOT reversible) THEN
    UPDATE public.google_managed_events SET conflict_id=CASE WHEN conflict_id IS NOT NULL AND conflict_version IS NOT DISTINCT FROM e.updated_at
      AND conflict_etag IS NOT DISTINCT FROM p_etag AND observed=remote_doc THEN conflict_id ELSE gen_random_uuid() END,
-     observed=remote_doc,protected=(p_state IN ('protected','missing')),conflict_etag=p_etag,conflict_version=e.updated_at,choice=NULL,pending=false,intent=NULL WHERE calendar_id=p_calendar AND event_id=m.event_id;
+     observed=remote_doc,protected=(p_state IN ('protected','missing') AND NOT
+       (p_state='missing' AND m.legacy_unverified AND m.absent_from_scan AND m.common IS NULL AND has_event)),conflict_etag=p_etag,conflict_version=e.updated_at,choice=NULL,pending=false,intent=NULL WHERE calendar_id=p_calendar AND event_id=m.event_id;
    RETURN jsonb_build_object('action','conflict');
  END IF;
  IF merged IS DISTINCT FROM local_doc THEN
@@ -547,6 +568,9 @@ BEGIN
    AND (m.is_master OR ((coalesce(m.common#>>'{timing,end}',m.common#>>'{timing,endAt}'))::timestamptz AT TIME ZONE 'Asia/Tokyo')::date>=p_start
    AND ((coalesce(m.common#>>'{timing,start}',m.common#>>'{timing,startAt}'))::timestamptz AT TIME ZONE 'Asia/Tokyo')::date<p_end)
    ON CONFLICT DO NOTHING;
+   UPDATE public.google_managed_events m SET absent_from_scan=true,pending=true
+    WHERE m.calendar_id=p_calendar AND m.legacy_unverified AND m.common IS NULL AND NOT m.absent_from_scan
+    AND NOT EXISTS(SELECT 1 FROM public.google_scan_seen seen WHERE seen.calendar_id=m.calendar_id AND seen.remote_id=m.remote_id);
    DELETE FROM public.google_scan_seen WHERE calendar_id=p_calendar;
  END IF;
  UPDATE public.google_managed_calendars SET sync_token=p_sync,page_token=p_page,window_start=p_start,window_end=p_end,scanned_on=p_scanned WHERE calendar_id=p_calendar;
@@ -562,13 +586,14 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$
   JOIN public.profiles p ON p.id=g.user_id AND p.household_id=g.household_id AND p.is_approved AND p.role<>'viewer'
   WHERE g.id=p_connection AND g.user_id=p_user AND g.household_id=p_household AND x.bidirectional
  ), conflicts AS (
-  SELECT m.conflict_id id,CASE WHEN m.is_master THEN s.doc ELSE irori_private.google_event_doc(e) END AS local,m.observed AS google,m.protected
+  SELECT m.conflict_id id,CASE WHEN m.is_master THEN s.doc ELSE irori_private.google_event_doc(e) END AS local,m.observed AS google,m.protected,(m.legacy_unverified AND m.absent_from_scan AND m.common IS NULL AND m.observed='null' AND NOT m.protected) AS legacy_missing
   FROM public.google_managed_events m JOIN owned USING(calendar_id)
   LEFT JOIN public.calendar_events e ON e.id=m.event_id AND e.household_id=p_household
   LEFT JOIN public.google_family_series s ON m.is_master AND s.root_id=m.event_id AND s.household_id=p_household
   WHERE m.conflict_id IS NOT NULL ORDER BY m.queued_at,m.event_id LIMIT 25
  )
- SELECT jsonb_build_object('pending',EXISTS(SELECT 1 FROM public.google_managed_events m JOIN owned USING(calendar_id) WHERE pending) OR EXISTS(SELECT 1 FROM public.google_managed_inbox JOIN owned USING(calendar_id)),
+ SELECT jsonb_build_object('retiring',EXISTS(SELECT 1 FROM public.google_managed_events m JOIN owned USING(calendar_id) WHERE m.retired_master),
+ 'pending',EXISTS(SELECT 1 FROM public.google_managed_events m JOIN owned USING(calendar_id) WHERE pending) OR EXISTS(SELECT 1 FROM public.google_managed_inbox JOIN owned USING(calendar_id)),
  'conflicts',coalesce((SELECT jsonb_agg(to_jsonb(c)) FROM conflicts c),'[]'::jsonb))
 $$;
 REVOKE ALL ON FUNCTION public.google_managed_status(uuid,uuid,uuid) FROM PUBLIC,anon,authenticated;
@@ -583,7 +608,7 @@ BEGIN
  JOIN public.profiles p ON p.id=g.user_id AND p.household_id=g.household_id AND p.is_approved AND p.role<>'viewer'
  WHERE x.calendar_id=m.calendar_id AND x.enabled AND x.bidirectional AND g.id=p_connection AND g.user_id=p_user AND g.household_id=p_household
  AND m.conflict_id=p_conflict AND NOT m.protected AND m.choice IS NULL
-;
+ AND (p_choice='local' OR NOT(m.legacy_unverified AND m.absent_from_scan AND m.common IS NULL AND m.observed='null'));
  RETURN FOUND;
 END;
 $$;

@@ -22,6 +22,7 @@ export interface GoogleExportStatus {
   provisioning: boolean
   busy: boolean
   lastSyncedAt: string | null
+  retiring?: boolean
   conflicts?: ManagedConflict[]
   pending?: boolean
   lastError: string | null
@@ -94,7 +95,8 @@ export async function getGoogleExportStatus(supabase: Db, owner: GoogleTokenOwne
     const { data, error } = await supabase.rpc("google_managed_status", { p_connection: owner.connectionId, p_user: owner.userId, p_household: owner.householdId })
     if (error || !data || typeof data !== "object" || Array.isArray(data) || !Array.isArray(data.conflicts)) throw new ExportFailure("failed")
     status.conflicts = data.conflicts as ManagedConflict[]
-    status.pending = data.pending === true
+    status.retiring = data.retiring === true
+    status.pending = data.pending === true || status.retiring
   }
   return status
 }

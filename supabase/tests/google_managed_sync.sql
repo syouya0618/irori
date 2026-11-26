@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(51);
+SELECT plan(59);
 INSERT INTO households(id,name) VALUES('10000000-0000-4000-8000-000000000001','sync fixture');
 INSERT INTO auth.users(id,email) VALUES('20000000-0000-4000-8000-000000000001','one@example.test'),('20000000-0000-4000-8000-000000000002','two@example.test');
 UPDATE profiles SET household_id='10000000-0000-4000-8000-000000000001',is_approved=true,role='member'
@@ -79,6 +79,8 @@ SELECT is((SELECT count(*) FROM calendar_events WHERE series_id=(SELECT series_i
 SELECT ok(NOT has_function_privilege('anon','calendar_series_revision(uuid)','EXECUTE'),'anonymous callers cannot learn series revision');
 SELECT is(google_managed_exchange('20000000-0000-4000-8000-000000000001',now()+interval '10 minutes','g-master','cancelled',NULL,'g2',null,
  '40000000-0000-4000-8000-000000000002',true)->>'action','conflict','a master cancellation cannot cascade across spouses');
+SELECT is(pg_temp.observe('g-instance','cancelled',NULL,'g2'),'deferred','sparse child cancellation held while parent awaits resolution');
+SELECT is((SELECT count(*) FROM calendar_events WHERE title='例外'),1::bigint,'parent review preserves editable child and spouse mapping');
 SELECT ok(google_managed_choose('20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001',
  (SELECT conflict_id FROM google_managed_events WHERE remote_id='g-master'),'local'),'owner may keep the series');
 SELECT is(google_managed_exchange('20000000-0000-4000-8000-000000000001',now()+interval '10 minutes','g-master','cancelled',NULL,'g2',null,
@@ -105,5 +107,18 @@ SELECT is((SELECT count(*) FROM google_managed_inbox WHERE remote_id LIKE 'stabl
 SELECT ok(EXISTS(SELECT 1 FROM google_managed_inbox WHERE remote_id='missing-probe'),'only previously established missing identity scheduled for point GET');
 SELECT is((SELECT count(*) FROM calendar_events WHERE title='kept after full rescan'),1::bigint,'full scan left unobserved row intact');
 SELECT is((SELECT count(*) FROM google_scan_seen),0::bigint,'scan receipts released after final page');
+INSERT INTO calendar_events(id,household_id,title,is_all_day,start_date,end_date,source)
+ VALUES('41000000-0000-4000-8000-000000000000','10000000-0000-4000-8000-000000000001','旧版未送信',true,current_date,current_date,'native');
+UPDATE google_managed_events SET legacy_unverified=true WHERE event_id='41000000-0000-4000-8000-000000000000';
+SELECT is(pg_temp.observe('irori41000000000040008000000000000000','missing',NULL,NULL),'conflict','legacy missing is never silently recreated');
+UPDATE google_managed_calendars SET sync_token=NULL,scanned_on=NULL WHERE calendar_id='20000000-0000-4000-8000-000000000001';
+SELECT google_managed_cursor('20000000-0000-4000-8000-000000000001',now()+interval '10 minutes','full',NULL,current_date-90,current_date+366,current_date,'[]');
+SELECT is(pg_temp.observe('irori41000000000040008000000000000000','missing',NULL,NULL),'conflict','full scan and missing GET still require an explicit decision');
+SELECT ok(NOT google_managed_choose('20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001',
+ (SELECT conflict_id FROM google_managed_events WHERE calendar_id='20000000-0000-4000-8000-000000000001' AND event_id='41000000-0000-4000-8000-000000000000'),'google'),'legacy 404 cannot be adopted as deletion');
+SELECT ok(google_managed_choose('20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001',
+ (SELECT conflict_id FROM google_managed_events WHERE calendar_id='20000000-0000-4000-8000-000000000001' AND event_id='41000000-0000-4000-8000-000000000000'),'local'),'owner can deliberately re-share a missing legacy copy');
+SELECT is(pg_temp.observe('irori41000000000040008000000000000000','missing',NULL,NULL),'none','reserving new identity cannot delete the native event');
+SELECT ok(EXISTS (SELECT 1 FROM google_managed_events WHERE calendar_id='20000000-0000-4000-8000-000000000001' AND event_id='41000000-0000-4000-8000-000000000000' AND remote_id LIKE 'r%' AND pending),'new durable ID is queued');
 SELECT * FROM finish();
 ROLLBACK;
