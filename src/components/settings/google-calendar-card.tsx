@@ -558,7 +558,7 @@ function GoogleConnectionRow({
             ))}
           </div>
           <p className="text-xs text-muted-foreground">
-            選択した Google カレンダーの予定は、irori の家族全員に表示されます。選択の変更は次の同期から反映されます。
+            選択した Google カレンダーの予定は、irori の家族全員に表示されます。共有を停止すると、他の家族も同じカレンダーを共有していない限り、irori から非表示になります。Google の元の予定は消しません。
           </p>
         </fieldset>
       )}

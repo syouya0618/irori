@@ -452,8 +452,9 @@ async function syncSubscription({
     .update({ sync_lease_until: leaseUntil })
     .eq("id", subscription.id)
     .eq("household_id", householdId)
+    .eq("is_selected", true)
     .or(`sync_lease_until.is.null,sync_lease_until.lt.${nowIso}`)
-    .select("id")
+    .select("id, sync_token")
 
   if (leaseError) {
     logSupabaseError("google-sync", "リースの取得に失敗", leaseError, {
@@ -470,9 +471,10 @@ async function syncSubscription({
   }
 
   try {
+    const currentToken = leased[0].sync_token
     const query: GoogleEventsQuery =
-      subscription.sync_token !== null
-        ? { mode: "incremental", syncToken: subscription.sync_token }
+      currentToken !== null
+        ? { mode: "incremental", syncToken: currentToken }
         : {
             mode: "full",
             timeMin: new Date(
