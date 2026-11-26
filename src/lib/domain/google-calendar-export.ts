@@ -136,3 +136,13 @@ export function planExport(
   }
   return changes
 }
+
+/** A 409 is not success: only a positively identified managed copy can be reused.
+ * Google can retain a deleted event's ID and some organizer-side details.
+ */
+export function recoverExportCollision(event: ExportEvent, remote: ExportRemoteEvent): Extract<ExportChange, { kind: "patch" }> | null {
+  if (remote.id !== event.id || !isExportMirror(remote) || !remote.etag ||
+      remote.extendedProperties?.private?.[EXPORT_MARKER] !== event.extendedProperties.private[EXPORT_MARKER] ||
+      remote.attendees?.length) return null
+  return { kind: "patch", event, etag: remote.etag }
+}

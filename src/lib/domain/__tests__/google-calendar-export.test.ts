@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { exportEventId, hasCalendarExportScope, GOOGLE_CALENDAR_EXPORT_SCOPE, isExportMirror, planExport, toExportEvent } from "../google-calendar-export"
+import { exportEventId, hasCalendarExportScope, GOOGLE_CALENDAR_EXPORT_SCOPE, isExportMirror, planExport, recoverExportCollision, toExportEvent } from "../google-calendar-export"
 
 const id = "11111111-2222-4333-8444-555555555555"
 const owner = "aaaa"
@@ -30,6 +30,15 @@ describe("Google 専用カレンダーへの共有", () => {
     expect(planExport([], [existing, { id: "unrelated", etag: "other" }], owner)).toEqual([{ kind: "delete", id: event.id, etag: "v1" }])
     expect(planExport([], [existing], "another")).toEqual([])
     expect(planExport([event], [], owner)).toEqual([{ kind: "insert", event }])
+  })
+  it("同じIDの衝突は所有印・版が確認できるコピーだけを復元する", () => {
+    const event = toExportEvent(base, owner)
+    const cancelled = { ...event, etag: "v1", status: "cancelled" }
+    expect(recoverExportCollision(event, cancelled)).toEqual({ kind: "patch", event, etag: "v1" })
+    expect(recoverExportCollision(event, { id: event.id, etag: "v1", status: "cancelled" })).toBeNull()
+    expect(recoverExportCollision(event, { ...toExportEvent(base, "other"), etag: "v1" })).toBeNull()
+    expect(recoverExportCollision(event, { ...cancelled, attendees: [{}] })).toBeNull()
+    expect(recoverExportCollision(event, { ...cancelled, etag: undefined })).toBeNull()
   })
   it("ゲストのいる予定を変更・削除せず、版の無い断面も拒む", () => {
     const event = toExportEvent(base, owner)

@@ -93,3 +93,12 @@ CREATE TRIGGER google_export_disconnect_guard
 
 -- Do not purge legacy data during deployment: old imports are reconciled on the
 -- owner's next explicit selection change. This migration changes future behavior only.
+
+-- Release barrier: the app can be deployed before DB migrations are applied.
+-- This invoker function returns only a schema capability, never user data.
+CREATE FUNCTION public.google_sharing_schema_ready() RETURNS boolean
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
+  SELECT true;
+$$;
+REVOKE ALL ON FUNCTION public.google_sharing_schema_ready() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.google_sharing_schema_ready() TO authenticated, service_role;

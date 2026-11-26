@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(), admin: vi.fn(), manage: vi.fn(), status: vi.fn(),
-  from: vi.fn(), eq: vi.fn(), select: vi.fn(), remove: vi.fn(), one: vi.fn(),
+  from: vi.fn(), eq: vi.fn(), select: vi.fn(), remove: vi.fn(), one: vi.fn(), rpc: vi.fn(),
 }))
 vi.mock("@/lib/supabase/auth-context", () => ({ getAuthContext: mocks.auth }))
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: mocks.admin }))
@@ -24,13 +24,29 @@ beforeEach(() => {
   mocks.select.mockReturnValue(query)
   mocks.remove.mockReturnValue(query)
   mocks.one.mockResolvedValue({ data: { id }, error: null })
-  mocks.auth.mockResolvedValue({ error: null, context: { supabase: { from: mocks.from }, userId: owner.userId, householdId: owner.householdId } })
+  mocks.rpc.mockResolvedValue({ data: true, error: null })
+  mocks.auth.mockResolvedValue({ error: null, context: { supabase: { from: mocks.from, rpc: mocks.rpc }, userId: owner.userId, householdId: owner.householdId } })
   mocks.admin.mockReturnValue(admin)
   mocks.manage.mockResolvedValue({ enabled: true, permission: true })
   mocks.status.mockResolvedValue({ enabled: false, permission: true })
 })
 
 describe("app-owned calendar sharing API", () => {
+  it("blocks all sharing operations before the DB contract exists", async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { code: "PGRST202" } })
+    for (const response of [
+      await GET(new Request(url + "?connectionId=" + id)),
+      await POST(req("POST", { connectionId: id, action: "enable" })),
+      await DELETE(req("DELETE", { connectionId: id })),
+    ]) {
+      expect(response.status).toBe(503)
+      expect(await response.json()).toMatchObject({ code: "sharing_not_ready" })
+    }
+    expect(mocks.from).not.toHaveBeenCalled()
+    expect(mocks.admin).not.toHaveBeenCalled()
+    expect(mocks.remove).not.toHaveBeenCalled()
+  })
+
   it("reads the owner's connection without allowing a browser-supplied household", async () => {
     const res = await GET(new Request(url + "?connectionId=" + id + "&householdId=other"))
     expect(res.status).toBe(200)

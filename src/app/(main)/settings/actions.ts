@@ -10,6 +10,7 @@ import { getAuthContext } from "@/lib/supabase/auth-context"
 import { getAppOrigin } from "@/lib/utils/app-origin"
 import { isFutureJstDate } from "@/lib/utils/date-jst"
 import { logSupabaseError } from "@/lib/supabase/log-error"
+import { googleSharingReady, GOOGLE_SHARING_NOT_READY } from "@/lib/google/sharing-ready"
 import { VALID_PAGES, type ValidPage } from "@/lib/constants/pages"
 import {
   FEEDING_INTERVAL_DEFAULT,
@@ -271,6 +272,9 @@ export async function updateGoogleCalendarSelection(
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
+
+  // Until the owner-only policy and cleanup triggers exist, never claim a successful sharing change.
+  if (!(await googleSharingReady(supabase))) return { error: GOOGLE_SHARING_NOT_READY }
 
   // 0 行更新を「成功」と偽らない（別世帯・RLS 拒否は 0 行マッチになる）。
   // household_id の明示 `.eq()` は RLS と二重になるが、ポリシーが将来緩んでも

@@ -6,7 +6,7 @@ import { refreshAccessToken, GoogleAuthError } from "@/lib/google/oauth"
 import { loadGoogleTokens, updateGoogleAccessToken, type GoogleTokenOwner } from "@/lib/google/token-store"
 import {
   EXPORT_CALENDAR_NAME, EXPORT_MARKER, EXPORT_MAX_EVENTS, EXPORT_PAST_DAYS, EXPORT_FUTURE_DAYS,
-  exportDescription, hasCalendarExportScope, planExport, toExportEvent, type ExportChange, type ExportRemoteEvent,
+  exportDescription, hasCalendarExportScope, planExport, recoverExportCollision, toExportEvent, type ExportChange, type ExportRemoteEvent,
 } from "@/lib/domain/google-calendar-export"
 import { shiftYmd, todayJstString } from "@/lib/utils/date-jst"
 
@@ -196,8 +196,16 @@ async function applyChange(token: string, calendarId: string, change: ExportChan
   const response = await api(token, path, {
     method: change.kind === "insert" ? "POST" : "PATCH",
     ...(change.kind === "patch" ? { headers: { "If-Match": change.etag } } : {}),
-    body: JSON.stringify(change.kind === "insert" ? { id: eventId, ...fields, reminders: { useDefault: false } } : fields),
+    body: JSON.stringify(change.kind === "insert" ? { id: eventId, ...fields, reminders: { useDefault: false } } : { ...fields, status: "confirmed" }),
   })
+  if (change.kind === "insert" && response.status === 409) {
+    const existing = await json(token, eventPath(calendarId, eventId))
+    const recovery = recoverExportCollision(change.event, existing as ExportRemoteEvent)
+    if (!recovery) throw new RemoteFailure(409)
+    // ETag precondition prevents overwriting a copy edited after the read.
+    await applyChange(token, calendarId, recovery)
+    return
+  }
   if (!response.ok) throw new RemoteFailure(response.status)
   const saved = object(await readJsonSafe(response))
   if (saved.id !== eventId) throw new ExportFailure("failed")

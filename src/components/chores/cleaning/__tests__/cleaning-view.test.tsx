@@ -96,6 +96,13 @@ function view(over: Partial<CleaningViewProps> = {}) {
 const dueSection = () => screen.getByRole("region", { name: "今日・今週やること" })
 const restSection = () => screen.getByRole("region", { name: "このあとの項目" })
 const completeBox = (name: string) => screen.getByRole("checkbox", { name: `${name}を完了にする` })
+function hasMinimumTouchHeight(element: HTMLElement): boolean {
+  return element.className.split(/\s+/).some((utility) => {
+    if (utility === "touch-target") return true
+    const size = /^(?:min-h|size)-(\d+(?:\.\d+)?)$/.exec(utility)
+    return size !== null && Number(size[1]) >= 11
+  })
+}
 async function ready(name = "浴室の排水口") {
   await waitFor(() => expect(completeBox(name)).toBeEnabled())
 }
@@ -120,7 +127,7 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-describe("B-01 最初に「今日・今週やること」", () => {
+describe("B-01 カレンダー・記録の下に「今日・今週やること」", () => {
   const routines = [
     routine({ id: MONTHLY, name: "冷蔵庫の拭き掃除", location: null, cadence_unit: "month", anchor_date: "2026-11-30" }),
     // 年 1 回・今週の金曜が期限
@@ -130,10 +137,10 @@ describe("B-01 最初に「今日・今週やること」", () => {
     routine(),
   ]
 
-  it("最初の区画が「今日・今週やること」で、期限超過を含めて期限の近い順に並ぶ", () => {
+  it("カレンダー・記録の次に期限超過を含む「今日・今週やること」が期限の近い順に並ぶ", () => {
     const { container } = view({ routines })
     const headings = [...container.querySelectorAll("h2")].map((h) => h.textContent)
-    expect(headings.slice(0, 2)).toEqual(["家事ルーティン記録", "今日・今週やること"])
+    expect(headings.slice(0, 4)).toEqual(["掃除カレンダー", "掃除を記録", "今日・今週やること", "このあとの項目"])
     const due = within(dueSection()).getAllByTestId("cleaning-item")
     expect(due.map((item) => item.querySelector("p")?.textContent)).toEqual(["浴室の排水口", "年に一度の換気扇"])
     // 期限超過は日数を文で言う（色だけにせぬ）
@@ -235,10 +242,12 @@ describe("B-04 1 タップ完了と直後の取り消し", () => {
     })
     expect(refresh).toHaveBeenCalledTimes(1)
 
-    // 取り消しの帯は一覧の下に出る（上に出すと項目が押し下がる）
+    // 取り消しの帯はクイック記録の釦の下に出る（上に出すと次に押す釦が動く）
     const undo = screen.getByTestId("cleaning-inline-undo")
-    const list = within(dueSection()).getByRole("list")
-    expect(list.compareDocumentPosition(undo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const quick = screen.getByRole("region", { name: "掃除を記録" })
+    expect(quick).toContainElement(undo)
+    const lastButton = within(quick).getByRole("button", { name: "掃除項目を追加" })
+    expect(lastButton.compareDocumentPosition(undo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
     await click(within(undo).getByRole("button", { name: "直前の記録を取り消す" }))
     await waitFor(() => expect(saveCleaning).toHaveBeenCalledTimes(2))
@@ -307,11 +316,11 @@ describe("X-02 / V-UI 表示の規約", () => {
   it("長い日本語の名前・場所は折り返す（横へはみ出す指定を持たぬ）", () => {
     const long = "浴室の排水口と洗い場の床と壁と天井と換気扇のカバーと鏡のうろこ取りをまとめて行う大掃除の項目です"
     view({ routines: [routine({ name: long, location: "二階の奥のいちばん広い浴室" })] })
-    const name = screen.getByText(long)
+    const name = within(dueSection()).getByText(long)
     expect(name.className).toMatch(/\bbreak-words\b/)
     expect(name.className).not.toMatch(/\b(truncate|whitespace-nowrap)\b/)
     expect(name.parentElement?.className).toMatch(/\bmin-w-0\b/)
-    const place = screen.getByText(/二階の奥のいちばん広い浴室/)
+    const place = within(dueSection()).getByText(/二階の奥のいちばん広い浴室/)
     expect(place.closest("p")?.className).toMatch(/\bbreak-words\b/)
   })
 
@@ -324,7 +333,7 @@ describe("X-02 / V-UI 表示の規約", () => {
     const pressables = [...container.querySelectorAll<HTMLElement>("button, a[href]")]
     expect(pressables.length).toBeGreaterThan(8)
     for (const element of pressables) {
-      expect(element.className, element.textContent ?? "").toMatch(/\b(min-h-11|size-11|touch-target|min-h-12)\b/)
+      expect(hasMinimumTouchHeight(element), element.textContent ?? "").toBe(true)
       expect(element.className).not.toContain("transition-all")
     }
     expect(container.textContent ?? "").not.toMatch(/\p{Extended_Pictographic}/u)
@@ -334,7 +343,7 @@ describe("X-02 / V-UI 表示の規約", () => {
   it("対照: 44px の検査は、指定を持たぬ釦を実際に見つけられる", () => {
     const probe = document.createElement("button")
     probe.className = "h-8 px-2"
-    expect(probe.className).not.toMatch(/\b(min-h-11|size-11|touch-target|min-h-12)\b/)
+    expect(hasMinimumTouchHeight(probe)).toBe(false)
   })
 })
 

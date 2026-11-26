@@ -1,5 +1,7 @@
 BEGIN;
-SELECT plan(12);
+SELECT plan(15);
+SELECT ok(has_function_privilege('authenticated', 'public.google_sharing_schema_ready()', 'EXECUTE'), 'authenticated can check rollout readiness');
+SELECT ok(NOT has_function_privilege('anon', 'public.google_sharing_schema_ready()', 'EXECUTE'), 'anon cannot check readiness');
 INSERT INTO households (id, name) VALUES ('11111111-1111-1111-1111-111111111111', 'H1');
 INSERT INTO auth.users (id, email) VALUES
  ('22222222-2222-2222-2222-222222222222','a@example.test'),
@@ -17,6 +19,7 @@ INSERT INTO calendar_events (id,household_id,title,is_all_day,start_date,end_dat
  ('99999999-9999-9999-9999-999999999999','11111111-1111-1111-1111-111111111111','native',true,'2026-11-26','2026-11-26','native',NULL,NULL,NULL);
 SET LOCAL role authenticated;
 SELECT set_config('request.jwt.claims', '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}', true);
+SELECT is(public.google_sharing_schema_ready(), true, 'readiness is available after migration');
 SELECT is((SELECT count(*) FROM google_calendar_subscriptions),2::bigint,'both household subscriptions visible');
 UPDATE google_calendar_subscriptions SET is_selected=false WHERE id='77777777-7777-7777-7777-777777777777';
 SELECT is((SELECT is_selected FROM google_calendar_subscriptions WHERE id='77777777-7777-7777-7777-777777777777'),true,'cannot toggle spouse consent');

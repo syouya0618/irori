@@ -3,6 +3,7 @@ import { AUTH_DENIAL_HTTP_STATUS } from "@/lib/auth/auth-denial-status"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { getGoogleExportStatus, manageGoogleExport } from "@/lib/google/export-sync"
 import { isClientId } from "@/lib/utils/client-id"
+import { googleSharingReady, GOOGLE_SHARING_NOT_READY } from "@/lib/google/sharing-ready"
 
 export const maxDuration = 60
 export const runtime = "nodejs"
@@ -14,6 +15,7 @@ async function handle(connectionId: unknown, action?: "enable" | "sync" | "stop"
     return Response.json({ error: "接続の指定が不正です" }, { status: 400 })
   }
   const { supabase, userId, householdId } = auth.context
+  if (!(await googleSharingReady(supabase))) return notReady()
   // Owner-only, even though ordinary import metadata is readable by household members.
   const { data, error } = await supabase.from("google_connections").select("id")
     .eq("id", connectionId).eq("user_id", userId).eq("household_id", householdId).maybeSingle()
@@ -28,6 +30,10 @@ async function handle(connectionId: unknown, action?: "enable" | "sync" | "stop"
     // Never expose token material, Google API response bodies or DB details to the browser.
     return Response.json({ error: "共有の状態を確認できませんでした。もう一度お試しください。" }, { status: 503 })
   }
+}
+
+function notReady() {
+  return Response.json({ error: GOOGLE_SHARING_NOT_READY, code: "sharing_not_ready" }, { status: 503, headers: { "Cache-Control": "private, no-store" } })
 }
 
 export async function GET(request: Request) {
@@ -69,6 +75,7 @@ export async function DELETE(request: Request) {
     return Response.json({ error: "接続の指定が不正です" }, { status: 400 })
   }
   const { supabase, userId, householdId } = auth.context
+  if (!(await googleSharingReady(supabase))) return notReady()
   const { data, error } = await supabase.from("google_connections").delete()
     .eq("id", connectionId).eq("user_id", userId).eq("household_id", householdId).select("id").maybeSingle()
   if (error?.code === "55P03") return Response.json({ error: "同期中です。少し時間をおいて再試行してください。" }, { status: 409 })

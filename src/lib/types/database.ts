@@ -998,6 +998,7 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
+      google_sharing_schema_ready: { Args: Record<string, never>; Returns: boolean }
       claim_news_ai_call: { Args: { p_day: string; p_limit: number }; Returns: boolean }
       news_source_statuses:{Args:Record<string,never>;Returns:Json}
       news_source_status:{Args:Record<string,never>;Returns:string|null}

@@ -37,7 +37,15 @@ export function GoogleExportControls({ connectionId }: { connectionId: string })
         ...(action ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ connectionId, action }) } : {}),
         redirect: "manual", cache: "no-store", signal: controller.signal,
       })
-      if (!response.ok) throw new Error("request failed")
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { code?: unknown; error?: unknown } | null
+        if (payload?.code === "sharing_not_ready" && typeof payload.error === "string") {
+          setStatus(null)
+          setError(payload.error)
+          return
+        }
+        throw new Error("request failed")
+      }
       const result = await response.json() as { status?: GoogleExportStatus }
       if (!result.status || typeof result.status.enabled !== "boolean" || typeof result.status.permission !== "boolean") throw new Error("invalid response")
       setStatus(result.status)
@@ -65,6 +73,15 @@ export function GoogleExportControls({ connectionId }: { connectionId: string })
         body: JSON.stringify({ connectionId }), redirect: "manual", cache: "no-store",
         signal: controller.signal,
       })
+      if (response.status === 503) {
+        const payload = await response.json().catch(() => null) as { code?: unknown; error?: unknown } | null
+        if (payload?.code === "sharing_not_ready" && typeof payload.error === "string") {
+          setStatus(null)
+          setError(payload.error)
+          return
+        }
+        throw new Error("request failed")
+      }
       if (response.status === 409) {
         setError("同期中です。少し時間をおいて再試行してください。")
         return
@@ -118,7 +135,7 @@ export function GoogleExportControls({ connectionId }: { connectionId: string })
             </>
           )}
           <Button type="button" variant="ghost" className="self-start" disabled={working} onClick={() => void perform()}>状態を再取得</Button>
-          <div className="flex flex-col gap-2 border-t border-border pt-3">
+          {status && <div className="flex flex-col gap-2 border-t border-border pt-3">
             {confirmDisconnect ? (
               <>
                 <p className="text-sm">この Google アカウントとの接続を解除します。irori に保存した接続情報と、他の家族が共有していない取り込み予定を削除します。Google 側の予定とコピー済みカレンダーは残ります。再接続後に共有を開始すると新しい専用カレンダーが作成される場合があります。</p>
@@ -128,7 +145,7 @@ export function GoogleExportControls({ connectionId }: { connectionId: string })
                 </div>
               </>
             ) : <Button type="button" variant="outline" className="self-start" disabled={working} onClick={() => setConfirmDisconnect(true)}>iroriとの接続を解除</Button>}
-          </div>
+          </div>}
         </>
       )}
     </section>

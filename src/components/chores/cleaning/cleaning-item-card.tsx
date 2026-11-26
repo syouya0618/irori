@@ -82,6 +82,7 @@ export function CleaningItemCard({
   status,
   bucket,
   today,
+  historyPending = false,
   disabled,
   busy,
   onComplete,
@@ -91,6 +92,8 @@ export function CleaningItemCard({
   status: RoutineStatus
   bucket: CleaningBucket
   today: string
+  /** 取消・訂正後の前回実施日を、サーバーで確かめ直している。 */
+  historyPending?: boolean
   /** 新しい操作を受けられぬ（送信中・確認待ち） */
   disabled: boolean
   /** この項目の完了を送信中 */
@@ -120,15 +123,15 @@ export function CleaningItemCard({
           {cadence ?? "周期を確認してください"}
         </p>
         <div className="flex flex-wrap gap-1.5 empty:hidden">
-          <CleaningStatusBadges status={status} bucket={bucket} />
+          {!historyPending && <CleaningStatusBadges status={status} bucket={bucket} />}
         </div>
         <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-sm">
           <dt className="text-muted-foreground">前回</dt>
-          <dd className="break-words">{lastDoneText(status, today)}</dd>
+          <dd className="break-words">{historyPending ? "確認中" : lastDoneText(status, today)}</dd>
           <dt className="text-muted-foreground">次回</dt>
-          <dd className="break-words">{nextDueText(status, today)}</dd>
+          <dd className="break-words">{historyPending ? "確認中" : nextDueText(status, today)}</dd>
         </dl>
-        {status.closeLimitReached && (
+        {!historyPending && status.closeLimitReached && (
           <p className="text-sm text-muted-foreground break-words">
             先の回まで記録済みです。次の予定日が近づくと、また完了にできます。
           </p>
