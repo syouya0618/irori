@@ -1,3 +1,4 @@
+import { isExportMirror, type ExportRemoteEvent } from "@/lib/domain/google-calendar-export"
 import { isValidYmd, shiftYmd, toJstDateString } from "@/lib/utils/date-jst"
 
 /**
@@ -38,6 +39,7 @@ export interface GoogleEventDateTime {
  */
 export interface GoogleRawEvent {
   id?: string | null
+  extendedProperties?: ExportRemoteEvent["extendedProperties"] | null
   /** "confirmed" | "tentative" | "cancelled"（未知値もありうる）。 */
   status?: string | null
   summary?: string | null
@@ -366,7 +368,8 @@ export function classifyEvent(
   raw: GoogleRawEvent,
   ctx: GoogleSyncContext
 ): ClassifiedGoogleEvent {
-  if (raw.status === "cancelled") {
+  // A copy of an irori native event must not re-enter as a Google event.
+  if (raw.status === "cancelled" || isExportMirror(raw)) {
     const googleEventId = optionalText(raw.id)
     // id 無しの cancelled は消すべき行を特定できない。undefined を delete へ
     // 流すと WHERE が壊れるため skip する。

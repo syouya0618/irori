@@ -57,6 +57,7 @@ export async function GET(request: Request) {
     // redirect_uri 完全一致」が構造的に保たれる。
     redirectUri: googleOAuthRedirectUri(origin),
     state,
+    share: new URL(request.url).searchParams.get("mode") === "share",
   })
 
   const response = NextResponse.redirect(authorizeUrl)

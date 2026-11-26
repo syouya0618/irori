@@ -1,3 +1,5 @@
+import { hasCalendarExportScope } from "@/lib/domain/google-calendar-export"
+import { syncExistingGoogleExport } from "@/lib/google/export-sync"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database, GoogleSyncErrorKind } from "@/lib/types/database"
 import { logSupabaseError } from "@/lib/supabase/log-error"
@@ -760,6 +762,15 @@ async function syncConnection(
           tokens,
         }),
       )
+    }
+
+    if (hasCalendarExportScope(tokenRow.scope)) {
+      try {
+        await syncExistingGoogleExport(supabase, owner, () => tokens.get())
+      } catch {
+        // Export status is independent; never turn a successful read-only import into a failed one.
+        console.warn("[google-sync] export status unavailable", { connectionId: connection.id })
+      }
     }
 
     const failed = outcome.subscriptions.filter(
