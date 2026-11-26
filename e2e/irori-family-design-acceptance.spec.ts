@@ -234,7 +234,7 @@ test("家族2アカウント: 自由な家事項目→完了→取消が掃除�
   const family = await familyPage(browser, household, testInfo.workerIndex)
   try {
     await page.goto("/chores/cleaning")
-    await page.getByRole("button", { name: "家事項目を設定" }).click()
+    await page.getByRole("button", { name: "掃除項目を追加", exact: true }).click()
     const form = page.getByRole("dialog")
     await form.getByLabel("名前").fill("家族共同の床拭き")
     await form.getByLabel("場所（任意）").fill("リビング")
@@ -264,8 +264,9 @@ test("家族2アカウント: 自由な家事項目→完了→取消が掃除�
     const calendar = page.getByTestId("cleaning-calendar")
     const dateLabel = todayJst().split("-")
     const dateText = Number(dateLabel[1]) + "月" + Number(dateLabel[2]) + "日"
-    await expect(calendar.getByRole("button", { name: dateText + ": 完了1件・次回目安0件" }))
-      .toBeVisible({ timeout: 75_000 })
+    const completed = calendar.getByRole("button", { name: dateText + ": 完了1件・次回目安0件" })
+    await expect(completed).toBeVisible({ timeout: 75_000 })
+    await expect(completed.locator('[data-cleaning-mark="done"]')).toHaveText("家族共同の床拭き")
     await checkCompactScreen(page)
 
     await family.page.getByTestId("cleaning-inline-undo")
