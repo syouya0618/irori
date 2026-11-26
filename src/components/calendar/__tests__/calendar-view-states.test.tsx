@@ -57,6 +57,7 @@ vi.mock("@/app/(main)/calendar/actions", () => ({
   createCalendarEvent: vi.fn().mockResolvedValue({ error: null, eventId: "x", updatedAt: "v1" }),
   updateCalendarEvent: vi.fn().mockResolvedValue({ error: null, updatedAt: "v2" }),
   deleteCalendarEvent: vi.fn().mockResolvedValue({ error: null }),
+  readCalendarSeriesRevision: vi.fn().mockResolvedValue("0".repeat(32)),
   deleteCalendarEventSeries: vi.fn().mockResolvedValue({ error: null, count: 7 }),
   fetchGoogleSyncSignal: vi.fn().mockResolvedValue({ lastSyncedAt: null }),
   fetchEventReminder: vi.fn().mockResolvedValue({ error: null, row: null }),
@@ -365,7 +366,7 @@ describe("削除は確認を経てから送り、結果を告げる", () => {
     fireEvent.click(screen.getByRole("button", { name: "削除" }))
     expect(deleteCalendarEvent).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole("button", { name: "削除する" }))
-    await waitFor(() => expect(deleteCalendarEvent).toHaveBeenCalledWith("e1"))
+    await waitFor(() => expect(deleteCalendarEvent).toHaveBeenCalledWith("e1","v1"))
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("「検診」を削除しました"))
   })
 
@@ -382,7 +383,7 @@ describe("削除は確認を経てから送り、結果を告げる", () => {
     fireEvent.click(within(agenda()).getByText("予防接種"))
     fireEvent.click(screen.getByRole("button", { name: "削除" }))
     fireEvent.click(screen.getByRole("button", { name: "繰り返しのすべての回を削除" }))
-    await waitFor(() => expect(deleteCalendarEventSeries).toHaveBeenCalledWith("s1"))
+    await waitFor(() => expect(deleteCalendarEventSeries).toHaveBeenCalledWith("s1",{id:"e1",version:"v1",revision:"0".repeat(32)}))
     // 手元の 2 件ではなく、サーバが消した 7 件を言う
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith("繰り返し予定を7件削除しました"),

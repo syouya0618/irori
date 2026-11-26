@@ -20,6 +20,13 @@ describe("managed Google events",()=>{
     const obs=googleEventObservation({...legacy,id:"event",start:{dateTime:"2026-11-01T01:45:00-04:00"},end:{dateTime:"2026-11-01T01:45:00-05:00"}},"owner")
     expect(googleFields(obs.doc)).toMatchObject({start:{dateTime:"2026-11-01T05:45:00.000Z"},end:{dateTime:"2026-11-01T06:45:00.000Z"}})
   })
+  it("preserves a weekly series and its exception across a daylight saving transition",()=>{
+    const wire={id:"weekly",etag:"e",summary:"会議",recurrence:["RRULE:FREQ=WEEKLY;BYDAY=SU","EXDATE:20261108T063000Z"],
+      start:{dateTime:"2026-11-01T01:30:00-05:00",timeZone:"America/New_York"},
+      end:{dateTime:"2026-11-01T02:30:00-05:00",timeZone:"America/New_York"}}
+    const fields=googleFields(googleEventObservation(wire,"owner").doc)
+    expect(fields).toMatchObject({recurrence:[...wire.recurrence].sort(),start:{dateTime:"2026-11-01T06:30:00.000Z",timeZone:"America/New_York"},end:{timeZone:"America/New_York"}})
+  })
   it("recognizes sparse cancellations and keeps recurrence identities scoped by calendar",()=>{
     expect(googleEventObservation({id:"a",status:"cancelled"},"owner").state).toBe("cancelled")
     expect(managedSeriesId("a","x")).not.toBe(managedSeriesId("b","x"))

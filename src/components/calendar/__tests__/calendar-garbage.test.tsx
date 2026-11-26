@@ -62,6 +62,7 @@ vi.mock("@/app/(main)/calendar/actions", () => ({
   createCalendarEvent: vi.fn().mockResolvedValue({ error: null, eventId: "x" }),
   updateCalendarEvent: vi.fn().mockResolvedValue({ error: null }),
   deleteCalendarEvent: vi.fn().mockResolvedValue({ error: null }),
+  readCalendarSeriesRevision: vi.fn().mockResolvedValue("0".repeat(32)),
   deleteCalendarEventSeries: vi.fn().mockResolvedValue({ error: null }),
   fetchGoogleSyncSignal: vi.fn().mockResolvedValue({ lastSyncedAt: null }),
   fetchEventReminder: vi.fn().mockResolvedValue({ error: null, row: null }),

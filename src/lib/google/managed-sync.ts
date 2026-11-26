@@ -76,6 +76,7 @@ async function exchange(ctx: Lease, id: string, item: Wire | null, cancelled: bo
 
 async function processEvent(ctx: Lease, requestedId: string, listedCancelled=false, parentOnly=false) {
   const context=await seriesContext(ctx,requestedId)
+  if (context.kind==="retired") return
   let id=requestedId
   if (context.kind==="instance" && context.bound!==true) {
     if (parentOnly || typeof context.master!=="string" || typeof context.anchor!=="string") throw new Error("invalid series dependency")
@@ -90,10 +91,11 @@ async function processEvent(ctx: Lease, requestedId: string, listedCancelled=fal
     if (item?.id !== id) throw new Error("invalid event identity")
   } else if (![404,410].includes(response.status)) throw new Error("event lookup failed")
   const master=Boolean(item?.recurrence || context.kind==="master")
-  let seriesId=master ? managedSeriesId(ctx.calendar,id) : null
+  let seriesId=typeof context.series==="string" ? context.series : master ? managedSeriesId(ctx.calendar,id) : null
   if (item?.recurringEventId) {
     if (parentOnly || item.recurringEventId===id) throw new Error("invalid recurring parent")
     let parent=await seriesContext(ctx,item.recurringEventId)
+    if (parent.kind==="retired") return
     if (!ctx.parents.has(item.recurringEventId)) {
       await processEvent(ctx,item.recurringEventId,false,true)
       ctx.parents.add(item.recurringEventId)

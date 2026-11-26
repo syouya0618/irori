@@ -134,7 +134,7 @@ export function GoogleExportControls({ connectionId }: { connectionId: string })
       </button>
       {expanded && (
         <>
-          <p className="text-sm text-muted-foreground">接続した本人の Google アカウントに「irori 家族の予定」という専用カレンダーを作成します。共有する内容は通常の家族予定の名前と日時です。メモ・子どもに紐づく予定・医療記録は共有しません。</p>
+          <p className="text-sm text-muted-foreground">接続した本人の Google アカウントに「irori 家族の予定」という専用カレンダーを作成します。共有する内容は通常の家族予定の名前・日時・繰り返し規則です。メモ・子どもに紐づく予定・医療記録は共有しません。</p>
           <p className="text-sm text-muted-foreground">専用カレンダーで追加・編集・削除すると、irori と共有中の家族の専用カレンダーにも反映します。個人カレンダーは読み取り専用です。夫婦それぞれのアカウントで開始してください。</p>
           {working && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 className="animate-spin" size={16} aria-hidden="true" />確認・処理中…</p>}
           {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
@@ -146,13 +146,13 @@ export function GoogleExportControls({ connectionId }: { connectionId: string })
                   <p>変更が競合しています。反映する内容を選んでください。</p>
                   {(["local","google"] as const).map(side => (
                     <div key={side} className="text-sm">
-                      <p>{side === "local" ? "irori" : "Google"} · {describeConflict(conflict[side])}</p>
+                      <p>{side === "local" ? "irori" : "Google"} · {side === "google" && conflict.protected ? "内容を確認できません" : describeConflict(conflict[side])}</p>
                       {!conflict.protected && <Button variant="outline" disabled={working || status.busy} onClick={() => void perform("resolve",conflict.id,side)}>
                         {side === "local" ? "irori の内容を採用" : "Google の内容を採用"}
                       </Button>}
                     </div>
                   ))}
-                  {conflict.protected && <p>参加者付きなど、共有対象外の予定です。Google の元予定を確認してください。</p>}
+                  {conflict.protected && <p>予定の内容または編集権限を確認できません。元予定を確認した後、もう一度同期してください。</p>}
                 </div>
               ))}
               {status.lastSyncedAt && <p className="text-xs text-muted-foreground">最終完了: {new Date(status.lastSyncedAt).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}</p>}

@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(44);
+SELECT plan(51);
 INSERT INTO households(id,name) VALUES('10000000-0000-4000-8000-000000000001','sync fixture');
 INSERT INTO auth.users(id,email) VALUES('20000000-0000-4000-8000-000000000001','one@example.test'),('20000000-0000-4000-8000-000000000002','two@example.test');
 UPDATE profiles SET household_id='10000000-0000-4000-8000-000000000001',is_approved=true,role='member'
@@ -91,5 +91,19 @@ INSERT INTO calendar_events(id,household_id,series_id,title,is_all_day,start_dat
 SELECT is((SELECT google_managed_exchange(m.calendar_id,now()+interval '10 minutes',m.remote_id,'missing',NULL,NULL,null,s.series_id,true)->>'action'
  FROM google_managed_events m JOIN google_family_series s ON s.root_id=m.event_id WHERE s.series_id='40000000-0000-4000-8000-000000000003' LIMIT 1),'none','no outbound parent for a wholly out-of-window series');
 SELECT ok(public.google_managed_sync_ready(),'managed schema readiness includes triggers and required RPC');
+SELECT is(google_managed_series_context('20000000-0000-4000-8000-000000000001',now()+interval '10 minutes','g-instance')->>'kind','retired','replayed old instance cannot requeue an orphan parent');
+SELECT pg_temp.observe('missing-probe','present',pg_temp.doc('kept after full rescan'),'v1');
+SELECT is(pg_temp.observe('missing-probe','missing',NULL,NULL),'conflict','a missing point GET cannot erase a family event');
+SELECT ok(NOT google_managed_choose('20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001',
+ (SELECT conflict_id FROM google_managed_events WHERE remote_id='missing-probe'),'google'),'cannot confirm deletion using ambiguous 404');
+SELECT pg_temp.observe('stable-'||n,'present',pg_temp.doc('stable'),'unchanged') FROM generate_series(1,200) n;
+SELECT google_managed_cursor('20000000-0000-4000-8000-000000000001',now()+interval '10 minutes',NULL,'page2',current_date-90,current_date+366,NULL,
+ (SELECT jsonb_agg(jsonb_build_object('id','stable-'||n,'etag','unchanged','cancelled',false)) FROM generate_series(1,100) n));
+SELECT google_managed_cursor('20000000-0000-4000-8000-000000000001',now()+interval '10 minutes','final',NULL,current_date-90,current_date+366,current_date,
+ (SELECT jsonb_agg(jsonb_build_object('id','stable-'||n,'etag','unchanged','cancelled',false)) FROM generate_series(101,200) n));
+SELECT is((SELECT count(*) FROM google_managed_inbox WHERE remote_id LIKE 'stable-%'),0::bigint,'unchanged 200 events on two pages produce zero redundant jobs');
+SELECT ok(EXISTS(SELECT 1 FROM google_managed_inbox WHERE remote_id='missing-probe'),'only previously established missing identity scheduled for point GET');
+SELECT is((SELECT count(*) FROM calendar_events WHERE title='kept after full rescan'),1::bigint,'full scan left unobserved row intact');
+SELECT is((SELECT count(*) FROM google_scan_seen),0::bigint,'scan receipts released after final page');
 SELECT * FROM finish();
 ROLLBACK;

@@ -354,12 +354,11 @@ BEGIN
  -- If a response was lost, an observed copy of our durable write intent is a
  -- common ancestor, even when the local event changed again in the meantime.
  IF m.intent IS NOT NULL AND remote_doc=m.intent AND p_state IN ('present','cancelled') THEN m.common:=m.intent; END IF;
- IF p_state='protected' THEN merged:=NULL;
+ IF p_state='protected' OR (p_state='missing' AND m.common IS NOT NULL AND m.common<>'null') THEN merged:=NULL;
  ELSIF m.conflict_id IS NOT NULL AND m.choice IS NOT NULL AND m.conflict_version IS NOT DISTINCT FROM e.updated_at
      AND m.conflict_etag IS NOT DISTINCT FROM p_etag AND m.observed=remote_doc THEN
    merged:=CASE WHEN m.choice='local' THEN local_doc ELSE remote_doc END;
    reversible:=true;
- ELSIF p_state='protected' OR (p_state='missing' AND m.common IS NOT NULL AND m.common<>'null') THEN merged:=NULL;
  ELSIF retired_instance AND NOT has_event AND m.common IS NULL AND p_state='present' THEN
    -- A never-observed override may carry independent edits, even if its title matches the parent.
    merged:=NULL;
@@ -415,7 +414,7 @@ BEGIN
    SELECT 1 FROM public.google_event_deletions WHERE household_id=c.household_id AND event_id=m.event_id) AND NOT reversible) THEN
    UPDATE public.google_managed_events SET conflict_id=CASE WHEN conflict_id IS NOT NULL AND conflict_version IS NOT DISTINCT FROM e.updated_at
      AND conflict_etag IS NOT DISTINCT FROM p_etag AND observed=remote_doc THEN conflict_id ELSE gen_random_uuid() END,
-     observed=remote_doc,protected=(p_state='protected'),conflict_etag=p_etag,conflict_version=e.updated_at,choice=NULL,pending=false,intent=NULL WHERE calendar_id=p_calendar AND event_id=m.event_id;
+     observed=remote_doc,protected=(p_state IN ('protected','missing')),conflict_etag=p_etag,conflict_version=e.updated_at,choice=NULL,pending=false,intent=NULL WHERE calendar_id=p_calendar AND event_id=m.event_id;
    RETURN jsonb_build_object('action','conflict');
  END IF;
  IF merged IS DISTINCT FROM local_doc THEN
@@ -615,6 +614,9 @@ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE c public.google_managed_calendars; info jsonb;
 BEGIN
  c:=irori_private.require_google_lease(p_calendar,p_lease);
+ IF EXISTS(SELECT 1 FROM public.google_retired_event_ids WHERE calendar_id=p_calendar AND remote_id=p_remote) THEN
+   RETURN jsonb_build_object('kind','retired');
+ END IF;
  SELECT jsonb_build_object('kind','master','series',s.series_id,'retired',s.doc='null' AND m.conflict_id IS NULL,'active',s.doc<>'null' AND NOT m.protected AND m.conflict_id IS NULL) INTO info FROM public.google_managed_events m
  JOIN public.google_family_series s ON s.root_id=m.event_id AND s.household_id=c.household_id
  WHERE m.calendar_id=p_calendar AND m.remote_id=p_remote AND m.is_master;
