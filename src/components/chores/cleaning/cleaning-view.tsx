@@ -401,6 +401,13 @@ export function CleaningView({
     lastDoneOn: entry.status.lastDoneOn,
   }))
   const completedIds = new Set(calendarMarksForDate(selectedDate, calendarItems, visibleLogs).completed.map((item) => item.id))
+  // 最新実施日より前の日は、部分履歴の不在だけでは未実施と断定できない。
+  // 今日・最新実施日以降・履歴なしが要約で確認できる項目は引き続き記録できる。
+  const uncertainDateIds = new Set(entries.filter(({ routine, status }) =>
+    (historyFailed || historyTruncated) && !completedIds.has(routine.id) &&
+    status.lastDoneOn !== null && selectedDate < status.lastDoneOn,
+  ).map(({ routine }) => routine.id))
+  const quickPendingIds = new Set([...pendingHistoryIds, ...uncertainDateIds])
   const sendingRecord = save.pending.find((entry) => entry.phase === "sending" && (entry.payload.op === "close" || entry.payload.op === "backfill"))
   const busyRoutineId = sendingRecord && (sendingRecord.payload.op === "close" || sendingRecord.payload.op === "backfill") ? sendingRecord.payload.routineId : null
   const undoing = save.pending.some(
@@ -425,7 +432,7 @@ export function CleaningView({
   function recordSelectedDay(id: string) {
     if (!isValidYmd(selectedDate) || selectedDate > today || completedIds.has(id)) return
     const entry = entries.find((item) => item.routine.id === id)
-    if (!entry || entry.historyPending) return
+    if (!entry || quickPendingIds.has(id)) return
     // 今日の記録は予定の回も進める。過去日や休止中・先の回の上限では、実施だけを追記する。
     if (selectedDate === today && !entry.status.isPaused && entry.status.currentOccurrence !== null && !entry.status.closeLimitReached) {
       send({
@@ -529,13 +536,19 @@ export function CleaningView({
             selectedDate={selectedDate}
             routines={entries.map((entry) => entry.routine)}
             completedIds={completedIds}
-            pendingIds={pendingHistoryIds}
+            pendingIds={quickPendingIds}
             disabled={save.blocked}
             busyRoutineId={busyRoutineId}
             onSelectDate={setSelectedDate}
             onRecord={recordSelectedDay}
             onAddRoutine={() => openSheet({ kind: "create" })}
           >
+            {uncertainDateIds.size > 0 && (
+              <div role="status" className="flex flex-col items-start gap-2 text-sm text-muted-foreground">
+                <p>選択日の履歴を確認できない項目は、二重記録を防ぐため一時的に記録を止めています。項目の詳細で履歴を確認してから記録してください。</p>
+                {historyFailed && <Button type="button" variant="outline" onClick={() => refresh("manual")}>履歴を読み込み直す</Button>}
+              </div>
+            )}
             {inlineUndo}
           </CleaningQuickRecord>
         </>

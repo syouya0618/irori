@@ -118,6 +118,23 @@ describe("カレンダーの選択日へ掃除を記録", () => {
     expect(saveCleaning).not.toHaveBeenCalled()
   })
 
+  it.each([
+    { historyFailed: true, historyTruncated: false },
+    { historyFailed: false, historyTruncated: true },
+  ])("部分履歴では最新実施日より前の不明な日を重複記録しない (%o)", async (flags) => {
+    const base = props({ marks: { [ROUTINE]: { lastDoneOn: TODAY, maxOccurrence: TODAY, maxSkipOccurrence: null } }, ...flags })
+    const { rerender } = render(<CleaningView {...base} />)
+    expect(doneButton()).toBeDisabled()
+    await selectDate("2026-11-20")
+    const pending = quick().getByRole("button", { name: "トイレ掃除の記録を確認中" })
+    expect(pending).toBeDisabled()
+    expect(quick().getByText(/選択日の履歴を確認できない項目/)).toBeInTheDocument()
+    await click(pending)
+    expect(saveCleaning).not.toHaveBeenCalled()
+    rerender(<CleaningView {...base} logs={[]} historyFailed={false} historyTruncated={false} />)
+    await ready()
+  })
+
   it.each<{ label: string; routines: CleaningRoutine[]; marks: Record<string, CleaningMarks> }>([
     { label: "休止中", routines: [{ ...ROUTINE_ROW, paused_at: VERSION }], marks: {} },
     { label: "予定回の上限", routines: [ROUTINE_ROW], marks: { [ROUTINE]: { lastDoneOn: null, maxOccurrence: "2027-01-01", maxSkipOccurrence: null } } },
