@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useRef } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { ChevronDown, ChevronUp, Loader2 } from "lucide-react"
 import type { GoogleExportStatus } from "@/lib/google/export-sync"
@@ -15,6 +16,9 @@ const ERROR_MESSAGES: Record<string, string> = {
 }
 
 export function GoogleExportControls({ connectionId }: { connectionId: string }) {
+  const router = useRouter()
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false)
+  const [disconnected, setDisconnected] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [status, setStatus] = useState<GoogleExportStatus | null>(null)
   const [working, setWorking] = useState(false)
@@ -48,6 +52,42 @@ export function GoogleExportControls({ connectionId }: { connectionId: string })
     }
   }
 
+  async function disconnect() {
+    if (running.current || !confirmDisconnect) return
+    running.current = true
+    setWorking(true)
+    setError(null)
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 30_000)
+    try {
+      const response = await fetch("/api/google/export", {
+        method: "DELETE", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ connectionId }), redirect: "manual", cache: "no-store",
+        signal: controller.signal,
+      })
+      if (response.status === 409) {
+        setError("同期中です。少し時間をおいて再試行してください。")
+        return
+      }
+      if (!response.ok) throw new Error("request failed")
+      const result = await response.json() as { ok?: boolean }
+      if (result.ok !== true) throw new Error("invalid response")
+      setDisconnected(true)
+      router.refresh()
+    } catch {
+      setError("解除結果を確認できませんでした。画面を再読み込みしてください。")
+      setStatus(null)
+      router.refresh()
+    } finally {
+      clearTimeout(timeout)
+      setConfirmDisconnect(false)
+      setWorking(false)
+      running.current = false
+    }
+  }
+
+  if (disconnected) return <p role="status" className="text-sm">接続を解除しました。</p>
+
   return (
     <section className="flex flex-col gap-3 rounded-xl border border-border p-3">
       <button type="button" aria-expanded={expanded} className="flex min-h-11 items-center justify-between gap-2 text-left text-sm font-semibold"
@@ -63,7 +103,7 @@ export function GoogleExportControls({ connectionId }: { connectionId: string })
           {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
           {status && (
             <>
-              <p role="status" className="text-sm font-medium">{status.enabled ? "共有中" : "共有停止中"}{status.busy ? "（別の処理が実行中）" : ""}</p>
+              <p role="status" className="text-sm font-medium">{status.enabled ? (status.permission ? "共有中" : "再接続が必要") : "共有停止中"}{status.busy ? "（別の処理が実行中）" : ""}</p>
               {status.lastSyncedAt && <p className="text-xs text-muted-foreground">最終完了: {new Date(status.lastSyncedAt).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}</p>}
               {status.lastError && <p role="alert" className="text-sm text-muted-foreground">{ERROR_MESSAGES[status.lastError] ?? "共有の状態を確認してください。"}</p>}
               {!status.permission && (
@@ -78,6 +118,17 @@ export function GoogleExportControls({ connectionId }: { connectionId: string })
             </>
           )}
           <Button type="button" variant="ghost" className="self-start" disabled={working} onClick={() => void perform()}>状態を再取得</Button>
+          <div className="flex flex-col gap-2 border-t border-border pt-3">
+            {confirmDisconnect ? (
+              <>
+                <p className="text-sm">この Google アカウントとの接続を解除します。irori に保存した接続情報と、他の家族が共有していない取り込み予定を削除します。Google 側の予定とコピー済みカレンダーは残ります。再接続後に共有を開始すると新しい専用カレンダーが作成される場合があります。</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="destructive" disabled={working} onClick={() => void disconnect()}>接続解除を確定</Button>
+                  <Button type="button" variant="outline" disabled={working} onClick={() => setConfirmDisconnect(false)}>キャンセル</Button>
+                </div>
+              </>
+            ) : <Button type="button" variant="outline" className="self-start" disabled={working} onClick={() => setConfirmDisconnect(true)}>iroriとの接続を解除</Button>}
+          </div>
         </>
       )}
     </section>

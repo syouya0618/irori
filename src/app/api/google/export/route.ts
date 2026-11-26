@@ -50,3 +50,29 @@ export async function POST(request: Request) {
   }
   return handle(connectionId, action)
 }
+
+/** Disconnect the owner's account from irori, not from Google's other apps.
+ * The DB trigger rejects active syncs and removes only unshared import mirrors.
+ * Google-side calendars and events are never deleted by this operation.
+ */
+export async function DELETE(request: Request) {
+  if (request.headers.get("sec-fetch-site") === "cross-site" ||
+      !request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+    return Response.json({ error: "不正なリクエストです" }, { status: 403 })
+  }
+  const auth = await getAuthContext()
+  if (auth.error !== null) return Response.json({ error: auth.error }, { status: AUTH_DENIAL_HTTP_STATUS[auth.reason] })
+  const body: unknown = await request.json().catch(() => null)
+  const connectionId = body !== null && typeof body === "object" && !Array.isArray(body)
+    ? (body as Record<string, unknown>).connectionId : null
+  if (typeof connectionId !== "string" || !isClientId(connectionId)) {
+    return Response.json({ error: "接続の指定が不正です" }, { status: 400 })
+  }
+  const { supabase, userId, householdId } = auth.context
+  const { data, error } = await supabase.from("google_connections").delete()
+    .eq("id", connectionId).eq("user_id", userId).eq("household_id", householdId).select("id").maybeSingle()
+  if (error?.code === "55P03") return Response.json({ error: "同期中です。少し時間をおいて再試行してください。" }, { status: 409 })
+  if (error) return Response.json({ error: "接続を解除できませんでした。" }, { status: 503 })
+  if (!data) return Response.json({ error: "接続が見つかりません" }, { status: 404 })
+  return Response.json({ ok: true }, { headers: { "Cache-Control": "private, no-store" } })
+}

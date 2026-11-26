@@ -254,7 +254,9 @@ export async function signOut(): Promise<{ error: string }> {
  * `sync_token` / `sync_lease_until` は**秘密**で authenticated の列 GRANT の外に
  * ある。`.select("*")` は 42501 で落ちる（migration の COMMENT が名指ししておる）。
  *
- * 購読変更のDBトリガは同期中の変更を拒み、増分トークンを初期化する。\n * 最後の購読を解除した時だけ、世帯内の Google ミラーを同じトランザクションで消す。\n */
+ * 購読変更のDBトリガは同期中の変更を拒み、増分トークンを初期化する。
+ * 最後の購読を解除した時だけ、世帯内の Google ミラーを同じトランザクションで消す。
+ */
 export async function updateGoogleCalendarSelection(
   subscriptionId: string,
   isSelected: boolean,

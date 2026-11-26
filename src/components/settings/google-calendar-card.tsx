@@ -347,13 +347,16 @@ export function GoogleCalendarCard({
             <CalendarConnectLink label="Google カレンダーを接続" />
           </div>
         ) : (
-          connections.map((connection) => (
-            <GoogleConnectionRow
-              key={connection.id}
-              connection={connection}
-              onSynced={() => router.refresh()}
-            />
-          ))
+          <>
+            {connections.map((connection) => (
+              <GoogleConnectionRow
+                key={connection.id}
+                connection={connection}
+                onSynced={() => router.refresh()}
+              />
+            ))}
+            <CalendarConnectLink label="別の Google アカウントを接続" />
+          </>
         )}
       </CardContent>
     </Card>
