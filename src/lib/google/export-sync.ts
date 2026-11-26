@@ -4,24 +4,17 @@ import { fetchWithTimeout, readJsonSafe } from "@/lib/google/fetch-with-timeout"
 import { fetchCalendarList } from "@/lib/google/calendar-client"
 import { refreshAccessToken, GoogleAuthError } from "@/lib/google/oauth"
 import { loadGoogleTokens, updateGoogleAccessToken, type GoogleTokenOwner } from "@/lib/google/token-store"
-import {
-  EXPORT_CALENDAR_NAME, EXPORT_MARKER, EXPORT_MAX_EVENTS, EXPORT_PAST_DAYS, EXPORT_FUTURE_DAYS,
-  exportDescription, hasCalendarExportScope, planExport, recoverExportCollision, toExportEvent, type ExportChange, type ExportRemoteEvent,
-} from "@/lib/domain/google-calendar-export"
-import { shiftYmd, todayJstString } from "@/lib/utils/date-jst"
+import { EXPORT_CALENDAR_NAME, exportDescription, hasCalendarExportScope, isManagedCalendarDescription } from "@/lib/domain/google-calendar-export"
+import { accountTarget, bindTarget, syncManaged, type ManagedConflict } from "./managed-sync"
 
 type Row = Database["public"]["Tables"]["google_calendar_exports"]["Row"]
 type Patch = Database["public"]["Tables"]["google_calendar_exports"]["Update"]
 type Db = SupabaseClient<Database>
 type Action = "enable" | "sync" | "stop"
 type ErrorCode = "partial" | "permission" | "provisioning" | "unavailable" | "limit" | "failed"
-const COLUMNS = "connection_id,household_id,enabled,calendar_id,provisioning,lease_until,last_synced_at,last_error"
+const COLUMNS = "connection_id,household_id,enabled,calendar_id,provisioning,lease_until,last_synced_at,last_error,bidirectional,worker_nonce"
 const GOOGLE = "https://www.googleapis.com/calendar/v3"
 const LEASE_MS = 120_000
-const WRITE_BUDGET = 12
-const RUN_BUDGET_MS = 18_000
-const MAX_REMOTE_PAGES = 8
-
 export interface GoogleExportStatus {
   enabled: boolean
   configured: boolean
@@ -29,6 +22,9 @@ export interface GoogleExportStatus {
   provisioning: boolean
   busy: boolean
   lastSyncedAt: string | null
+  retiring?: boolean
+  conflicts?: ManagedConflict[]
+  pending?: boolean
   lastError: string | null
 }
 class ExportFailure extends Error {
@@ -50,6 +46,11 @@ async function api(token: string, path: string, init: RequestInit = {}): Promise
     headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", ...init.headers },
   }, 5_000)
   if (!outcome.ok) throw new RemoteFailure(null)
+  if (outcome.response.status === 401) throw new RemoteFailure(401)
+  if (outcome.response.status === 403) {
+    const body = await readJsonSafe(outcome.response.clone()) as {error?: {errors?: {reason?: string}[]}} | null
+    if (body?.error?.errors?.some(item=>["insufficientPermissions","forbidden","authError"].includes(item.reason ?? ""))) throw new RemoteFailure(403)
+  }
   return outcome.response
 }
 async function json(token: string, path: string, init: RequestInit = {}) {
@@ -58,9 +59,6 @@ async function json(token: string, path: string, init: RequestInit = {}) {
   return object(await readJsonSafe(response))
 }
 const calendarPath = (id: string) => "/calendars/" + encodeURIComponent(id)
-const eventPath = (calendar: string, id?: string) =>
-  calendarPath(calendar) + "/events" + (id ? "/" + encodeURIComponent(id) : "")
-
 async function readRow(supabase: Db, owner: GoogleTokenOwner): Promise<Row | null> {
   const { data, error } = await supabase.from("google_calendar_exports").select(COLUMNS)
     .eq("connection_id", owner.connectionId).eq("household_id", owner.householdId).maybeSingle()
@@ -69,9 +67,9 @@ async function readRow(supabase: Db, owner: GoogleTokenOwner): Promise<Row | nul
 }
 function statusOf(row: Row | null, permission: boolean): GoogleExportStatus {
   return {
-    enabled: row?.enabled ?? false,
+    enabled: Boolean(row?.enabled && row?.bidirectional),
     configured: row?.calendar_id != null,
-    permission,
+    permission: permission && row?.last_error !== "permission",
     provisioning: row?.provisioning ?? false,
     busy: row?.lease_until != null && Date.parse(row.lease_until) > Date.now(),
     lastSyncedAt: row?.last_synced_at ?? null,
@@ -91,13 +89,22 @@ async function requireCurrentMember(supabase: Db, owner: GoogleTokenOwner) {
 export async function getGoogleExportStatus(supabase: Db, owner: GoogleTokenOwner): Promise<GoogleExportStatus> {
   await requireCurrentMember(supabase, owner)
   const tokens = await loadGoogleTokens(supabase, owner)
-  return statusOf(await readRow(supabase, owner), hasCalendarExportScope(tokens?.scope))
+  const row = await readRow(supabase, owner)
+  const status = statusOf(row, hasCalendarExportScope(tokens?.scope))
+  if (row?.bidirectional && row.calendar_id) {
+    const { data, error } = await supabase.rpc("google_managed_status", { p_connection: owner.connectionId, p_user: owner.userId, p_household: owner.householdId })
+    if (error || !data || typeof data !== "object" || Array.isArray(data) || !Array.isArray(data.conflicts)) throw new ExportFailure("failed")
+    status.conflicts = data.conflicts as ManagedConflict[]
+    status.retiring = data.retiring === true
+    status.pending = data.pending === true || status.retiring
+  }
+  return status
 }
 
 async function leaseRow(supabase: Db, owner: GoogleTokenOwner): Promise<Row | null> {
   const now = new Date().toISOString()
   const lease = new Date(Date.now() + LEASE_MS).toISOString()
-  const { data, error } = await supabase.from("google_calendar_exports").update({ lease_until: lease })
+  const { data, error } = await supabase.from("google_calendar_exports").update({ lease_until: lease, worker_nonce: crypto.randomUUID() })
     .eq("connection_id", owner.connectionId).eq("household_id", owner.householdId)
     .or("lease_until.is.null,lease_until.lt." + now).select(COLUMNS).maybeSingle()
   if (error) throw new ExportFailure("failed")
@@ -124,16 +131,27 @@ async function accessToken(supabase: Db, owner: GoogleTokenOwner): Promise<strin
 }
 
 /** Only explicit enable may provision a calendar. If create's outcome is unknown, recover by marker, never create again. */
-async function provision(supabase: Db, owner: GoogleTokenOwner, row: Row, token: string): Promise<Row> {
+async function provision(supabase: Db, owner: GoogleTokenOwner, row: Row, token: string, subject: string): Promise<{row: Row; marker: string}> {
   const lease = row.lease_until!
-  if (row.calendar_id !== null) return row
-  const description = exportDescription(owner.connectionId)
-  const found = (await fetchCalendarList(token)).filter((item) => !item.primary && item.accessRole === "owner" && item.description === description)
+  const key = { household_id:owner.householdId, user_id:owner.userId, google_account_id:subject }
+  const reservation = await supabase.from("google_calendar_provisioning")
+    .upsert({...key, marker:owner.connectionId}, {onConflict:"household_id,user_id,google_account_id",ignoreDuplicates:true})
+  if (reservation.error) throw new ExportFailure("provisioning")
+  const {data:intent,error} = await supabase.from("google_calendar_provisioning").select("marker,attempted").match(key).single()
+  if (error || !intent) throw new ExportFailure("provisioning")
+  const marker=intent.marker
+  if (row.calendar_id !== null) return {row,marker}
+  const description = exportDescription(marker)
+  const calendars = (await fetchCalendarList(token,true)).filter(item=>!item.primary && item.accessRole==="owner")
+  const found = calendars.filter(item => item.description === description)
   if (found.length > 1) throw new ExportFailure("provisioning")
   if (found.length === 1) {
-    return setRow(supabase, owner, lease, { calendar_id: found[0].id, provisioning: false })
+    return {row:await setRow(supabase, owner, lease, { calendar_id: found[0].id, provisioning: false }),marker}
   }
-  if (row.provisioning) throw new ExportFailure("provisioning")
+  // A disconnected v1 calendar without surviving ownership evidence needs reconciliation.
+  if (intent.attempted || calendars.some(item=>isManagedCalendarDescription(item.description))) throw new ExportFailure("provisioning")
+  const claim=await supabase.from("google_calendar_provisioning").update({attempted:true}).match(key).eq("attempted",false).select("marker").maybeSingle()
+  if (claim.error || !claim.data) throw new ExportFailure("provisioning")
   await setRow(supabase, owner, lease, { provisioning: true })
   let payload: Record<string, unknown>
   try {
@@ -143,102 +161,14 @@ async function provision(supabase: Db, owner: GoogleTokenOwner, row: Row, token:
   } catch (error) {
     // A definitive invalid/unauthorized request cannot have created a calendar. Other failures may have.
     if (error instanceof RemoteFailure && [400, 401, 403].includes(error.status ?? 0)) {
+      const {error:resetError}=await supabase.from("google_calendar_provisioning").update({attempted:false}).match(key)
+      if (resetError) throw new ExportFailure("provisioning")
       await setRow(supabase, owner, lease, { provisioning: false })
     }
     throw error
   }
   if (typeof payload.id !== "string" || !payload.id || payload.id === "primary") throw new ExportFailure("provisioning")
-  return setRow(supabase, owner, lease, { calendar_id: payload.id, provisioning: false })
-}
-
-async function readRemote(token: string, calendarId: string, owner: GoogleTokenOwner): Promise<ExportRemoteEvent[]> {
-  // Verify the destination's identity on every pass. Never accept a calendar ID from the browser.
-  const calendar = await json(token, calendarPath(calendarId))
-  if (calendar.id !== calendarId || calendar.description !== exportDescription(owner.connectionId)) {
-    throw new ExportFailure("unavailable")
-  }
-  const events: ExportRemoteEvent[] = []
-  const seen = new Set<string>()
-  let page: string | null = null
-  for (let count = 0; count < MAX_REMOTE_PAGES; count++) {
-    const params = new URLSearchParams({
-      maxResults: "250", showDeleted: "false", singleEvents: "true",
-      privateExtendedProperty: EXPORT_MARKER + "=" + owner.connectionId,
-    })
-    if (page) params.set("pageToken", page)
-    const payload = await json(token, eventPath(calendarId) + "?" + params.toString())
-    // Never infer an empty authoritative snapshot from a malformed response.
-    if (!Array.isArray(payload.items)) throw new ExportFailure("failed")
-    for (const item of payload.items) {
-      const value = object(item)
-      if (typeof value.id !== "string") throw new ExportFailure("failed")
-      events.push(value as ExportRemoteEvent)
-    }
-    if (payload.nextPageToken === undefined || payload.nextPageToken === null) return events
-    if (typeof payload.nextPageToken !== "string" || !payload.nextPageToken || seen.has(payload.nextPageToken)) {
-      throw new ExportFailure("failed")
-    }
-    page = payload.nextPageToken
-    seen.add(page)
-  }
-  throw new ExportFailure("limit")
-}
-
-async function applyChange(token: string, calendarId: string, change: ExportChange) {
-  const id = change.kind === "delete" ? change.id : change.event.id
-  const path = eventPath(calendarId, change.kind === "insert" ? undefined : id) + "?sendUpdates=none"
-  if (change.kind === "delete") {
-    const response = await api(token, path, { method: "DELETE", headers: { "If-Match": change.etag } })
-    if (!response.ok && response.status !== 404 && response.status !== 410) throw new RemoteFailure(response.status)
-    return
-  }
-  const { id: eventId, ...fields } = change.event
-  const response = await api(token, path, {
-    method: change.kind === "insert" ? "POST" : "PATCH",
-    ...(change.kind === "patch" ? { headers: { "If-Match": change.etag } } : {}),
-    body: JSON.stringify(change.kind === "insert" ? { id: eventId, ...fields, reminders: { useDefault: false } } : { ...fields, status: "confirmed" }),
-  })
-  if (change.kind === "insert" && response.status === 409) {
-    const existing = await json(token, eventPath(calendarId, eventId))
-    const recovery = recoverExportCollision(change.event, existing as ExportRemoteEvent)
-    if (!recovery) throw new RemoteFailure(409)
-    // ETag precondition prevents overwriting a copy edited after the read.
-    await applyChange(token, calendarId, recovery)
-    return
-  }
-  if (!response.ok) throw new RemoteFailure(response.status)
-  const saved = object(await readJsonSafe(response))
-  if (saved.id !== eventId) throw new ExportFailure("failed")
-}
-
-async function reconcile(supabase: Db, owner: GoogleTokenOwner, row: Row, token: string): Promise<Patch> {
-  if (!row.calendar_id) throw new ExportFailure("unavailable")
-  const started = Date.now()
-  await requireCurrentMember(supabase, owner)
-  const today = todayJstString()
-  const { data, error } = await supabase.from("calendar_events")
-    .select("id,title,is_all_day,start_date,end_date,start_at,end_at")
-    .eq("household_id", owner.householdId).eq("source", "native")
-    .is("child_id", null).is("medical_record_id", null)
-    .gte("end_date", shiftYmd(today, -EXPORT_PAST_DAYS))
-    .lte("start_date", shiftYmd(today, EXPORT_FUTURE_DAYS))
-    .order("id").limit(EXPORT_MAX_EVENTS + 1)
-  if (error || !data) throw new ExportFailure("failed")
-  if (data.length > EXPORT_MAX_EVENTS) throw new ExportFailure("limit")
-  const desired = data.map((event) => toExportEvent(event, owner.connectionId))
-  const remote = await readRemote(token, row.calendar_id, owner)
-  const changes = planExport(desired, remote, owner.connectionId)
-  let applied = 0
-  for (const change of changes) {
-    if (applied >= WRITE_BUDGET || Date.now() - started >= RUN_BUDGET_MS) break
-    // A removed member may not resume a stale lease. No parallel writes to a single export.
-    await requireCurrentMember(supabase, owner)
-    await applyChange(token, row.calendar_id, change)
-    applied++
-  }
-  return applied === changes.length
-    ? { last_synced_at: new Date().toISOString(), last_error: null }
-    : { last_error: "partial" }
+  return {row:await setRow(supabase, owner, lease, { calendar_id: payload.id, provisioning: false }),marker}
 }
 
 function failureCode(error: unknown): ErrorCode {
@@ -261,7 +191,7 @@ async function run(supabase: Db, owner: GoogleTokenOwner, action: Action, getTok
   }
   const before = await readRow(supabase, owner)
   if (!before) return statusOf(null, permission)
-  if (action === "sync" && !before.enabled) return statusOf(before, permission)
+  if (action === "sync" && (!before.enabled || !before.bidirectional)) return statusOf(before, permission)
   const leased = await leaseRow(supabase, owner)
   if (!leased) return statusOf(await readRow(supabase, owner), permission)
   const lease = leased.lease_until!
@@ -270,22 +200,34 @@ async function run(supabase: Db, owner: GoogleTokenOwner, action: Action, getTok
       return statusOf(await setRow(supabase, owner, lease, { enabled: false, lease_until: null, last_error: null }), permission)
     }
     // Stop may have won the lease between read and claim.
-    if (action === "sync" && !leased.enabled) {
+    if (action === "sync" && (!leased.enabled || !leased.bidirectional)) {
       return statusOf(await setRow(supabase, owner, lease, { lease_until: null }), permission)
     }
     if (!permission) throw new ExportFailure("permission")
     const token = await getToken()
     let row = leased
+    const account = await accountTarget(supabase, owner)
+    const subject = account.subject
+    let target = account.target
     if (action === "enable") {
-      row = await provision(supabase, owner, row, token)
-      // Before recording the opt-in, verify that the destination is still the app-created calendar.
-      const calendar = await json(token, calendarPath(row.calendar_id!))
-      if (calendar.id !== row.calendar_id || calendar.description !== exportDescription(owner.connectionId)) {
-        throw new ExportFailure("unavailable")
+      if (target) {
+        if (row.calendar_id && row.calendar_id !== target.calendar_id) throw new ExportFailure("unavailable")
+        row = await setRow(supabase, owner, lease, { calendar_id: target.calendar_id })
+      } else {
+        const reserved = await provision(supabase, owner, row, token, subject)
+        row = reserved.row
+        await bindTarget(supabase, owner, row.calendar_id!, subject, reserved.marker)
+        target = (await accountTarget(supabase, owner)).target
       }
-      row = await setRow(supabase, owner, lease, { enabled: true })
+      if (!target || target.calendar_id !== row.calendar_id) throw new ExportFailure("unavailable")
+      const identity = await json(token, calendarPath(target.calendar_id))
+      if (identity.id !== target.calendar_id || identity.description !== exportDescription(target.marker)) throw new ExportFailure("unavailable")
+      row = await setRow(supabase, owner, lease, { enabled: true, bidirectional: true, last_synced_at: null, last_error: "partial", lease_until: null })
+      return statusOf(row, permission)
     }
-    const patch = await reconcile(supabase, owner, row, token)
+    if (!target || target.calendar_id !== row.calendar_id) throw new ExportFailure("unavailable")
+    const done = await syncManaged(supabase, target, lease, (path, init) => api(token,path,init), () => requireCurrentMember(supabase,owner))
+    const patch: Patch = done ? { last_synced_at: new Date().toISOString(), last_error: null } : { last_error: "partial" }
     return statusOf(await setRow(supabase, owner, lease, { ...patch, lease_until: null }), permission)
   } catch (error) {
     const code = failureCode(error)
@@ -304,6 +246,6 @@ export async function manageGoogleExport(supabase: Db, owner: GoogleTokenOwner, 
 export async function syncExistingGoogleExport(supabase: Db, owner: GoogleTokenOwner, getToken: () => Promise<string>): Promise<void> {
   // Existing read-only integrations never call this path. No calendar is created by background jobs.
   const row = await readRow(supabase, owner)
-  if (!row?.enabled) return
+  if (!row?.enabled || !row.bidirectional) return
   await run(supabase, owner, "sync", getToken, true)
 }

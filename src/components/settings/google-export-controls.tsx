@@ -1,10 +1,23 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect, useEffectEvent } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { ChevronDown, ChevronUp, Loader2 } from "lucide-react"
 import type { GoogleExportStatus } from "@/lib/google/export-sync"
+
+import type { Json } from "@/lib/types/database"
+
+function describeConflict(doc: Json) {
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return "予定なし（削除）"
+  const timing = doc.timing
+  if (!timing || typeof timing !== "object" || Array.isArray(timing)) return String(doc.title ?? "")
+  const at = (v: Json | undefined) => typeof v === "string" ? new Date(v).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }) : ""
+  const rule = doc.rule
+  const recurrence = rule && typeof rule === "object" && !Array.isArray(rule) && Array.isArray(rule.lines)
+    ? " · 繰り返し " + rule.lines.join(" / ") + " (" + rule.startZone + " / " + rule.endZone + ")" : ""
+  return String(doc.title ?? "") + " · " + (timing.start ? timing.start + " 〜 " + timing.end : at(timing.startAt) + " 〜 " + at(timing.endAt)) + recurrence
+}
 
 const ERROR_MESSAGES: Record<string, string> = {
   partial: "一部の予定を反映しました。残りは次の同期で反映します。",
@@ -25,7 +38,7 @@ export function GoogleExportControls({ connectionId }: { connectionId: string })
   const [error, setError] = useState<string | null>(null)
   const running = useRef(false)
 
-  async function perform(action?: "enable" | "sync" | "stop") {
+  async function perform(action?: "enable" | "sync" | "stop" | "resolve", conflictId?: string, choice?: "google" | "local") {
     if (running.current) return
     running.current = true
     setWorking(true)
@@ -34,7 +47,7 @@ export function GoogleExportControls({ connectionId }: { connectionId: string })
     const timeout = setTimeout(() => controller.abort(), 55_000)
     try {
       const response = await fetch(action ? "/api/google/export" : "/api/google/export?connectionId=" + encodeURIComponent(connectionId), {
-        ...(action ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ connectionId, action }) } : {}),
+        ...(action ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ connectionId, action, conflictId, choice }) } : {}),
         redirect: "manual", cache: "no-store", signal: controller.signal,
       })
       if (!response.ok) {
@@ -59,6 +72,13 @@ export function GoogleExportControls({ connectionId }: { connectionId: string })
       running.current = false
     }
   }
+
+  const refresh = useEffectEvent(() => { void perform() })
+  useEffect(() => {
+    if (!expanded || !status?.enabled || (!status.busy && !status.pending && status.lastError !== "partial")) return
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") refresh() }, 5000)
+    return () => window.clearInterval(timer)
+  }, [expanded,status?.enabled,status?.busy,status?.pending,status?.lastError])
 
   async function disconnect() {
     if (running.current || !confirmDisconnect) return
@@ -109,18 +129,34 @@ export function GoogleExportControls({ connectionId }: { connectionId: string })
     <section className="flex flex-col gap-3 rounded-xl border border-border p-3">
       <button type="button" aria-expanded={expanded} className="flex min-h-11 items-center justify-between gap-2 text-left text-sm font-semibold"
         onClick={() => { setExpanded(!expanded); if (!expanded) void perform() }}>
-        irori の予定を Google に共有
+        Google と家族予定を同期
         {expanded ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}
       </button>
       {expanded && (
         <>
-          <p className="text-sm text-muted-foreground">接続した本人の Google アカウントに「irori 家族の予定」という専用カレンダーを作成します。通常の家族予定の名前と日時を過去90日・今後365日分まで共有します（最大500件）。メモ・子どもに紐づく予定・医療記録は共有しません。</p>
-          <p className="text-sm text-muted-foreground">予定の追加・訂正・削除は irori で行ってください。個人の Google カレンダーは変更しません。共有する家族は各自の Google アカウントで設定してください。</p>
+          <p className="text-sm text-muted-foreground">接続した本人の Google アカウントに「irori 家族の予定」という専用カレンダーを作成します。共有する内容は通常の家族予定の名前・日時・繰り返し規則です。メモ・子どもに紐づく予定・医療記録は共有しません。</p>
+          <p className="text-sm text-muted-foreground">専用カレンダーで追加・編集・削除すると、irori と共有中の家族の専用カレンダーにも反映します。個人カレンダーは読み取り専用です。夫婦それぞれのアカウントで開始してください。</p>
           {working && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 className="animate-spin" size={16} aria-hidden="true" />確認・処理中…</p>}
           {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
           {status && (
             <>
-              <p role="status" className="text-sm font-medium">{status.enabled ? (status.permission ? "共有中" : "再接続が必要") : "共有停止中"}{status.busy ? "（別の処理が実行中）" : ""}</p>
+              <p role="status" className="text-sm font-medium">{!status.enabled ? "同期停止中" : !status.permission ? "再認証が必要" : status.conflicts?.length ? "競合あり" : status.busy ? "同期中" : status.lastError === "failed" ? "通信または同期に失敗" : status.pending || !status.lastSyncedAt || status.lastError ? "未同期" : "同期済み"}</p>
+              {status.retiring && <p role="status">繰り返しの個別回を確認中です。Google 側にシリーズが残っているため、全件の削除は未完了です。</p>}
+              {status.conflicts?.map(conflict => (
+                <div key={conflict.id} className="grid gap-2 rounded-md border p-3">
+                  <p>変更が競合しています。反映する内容を選んでください。</p>
+                  {(["local","google"] as const).map(side => (
+                    <div key={side} className="text-sm">
+                      <p>{side === "local" ? "irori" : "Google"} · {side === "google" && conflict.protected ? "内容を確認できません" : describeConflict(conflict[side])}</p>
+                      {!conflict.protected && !(conflict.legacy_missing && side === "google") && <Button variant="outline" disabled={working || status.busy} onClick={() => void perform("resolve",conflict.id,side)}>
+                        {conflict.legacy_missing ? "新しい Google 予定として送る" : side === "local" ? "irori の内容を採用" : "Google の内容を採用"}
+                      </Button>}
+                    </div>
+                  ))}
+                  {conflict.legacy_missing && <p>旧版のコピーは完全取得と個別照会の両方で見つかりませんでした。この予定を改めて共有する場合は選択してください。</p>}
+                  {conflict.protected && <p>予定の内容または編集権限を確認できません。元予定を確認した後、もう一度同期してください。</p>}
+                </div>
+              ))}
               {status.lastSyncedAt && <p className="text-xs text-muted-foreground">最終完了: {new Date(status.lastSyncedAt).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}</p>}
               {status.lastError && <p role="alert" className="text-sm text-muted-foreground">{ERROR_MESSAGES[status.lastError] ?? "共有の状態を確認してください。"}</p>}
               {!status.permission && (
@@ -138,7 +174,7 @@ export function GoogleExportControls({ connectionId }: { connectionId: string })
           {status && <div className="flex flex-col gap-2 border-t border-border pt-3">
             {confirmDisconnect ? (
               <>
-                <p className="text-sm">この Google アカウントとの接続を解除します。irori に保存した接続情報と、他の家族が共有していない取り込み予定を削除します。Google 側の予定とコピー済みカレンダーは残ります。再接続後に共有を開始すると新しい専用カレンダーが作成される場合があります。</p>
+                <p className="text-sm">この Google アカウントとの接続を解除します。irori に保存した接続情報と、他の家族が共有していない取り込み予定を削除します。Google 側の予定とコピー済みカレンダーは残ります。同じ Google アカウントで再接続すると専用カレンダーを再利用します。</p>
                 <div className="flex flex-wrap gap-2">
                   <Button type="button" variant="destructive" disabled={working} onClick={() => void disconnect()}>接続解除を確定</Button>
                   <Button type="button" variant="outline" disabled={working} onClick={() => setConfirmDisconnect(false)}>キャンセル</Button>

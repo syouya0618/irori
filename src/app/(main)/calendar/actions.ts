@@ -587,17 +587,20 @@ export async function updateCalendarEvent(
   }
 }
 
-export async function deleteCalendarEvent(id: string) {
+export async function deleteCalendarEvent(id: string, expectedUpdatedAt?: string) {
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
 
-  const { data, error } = await supabase
+  if (!isTimestamptzText(expectedUpdatedAt)) return {error:"削除する前に予定を読み直してください。"}
+  const deletion = supabase
     .from("calendar_events")
     .delete()
     .eq("id", id)
     .eq("household_id", householdId)
     .eq("source", "native")
+  deletion.eq("updated_at",expectedUpdatedAt)
+  const { data, error } = await deletion
     // series_id は、消した回がシリーズの最後の 1 回だった時に、シリーズ既定の分類
     // （event_purposes の series 行）も片付けるために読む（既存の列）
     .select("id, series_id")
@@ -620,24 +623,24 @@ export async function deleteCalendarEvent(id: string) {
   return { error: null }
 }
 
-/**
- * 繰り返しシリーズ全体を一括削除する。household_id / series_id / source='native'
- * の**三点 eq**で絞り(RLS の二重防御 + 他世帯・同期行の巻き込み防止)、.select("id")
- * で削除行数を検証する(0 行は silent fail を作らずエラー扱い)。
- */
-export async function deleteCalendarEventSeries(seriesId: string) {
+export async function readCalendarSeriesRevision(seriesId: string) {
+  const auth = await getAuthContext()
+  if (auth.error !== null) return null
+  const { data, error } = await auth.context.supabase.rpc("calendar_series_revision", { p_series: seriesId })
+  return error ? null : data
+}
+
+export async function deleteCalendarEventSeries(seriesId: string, review?: {id:string; version:string; revision:string}) {
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
-
-  const { data, error } = await supabase
-    .from("calendar_events")
-    .delete()
-    .eq("household_id", householdId)
-    .eq("series_id", seriesId)
-    .eq("source", "native")
-    .select("id")
-
+  if (!review || !isTimestamptzText(review.version) || !/^[a-f0-9]{32}$/.test(review.revision)) {
+    return { error: "すべての回を削除する前に予定を読み直してください。" }
+  }
+  const { data, error } = await supabase.rpc("delete_managed_calendar_series", {
+    p_series: seriesId, p_anchor: review.id, p_version: review.version, p_revision: review.revision,
+  })
+  if (error?.code === "40001") return { error: "ほかの端末が予定を変更しました。全件の削除を中止しました。" }
   if (error) {
     logSupabaseError("calendar", "delete series failed", error, {
       seriesId,

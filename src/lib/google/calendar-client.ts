@@ -249,7 +249,7 @@ function asArray(value: unknown): unknown[] {
  * （OFFSET ページングではないため件数比較による終端判定は使わぬ）。
  */
 export async function fetchCalendarList(
-  accessToken: string
+  accessToken: string, requireComplete = false
 ): Promise<GoogleCalendarListEntry[]> {
   const entries: GoogleCalendarListEntry[] = []
   let pageToken: string | null = null
@@ -273,11 +273,15 @@ export async function fetchCalendarList(
       "google-calendar:list"
     )
     const record = (payload ?? {}) as Record<string, unknown>
+    if (requireComplete && (!Array.isArray(record.items) || (record.nextPageToken != null && (typeof record.nextPageToken !== "string" || !record.nextPageToken)))) {
+      throw new GoogleCalendarError("unknown", "Incomplete Google calendar list")
+    }
     for (const raw of asArray(record.items)) {
       const item = (raw ?? {}) as Record<string, unknown>
       const id = asStringOrNull(item.id)
       // id 無しは購読キーを作れぬゆえ捨てる（黙らず理由を残す）。
       if (id === null) {
+        if (requireComplete) throw new GoogleCalendarError("unknown", "Incomplete calendar identity")
         console.warn("[google-calendar:list] id を持たぬカレンダーを破棄")
         continue
       }

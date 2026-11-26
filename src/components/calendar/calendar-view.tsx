@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react"
@@ -34,6 +35,7 @@ import {
   updateCalendarEvent,
   deleteCalendarEvent,
   deleteCalendarEventSeries,
+  readCalendarSeriesRevision,
   fetchGoogleSyncSignal,
   fetchEventReminder,
   setEventReminder,
@@ -213,6 +215,7 @@ export function CalendarView({
   const [sheetOpen, setSheetOpen] = useState(false)
   const router = useRouter()
   const [editing, setEditing] = useState<CalendarEventRecord | null>(null)
+  const seriesReview = useRef<Promise<string | null> | null>(null)
   // 保存の往復中の予定 id（一覧に「保存中」を出す。作成の楽観行は id の prefix で分かる）
   const [savingIds, setSavingIds] = useState<ReadonlySet<string>>(() => new Set())
   const markSaving = (id: string, on: boolean) =>
@@ -352,6 +355,8 @@ export function CalendarView({
 
   const openEvent = (event: CalendarEventRecord) => {
     if(event.medical_record_id){ router.push(`/baby/medical?child=${encodeURIComponent(event.child_id??"")}`);return }
+    seriesReview.current = event.series_id && event.source === "native"
+      ? readCalendarSeriesRevision(event.series_id).catch(() => null) : null
     setEditing(event)
     setSheetDraft(null)
     setStaleDraft(null)
@@ -1066,7 +1071,7 @@ export function CalendarView({
     setSheetOpen(false)
     startTransition(async () => {
       try {
-        const res = await deleteCalendarEvent(id)
+        const res = await deleteCalendarEvent(id,editing ? resolveOwnAdvance(editing).updated_at ?? undefined : undefined)
         if (res.error) {
           if (snapshot) m.upsertOptimistic(snapshot) // 復元
           toast.error(res.error)
@@ -1090,12 +1095,15 @@ export function CalendarView({
   // シリーズ一括削除: 楽観的に同 series_id の行を全除去 → 失敗でスナップショット復元。
   // 単発削除(単一 id 除去)と違い複数行を消すため setAllEvents で一括置換する。
   const handleDeleteSeries = (seriesId: string) => {
+    const revisionAtOpen = seriesReview.current
     const snapshot = m.events
     m.setAllEvents(m.events.filter((e) => e.series_id !== seriesId))
     setSheetOpen(false)
     startTransition(async () => {
       try {
-        const res = await deleteCalendarEventSeries(seriesId)
+        const reviewed=editing ? resolveOwnAdvance(editing) : null
+        const revision = await revisionAtOpen
+        const res = await deleteCalendarEventSeries(seriesId, reviewed?.updated_at && revision ? {id:reviewed.id, version:reviewed.updated_at, revision} : undefined)
         if (res.error) {
           m.setAllEvents(snapshot) // 復元
           toast.error(res.error)
@@ -1184,6 +1192,8 @@ export function CalendarView({
           </Button>
         </div>
       </div>
+
+      <Link href="/settings#settings-google" className="touch-target self-end text-sm text-primary underline">Google カレンダー連携設定</Link>
 
       <CalendarMonthView
         grid={m.grid}

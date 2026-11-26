@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => ({
-  auth: vi.fn(), admin: vi.fn(), manage: vi.fn(), status: vi.fn(),
+  after: vi.fn(), auth: vi.fn(), admin: vi.fn(), manage: vi.fn(), status: vi.fn(),
   from: vi.fn(), eq: vi.fn(), select: vi.fn(), remove: vi.fn(), one: vi.fn(), rpc: vi.fn(),
 }))
+vi.mock("next/server", () => ({ after: mocks.after }))
 vi.mock("@/lib/supabase/auth-context", () => ({ getAuthContext: mocks.auth }))
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: mocks.admin }))
 vi.mock("@/lib/google/export-sync", () => ({ manageGoogleExport: mocks.manage, getGoogleExportStatus: mocks.status }))
@@ -54,9 +55,17 @@ describe("app-owned calendar sharing API", () => {
     expect(mocks.status).toHaveBeenCalledWith(admin, owner)
     expect(res.headers.get("cache-control")).toBe("private, no-store")
   })
-  it.each(["enable", "sync", "stop"])("dispatches only the authorized owner's %s", async action => {
+  it.each(["enable", "stop"])("dispatches only the authorized owner's %s", async action => {
     expect((await POST(req("POST", { connectionId: id, action, householdId: "other" }))).status).toBe(200)
     expect(mocks.manage).toHaveBeenCalledWith(admin, owner, action)
+  })
+  it("returns the queued state before any Google call and invokes the owner worker after the response", async () => {
+    mocks.status.mockResolvedValue({ enabled: true, permission: true })
+    const res = await POST(req("POST", { connectionId: id, action: "sync" }))
+    expect(await res.json()).toMatchObject({status:{pending:true}})
+    expect(mocks.manage).not.toHaveBeenCalled()
+    await mocks.after.mock.calls[0][0]()
+    expect(mocks.manage).toHaveBeenCalledWith(admin,owner,"sync")
   })
   it("does not create a service-role client for another member's connection", async () => {
     mocks.one.mockResolvedValue({ data: null, error: null })
