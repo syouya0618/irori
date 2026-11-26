@@ -396,3 +396,10 @@ test("既存予定の通知は Select を変えた瞬間に保存される", asy
   await page.getByRole("option", { name: "なし" }).click()
   await waitForReminders(approvedUser.id, [])
 })
+
+test("カレンダーから本人の Google 連携設定を開く", async ({page,approvedUser}) => {
+  await loginAndOpenCalendar(page,approvedUser.email)
+  await page.getByRole("link",{name:"Google カレンダー連携設定"}).click()
+  await expect(page).toHaveURL(/\/settings#settings-google$/)
+  await expect(page.locator("#settings-google")).toBeVisible()
+})

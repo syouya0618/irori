@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react"
@@ -1184,6 +1185,8 @@ export function CalendarView({
           </Button>
         </div>
       </div>
+
+      <Link href="/settings#settings-google" className="touch-target self-end text-sm text-primary underline">Google カレンダー連携設定</Link>
 
       <CalendarMonthView
         grid={m.grid}

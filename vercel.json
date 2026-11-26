@@ -11,7 +11,8 @@
   ],
   "git": {
     "deploymentEnabled": {
-      "codex/irori-gap-closure-20261101": false
+      "codex/irori-gap-closure-20261101": false,
+      "codex/google-calendar-bidirectional": false
     }
   }
 }

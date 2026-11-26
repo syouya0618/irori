@@ -847,10 +847,36 @@ export interface Database {
         Update: Record<string, never>
         Relationships: []
       }
+      google_calendar_provisioning: {
+        Row: { household_id: string; user_id: string; google_account_id: string; marker: string; attempted: boolean }
+        Insert: { household_id: string; user_id: string; google_account_id: string; marker: string; attempted?: boolean }
+        Update: { attempted?: boolean }
+        Relationships: []
+      }
+      google_managed_calendars: {
+        Row: { calendar_id: string; household_id: string; user_id: string; google_account_id: string; marker: string; sync_token: string | null; page_token: string | null; window_start: string | null; window_end: string | null; scanned_on: string | null }
+        Insert: { calendar_id: string; household_id: string; user_id: string; google_account_id: string; marker: string }
+        Update: Record<string, never>
+        Relationships: []
+      }
+      google_managed_inbox: {
+        Row: { calendar_id: string; remote_id: string; cancelled: boolean; queued_at: string }
+        Insert: Record<string, never>
+        Update: { queued_at?: string }
+        Relationships: []
+      }
+      google_managed_events: {
+        Row: { calendar_id: string; event_id: string; remote_id: string; common: Json; common_version: string | null; etag: string | null; pending: boolean; observed: Json; conflict_id: string | null; conflict_version: string | null; conflict_etag: string | null; choice: string | null; intent: Json; queued_at: string }
+        Insert: Record<string, never>
+        Update: { choice?: "local" | "google"; pending?: boolean; queued_at?: string }
+        Relationships: []
+      }
       google_calendar_exports: {
         Row: {
           connection_id: string
           household_id: string
+          bidirectional: boolean
+          worker_nonce: string | null
           enabled: boolean
           calendar_id: string | null
           provisioning: boolean
@@ -861,6 +887,8 @@ export interface Database {
         Insert: {
           connection_id: string
           household_id: string
+          bidirectional?: boolean
+          worker_nonce?: string
           enabled?: boolean
           calendar_id?: string | null
           provisioning?: boolean
@@ -869,6 +897,8 @@ export interface Database {
           last_error?: string | null
         }
         Update: {
+          bidirectional?: boolean
+          worker_nonce?: string
           enabled?: boolean
           calendar_id?: string | null
           provisioning?: boolean
@@ -998,6 +1028,10 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
+      google_managed_exchange: { Args: { p_calendar: string; p_lease: string; p_remote: string; p_state: string; p_doc: Json; p_etag: string | null; p_legacy?: string | null; p_series?: string | null }; Returns: Json }
+      google_managed_choose: { Args: { p_connection: string; p_user: string; p_household: string; p_conflict: string; p_choice: string }; Returns: boolean }
+      google_managed_status: { Args: { p_connection: string; p_user: string; p_household: string }; Returns: Json }
+      google_managed_cursor: { Args: { p_calendar: string; p_lease: string; p_sync: string | null; p_page: string | null; p_start: string; p_end: string; p_scanned: string | null; p_items: Json }; Returns: undefined }
       google_sharing_schema_ready: { Args: Record<string, never>; Returns: boolean }
       claim_news_ai_call: { Args: { p_day: string; p_limit: number }; Returns: boolean }
       news_source_statuses:{Args:Record<string,never>;Returns:Json}

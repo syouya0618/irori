@@ -1,3 +1,4 @@
+import { after } from "next/server"
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { AUTH_DENIAL_HTTP_STATUS } from "@/lib/auth/auth-denial-status"
 import { createAdminClient } from "@/lib/supabase/admin"
@@ -8,7 +9,7 @@ import { googleSharingReady, GOOGLE_SHARING_NOT_READY } from "@/lib/google/shari
 export const maxDuration = 60
 export const runtime = "nodejs"
 
-async function handle(connectionId: unknown, action?: "enable" | "sync" | "stop") {
+async function handle(connectionId: unknown, action?: "enable" | "sync" | "stop", resolution?: { id: string; choice: "local" | "google" }) {
   const auth = await getAuthContext()
   if (auth.error !== null) return Response.json({ error: auth.error }, { status: AUTH_DENIAL_HTTP_STATUS[auth.reason] })
   if (typeof connectionId !== "string" || !isClientId(connectionId)) {
@@ -24,7 +25,17 @@ async function handle(connectionId: unknown, action?: "enable" | "sync" | "stop"
   try {
     const admin = createAdminClient()
     const owner = { connectionId, userId, householdId }
-    const status = action ? await manageGoogleExport(admin, owner, action) : await getGoogleExportStatus(admin, owner)
+    if (resolution) {
+      const selected = await admin.rpc("google_managed_choose", { p_connection: connectionId, p_user:userId, p_household:householdId,
+        p_conflict:resolution.id, p_choice:resolution.choice })
+      if (selected.error) throw new Error("resolution unavailable")
+      if (!selected.data) return Response.json({ error:"競合の状態が変わりました。再取得してください。" }, {status:409})
+    }
+    const status = action && action !== "sync" ? await manageGoogleExport(admin, owner, action) : await getGoogleExportStatus(admin, owner)
+    if ((action === "sync" || action === "enable" || resolution) && status.enabled) {
+      after(async () => { await manageGoogleExport(admin,owner,"sync") })
+      status.pending = true
+    }
     return Response.json({ status }, { headers: { "Cache-Control": "private, no-store" } })
   } catch {
     // Never expose token material, Google API response bodies or DB details to the browser.
@@ -50,7 +61,10 @@ export async function POST(request: Request) {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     return Response.json({ error: "操作の指定が不正です" }, { status: 400 })
   }
-  const { connectionId, action } = body as Record<string, unknown>
+  const { connectionId, action, conflictId, choice } = body as Record<string, unknown>
+  if (action === "resolve" && isClientId(conflictId) && (choice === "local" || choice === "google")) {
+    return handle(connectionId,undefined,{id:conflictId,choice})
+  }
   if (action !== "enable" && action !== "sync" && action !== "stop") {
     return Response.json({ error: "操作の指定が不正です" }, { status: 400 })
   }
