@@ -29,6 +29,8 @@ import {
 // 保つ(mock 化すると undefined 化して series 経路が壊れる)。
 import * as dateJst from "@/lib/utils/date-jst"
 
+const version = "2026-07-09T00:00:00.123456+00:00"
+const review = {id:"ev-1", version, revision:"0".repeat(32)}
 const HOUSEHOLD = "house-1"
 
 /**
@@ -52,6 +54,7 @@ function makeSupabase(opts: {
   rpc?: { data: unknown; error: unknown } | (() => Promise<{ data: unknown; error: unknown }>)
 }) {
   const rpcResult = opts.rpc
+  const seriesDelete = vi.fn().mockResolvedValue(opts.mutate ?? {data:[{id:"ev-1"}],error:null})
   const rpc = vi.fn((_name: string, _args: unknown) =>
     typeof rpcResult === "function"
       ? rpcResult()
@@ -107,9 +110,10 @@ function makeSupabase(opts: {
     },
   }))
   return {
-    client: { from, rpc },
+    client: { from, rpc: (name:string, args:unknown) => name === "delete_managed_calendar_series" ? seriesDelete(args) : rpc(name,args) },
     from,
     rpc,
+    seriesDelete,
     insert,
     update,
     rereadSelect,
@@ -307,14 +311,14 @@ describe("deleteCalendarEvent", () => {
   it("0 行で「削除できません」を返す", async () => {
     const sb = makeSupabase({ mutate: { data: [], error: null } })
     setContext(sb.client)
-    const r = await deleteCalendarEvent("ev-1")
+    const r = await deleteCalendarEvent("ev-1", version)
     expect(r.error).toMatch(/削除できません/)
   })
 
   it("1 行削除で成功", async () => {
     const sb = makeSupabase({ mutate: { data: [{ id: "ev-1" }], error: null } })
     setContext(sb.client)
-    const r = await deleteCalendarEvent("ev-1")
+    const r = await deleteCalendarEvent("ev-1", version)
     expect(r.error).toBeNull()
   })
 })
@@ -506,23 +510,27 @@ describe("createCalendarEvent (繰り返し)", () => {
 })
 
 describe("deleteCalendarEventSeries", () => {
-  it("household_id / series_id / source=native の三点 eq で絞り込む", async () => {
+  it("版を持たぬ旧画面からの削除は拒む",async()=>{
+    const sb=makeSupabase({})
+    setContext(sb.client)
+    expect((await deleteCalendarEventSeries("series-1")).error).toMatch(/読み直し/)
+    expect((await deleteCalendarEvent("ev-1")).error).toMatch(/読み直し/)
+    expect(sb.seriesDelete).not.toHaveBeenCalled()
+    expect(sb.from).not.toHaveBeenCalled()
+  })
+  it("確認時のシリーズ全体の版と表示した回の版を RPC に渡す", async () => {
     const sb = makeSupabase({ mutate: { data: [{ id: "a" }, { id: "b" }], error: null } })
     setContext(sb.client)
-    const r = await deleteCalendarEventSeries("series-1")
+    const r = await deleteCalendarEventSeries("series-1", review)
     expect(r.error).toBeNull()
     expect((r as { count: number }).count).toBe(2)
-    expect(sb.eqCallsFor("calendar_events")).toEqual([
-      ["household_id", HOUSEHOLD],
-      ["series_id", "series-1"],
-      ["source", "native"],
-    ])
+    expect(sb.seriesDelete).toHaveBeenCalledWith({p_series:"series-1",p_anchor:review.id,p_version:version,p_revision:review.revision})
   })
 
   it("0 行(同期予定/権限なし/存在しない series)で「削除できません」を返す", async () => {
     const sb = makeSupabase({ mutate: { data: [], error: null } })
     setContext(sb.client)
-    const r = await deleteCalendarEventSeries("series-1")
+    const r = await deleteCalendarEventSeries("series-1", review)
     expect(r.error).toMatch(/削除できません/)
   })
 
@@ -531,7 +539,7 @@ describe("deleteCalendarEventSeries", () => {
       mutate: { data: null, error: { message: "boom", code: "500", details: "", hint: "" } },
     })
     setContext(sb.client)
-    const r = await deleteCalendarEventSeries("series-1")
+    const r = await deleteCalendarEventSeries("series-1", review)
     expect(r.error).toMatch(/失敗/)
     expect(logSupabaseError).toHaveBeenCalled()
   })
@@ -579,8 +587,8 @@ describe("calendar_events を書く経路は読者ページを漏れなく無効
           expectedUpdatedAt: "2026-07-09T00:00:00.123456+00:00",
         }),
     ],
-    ["deleteCalendarEvent", () => deleteCalendarEvent("ev-1")],
-    ["deleteCalendarEventSeries", () => deleteCalendarEventSeries("series-1")],
+    ["deleteCalendarEvent", () => deleteCalendarEvent("ev-1", version)],
+    ["deleteCalendarEventSeries", () => deleteCalendarEventSeries("series-1", review)],
   ]
 
   it.each(cases)("%s", async (_name, run) => {
@@ -593,7 +601,7 @@ describe("calendar_events を書く経路は読者ページを漏れなく無効
 
   it("失敗経路（0 行）では 1 つも無効化せぬ", async () => {
     setContext(makeSupabase({ mutate: { data: [], error: null } }).client)
-    const r = await deleteCalendarEvent("ev-1")
+    const r = await deleteCalendarEvent("ev-1", version)
     expect(r.error).toMatch(/削除できません/)
     expect(revalidatePath).not.toHaveBeenCalled()
   })
@@ -848,7 +856,7 @@ describe("予定を消したら通知設定も掃除する", () => {
   it("deleteCalendarEvent は **予定を消した後に** event_reminders を掃除する", async () => {
     const sb = makeSupabase({ mutate: { data: [{ id: "ev-1" }], error: null } })
     setContext(sb.client)
-    const r = await deleteCalendarEvent("ev-1")
+    const r = await deleteCalendarEvent("ev-1", version)
     expect(r.error).toBeNull()
     // 順序が逆だと、予定の削除が失敗したときに通知だけ失われる。
     expect(sb.from.mock.calls.map(([t]) => t)).toEqual([
@@ -863,7 +871,7 @@ describe("予定を消したら通知設定も掃除する", () => {
   it("0 行削除（同期予定・権限なし）では掃除を撃たぬ", async () => {
     const sb = makeSupabase({ mutate: { data: [], error: null } })
     setContext(sb.client)
-    await deleteCalendarEvent("ev-1")
+    await deleteCalendarEvent("ev-1", version)
     expect(sb.from.mock.calls.map(([t]) => t)).toEqual(["calendar_events"])
   })
 
@@ -872,7 +880,7 @@ describe("予定を消したら通知設定も掃除する", () => {
       mutate: { data: [{ id: "a" }, { id: "b" }], error: null },
     })
     setContext(sb.client)
-    const r = await deleteCalendarEventSeries("series-1")
+    const r = await deleteCalendarEventSeries("series-1", review)
     expect(r.error).toBeNull()
     expect(sb.inCallsFor("event_reminders")).toEqual([["event_uid", ["a", "b"]]])
   })
@@ -886,7 +894,7 @@ describe("予定を消したら通知設定も掃除する", () => {
       },
     })
     setContext(sb.client)
-    const r = await deleteCalendarEvent("ev-1")
+    const r = await deleteCalendarEvent("ev-1", version)
     expect(r.error).toBeNull()
     expect(logSupabaseError).toHaveBeenCalled()
     expect(revalidatePath).toHaveBeenCalled()
@@ -904,7 +912,7 @@ describe("予定を消したら、ごみの分類も掃除する", () => {
   it("deleteCalendarEvent は、予定と通知設定を消した後に、消した回とそのシリーズを掃除へ渡す", async () => {
     const sb = makeSupabase({ mutate: { data: [{ id: EV_A, series_id: SERIES }], error: null } })
     setContext(sb.client)
-    const r = await deleteCalendarEvent(EV_A)
+    const r = await deleteCalendarEvent(EV_A, version)
     expect(r.error).toBeNull()
     expect(sb.rpc.mock.calls).toEqual([
       ["cleanup_deleted_event_purposes", { p_event_ids: [EV_A], p_series_id: SERIES }],
@@ -919,7 +927,7 @@ describe("予定を消したら、ごみの分類も掃除する", () => {
   it("単発の予定（series_id なし）はシリーズを渡さぬ", async () => {
     const sb = makeSupabase({ mutate: { data: [{ id: EV_A, series_id: null }], error: null } })
     setContext(sb.client)
-    await deleteCalendarEvent(EV_A)
+    await deleteCalendarEvent(EV_A, version)
     expect(sb.rpc.mock.calls).toEqual([
       ["cleanup_deleted_event_purposes", { p_event_ids: [EV_A], p_series_id: null }],
     ])
@@ -928,7 +936,7 @@ describe("予定を消したら、ごみの分類も掃除する", () => {
   it("deleteCalendarEventSeries は消せた全ての回とシリーズを掃除へ渡す", async () => {
     const sb = makeSupabase({ mutate: { data: [{ id: EV_A }, { id: EV_B }], error: null } })
     setContext(sb.client)
-    const r = await deleteCalendarEventSeries(SERIES)
+    const r = await deleteCalendarEventSeries(SERIES, review)
     expect(r).toEqual({ error: null, count: 2 })
     expect(sb.rpc.mock.calls).toEqual([
       ["cleanup_deleted_event_purposes", { p_event_ids: [EV_A, EV_B], p_series_id: SERIES }],
@@ -938,15 +946,15 @@ describe("予定を消したら、ごみの分類も掃除する", () => {
   it("0 行削除（同期予定・権限なし）では掃除を撃たぬ", async () => {
     const sb = makeSupabase({ mutate: { data: [], error: null } })
     setContext(sb.client)
-    await deleteCalendarEvent(EV_A)
-    await deleteCalendarEventSeries(SERIES)
+    await deleteCalendarEvent(EV_A, version)
+    await deleteCalendarEventSeries(SERIES, review)
     expect(sb.rpc).not.toHaveBeenCalled()
   })
 
   it("UUID の形でない id・シリーズは RPC へ渡さぬ（掃除ごと 22P02 にせぬ）", async () => {
     const sb = makeSupabase({ mutate: { data: [{ id: "ev-1" }], error: null } })
     setContext(sb.client)
-    await deleteCalendarEventSeries("series-1")
+    await deleteCalendarEventSeries("series-1", review)
     expect(sb.rpc).not.toHaveBeenCalled()
   })
 
@@ -956,7 +964,7 @@ describe("予定を消したら、ごみの分類も掃除する", () => {
       rpc: { data: null, error: { message: "boom", code: "42501", details: "", hint: "" } },
     })
     setContext(sb.client)
-    const r = await deleteCalendarEvent(EV_A)
+    const r = await deleteCalendarEvent(EV_A, version)
     expect(r.error).toBeNull()
     expect(logSupabaseError).toHaveBeenCalledWith(
       "calendar",
@@ -974,7 +982,7 @@ describe("予定を消したら、ごみの分類も掃除する", () => {
       rpc: () => Promise.reject(new Error("network down")),
     })
     setContext(sb.client)
-    const r = await deleteCalendarEvent(EV_A)
+    const r = await deleteCalendarEvent(EV_A, version)
     expect(r.error).toBeNull()
     expect(consoleError).toHaveBeenCalled()
     expect(revalidatePath).toHaveBeenCalled()

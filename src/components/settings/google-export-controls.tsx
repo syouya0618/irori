@@ -13,7 +13,10 @@ function describeConflict(doc: Json) {
   const timing = doc.timing
   if (!timing || typeof timing !== "object" || Array.isArray(timing)) return String(doc.title ?? "")
   const at = (v: Json | undefined) => typeof v === "string" ? new Date(v).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }) : ""
-  return String(doc.title ?? "") + " · " + (timing.start ? timing.start + " 〜 " + timing.end : at(timing.startAt) + " 〜 " + at(timing.endAt))
+  const rule = doc.rule
+  const recurrence = rule && typeof rule === "object" && !Array.isArray(rule) && Array.isArray(rule.lines)
+    ? " · 繰り返し " + rule.lines.join(" / ") + " (" + rule.startZone + " / " + rule.endZone + ")" : ""
+  return String(doc.title ?? "") + " · " + (timing.start ? timing.start + " 〜 " + timing.end : at(timing.startAt) + " 〜 " + at(timing.endAt)) + recurrence
 }
 
 const ERROR_MESSAGES: Record<string, string> = {

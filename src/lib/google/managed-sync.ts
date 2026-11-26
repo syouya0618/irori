@@ -8,8 +8,8 @@ import { shiftYmd, todayJstString } from "@/lib/utils/date-jst"
 type Db = SupabaseClient<Database>
 type Target = Database["public"]["Tables"]["google_managed_calendars"]["Row"]
 type Api = (path: string, init?: RequestInit) => Promise<Response>
-type Wire = ExportRemoteEvent & { recurringEventId?: string }
-type Lease = { calendar: string; lease: string; marker: string; api: Api; db: Db }
+type Wire = ExportRemoteEvent & { recurringEventId?: string; recurrence?: string[]; originalStartTime?: {date?:string;dateTime?:string} }
+type Lease = { calendar: string; lease: string; marker: string; api: Api; db: Db; parents: Set<string> }
 const columns = "calendar_id,household_id,user_id,google_account_id,marker,sync_token,page_token,window_start,window_end,scanned_on"
 
 export async function accountTarget(db: Db, owner: GoogleTokenOwner) {
@@ -32,16 +32,56 @@ function pathFor(calendar: string, id?: string) {
   return "/calendars/" + encodeURIComponent(calendar) + "/events" + (id ? "/" + encodeURIComponent(id) : "")
 }
 
-async function exchange(ctx: Lease, id: string, item: Wire | null, cancelled: boolean) {
+async function seriesContext(ctx: Lease, id: string) {
+  const {data,error}=await ctx.db.rpc("google_managed_series_context",{p_calendar:ctx.calendar,p_lease:ctx.lease,p_remote:id})
+  if (error || !data || typeof data!=="object" || Array.isArray(data)) throw new Error("series context unavailable")
+  return data
+}
+
+function occurrenceAnchor(item: Wire) {
+  const original=item.originalStartTime
+  if (typeof original?.date==="string") return original.date
+  if (original?.dateTime && Number.isFinite(Date.parse(original.dateTime))) return new Date(original.dateTime).toISOString()
+  return null
+}
+
+async function findInstance(ctx: Lease, master: string, anchor: string) {
+  const query=new URLSearchParams({originalStart:anchor, showDeleted:"true",maxResults:"250"})
+
+  const url=pathFor(ctx.calendar,master)+"/instances?"
+  const found: Wire[]=[]
+  for (let page=0;page<20;page++) {
+    const response=await ctx.api(url+query.toString())
+    if (!response.ok) throw new Error("instance lookup failed")
+    const body=await response.json()
+    if (!Array.isArray(body.items)) throw new Error("invalid instance list")
+    for (const item of body.items) if (item.recurringEventId===master && occurrenceAnchor(item)===anchor) found.push(item)
+    if (!body.nextPageToken) {
+      if (found.length!==1 || !found[0].id) throw new Error("instance identity unavailable")
+      return found[0].id
+    }
+    query.set("pageToken",body.nextPageToken)
+  }
+  throw new Error("instance limit reached")
+}
+
+async function exchange(ctx: Lease, id: string, item: Wire | null, cancelled: boolean, seriesId: string | null, master: boolean) {
   const obs = item ? googleEventObservation(item,ctx.marker) : { state: cancelled ? "cancelled" : "missing", doc: null, legacy: null, series: null }
   const { data, error } = await ctx.db.rpc("google_managed_exchange", { p_calendar:ctx.calendar, p_lease:ctx.lease,
     p_remote:id, p_state:obs.state, p_doc:obs.doc, p_etag:item?.etag ?? null, p_legacy:obs.legacy,
-    p_series:obs.series ? managedSeriesId(ctx.calendar,obs.series) : null })
+    p_series:seriesId, p_master:master, p_anchor:item ? occurrenceAnchor(item) : null })
   if (error || !data || typeof data !== "object" || Array.isArray(data) || typeof data.action !== "string") throw new Error("failed to persist event observation")
   return { action:data.action, doc:data.doc ?? null }
 }
 
-async function processEvent(ctx: Lease, id: string, listedCancelled=false) {
+async function processEvent(ctx: Lease, requestedId: string, listedCancelled=false, parentOnly=false) {
+  const context=await seriesContext(ctx,requestedId)
+  let id=requestedId
+  if (context.kind==="instance" && context.bound!==true) {
+    if (parentOnly || typeof context.master!=="string" || typeof context.anchor!=="string") throw new Error("invalid series dependency")
+    if (!context.rootReady) await processEvent(ctx,context.master,false,true)
+    id=await findInstance(ctx,context.master,context.anchor)
+  }
   const path = pathFor(ctx.calendar,id)
   const response = await ctx.api(path)
   let item: Wire | null = null
@@ -49,10 +89,25 @@ async function processEvent(ctx: Lease, id: string, listedCancelled=false) {
     item = await response.json() as Wire
     if (item?.id !== id) throw new Error("invalid event identity")
   } else if (![404,410].includes(response.status)) throw new Error("event lookup failed")
-  const plan = await exchange(ctx,id,item,listedCancelled || response.status===410)
+  const master=Boolean(item?.recurrence || context.kind==="master")
+  let seriesId=master ? managedSeriesId(ctx.calendar,id) : null
+  if (item?.recurringEventId) {
+    if (parentOnly || item.recurringEventId===id) throw new Error("invalid recurring parent")
+    let parent=await seriesContext(ctx,item.recurringEventId)
+    if (!ctx.parents.has(item.recurringEventId)) {
+      await processEvent(ctx,item.recurringEventId,false,true)
+      ctx.parents.add(item.recurringEventId)
+      parent=await seriesContext(ctx,item.recurringEventId)
+    }
+    if (parent.kind==="master" && parent.active===false && parent.retired!==true && item.status!=="cancelled") throw new Error("series paused")
+    if (typeof parent.series!=="string" || !occurrenceAnchor(item)) throw new Error("missing occurrence identity")
+    seriesId=parent.series
+  }
+  const plan = await exchange(ctx,id,item,listedCancelled || response.status===410 || (context.parentCancelled===true && response.status===404),seriesId,master)
   if (plan.action==="none" || plan.action==="conflict") return
   const insert = plan.action==="insert"
   const remove = plan.action==="delete"
+  if (master && remove) throw new Error("cannot cascade across independent Google versions")
   if (!insert && !remove && plan.action!=="patch") throw new Error("unknown sync action")
   if (!insert && !item?.etag) throw new Error("missing conditional version")
   const fields = remove ? undefined : googleFields(plan.doc)
@@ -68,7 +123,7 @@ async function processEvent(ctx: Lease, id: string, listedCancelled=false) {
   if (!saved.ok) throw new Error("conditional write failed")
   const updated = remove ? null : await saved.json() as Wire
   if (!remove && updated?.id!==id) throw new Error("invalid mutation reply")
-  await exchange(ctx,id,updated,remove)
+  await exchange(ctx,id,updated,remove,seriesId,master)
 }
 
 export async function syncManaged(db: Db, target: Target, lease: string, api: Api, stillMember: () => Promise<void>) {
@@ -76,13 +131,13 @@ export async function syncManaged(db: Db, target: Target, lease: string, api: Ap
   const identity = await api("/calendars/"+encodeURIComponent(calendar))
   const metadata = identity.ok ? await identity.json() : null
   if (metadata?.id!==calendar || metadata.description!==exportDescription(target.marker)) throw new Error("destination identity changed")
-  const ctx = { calendar, lease, marker:target.marker, api, db }
+  const ctx = { calendar, lease, marker:target.marker, api, db, parents:new Set<string>() }
   const today = todayJstString()
   const refreshWindow = !target.page_token && target.scanned_on !== null && target.scanned_on <= shiftYmd(today,-7)
   const sync = refreshWindow ? null : target.sync_token
   const start = refreshWindow || !target.window_start ? shiftYmd(today,-90) : target.window_start
   const end = refreshWindow || !target.window_end ? shiftYmd(today,366) : target.window_end
-  async function cursor(nextSync: string | null, page: string | null, scanned: string | null, items: {id:string;cancelled:boolean}[] = []) {
+  async function cursor(nextSync: string | null, page: string | null, scanned: string | null, items: {id:string;cancelled:boolean;etag?:string;parent?:string}[] = []) {
     const { error } = await db.rpc("google_managed_cursor", {p_calendar:calendar,p_lease:lease,p_sync:nextSync,p_page:page,p_start:start,p_end:end,p_scanned:scanned,p_items:items})
     if (error) throw new Error("cursor commit failed")
   }
@@ -106,12 +161,12 @@ export async function syncManaged(db: Db, target: Target, lease: string, api: Ap
       (!next && (typeof final!=="string" || !final))) throw new Error("incomplete listing")
   const items = page.items.map((row: Wire) => {
     if (typeof row?.id!=="string" || !row.id) throw new Error("invalid event on page")
-    return {id:row.id,cancelled:row.status==="cancelled"}
+    return {id:row.id,cancelled:row.status==="cancelled",etag:row.etag,parent:row.recurringEventId}
   })
   await cursor(next ? sync : final,next ?? null,sync ? target.scanned_on : next ? null : today,items)
   const [inbox, outbox] = await Promise.all([
-    db.from("google_managed_inbox").select("remote_id,cancelled,queued_at").eq("calendar_id",calendar).order("queued_at").order("remote_id").limit(12),
-    db.from("google_managed_events").select("remote_id").eq("calendar_id",calendar).eq("pending",true).order("queued_at").order("event_id").limit(12),
+    db.from("google_managed_inbox").select("remote_id,cancelled,queued_at").eq("calendar_id",calendar).order("queued_at").order("remote_id").limit(100),
+    db.from("google_managed_events").select("remote_id").eq("calendar_id",calendar).eq("pending",true).order("is_master",{ascending:false}).order("queued_at").order("event_id").limit(100),
   ])
   if (inbox.error || outbox.error) throw new Error("queue unavailable")
   const jobs = new Map(inbox.data.map(item=>[item.remote_id,item]))

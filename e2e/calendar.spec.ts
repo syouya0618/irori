@@ -403,3 +403,40 @@ test("カレンダーから本人の Google 連携設定を開く", async ({page
   await expect(page).toHaveURL(/\/settings#settings-google$/)
   await expect(page.locator("#settings-google")).toBeVisible()
 })
+
+test("専用カレンダーから取り込んだ予定を irori で編集し、次の同期に反映する", async ({ page, approvedUser }) => {
+  await loginAndOpenCalendar(page, approvedUser.email)
+  const db=adminClient()
+  const {data:profile,error}=await db.from("profiles").select("household_id").eq("id",approvedUser.id).single()
+  expect(error).toBeNull()
+  const household=profile!.household_id
+  const connection=crypto.randomUUID()
+  const calendar="fixture-"+connection
+  const lease=new Date(Date.now()+90_000).toISOString()
+  const day=todayJst()
+  const doc={title:"Google からの家族予定",timing:{start:day,end:day}}
+  const base={p_calendar:calendar,p_remote:"external-event",p_state:"present",p_doc:doc,p_etag:"v1",p_lease:lease}
+  try {
+    await db.from("google_connections").insert({id:connection,user_id:approvedUser.id,household_id:household,google_account_id:connection,google_email:approvedUser.email}).throwOnError()
+    await db.from("google_calendar_exports").insert({connection_id:connection,household_id:household,calendar_id:calendar,bidirectional:true,enabled:true,lease_until:lease}).throwOnError()
+    await db.from("google_managed_calendars").insert({calendar_id:calendar,household_id:household,user_id:approvedUser.id,google_account_id:connection,marker:connection}).throwOnError()
+    const received=await db.rpc("google_managed_exchange",base).throwOnError()
+    expect(received.data.action).toBe("none")
+    await reloadHydrated(page)
+    await page.getByText(doc.title,{exact:true}).click()
+    await expect(page.getByRole("heading",{name:"予定を編集"})).toBeVisible()
+    await page.getByLabel("タイトル").fill("irori で変更した予定")
+    await page.getByRole("button",{name:"更新",exact:true}).click()
+    await waitForEventCount(approvedUser.id,"irori で変更した予定",1)
+    const planned=await db.rpc("google_managed_exchange",base).throwOnError()
+    expect(planned.data).toMatchObject({action:"patch",doc:{title:"irori で変更した予定"}})
+    const saved=await db.rpc("google_managed_exchange",{...base,p_doc:planned.data.doc,p_etag:"v2"}).throwOnError()
+    expect(saved.data.action).toBe("none")
+    const removed=await db.rpc("google_managed_exchange",{...base,p_state:"cancelled",p_doc:null,p_etag:"v3"}).throwOnError()
+    expect(removed.data.action).toBe("none")
+    await reloadHydrated(page)
+    await expect(page.getByText("irori で変更した予定",{exact:true})).toHaveCount(0)
+  } finally {
+    await db.from("google_calendar_exports").update({lease_until:null}).eq("connection_id",connection).throwOnError()
+  }
+})

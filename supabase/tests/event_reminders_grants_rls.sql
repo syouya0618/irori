@@ -255,8 +255,9 @@ SELECT set_eq(
         'trg_calendar_events_sync_remind_at_upd',
         'guard_medical_calendar',
         -- 20261111100001_event_purposes.sql: ごみのシリーズ既定の前日通知を後から入った回へ足す
-        'trg_calendar_events_purpose_default'],
-  'A-13a: calendar_events のトリガは既存 1 本 + 通知追随 2 本 + 医療記録保護 1 本 + 用途の既定通知 1 本'
+        'trg_calendar_events_purpose_default',
+        'queue_google_event','native_series_inserted','lock_calendar_series'],
+  'A-13a: calendar_events のトリガは既存 1 本 + 通知追随 2 本 + 医療記録保護 1 本 + 用途の既定通知 1 本 + Google 同期キューとシリーズ登録'
 );
 SELECT ok(
   EXISTS (

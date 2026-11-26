@@ -866,7 +866,7 @@ export interface Database {
         Relationships: []
       }
       google_managed_events: {
-        Row: { calendar_id: string; event_id: string; remote_id: string; common: Json; common_version: string | null; etag: string | null; pending: boolean; observed: Json; conflict_id: string | null; conflict_version: string | null; conflict_etag: string | null; choice: string | null; intent: Json; queued_at: string }
+        Row: { calendar_id: string; event_id: string; remote_id: string; is_master: boolean; remote_bound: boolean; common: Json; common_version: string | null; etag: string | null; pending: boolean; observed: Json; conflict_id: string | null; conflict_version: string | null; conflict_etag: string | null; choice: string | null; intent: Json; queued_at: string }
         Insert: Record<string, never>
         Update: { choice?: "local" | "google"; pending?: boolean; queued_at?: string }
         Relationships: []
@@ -1028,10 +1028,14 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
-      google_managed_exchange: { Args: { p_calendar: string; p_lease: string; p_remote: string; p_state: string; p_doc: Json; p_etag: string | null; p_legacy?: string | null; p_series?: string | null }; Returns: Json }
+      google_managed_exchange: { Args: { p_calendar: string; p_lease: string; p_remote: string; p_state: string; p_doc: Json; p_etag: string | null; p_legacy?: string | null; p_series?: string | null; p_anchor?: string | null; p_master?: boolean }; Returns: Json }
+      google_managed_series_context: { Args: {p_calendar: string; p_lease: string; p_remote: string}; Returns: Json }
       google_managed_choose: { Args: { p_connection: string; p_user: string; p_household: string; p_conflict: string; p_choice: string }; Returns: boolean }
+      calendar_series_revision: { Args: {p_series:string}; Returns: string | null }
+      delete_managed_calendar_series: { Args: {p_series:string; p_anchor:string; p_version:string; p_revision:string}; Returns: {id:string}[] }
       google_managed_status: { Args: { p_connection: string; p_user: string; p_household: string }; Returns: Json }
       google_managed_cursor: { Args: { p_calendar: string; p_lease: string; p_sync: string | null; p_page: string | null; p_start: string; p_end: string; p_scanned: string | null; p_items: Json }; Returns: undefined }
+      google_managed_sync_ready: { Args: Record<string, never>; Returns: boolean }
       google_sharing_schema_ready: { Args: Record<string, never>; Returns: boolean }
       claim_news_ai_call: { Args: { p_day: string; p_limit: number }; Returns: boolean }
       news_source_statuses:{Args:Record<string,never>;Returns:Json}

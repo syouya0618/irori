@@ -16,7 +16,7 @@ async function handle(connectionId: unknown, action?: "enable" | "sync" | "stop"
     return Response.json({ error: "接続の指定が不正です" }, { status: 400 })
   }
   const { supabase, userId, householdId } = auth.context
-  if (!(await googleSharingReady(supabase))) return notReady()
+  if (!(await googleSharingReady(supabase, true))) return notReady()
   // Owner-only, even though ordinary import metadata is readable by household members.
   const { data, error } = await supabase.from("google_connections").select("id")
     .eq("id", connectionId).eq("user_id", userId).eq("household_id", householdId).maybeSingle()

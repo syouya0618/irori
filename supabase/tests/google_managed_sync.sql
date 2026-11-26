@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(22);
+SELECT plan(44);
 INSERT INTO households(id,name) VALUES('10000000-0000-4000-8000-000000000001','sync fixture');
 INSERT INTO auth.users(id,email) VALUES('20000000-0000-4000-8000-000000000001','one@example.test'),('20000000-0000-4000-8000-000000000002','two@example.test');
 UPDATE profiles SET household_id='10000000-0000-4000-8000-000000000001',is_approved=true,role='member'
@@ -17,7 +17,7 @@ CREATE FUNCTION pg_temp.doc(t text, offset_days integer DEFAULT 0) RETURNS jsonb
  SELECT jsonb_build_object('title',t,'timing',jsonb_build_object('start',current_date+offset_days,'end',current_date+offset_days+1))
 $$;
 SELECT ok(NOT has_table_privilege('authenticated','google_managed_events','SELECT,UPDATE'),'mapping unavailable to browsers');
-SELECT ok(NOT has_function_privilege('anon','google_managed_exchange(text,timestamptz,text,text,jsonb,text,uuid,uuid)','EXECUTE'),'worker RPC denied to anon');
+SELECT ok(NOT has_function_privilege('anon','google_managed_exchange(text,timestamptz,text,text,jsonb,text,uuid,uuid,boolean,text)','EXECUTE'),'worker RPC denied to anon');
 SELECT is(pg_temp.observe('google-a','present',pg_temp.doc('initial'),'v1'),'none','Google create materializes a family event');
 SELECT is((SELECT count(*) FROM calendar_events WHERE source='native' AND title='initial'),1::bigint,'Google event is editable native');
 SELECT is((SELECT count(*) FROM google_managed_events WHERE event_id=(SELECT id FROM calendar_events WHERE title='initial')),2::bigint,'both spouses point to same native row');
@@ -44,5 +44,52 @@ SELECT is((SELECT count(*) FROM google_retired_event_ids WHERE remote_id='google
 SELECT is(pg_temp.observe('google-a','present',pg_temp.doc('stale replay'),'v1'),'none','obsolete identity ignored');
 SELECT is((SELECT count(*) FROM calendar_events WHERE title='stale replay'),0::bigint,'no revival from old page');
 SELECT ok(NOT google_managed_choose('20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000001',gen_random_uuid(),'google'),'spouse cannot resolve another connection');
+-- A master and two native materialized occurrences use separate identities.
+INSERT INTO calendar_events(id,household_id,series_id,title,is_all_day,start_date,end_date,source)
+ SELECT gen_random_uuid(),'10000000-0000-4000-8000-000000000001','40000000-0000-4000-8000-000000000001','weekly',true,current_date+n,current_date+n,'native'
+ FROM unnest(ARRAY[1,8]) n;
+SELECT is((SELECT count(*) FROM google_series_occurrences WHERE series_id='40000000-0000-4000-8000-000000000001'),2::bigint,'two immutable original occurrence anchors');
+SELECT is((SELECT count(*) FROM google_managed_events WHERE is_master),2::bigint,'one parent per spouse');
+SELECT ok((SELECT doc#>>'{rule,lines,0}' FROM google_family_series WHERE series_id='40000000-0000-4000-8000-000000000001') LIKE 'RDATE;VALUE=DATE:%','real Google recurrence payload for finite irori series');
+CREATE FUNCTION pg_temp.master(title text) RETURNS jsonb LANGUAGE sql AS $$
+ SELECT pg_temp.doc(title)||'{"rule":{"lines":["RRULE:FREQ=WEEKLY"],"startZone":"Asia/Tokyo","endZone":"Asia/Tokyo"}}'::jsonb
+$$;
+SELECT is(google_managed_exchange('20000000-0000-4000-8000-000000000001',now()+interval '10 minutes','g-master','present',pg_temp.master('原本'),'g1',null,
+ '40000000-0000-4000-8000-000000000002',true)->>'action','none','Google-created series retains master rule');
+CREATE FUNCTION pg_temp.series_obs(remote text,title text) RETURNS text LANGUAGE sql AS $$
+ SELECT google_managed_exchange('20000000-0000-4000-8000-000000000001',now()+interval '10 minutes',remote,'present',pg_temp.doc(title),'i1',null,
+ '40000000-0000-4000-8000-000000000002',false,current_date::text)->>'action'
+$$;
+SELECT is(pg_temp.series_obs('g-instance','例外'),'none','Google occurrence becomes native');
+SELECT is((SELECT count(*) FROM calendar_events WHERE series_id='40000000-0000-4000-8000-000000000002'),1::bigint,'one native instance');
+SELECT is((SELECT count(*) FROM google_managed_events m JOIN google_family_series s ON m.event_id=s.root_id WHERE s.series_id='40000000-0000-4000-8000-000000000002'),2::bigint,'foreign Google parent fans out to spouse');
+SELECT is(google_managed_exchange('20000000-0000-4000-8000-000000000002',now()+interval '10 minutes','other-instance','present',pg_temp.doc('例外'),'sp1',null,
+ '40000000-0000-4000-8000-000000000002',false,current_date::text)->>'action','none','spouse occurrence binds to original meeting');
+SELECT is((SELECT count(*) FROM calendar_events WHERE series_id='40000000-0000-4000-8000-000000000002'),1::bigint,'spouse echo creates no duplicate');
+SELECT is((SELECT event_id FROM google_managed_events WHERE remote_id='other-instance'),(SELECT event_id FROM google_managed_events WHERE remote_id='g-instance'),'both Google IDs point at same irori occurrence');
+SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000001',true);
+SELECT set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000001","role":"authenticated"}',true);
+CREATE TEMP TABLE reviewed AS SELECT e.id,e.updated_at,e.series_id,public.calendar_series_revision(e.series_id) AS revision FROM calendar_events e
+ WHERE series_id='40000000-0000-4000-8000-000000000001' ORDER BY start_date LIMIT 1;
+SELECT ok((SELECT revision IS NOT NULL FROM reviewed),'editor can capture series revision');
+INSERT INTO calendar_events(id,household_id,series_id,title,is_all_day,start_date,end_date,source)
+ SELECT gen_random_uuid(),'10000000-0000-4000-8000-000000000001',series_id,'concurrent addition',true,current_date+15,current_date+15,'native' FROM reviewed;
+SELECT throws_ok('SELECT delete_managed_calendar_series(series_id,id,updated_at,revision) FROM reviewed','40001','series changed','another occurrence invalidates reviewed series delete');
+SELECT is((SELECT count(*) FROM calendar_events WHERE series_id=(SELECT series_id FROM reviewed)),3::bigint,'stale request retained all occurrences');
+SELECT ok(NOT has_function_privilege('anon','calendar_series_revision(uuid)','EXECUTE'),'anonymous callers cannot learn series revision');
+SELECT is(google_managed_exchange('20000000-0000-4000-8000-000000000001',now()+interval '10 minutes','g-master','cancelled',NULL,'g2',null,
+ '40000000-0000-4000-8000-000000000002',true)->>'action','conflict','a master cancellation cannot cascade across spouses');
+SELECT ok(google_managed_choose('20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001',
+ (SELECT conflict_id FROM google_managed_events WHERE remote_id='g-master'),'local'),'owner may keep the series');
+SELECT is(google_managed_exchange('20000000-0000-4000-8000-000000000001',now()+interval '10 minutes','g-master','cancelled',NULL,'g2',null,
+ '40000000-0000-4000-8000-000000000002',true)->>'action','none','new generation allocated for retained master');
+SELECT ok(EXISTS(SELECT 1 FROM google_retired_event_ids WHERE remote_id='g-instance'),'old occurrence ID retired together with old master');
+SELECT is(pg_temp.series_obs('replacement-instance','例外'),'none','new occurrence can bind to existing native row');
+SELECT is((SELECT count(*) FROM calendar_events WHERE series_id='40000000-0000-4000-8000-000000000002'),1::bigint,'generation change cannot duplicate occurrences');
+INSERT INTO calendar_events(id,household_id,series_id,title,is_all_day,start_date,end_date,source)
+ VALUES(gen_random_uuid(),'10000000-0000-4000-8000-000000000001','40000000-0000-4000-8000-000000000003','far future',true,current_date+800,current_date+800,'native');
+SELECT is((SELECT google_managed_exchange(m.calendar_id,now()+interval '10 minutes',m.remote_id,'missing',NULL,NULL,null,s.series_id,true)->>'action'
+ FROM google_managed_events m JOIN google_family_series s ON s.root_id=m.event_id WHERE s.series_id='40000000-0000-4000-8000-000000000003' LIMIT 1),'none','no outbound parent for a wholly out-of-window series');
+SELECT ok(public.google_managed_sync_ready(),'managed schema readiness includes triggers and required RPC');
 SELECT * FROM finish();
 ROLLBACK;

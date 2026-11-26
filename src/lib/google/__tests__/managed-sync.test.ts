@@ -12,7 +12,7 @@ function fixture(incoming: {remote_id:string;cancelled:boolean;queued_at:string}
     const chain = {eq:()=>chain,order:()=>chain,limit:()=>result,then:(resolve: (value: typeof result)=>unknown)=>resolve(result)}
     return chain
   }
-  const db = {rpc, from:(table:string)=>({select:()=>finish(table==="google_managed_inbox"?incoming:[]),delete:()=>finish(null)})}
+  const db = {rpc:(name:string,args:object)=>name==="google_managed_series_context" ? Promise.resolve({data:{},error:null}) : rpc(name,args), from:(table:string)=>({select:()=>finish(table==="google_managed_inbox"?incoming:[]),delete:()=>finish(null)})}
   const api=vi.fn().mockResolvedValueOnce(Response.json({id:"dedicated",description:exportDescription("owner")}))
   return {rpc,api,db:db as unknown as SupabaseClient<Database>}
 }
