@@ -265,7 +265,8 @@ function makeGoogleSupabase(result: {
   const eqId = vi.fn(() => ({ eq: eqHousehold }))
   const update = vi.fn(() => ({ eq: eqId }))
   const from = vi.fn(() => ({ update }))
-  return { client: { from }, from, update, eqId, eqHousehold, select }
+  const rpc = vi.fn().mockResolvedValue({ data: true, error: null })
+  return { client: { from, rpc }, from, update, eqId, eqHousehold, select, rpc }
 }
 
 /**
@@ -322,6 +323,14 @@ describe("approveUser", () => {
 })
 
 describe("updateGoogleCalendarSelection", () => {
+  it("新しいDB契約が未適用なら購読を変更しない", async () => {
+    const { client, rpc, update } = makeGoogleSupabase({ data: [{ id: "sub-1" }], error: null })
+    rpc.mockResolvedValue({ data: null, error: { code: "PGRST202" } })
+    setContext(client)
+    expect(await updateGoogleCalendarSelection("sub-1", false)).toEqual({ error: "Google カレンダーの共有設定を確認できません。少し時間をおいて再試行してください。" })
+    expect(update).not.toHaveBeenCalled()
+  })
+
   it("認証前に入力を検証する（空 ID は DB へ到達せぬ）", async () => {
     const { client, update } = makeGoogleSupabase({ data: [], error: null })
     setContext(client)

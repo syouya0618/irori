@@ -1,3 +1,4 @@
+import { isManagedCalendarDescription } from "@/lib/domain/google-calendar-export"
 import { NextResponse, type NextRequest } from "next/server"
 import { getAuthContext } from "@/lib/supabase/auth-context"
 import { getAppOrigin } from "@/lib/utils/app-origin"
@@ -371,6 +372,7 @@ async function storeCalendarList(args: {
     const calendars = await fetchCalendarList(accessToken)
 
     const rows = calendars
+      .filter((calendar) => !isManagedCalendarDescription(calendar.description))
       // DB の CHECK を跨げぬ行を先に落とす。1 件の異常で upsert 全体が
       // 落ちて「一覧が丸ごと出ない」ことを防ぐ（fail-soft）。
       .filter((calendar) => {

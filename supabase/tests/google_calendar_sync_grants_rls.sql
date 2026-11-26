@@ -418,14 +418,13 @@ SELECT is((SELECT count(*) FROM google_calendar_subscriptions
             WHERE id = '66666666-6666-6666-6666-666666666666'), 0::bigint,
   '切断で google_calendar_subscriptions が道連れに消える');
 
--- ══ V9 の核心: 購読が消えても予定は消えぬ ══════════════════════
+-- 最後の購読解除: Google のミラーだけが消え、接続削除でも復活しない。
 SELECT is((SELECT count(*) FROM calendar_events
-            WHERE id = '33333333-3333-3333-3333-333333333333'), 1::bigint,
-  'V9: 購読が消えても google ミラー行は残る（CASCADE なら 0 になり永久に復活せぬ）');
+            WHERE id = '33333333-3333-3333-3333-333333333333'), 0::bigint,
+  '最後の購読を解除すると Google ミラーが消える');
 SELECT ok(
-  (SELECT subscription_id IS NULL FROM calendar_events
-    WHERE id = '33333333-3333-3333-3333-333333333333'),
-  'V9: 残った行の subscription_id は NULL（SET NULL が効いた証跡）');
+  NOT EXISTS (SELECT 1 FROM calendar_events WHERE household_id = '11111111-1111-1111-1111-111111111111' AND source = 'google' AND google_calendar_id = 'cal-h1'),
+  '切断後も解除したカレンダーのミラーは復活しない');
 
 SELECT * FROM finish();
 ROLLBACK;

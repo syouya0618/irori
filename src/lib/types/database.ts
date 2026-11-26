@@ -847,6 +847,37 @@ export interface Database {
         Update: Record<string, never>
         Relationships: []
       }
+      google_calendar_exports: {
+        Row: {
+          connection_id: string
+          household_id: string
+          enabled: boolean
+          calendar_id: string | null
+          provisioning: boolean
+          lease_until: string | null
+          last_synced_at: string | null
+          last_error: string | null
+        }
+        Insert: {
+          connection_id: string
+          household_id: string
+          enabled?: boolean
+          calendar_id?: string | null
+          provisioning?: boolean
+          lease_until?: string | null
+          last_synced_at?: string | null
+          last_error?: string | null
+        }
+        Update: {
+          enabled?: boolean
+          calendar_id?: string | null
+          provisioning?: boolean
+          lease_until?: string | null
+          last_synced_at?: string | null
+          last_error?: string | null
+        }
+        Relationships: []
+      }
       google_connections: {
         Row: {
           id: string
@@ -967,6 +998,7 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
+      google_sharing_schema_ready: { Args: Record<string, never>; Returns: boolean }
       claim_news_ai_call: { Args: { p_day: string; p_limit: number }; Returns: boolean }
       news_source_statuses:{Args:Record<string,never>;Returns:Json}
       news_source_status:{Args:Record<string,never>;Returns:string|null}

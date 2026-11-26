@@ -1,3 +1,5 @@
+import { GOOGLE_CALENDAR_EXPORT_SCOPE } from "@/lib/domain/google-calendar-export"
+
 /**
  * OAuth 接続フロー（計画書 §7 D-4）の**契約**を 1 箇所に集める。
  *
@@ -162,13 +164,14 @@ export function buildGoogleAuthorizeUrl(params: {
   clientId: string
   redirectUri: string
   state: string
+  share?: boolean
 }): string {
   const url = new URL(GOOGLE_AUTHORIZE_ENDPOINT)
   url.searchParams.set("client_id", params.clientId)
   url.searchParams.set("redirect_uri", params.redirectUri)
   url.searchParams.set("response_type", "code")
   // 空白区切り（RFC 6749 §3.3）。URLSearchParams が `+` へエンコードする。
-  url.searchParams.set("scope", GOOGLE_OAUTH_SCOPES.join(" "))
+  url.searchParams.set("scope", [...GOOGLE_OAUTH_SCOPES, ...(params.share ? [GOOGLE_CALENDAR_EXPORT_SCOPE] : [])].join(" "))
   // refresh_token を得る条件その 1。落とすと翌日以降の同期が全滅する。
   url.searchParams.set("access_type", "offline")
   // その 2。落とすと 2 回目以降の同意で refresh_token が返らぬ。

@@ -10,6 +10,7 @@ import { getAuthContext } from "@/lib/supabase/auth-context"
 import { getAppOrigin } from "@/lib/utils/app-origin"
 import { isFutureJstDate } from "@/lib/utils/date-jst"
 import { logSupabaseError } from "@/lib/supabase/log-error"
+import { googleSharingReady, GOOGLE_SHARING_NOT_READY } from "@/lib/google/sharing-ready"
 import { VALID_PAGES, type ValidPage } from "@/lib/constants/pages"
 import {
   FEEDING_INTERVAL_DEFAULT,
@@ -246,7 +247,7 @@ export async function signOut(): Promise<{ error: string }> {
  *
  * ## 認証済みクライアントで撃つ（service role ではない）
  * D-1 の migration は authenticated へ
- * `GRANT UPDATE (is_selected)` と世帯スコープの UPDATE ポリシーを与えておる。
+ * `GRANT UPDATE (is_selected)` と本人・世帯スコープの UPDATE ポリシーを与えておる。
  * ゆえに**利用者が触ってよい唯一の列**であり、RLS が世帯分離を守る。
  * ここに service role を持ち込めば、その保証を自分で捨てることになる。
  *
@@ -254,12 +255,8 @@ export async function signOut(): Promise<{ error: string }> {
  * `sync_token` / `sync_lease_until` は**秘密**で authenticated の列 GRANT の外に
  * ある。`.select("*")` は 42501 で落ちる（migration の COMMENT が名指ししておる）。
  *
- * ## 既知の穴（D-5 の担当・計画書 §D-2「ミラー掃除（V9）」）
- * **購読を OFF にしても `calendar_events` のミラー行は消えぬ。** 計画書は
- * 「他に同一 `google_calendar_id` を選択中の購読が無い場合にのみ明示 DELETE」を
- * 要求しておるが、あれは `calendar_events` の google 行を所有する同期エンジン
- * （D-5）の関心事ゆえ本 PR では実装せぬ。現状 OFF 直後はカレンダーに古い予定が
- * 残る。**握り潰しではなく未実装として報告済み。**
+ * 購読変更のDBトリガは同期中の変更を拒み、増分トークンを初期化する。
+ * 最後の購読を解除した時だけ、世帯内の Google ミラーを同じトランザクションで消す。
  */
 export async function updateGoogleCalendarSelection(
   subscriptionId: string,
@@ -275,6 +272,9 @@ export async function updateGoogleCalendarSelection(
   const result = await getAuthContext()
   if (result.error !== null) return { error: result.error }
   const { supabase, householdId } = result.context
+
+  // Until the owner-only policy and cleanup triggers exist, never claim a successful sharing change.
+  if (!(await googleSharingReady(supabase))) return { error: GOOGLE_SHARING_NOT_READY }
 
   // 0 行更新を「成功」と偽らない（別世帯・RLS 拒否は 0 行マッチになる）。
   // household_id の明示 `.eq()` は RLS と二重になるが、ポリシーが将来緩んでも
@@ -293,12 +293,17 @@ export async function updateGoogleCalendarSelection(
       error,
       { subscriptionId, householdId },
     )
-    return { error: "カレンダーの設定に失敗しました" }
+    return { error: error.code === "55P03" ? "同期中です。少し時間をおいてもう一度お試しください" : "カレンダーの設定に失敗しました" }
   }
   if (!data || data.length === 0) {
     return { error: "カレンダーの設定に失敗しました" }
   }
 
+  revalidatePath("/calendar")
+  revalidatePath("/baby")
+  revalidatePath("/chores")
+  revalidatePath("/chores/garbage")
+  revalidatePath("/settings")
   return { success: true }
 }
 

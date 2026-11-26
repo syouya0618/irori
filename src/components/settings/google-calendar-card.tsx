@@ -27,6 +27,7 @@ import { updateGoogleCalendarSelection } from "@/app/(main)/settings/actions"
 // startTransition 内の未処理 reject は error boundary へ bubble する（offline-error.ts）
 import { toastOfflineError } from "@/lib/utils/offline-error"
 import { interpretSyncResponse, type SyncOutcome } from "./google-sync-outcome"
+import { GoogleExportControls } from "./google-export-controls"
 
 /**
  * Google カレンダー接続カード（計画書 §7 D-4）。
@@ -346,13 +347,16 @@ export function GoogleCalendarCard({
             <CalendarConnectLink label="Google カレンダーを接続" />
           </div>
         ) : (
-          connections.map((connection) => (
-            <GoogleConnectionRow
-              key={connection.id}
-              connection={connection}
-              onSynced={() => router.refresh()}
-            />
-          ))
+          <>
+            {connections.map((connection) => (
+              <GoogleConnectionRow
+                key={connection.id}
+                connection={connection}
+                onSynced={() => router.refresh()}
+              />
+            ))}
+            <CalendarConnectLink label="別の Google アカウントを接続" />
+          </>
         )}
       </CardContent>
     </Card>
@@ -557,10 +561,12 @@ function GoogleConnectionRow({
             ))}
           </div>
           <p className="text-xs text-muted-foreground">
-            選択の変更は次の同期から予定画面に反映されます。
+            選択した Google カレンダーの予定は、irori の家族全員に表示されます。共有を停止すると、他の家族も同じカレンダーを共有していない限り、irori から非表示になります。Google の元の予定は消しません。
           </p>
         </fieldset>
       )}
+
+      <GoogleExportControls connectionId={connection.id} />
 
       {/* 再接続待ちの接続は同期の対象外（syncHousehold が外す）。押しても何も起きぬ
           ボタンは出さず、上の「再接続」だけを道にする */}

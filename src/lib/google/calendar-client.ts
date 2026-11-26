@@ -106,6 +106,8 @@ export interface GoogleCalendarListEntry {
   primary: boolean
   /** "owner" | "reader" | "writer" | "freeBusyReader"（未知値もありうる）。 */
   accessRole: string | null
+  /** Only used to identify app-created export calendars. */
+  description?: string
 }
 
 /**
@@ -284,6 +286,7 @@ export async function fetchCalendarList(
         summary: asStringOrNull(item.summary),
         primary: item.primary === true,
         accessRole: asStringOrNull(item.accessRole),
+        ...(typeof item.description === "string" ? { description: item.description } : {}),
       })
     }
 

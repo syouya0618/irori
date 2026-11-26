@@ -98,6 +98,11 @@ describe("GET /api/google/oauth/start — URL 契約", () => {
     expect(granted).toContain(GOOGLE_CALENDAR_READONLY_SCOPE)
   })
 
+  it("共有の明示操作だけにアプリ作成カレンダーの権限を追加する", async () => {
+    const url = locationOf(await GET(new Request(APP_ORIGIN + "/api/google/oauth/start?mode=share")))
+    expect(new Set(url.searchParams.get("scope")?.split(" "))).toEqual(new Set([GOOGLE_CALENDAR_READONLY_SCOPE, "openid", "email", "https://www.googleapis.com/auth/calendar.app.created"]))
+  })
+
   it("access_type=offline を必ず付ける（refresh token を得る条件）", async () => {
     const url = locationOf(await GET(request()))
     expect(url.searchParams.get("access_type")).toBe("offline")

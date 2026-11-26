@@ -1,3 +1,5 @@
+import { hasCalendarExportScope } from "@/lib/domain/google-calendar-export"
+import { syncExistingGoogleExport } from "@/lib/google/export-sync"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database, GoogleSyncErrorKind } from "@/lib/types/database"
 import { logSupabaseError } from "@/lib/supabase/log-error"
@@ -450,8 +452,9 @@ async function syncSubscription({
     .update({ sync_lease_until: leaseUntil })
     .eq("id", subscription.id)
     .eq("household_id", householdId)
+    .eq("is_selected", true)
     .or(`sync_lease_until.is.null,sync_lease_until.lt.${nowIso}`)
-    .select("id")
+    .select("id, sync_token")
 
   if (leaseError) {
     logSupabaseError("google-sync", "リースの取得に失敗", leaseError, {
@@ -468,9 +471,10 @@ async function syncSubscription({
   }
 
   try {
+    const currentToken = leased[0].sync_token
     const query: GoogleEventsQuery =
-      subscription.sync_token !== null
-        ? { mode: "incremental", syncToken: subscription.sync_token }
+      currentToken !== null
+        ? { mode: "incremental", syncToken: currentToken }
         : {
             mode: "full",
             timeMin: new Date(
@@ -760,6 +764,15 @@ async function syncConnection(
           tokens,
         }),
       )
+    }
+
+    if (hasCalendarExportScope(tokenRow.scope)) {
+      try {
+        await syncExistingGoogleExport(supabase, owner, () => tokens.get())
+      } catch {
+        // Export status is independent; never turn a successful read-only import into a failed one.
+        console.warn("[google-sync] export status unavailable", { connectionId: connection.id })
+      }
     }
 
     const failed = outcome.subscriptions.filter(
